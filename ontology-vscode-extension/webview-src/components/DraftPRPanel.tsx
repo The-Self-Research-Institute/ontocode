@@ -10,7 +10,9 @@ import {
   getActionMeta,
   getOpLabel,
   groupByCategory,
+  describeChange,
 } from "../utils/draftChangeHelpers";
+import { DraftFullChanges, DraftMergeRow, FullDiff, Resolution, conflictKeys, normalizeFullDiff } from "./DraftPRDetails";
 
 interface DraftPR {
   id: string;
@@ -80,6 +82,11 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
     conflicts: Array<{ entityIRI: string; entityLabel: string; changedBy: string }>;
   }>>({});
   const [prExpandedCategories, setPrExpandedCategories] = useState<Record<string, Set<string>>>({});
+  const [prFullDiffMap, setPrFullDiffMap] = useState<Record<string, FullDiff>>({});
+  const [prTabMap, setPrTabMap] = useState<Record<string, "notes" | "full">>({});
+  const [prResolutions, setPrResolutions] = useState<Record<string, Record<string, Resolution>>>({});
+  const [prConflictNotice, setPrConflictNotice] = useState<Record<string, string>>({});
+  const [expandedMerges, setExpandedMerges] = useState<Set<string>>(new Set());
   const fetchedConflictsRef = useRef<Set<string>>(new Set());
 
   const fetchPRs = useCallback(async () => {
@@ -101,9 +108,27 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
     setLiveDraftCount(draftCount);
   }, [draftCount]);
 
+  const refreshDraftCount = useCallback(() => {
+    apiClient.get<any>(`/api/ontology/${projectId}/drafts/stats`, { userId })
+      .then((res: any) => {
+        const data = res?.data || res;
+        const count = data?.unappliedDrafts ?? data?.totalDrafts;
+        if (typeof count === 'number') setLiveDraftCount(count);
+      })
+      .catch(() => {});
+  }, [projectId, userId]);
+
   const loadPRDetails = async (pr: DraftPR) => {
     if (fetchedConflictsRef.current.has(pr.id)) return;
     fetchedConflictsRef.current.add(pr.id);
+    apiClient.get<any>(`/api/ontology/${projectId}/drafts/full-diff`, { userId: pr.authorId })
+      .then((res: any) => {
+        const diff = normalizeFullDiff(res?.data || res);
+        setPrFullDiffMap((prev) => (prev[pr.id] ? prev : { ...prev, [pr.id]: diff }));
+      })
+      .catch(() => {
+        setPrFullDiffMap((prev) => (prev[pr.id] ? prev : { ...prev, [pr.id]: normalizeFullDiff({ available: false }) }));
+      });
     try {
       const [changesRes, previewRes] = await Promise.all([
         apiClient.get<any>(`/api/ontology/${projectId}/drafts`, { userId: pr.authorId }),
@@ -136,17 +161,16 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
       setPrConflictMap({});
       setPrChangesMap({});
       setPrExpandedCategories({});
+      setPrFullDiffMap({});
+      setPrTabMap({});
+      setPrResolutions({});
+      setPrConflictNotice({});
+      setExpandedMerges(new Set());
       if (canRaisePR) {
-        apiClient.get<any>(`/api/ontology/${projectId}/drafts/stats`, { userId })
-          .then((res: any) => {
-            const data = res?.data || res;
-            const count = data?.unappliedDrafts ?? data?.totalDrafts;
-            if (typeof count === 'number') setLiveDraftCount(count);
-          })
-          .catch(() => {});
+        refreshDraftCount();
       }
     }
-  }, [isOpen, fetchPRs, canRaisePR, projectId, userId]);
+  }, [isOpen, fetchPRs, canRaisePR, refreshDraftCount]);
 
   const handleRaisePR = async () => {
     setRaising(true);
@@ -176,13 +200,26 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
       await apiClient.post(`/api/ontology/${projectId}/draft-prs/${pr.id}/approve`, {
         reviewerId: userId,
         reviewNote: reviewNote.trim() || undefined,
+        resolutions: prResolutions[pr.id] || {},
       });
+      setPrConflictNotice((prev) => ({ ...prev, [pr.id]: "" }));
       setReviewingPrId(null);
       setReviewNote("");
       await fetchPRs();
+      refreshDraftCount();
+      window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["draftPrApproved"] } }));
       onPRApproved?.();
     } catch (e: any) {
-      const msg = e?.response?.data?.error || e?.message || "Failed to approve pull request";
+      if (e?.status === 409 && e?.data?.conflicts) {
+        setPrFullDiffMap((prev) => ({ ...prev, [pr.id]: normalizeFullDiff(e.data.conflicts) }));
+        setPrTabMap((prev) => ({ ...prev, [pr.id]: "full" }));
+        setPrConflictNotice((prev) => ({
+          ...prev,
+          [pr.id]: "This draft conflicts with Public. Choose Keep draft or Take Public's for each highlighted row, then approve again.",
+        }));
+        return;
+      }
+      const msg = e?.data?.error || e?.response?.data?.error || e?.message || "Failed to approve pull request";
       setError(msg);
     } finally {
       setReviewing(false);
@@ -423,6 +460,56 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
 
                   {/* Full change list for reviewers */}
                   {canReview && pr.status === "OPEN" && (() => {
+                    const fullDiff = prFullDiffMap[pr.id];
+                    const fullConflicts = fullDiff ? conflictKeys(fullDiff).length : 0;
+                    const fullAvailable = !!fullDiff && ((fullDiff.available && !fullDiff.baselineLost) || fullConflicts > 0);
+                    const tab = fullAvailable ? prTabMap[pr.id] || "notes" : "notes";
+                    const tabs = fullAvailable ? (
+                      <div role="tablist" className="mt-2 flex gap-1 text-[11px]">
+                        {(["notes", "full"] as const).map((value) => (
+                          <button
+                            key={value}
+                            type="button"
+                            role="tab"
+                            aria-selected={tab === value}
+                            onClick={() => setPrTabMap((prev) => ({ ...prev, [pr.id]: value }))}
+                            className={`px-2 py-1 rounded border font-medium transition-opacity ${tab === value ? "border-blue-500 text-blue-600" : "opacity-60 hover:opacity-100"}`}
+                            style={tab === value ? undefined : { borderColor: "var(--color-border)" }}
+                          >
+                            {value === "notes" ? "Change notes" : `Full changes${fullConflicts ? ` · ${fullConflicts} conflict${fullConflicts !== 1 ? "s" : ""}` : ""}`}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null;
+                    const unavailable = fullDiff && !fullAvailable ? (
+                      <div className="mt-2 text-[11px] opacity-60">
+                        {fullDiff.baselineLost
+                          ? "The full comparison is unavailable because this draft's starting point was lost. The change notes are listed below."
+                          : "The full comparison is unavailable for this draft. The change notes are listed below."}
+                      </div>
+                    ) : null;
+                    if (tab === "full" && fullDiff) {
+                      return (
+                        <>
+                          {tabs}
+                          <DraftFullChanges
+                            diff={fullDiff}
+                            resolutions={prResolutions[pr.id] || {}}
+                            notice={prConflictNotice[pr.id] || null}
+                            onResolve={(key, value) => setPrResolutions((prev) => {
+                              const next = { ...(prev[pr.id] || {}) };
+                              if (value) {
+                                next[key] = value;
+                              } else {
+                                delete next[key];
+                              }
+                              return { ...prev, [pr.id]: next };
+                            })}
+                          />
+                        </>
+                      );
+                    }
+
                     const prChanges = prChangesMap[pr.id];
                     const ci = prConflictMap[pr.id];
                     const conflictIris = new Set<string>((ci?.conflicts || []).map((c) => c.entityIRI));
@@ -430,7 +517,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                     if (!prChanges && !fetchedConflictsRef.current.has(pr.id)) {
                       return <div className="mt-2 text-[11px] opacity-40">Loading changes…</div>;
                     }
-                    if (!prChanges) return null;
+                    if (!prChanges) return tabs || unavailable ? <>{tabs}{unavailable}</> : null;
 
                     const grouped = groupByCategory(prChanges);
                     const categories = CATEGORY_ORDER.filter((cat) => grouped[cat]?.length);
@@ -445,6 +532,9 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                     };
 
                     return (
+                      <>
+                      {tabs}
+                      {unavailable}
                       <div className="mt-2 flex flex-col gap-1.5 text-[11px]">
                         {/* Conflict banners */}
                         {ci?.conflictType === "IRI_OVERLAP" && (
@@ -502,6 +592,26 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                               {isExpanded && (
                                 <div className="border-t divide-y" style={{ borderColor: "var(--color-border)" }}>
                                   {items.map((c) => {
+                                    if (c.operationType === "ontologyMerge") {
+                                      const mergeKey = `${pr.id}:${c.id}`;
+                                      return (
+                                        <DraftMergeRow
+                                          key={c.id}
+                                          change={c}
+                                          expanded={expandedMerges.has(mergeKey)}
+                                          onToggle={() => setExpandedMerges((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(mergeKey)) {
+                                              next.delete(mergeKey);
+                                            } else {
+                                              next.add(mergeKey);
+                                            }
+                                            return next;
+                                          })}
+                                        />
+                                      );
+                                    }
+                                    const described = describeChange(c.operationType, c.operationData);
                                     const { symbol, cls } = getActionMeta(c.operationType);
                                     const name = getEntityName(c.operationType, c.operationData);
                                     const iri = getEntityIri(c.operationData);
@@ -515,15 +625,18 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                                         <span className={`font-bold flex-shrink-0 mt-0.5 ${cls}`}>{symbol}</span>
                                         <div className="flex-1 min-w-0">
                                           <div className="flex items-center gap-1.5">
-                                            <span className="opacity-80 truncate">{name}</span>
+                                            <span className="opacity-80 truncate">{described ? described.label : name}</span>
                                             {isConflict && (
                                               <span title="Conflict with public" className="inline-flex flex-shrink-0"><AlertTriangle size={10} className="text-amber-500" /></span>
                                             )}
                                           </div>
-                                          {parentLabel && (
+                                          {described && described.lines.map((line, i) => (
+                                            <div key={i} className="opacity-60 text-[10px] mt-0.5 break-all">{line}</div>
+                                          ))}
+                                          {!described && parentLabel && (
                                             <div className="opacity-40 text-[10px] mt-0.5">⊂ {parentLabel}</div>
                                           )}
-                                          {targetLabel && (
+                                          {!described && targetLabel && (
                                             <div className="opacity-40 text-[10px] mt-0.5 truncate" title={targetIri}>→ {targetLabel}</div>
                                           )}
                                         </div>
@@ -539,6 +652,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                           );
                         })}
                       </div>
+                      </>
                     );
                   })()}
 
@@ -555,6 +669,16 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                             onChange={(e) => setReviewNote(e.target.value)}
                             rows={2}
                           />
+                          {(() => {
+                            const diff = prFullDiffMap[pr.id];
+                            const chosen = prResolutions[pr.id] || {};
+                            const pending = diff ? conflictKeys(diff).filter((key) => !chosen[key]).length : 0;
+                            return pending > 0 ? (
+                              <div className="text-[11px] text-amber-600">
+                                {pending} conflict{pending !== 1 ? "s" : ""} still need{pending === 1 ? "s" : ""} a choice in Full changes
+                              </div>
+                            ) : null;
+                          })()}
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleApprove(pr)}

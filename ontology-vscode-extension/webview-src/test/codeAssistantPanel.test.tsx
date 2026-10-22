@@ -395,7 +395,7 @@ describe("CodeAssistantPanel failed checks", () => {
     expect(container.textContent).toContain(
       "This refers to a name that doesn't exist in the ontology: ex:Hamster is not defined",
     );
-    expect(container.textContent).toContain("turtle · insert at line 10");
+    expect(container.textContent).toContain("Turtle · insert at line 10 of the Turtle file");
   });
 });
 

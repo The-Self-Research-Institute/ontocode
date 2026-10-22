@@ -20,6 +20,10 @@ public class AxiomAnnotationService {
     private final OntologyMutationService mutationService;
     private final ProjectImportService importService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private DraftTrackingService draftTracking;
+
     public AxiomAnnotationService(StorageManager storageManager,
                                   SparqlDatasetService datasetService,
                                   AxiomLookupService axiomLookupService,
@@ -80,7 +84,11 @@ public class AxiomAnnotationService {
 
         OWLAxiom base = axiom.getAxiomWithoutAnnotations();
         OWLAxiom annotated = base.getAnnotatedAxiom(merged);
-        replaceAxiom(projectId, base, annotated, draft, userId, username);
+        DraftRecords.describe(draftTracking, draft, projectId, userId, username, DraftRecords.ADD_AXIOM_ANNOTATION,
+                DraftRecords.axiomAnnotation(entityIri, relatedIri, sectionName, annotationProperty, value, language), () -> {
+                    replaceAxiom(projectId, base, annotated, draft, userId, username);
+                    return null;
+                });
     }
 
     public void deleteAnnotation(String projectId, String entityIri, String relatedIri, String sectionName,
@@ -111,7 +119,11 @@ public class AxiomAnnotationService {
 
         OWLAxiom base = axiom.getAxiomWithoutAnnotations();
         OWLAxiom updated = remaining.isEmpty() ? base : base.getAnnotatedAxiom(remaining);
-        replaceAxiom(projectId, base, updated, draft, userId, username);
+        DraftRecords.describe(draftTracking, draft, projectId, userId, username, DraftRecords.DELETE_AXIOM_ANNOTATION,
+                DraftRecords.axiomAnnotation(entityIri, relatedIri, sectionName, annotationProperty, value, null), () -> {
+                    replaceAxiom(projectId, base, updated, draft, userId, username);
+                    return null;
+                });
     }
 
     private void replaceAxiom(String projectId, OWLAxiom previous, OWLAxiom next, boolean draft, String userId, String username)

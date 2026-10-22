@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.Limit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -479,27 +480,26 @@ public class OntologyQueryController {
             org.semanticweb.owlapi.model.parameters.Imports importsScope) {
         if (preferOwlApiPath(projectId)
                 && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-            return Optional.of(desktopHierarchyService.children(projectId, parentIri, MAX_DESCENDANTS, 0, importsScope));
+            return Optional.of(desktopHierarchyService.children(projectId, parentIri, Limit.QUERY_MAX_DESCENDANTS.value(), 0, importsScope));
         }
         String userId = SparqlQueryContext.getUserId();
         boolean hasDraft = userId != null && datasetService != null
                 && datasetService.hasActiveDraftOverlay(projectId, userId);
         if (!hasDraft) {
             Optional<List<self.research.ontology.owlEditor.dto.OntologyDto.TreeNode>> snap =
-                    hierarchyIndexService.children(projectId, parentIri, MAX_DESCENDANTS, 0);
+                    hierarchyIndexService.children(projectId, parentIri, Limit.QUERY_MAX_DESCENDANTS.value(), 0);
             if (snap.isPresent()) return snap;
             if (hierarchyIndexService.isEnabled() && !hierarchyIndexService.allowsLegacySparqlFallback()) {
                 return Optional.empty();
             }
         }
         try {
-            return Optional.of(queryService.children(projectId, parentIri, MAX_DESCENDANTS, 0));
+            return Optional.of(queryService.children(projectId, parentIri, Limit.QUERY_MAX_DESCENDANTS.value(), 0));
         } catch (Exception e) {
             return Optional.empty();
         }
     }
 
-    private static final int MAX_DESCENDANTS = 5000;
 
     /**
      * All asserted descendants of a class (BFS over the same children source used by
@@ -531,7 +531,7 @@ public class OntologyQueryController {
             }
             for (self.research.ontology.owlEditor.dto.OntologyDto.TreeNode child : kids.get()) {
                 if (child.getId() == null || found.containsKey(child.getId())) continue; // already visited (asserted-hierarchy cycle guard)
-                if (found.size() >= MAX_DESCENDANTS) {
+                if (found.size() >= Limit.QUERY_MAX_DESCENDANTS.value()) {
                     truncated = true;
                     break;
                 }
@@ -865,8 +865,11 @@ public class OntologyQueryController {
             if (iris.isEmpty()) {
                 return ResponseEntity.ok(Map.of());
             }
+            String ctxUserId = SparqlQueryContext.getUserId();
+            boolean hasDraft = ctxUserId != null && datasetService != null
+                    && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
             Map<String, String> result;
-            if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            if (!hasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
                 result = desktopHierarchyService.batchAnnotations(projectId, iris, propertyIri);
             } else {
                 result = queryService.batchAnnotations(projectId, iris, propertyIri);

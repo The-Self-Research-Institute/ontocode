@@ -92,7 +92,7 @@ final class AssistantGraphWriter {
             removed.addAll(patch.restoredTrees());
             Model added = new LinkedHashModel(patch.added());
             added.addAll(patch.insertedTrees());
-            attachPrefixes(group.getTargetPath(), sourceFile, splicedFile, removed, added);
+            attachPrefixes(group, group.getTargetPath(), sourceFile, splicedFile, removed, added);
             long version = reimportPipeline.finishPatch(projectId, group.getTargetPath(), splicedFile, userEmail,
                     userEmail, removed, added, origin);
             operationService.markCommitted(operation);
@@ -111,7 +111,20 @@ final class AssistantGraphWriter {
         }
     }
 
-    private static void attachPrefixes(String format, Path sourceFile, Path splicedFile, Model removed, Model added) {
+    private static boolean editsTouchPrefixes(AssistantEditGroupDocument group) {
+        List<String> texts = new java.util.ArrayList<>();
+        group.getEdits().forEach(edit -> {
+            texts.add(edit.getOriginalText());
+            texts.add(edit.getNewText());
+        });
+        return PrefixScanner.mentionsDeclaration(texts);
+    }
+
+    private static void attachPrefixes(AssistantEditGroupDocument group, String format, Path sourceFile, Path splicedFile,
+                                       Model removed, Model added) {
+        if (!editsTouchPrefixes(group)) {
+            return;
+        }
         try {
             PrefixScanner.scan(sourceFile, format).forEach(removed::setNamespace);
             PrefixScanner.scan(splicedFile, format).forEach(added::setNamespace);
@@ -157,6 +170,9 @@ final class AssistantGraphWriter {
 
     private void recordPrefixChanges(AssistantEditGroupDocument group, Path sourceFile, Path splicedFile, boolean draft,
                                      String historyUserId, String username, ChangeOrigin origin) {
+        if (!editsTouchPrefixes(group)) {
+            return;
+        }
         try {
             reimportPipeline.recordPrefixChanges(group.getProjectId(), historyUserId, username, draft, origin,
                     PrefixScanner.scan(sourceFile, group.getTargetPath()),

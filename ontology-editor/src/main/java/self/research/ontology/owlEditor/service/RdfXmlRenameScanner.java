@@ -11,8 +11,6 @@ import java.util.TreeMap;
 
 final class RdfXmlRenameScanner {
 
-    private static final int MAX_BUFFERED_LINES = 10_000;
-    private static final long MAX_BUFFERED_CHARS = 8L * 1024 * 1024;
 
     private RdfXmlRenameScanner() {
     }
@@ -52,9 +50,9 @@ final class RdfXmlRenameScanner {
                     bufferedLines.clear();
                     bufferedChars = 0;
                     pending.clear();
-                } else if (bufferedLines.size() > MAX_BUFFERED_LINES || bufferedChars > MAX_BUFFERED_CHARS) {
+                } else if (bufferedLines.size() > Limit.RENAME_SCAN_MAX_LINES.value() || bufferedChars > Limit.RENAME_SCAN_MAX_MB.mb()) {
                     scan.problem = "The rdfxml document has a tag or declaration spanning more than "
-                            + MAX_BUFFERED_LINES + " lines starting at line " + firstBufferedLine
+                            + Limit.RENAME_SCAN_MAX_LINES.value() + " lines starting at line " + firstBufferedLine
                             + ", so no rename was generated.";
                     return scan;
                 }

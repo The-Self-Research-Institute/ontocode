@@ -1,6 +1,8 @@
 import React from 'react';
 import { Clock, GitBranch } from 'lucide-react';
+import { fallbackLabel } from './changeKinds';
 import { getChangeIcon } from './display';
+import { parseServerTime } from '../changeSets/timeFormat';
 
 function actionClass(details: any): string {
   const action = (details.operationType || details.action || '').toLowerCase();
@@ -47,7 +49,12 @@ export const ChangeInfo: React.FC<{ details: any }> = ({ details }) => (
     <div className="flex items-center gap-2">
       <span className="text-2xl">{getChangeIcon(details.entityType?.toLowerCase() || details.type || 'axiom')}</span>
       <div>
-        <p className="font-medium">{details.entityLabel || 'Unknown Entity'}</p>
+        <p className="font-medium">{fallbackLabel({
+          entityLabel: details.entityLabel,
+          entityUri: details.entityIRI,
+          operationType: details.operationType,
+          description: details.description
+        })}</p>
         <p className="text-xs text-gray-500 font-mono truncate max-w-[350px]" title={details.entityIRI}>
           {details.entityIRI}
         </p>
@@ -56,7 +63,7 @@ export const ChangeInfo: React.FC<{ details: any }> = ({ details }) => (
     <InfoGrid details={details} />
     <div className="text-xs text-gray-500 pt-1 border-t">
       <Clock className="w-3 h-3 inline mr-1" />
-      {details.timestamp ? new Date(details.timestamp).toLocaleString() : 'Unknown time'}
+      {details.timestamp ? parseServerTime(details.timestamp).toLocaleString() : 'Unknown time'}
     </div>
   </div>
 );

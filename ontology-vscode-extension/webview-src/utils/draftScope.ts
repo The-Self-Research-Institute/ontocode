@@ -17,3 +17,8 @@ export function withDraftAndUser(url: string): string {
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}draft=true&userId=${encodeURIComponent(uid || "")}`;
 }
+
+export function draftBodyFields(): Record<string, string> {
+  if (!isDraftScopeActive()) return {};
+  return { draft: "true", userId: resolveMutationActor().userId || "" };
+}

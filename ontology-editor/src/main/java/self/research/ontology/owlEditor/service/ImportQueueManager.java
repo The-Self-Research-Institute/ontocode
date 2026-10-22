@@ -50,14 +50,10 @@ public class ImportQueueManager {
     @Value("${ontocode.import.max-concurrent:1}")
     private int maxConcurrentImports;
 
-    private static final int MAX_RETRIES = 3;
     private static final long RETRY_DELAY_MS = 10 * 1000;
     /** Never timeout an in-flight import earlier than this floor. */
-    private static final long MIN_PROCESSING_TIMEOUT_MS = 10 * 60 * 1000;
     /** Allow headroom beyond the estimator because parse/write phases can vary. */
-    private static final double PROCESSING_TIMEOUT_MULTIPLIER = 2.0;
     /** Cap total queue wait shown to users (sum of ahead-of-you estimates). */
-    private static final long MAX_WAIT_TIME_MS = 20 * 60 * 1000;
 
     public ImportQueueManager(SimpMessagingTemplate messagingTemplate,
                               ImportTimeEstimator estimator,
@@ -115,7 +111,7 @@ public class ImportQueueManager {
                 .estimatedDurationMs(estimatedDurationMs)
                 .queuePosition(queue.size() + 1)
                 .retryCount(0)
-                .maxRetries(MAX_RETRIES)
+                .maxRetries(Limit.IMPORT_MAX_RETRIES.value())
                 .build();
 
         // Add to end of queue (FIFO)
@@ -436,11 +432,11 @@ public class ImportQueueManager {
     private long calculateTimeoutMsForItem(ImportQueueItem item, long configuredTimeoutMs) {
         long estimateMs = Math.max(0, estimateDurationMsForItem(item));
         long estimateBasedTimeoutMs = estimateMs > 0
-                ? (long) Math.ceil(estimateMs * PROCESSING_TIMEOUT_MULTIPLIER)
+                ? (long) Math.ceil(estimateMs * (Limit.IMPORT_PROCESSING_TIMEOUT_PERCENT.value() / 100.0))
                 : 0;
 
         return Math.max(
-                Math.max(configuredTimeoutMs, MIN_PROCESSING_TIMEOUT_MS),
+                Math.max(configuredTimeoutMs, (Limit.IMPORT_MIN_PROCESSING_TIMEOUT_MINUTES.value() * 60_000L)),
                 estimateBasedTimeoutMs);
     }
 
@@ -472,7 +468,7 @@ public class ImportQueueManager {
             waitTimeMs += estimateDurationMsForItem(item);
         }
 
-        return Math.min(waitTimeMs, MAX_WAIT_TIME_MS);
+        return Math.min(waitTimeMs, (Limit.IMPORT_MAX_WAIT_MINUTES.value() * 60_000L));
     }
 
     private long estimateRemainingTimeMs(ImportQueueItem item) {

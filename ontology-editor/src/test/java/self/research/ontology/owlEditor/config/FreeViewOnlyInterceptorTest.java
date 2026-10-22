@@ -69,6 +69,42 @@ class FreeViewOnlyInterceptorTest {
         return request;
     }
 
+    private static final String IMPORT = "/api/ontology/spreadsheet-import/proj-9";
+
+    private void inProject(boolean viewer, boolean draftEditor) {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(org.mockito.ArgumentMatchers.startsWith(IMPORT)))
+                .thenReturn(Optional.of("proj-9"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-9")).thenReturn(viewer);
+        when(workspaceOwnershipService.isDraftEditorInProject("u1", "proj-9")).thenReturn(draftEditor);
+    }
+
+    @Test
+    void draftEditorCanUploadAndPreviewASpreadsheet() throws Exception {
+        inProject(false, true);
+        assertTrue(interceptor.preHandle(postRequest(IMPORT + "/parse", "PRO"), new MockHttpServletResponse(), new Object()));
+        assertTrue(interceptor.preHandle(postRequest(IMPORT + "/preview", "PRO"), new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void draftEditorCanOnlyCommitAnImportToTheirDraft() throws Exception {
+        inProject(false, true);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(postRequest(IMPORT + "/commit", "PRO"), response, new Object()));
+        assertEquals(403, response.getStatus());
+
+        MockHttpServletRequest draft = postRequest(IMPORT + "/commit", "PRO");
+        draft.setParameter("draft", "true");
+        assertTrue(interceptor.preHandle(draft, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void viewerCannotUseSpreadsheetImport() throws Exception {
+        inProject(true, false);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(postRequest(IMPORT + "/parse", "PRO"), response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
+
     private AssistantSessionDocument sessionFor(String projectId) {
         return AssistantSessionDocument.builder().id("s1").projectId(projectId).build();
     }
@@ -459,5 +495,31 @@ class FreeViewOnlyInterceptorTest {
         assertTrue(interceptor.preHandle(postRequest("/api/v1/code-assistant/sessions/s1/usage", "FREE"),
                 new MockHttpServletResponse(), new Object()));
         verify(workspaceOwnershipService, never()).isViewerInProject(anyString(), anyString());
+    }
+
+    @Test
+    void viewerOnFreePlanCanCancelReasonerJobsLikeTheyCanPollThem() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);
+
+        MockHttpServletRequest projectJob = postRequest("/api/ontology/proj-5/reasoner/jobs/job-1", "FREE");
+        projectJob.setMethod("DELETE");
+        MockHttpServletRequest dlQueryJob = postRequest("/api/dl-query/jobs/job-1", "FREE");
+        dlQueryJob.setMethod("DELETE");
+
+        assertTrue(interceptor.preHandle(projectJob, new MockHttpServletResponse(), new Object()));
+        assertTrue(interceptor.preHandle(dlQueryJob, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void viewerStillCannotDeleteOtherProjectResources() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);
+        MockHttpServletRequest request = postRequest("/api/ontology/proj-5/classes/job-1", "FREE");
+        request.setMethod("DELETE");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(request, response, new Object()));
+        assertEquals(403, response.getStatus());
     }
 }

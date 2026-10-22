@@ -1,3 +1,6 @@
+# Local-only compose overrides
+docker-compose.local-reasoner-worker.yml
+
 # Maven
 target/
 pom.xml.tag

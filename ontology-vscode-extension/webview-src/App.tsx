@@ -30,6 +30,7 @@ import {
 import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from "./utils/desktop";
 import AdminSettingsModal from "./components/AdminSettingsModal";
 import MaintenancePage from "./components/MaintenancePage";
+import { isDownloadLocation, leaveStandalonePage } from "./utils/feedback";
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
 const DesktopDownloadPage = lazy(() => import("./components/DesktopDownloadPage"));
 const DesktopUpdateBanner = lazy(() => import("./components/DesktopUpdateBanner"));
@@ -347,6 +348,8 @@ const AppContent = () => {
     window.addEventListener("navigate-desktop-download", handler);
     return () => window.removeEventListener("navigate-desktop-download", handler);
   }, []);
+
+  const [openedAtDownloadPath, setOpenedAtDownloadPath] = React.useState(() => isDownloadLocation());
 
   // Desktop license — drives the "License expired" block screen.
   const [desktopLicense, setDesktopLicense] = React.useState<DesktopLicense | null>(null);
@@ -1888,6 +1891,19 @@ const AppContent = () => {
 
   if (maintenanceActive) {
     return <MaintenancePage message={maintenanceMessage} />;
+  }
+
+  if (openedAtDownloadPath && !isDesktop()) {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-900" />}>
+        <DesktopDownloadPage
+          onBack={() => {
+            leaveStandalonePage();
+            setOpenedAtDownloadPath(false);
+          }}
+        />
+      </Suspense>
+    );
   }
 
   if (loading) {

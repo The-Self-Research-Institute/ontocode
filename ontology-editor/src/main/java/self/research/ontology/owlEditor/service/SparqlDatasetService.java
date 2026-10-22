@@ -14,6 +14,8 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.eclipse.rdf4j.http.client.SharedHttpClientSessionManager;
 import org.eclipse.rdf4j.repository.sparql.SPARQLRepository;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFHandler;
 import org.eclipse.rdf4j.rio.RDFParser;
@@ -33,6 +35,7 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.ImportOptions;
+import self.research.ontology.owlEditor.util.SparqlText;
 
 import jakarta.annotation.PreDestroy;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -79,6 +82,29 @@ public class SparqlDatasetService {
 
     private static final Logger log = LoggerFactory.getLogger(SparqlDatasetService.class);
     private static final Logger sparqlLog = LoggerFactory.getLogger("SPARQL");
+
+    @Value("${ontocode.draft.max-triples:500000}")
+    private long draftMaxTriples;
+
+    private static final String DRAFT_GRAPH_PREFIX = "http://ontocode.org/draft/";
+
+    private final ConcurrentHashMap<String, AtomicLong> draftGraphWriteStamps = new ConcurrentHashMap<>();
+
+    private final Cache<String, CompletableFuture<org.semanticweb.owlapi.model.OWLOntology>> draftOntologyCache = Caffeine.newBuilder()
+        .maximumSize(4)
+        .expireAfterAccess(5, java.util.concurrent.TimeUnit.MINUTES)
+        .scheduler(com.github.benmanes.caffeine.cache.Scheduler.systemScheduler())
+        .removalListener((String key, CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> loaded,
+                          com.github.benmanes.caffeine.cache.RemovalCause cause) -> {
+            if (cause == com.github.benmanes.caffeine.cache.RemovalCause.EXPIRED && loaded != null) {
+                loaded.thenAccept(this::releaseDraftOntology);
+            }
+        })
+        .build();
+
+    @Autowired(required = false)
+    @Lazy
+    private ReasonerService reasonerService;
 
     @Value("${ontocode.fuseki.queryEndpoint:http://localhost:3030/ontocode/query}")
     private String fusekiQueryEndpoint;
@@ -1035,9 +1061,8 @@ public class SparqlDatasetService {
         }
         try (RepositoryConnection conn = memRepo.getConnection()) {
             String finalQuery = sparqlQuery;
-            // Match SPARQL FROM clause: "FROM <" — avoids false positive on owl:someValuesFrom etc.
-            if (!finalQuery.matches("(?si).*\\bFROM\\s+<.*")) {
-                finalQuery = finalQuery.replaceFirst("(?i)WHERE",
+            if (!SparqlText.hasFromClause(finalQuery)) {
+                finalQuery = SparqlText.replaceFirstKeyword(finalQuery, "WHERE",
                         buildFromClause(conn, projectId) + " WHERE");
             }
             String queryType = extractQueryType(finalQuery);
@@ -1070,7 +1095,7 @@ public class SparqlDatasetService {
      */
     GraphQueryResult execConstructAll(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
-        final RepositoryConnection conn = binding.repository().getConnection();
+        final RepositoryConnection conn = TolerantRdfParsing.apply(binding.repository().getConnection());
         try {
             String fromClause = buildFromClause(conn, projectId);
             String q = "CONSTRUCT { ?s ?p ?o } " + fromClause + " WHERE { ?s ?p ?o }";
@@ -1106,12 +1131,9 @@ public class SparqlDatasetService {
             long connMs = (System.nanoTime() - totalStart) / 1_000_000;
 
             // Scope query to this project's graph only — strip user-supplied FROM <> to prevent cross-project reads.
-            // Use regex to avoid false positive on owl:someValuesFrom / owl:allValuesFrom etc.
-            if (sparqlQuery.matches("(?si).*\\bFROM\\s+<.*")) {
-                sparqlQuery = sparqlQuery.replaceAll("(?i)\\bFROM\\s+<[^>]+>", " ");
-            }
-            if (!sparqlQuery.matches("(?si).*\\bFROM\\s+<.*")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+            sparqlQuery = SparqlText.removeFromClauses(sparqlQuery);
+            if (!SparqlText.hasFromClause(sparqlQuery)) {
+                sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE",
                     buildFromClause(conn, projectId) + " WHERE");
             }
 
@@ -1210,11 +1232,11 @@ public class SparqlDatasetService {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
 
-        try (RepositoryConnection conn = binding.repository().getConnection()) {
+        try (RepositoryConnection conn = TolerantRdfParsing.apply(binding.repository().getConnection())) {
 
             // Inject FROM clause if not present
             if (!sparqlQuery.toUpperCase().contains("FROM")) {
-                sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE",
+                sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE",
                     buildFromClause(conn, projectId) + " WHERE");
             }
 
@@ -1261,11 +1283,15 @@ public class SparqlDatasetService {
                 String fromClause = forceGraphUri != null
                         ? "FROM <" + forceGraphUri + ">"
                         : buildFromClause(conn, projectId);
-                if (sparqlQuery.toUpperCase().contains("WHERE")) {
-                    sparqlQuery = sparqlQuery.replaceFirst("(?i)WHERE", fromClause + " WHERE");
+                if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
+                    sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE", fromClause + " WHERE");
                 } else {
                     // ASK { ... } without WHERE — insert FROM <graph> WHERE before the body brace
-                    sparqlQuery = sparqlQuery.replaceFirst("(?i)(ASK\\s*)\\{", "$1" + fromClause + " WHERE {");
+                    int ask = SparqlText.indexOfKeyword(sparqlQuery, "ASK");
+                    int body = ask < 0 ? -1 : SparqlText.indexOfOpenBrace(sparqlQuery, ask);
+                    if (body >= 0) {
+                        sparqlQuery = sparqlQuery.substring(0, body) + fromClause + " WHERE " + sparqlQuery.substring(body);
+                    }
                 }
             }
 
@@ -1308,10 +1334,6 @@ public class SparqlDatasetService {
      */
     public void execDraftUpdateCopyOnSwitch(String projectId, String userId, String sparqlUpdate) {
         String draftGraph = getDraftGraphUri(projectId, userId);
-        if (sparqlUpdate.toUpperCase().contains("WHERE")
-                && !sparqlUpdate.toUpperCase().contains("USING ")) {
-            sparqlUpdate = sparqlUpdate.replaceAll("(?i)\\bWHERE\\b", "USING <" + draftGraph + "> WHERE");
-        }
         execUpdate(projectId, draftGraph, sparqlUpdate);
     }
 
@@ -1330,6 +1352,7 @@ public class SparqlDatasetService {
                 + "CLEAR GRAPH <" + draftGraph + ">";
         long start = System.nanoTime();
         execUpdate(projectId, mainGraph, sparql);
+        noteGraphWritten(draftGraph);
         publishDraftPrefixesToPublic(projectId, userId);
         evictDraftReadyCache(projectId, userId);
         log.info("[DRAFT-MOVE] Published draft→main for project {} user {} in {}ms",
@@ -1344,6 +1367,8 @@ public class SparqlDatasetService {
             int copied = GraphStatementOps.copy(conn, mainGraph, draftGraph);
             log.info("[DRAFT-COPY] Copied {} triples main -> draft for project {} user {} in {}ms",
                     copied, projectId, userId, elapsedMillis(start));
+        } finally {
+            noteGraphWritten(draftGraph);
         }
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
@@ -1366,6 +1391,74 @@ public class SparqlDatasetService {
         }
     }
 
+    public long getDraftWriteStamp(String projectId, String userId) {
+        AtomicLong stamp = draftGraphWriteStamps.get(getDraftGraphUri(projectId, userId));
+        return stamp == null ? 0L : stamp.get();
+    }
+
+    private void noteGraphWritten(String graphUri) {
+        if (graphUri != null && graphUri.startsWith(DRAFT_GRAPH_PREFIX)) {
+            draftGraphWriteStamps.computeIfAbsent(graphUri, k -> new AtomicLong()).incrementAndGet();
+        }
+    }
+
+    private void releaseDraftOntology(org.semanticweb.owlapi.model.OWLOntology ontology) {
+        if (ontology != null && reasonerService != null) {
+            reasonerService.releaseOntologyFromMemory(ontology);
+        }
+    }
+
+    public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId,
+                                                                         long draftVersion) throws Exception {
+        String cacheKey = projectId + "::" + userId + "::" + draftVersion + "::" + getDraftWriteStamp(projectId, userId);
+        CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> loading = new CompletableFuture<>();
+        CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> existing =
+                draftOntologyCache.asMap().putIfAbsent(cacheKey, loading);
+        if (existing != null) {
+            try {
+                return existing.get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                throw cause instanceof Exception ex ? ex : new RuntimeException(cause);
+            }
+        }
+        try {
+            org.semanticweb.owlapi.model.OWLOntology ontology = readDraftAsOntology(projectId, userId);
+            loading.complete(ontology);
+            return ontology;
+        } catch (Exception e) {
+            draftOntologyCache.asMap().remove(cacheKey, loading);
+            loading.completeExceptionally(e);
+            throw e;
+        }
+    }
+
+    private org.semanticweb.owlapi.model.OWLOntology readDraftAsOntology(String projectId, String userId) throws Exception {
+        if (!isDraftCopySessionReady(projectId, userId)) {
+            throw new IllegalStateException("Draft copy for project " + projectId + " (user " + userId
+                    + ") is not ready yet — the copy-on-switch background job hasn't finished.");
+        }
+
+        long tripleCount = countDraftTriples(projectId, userId);
+        if (tripleCount < 0) {
+            throw new RuntimeException("Could not determine the draft's triple count for project " + projectId
+                    + " (user " + userId + ") — refusing to load it for in-process reasoning without a size check.");
+        }
+        if (tripleCount > draftMaxTriples) {
+            throw new RuntimeException("Draft has " + tripleCount + " triples, exceeding the configured limit of "
+                    + draftMaxTriples + " triples for in-process draft reasoning.");
+        }
+
+        String draftContent = exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+        org.semanticweb.owlapi.model.OWLOntologyManager manager =
+                org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        org.semanticweb.owlapi.model.OWLOntology ontology;
+        try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
+            ontology = manager.loadOntologyFromOntologyDocument(is);
+        }
+        return ontology;
+    }
+
     public long countDraftTriples(String projectId, String userId) {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
@@ -1375,7 +1468,7 @@ public class SparqlDatasetService {
             }
         } catch (Exception e) {
             log.debug("[DRAFT-GRAPH] count failed for project {} user {}: {}", projectId, userId, e.getMessage());
-            return 0;
+            return -1;
         }
     }
 
@@ -1401,12 +1494,13 @@ public class SparqlDatasetService {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private boolean isDraftCopyReady(String projectId, String userId) {
-        // userId is resolved from the JWT/X-Ontocode-User-Id header on every request
-        // (including ones made while viewing Public), so it alone can't signal "this
-        // request wants draft scope" — that requires the explicit draft=true parameter.
         if (!SparqlQueryContext.wantsDraft()) {
             return false;
         }
+        return isDraftCopySessionReady(projectId, userId);
+    }
+
+    private boolean isDraftCopySessionReady(String projectId, String userId) {
         if (userId == null || userId.isBlank() || draftSessionRepository == null) {
             return false;
         }
@@ -1495,6 +1589,7 @@ public class SparqlDatasetService {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             conn.prepareUpdate(updateText).execute();
+            noteGraphWritten(graphUri);
             invalidateDerivedCachesAfterUpdate(projectId);
             log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} triples)", graphUri, projectId, statements.size());
         } catch (Exception e) {
@@ -1543,6 +1638,8 @@ public class SparqlDatasetService {
                         projectId, updateExecMs, commitMs, totalMs, connMs);
                 log.info("[GRAPHDB] UPDATE completed: execTime={}ms commitTime={}ms totalTime={}ms",
                         updateExecMs, commitMs, totalMs);
+
+                noteGraphWritten(targetGraphUri);
 
                 // Phase C: evict the in-memory mirror so the next read repopulates it
                 // with the just-written triples. Cheap (microseconds) + safe.
@@ -1610,7 +1707,7 @@ public class SparqlDatasetService {
         // Check if this is INSERT { ... } WHERE { ... } with Turtle syntax (contains blank nodes or semicolons within braces)
         // Don't split by semicolon in this case as it's part of Turtle syntax
         if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
-            if (operationsStr.toUpperCase().contains("USING ")) {
+            if (SparqlText.hasKeyword(operationsStr, "USING")) {
                 operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
                         "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
                 log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
@@ -1650,7 +1747,7 @@ public class SparqlDatasetService {
             }
             // For DELETE { ... } WHERE { ... }, add WITH clause (or GRAPH if USING is present)
             else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
-                if (stmt.toUpperCase().contains("USING ")) {
+                if (SparqlText.hasKeyword(stmt, "USING")) {
                     // Draft update: USING already present; wrap DELETE/INSERT templates with GRAPH
                     // instead of WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
                     stmt = stmt.replaceFirst("(?is)(DELETE\\s*\\{)(.*?)(\\})",
@@ -1662,6 +1759,10 @@ public class SparqlDatasetService {
                     stmt = "WITH <" + graphUri + "> " + stmt;
                     log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
                 }
+            } else if (stmt.matches("(?is)DELETE\\s+WHERE\\s*\\{.*\\}\\s*")) {
+                stmt = "WITH <" + graphUri + "> " + stmt.replaceFirst("(?is)DELETE\\s+WHERE\\s*\\{(.*)\\}\\s*$", "DELETE {$1} WHERE {$1}");
+            } else if (stmt.matches("(?is)INSERT\\s*\\{.*")) {
+                stmt = "WITH <" + graphUri + "> " + stmt;
             } else {
                 log.info("[GRAPH-INJECT] No pattern matched for statement");
             }
@@ -1679,34 +1780,7 @@ public class SparqlDatasetService {
      * Split UPDATE statements by semicolon, but only at top level (not inside braces)
      */
     private String[] splitUpdateStatements(String operations) {
-        List<String> statements = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        int braceDepth = 0;
-
-        for (int i = 0; i < operations.length(); i++) {
-            char c = operations.charAt(i);
-
-            if (c == '{') {
-                braceDepth++;
-                current.append(c);
-            } else if (c == '}') {
-                braceDepth--;
-                current.append(c);
-            } else if (c == ';' && braceDepth == 0) {
-                // Top-level semicolon - this is a statement separator
-                statements.add(current.toString().trim());
-                current = new StringBuilder();
-            } else {
-                current.append(c);
-            }
-        }
-
-        // Add the last statement
-        if (current.length() > 0) {
-            statements.add(current.toString().trim());
-        }
-
-        return statements.toArray(new String[0]);
+        return SparqlText.splitStatements(operations).toArray(new String[0]);
     }
 
     /**
@@ -2023,6 +2097,10 @@ public class SparqlDatasetService {
 
                     // Invalidate context caches after new data is committed
                     invalidateContextCaches(projectId);
+                    noteGraphWritten(graphUri);
+                    if (!draft && mainGraphRevisionService != null) {
+                        mainGraphRevisionService.incrementRevision(projectId);
+                    }
 
                     // Register any partition graphs that were created during this import
                     if (partitionBatches != null && !partitionBatches.isEmpty()) {
@@ -2570,6 +2648,9 @@ public class SparqlDatasetService {
 
                     // Restore original auto-commit setting
                     conn.setAutoCommit(originalAutoCommit);
+                    if (mainGraphRevisionService != null) {
+                        mainGraphRevisionService.incrementRevision(projectId);
+                    }
 
                     long totalDuration = elapsedMillis(bulkLoadStart);
                     log.info("═══════════════════════════════════════════════════════════");
@@ -2691,6 +2772,9 @@ public class SparqlDatasetService {
             clearGraphsInRepository(shared.repository(), projectId);
             evictPerFileDataset(projectId);
             invalidateContextCaches(projectId);
+            if (mainGraphRevisionService != null) {
+                mainGraphRevisionService.incrementRevision(projectId);
+            }
 
         } catch (org.eclipse.rdf4j.repository.RepositoryException e) {
             if (e.getMessage().contains("404") || e.getMessage().contains("not found")) {
@@ -2721,8 +2805,12 @@ public class SparqlDatasetService {
      * Get dataset size (triple count) for a project
      */
     public long getDatasetSize(String projectId) {
+        long size = getDatasetSizeOrUnknown(projectId);
+        return size < 0 ? 0 : size;
+    }
+
+    public long getDatasetSizeOrUnknown(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
-        String graphUri = binding.graphUri();
 
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long sizeStart = System.nanoTime();
@@ -2736,7 +2824,7 @@ public class SparqlDatasetService {
             return total;
         } catch (Exception e) {
             log.error("Failed to get dataset size for project: {}", projectId, e);
-            return 0;
+            return -1;
         }
     }
 

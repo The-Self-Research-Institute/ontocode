@@ -12,6 +12,7 @@ import reactor.core.publisher.Mono;
 import self.research.ontology.owlEditor.config.SparqlProperties;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 import self.research.ontology.owlEditor.repository.SparqlQueryRepository;
+import self.research.ontology.owlEditor.util.SparqlText;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -82,7 +83,7 @@ public class SparqlQueryService {
 
         String enrichedQuery = (upper.contains("FROM") || upper.contains("GRAPH"))
                 ? queryText
-                : queryText.replaceFirst("(?i)WHERE", "\nFROM <" + graph + ">\nWHERE");
+                : SparqlText.replaceFirstKeyword(queryText, "WHERE", "\nFROM <" + graph + ">\nWHERE");
 
         return client.post()
                 .uri("")

@@ -1,19 +1,8 @@
-/**
- * SPARQL Query Plugin - Main Component
- * 
- * Full-featured SPARQL query editor with:
- * - Query management (save, load, delete)
- * - Syntax highlighting placeholders
- * - Live query execution
- * - Results table with CSV export
- * - Prefix management
- */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Trash2, Play, Save, Loader2, ChevronDown, ChevronRight, Download, Database, Code, Table, FileText, RefreshCw, Copy, Check } from 'lucide-react';
 import type { SparqlQuery, SparqlQueryResult, OntologyPrefix, PluginContext, SparqlQueryEditorProps, SparqlBinding } from './types';
 
-// SPARQL Keywords for basic syntax highlighting
 const SPARQL_KEYWORDS = [
   'SELECT', 'CONSTRUCT', 'DESCRIBE', 'ASK', 'WHERE', 'FROM', 'NAMED',
   'PREFIX', 'BASE', 'OPTIONAL', 'UNION', 'FILTER', 'GRAPH', 'ORDER', 'BY',
@@ -22,16 +11,11 @@ const SPARQL_KEYWORDS = [
   'DATA', 'LOAD', 'CLEAR', 'CREATE', 'DROP', 'COPY', 'MOVE', 'ADD'
 ];
 
-// SPARQL has no implicit prefixes — every query must declare each one it uses, or the
-// backend's parser rejects it with "Unresolved prefixed name" even though the editor's
-// own "Ontology Prefixes" panel shows them (that panel is informational display only,
-// not something injected into the query sent to the server).
 const COMMON_PREFIXES = `PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 `;
 
-// Sample queries for new users
 const SAMPLE_QUERIES = [
   {
     name: 'List All Classes',
@@ -88,12 +72,12 @@ LIMIT 100`
 export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({ 
   projectId, 
   prefixes = [],
-  context 
+  context,
+  draftMode = false
 }) => {
   const { apiClient } = context;
   const mainAreaRef = useRef<HTMLDivElement>(null);
   
-  // State
   const [queries, setQueries] = useState<SparqlQuery[]>([]);
   const [selectedQuery, setSelectedQuery] = useState<SparqlQuery | null>(null);
   const [queryText, setQueryText] = useState('SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o\n} LIMIT 10');
@@ -111,7 +95,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [activeTab, setActiveTab] = useState<'editor' | 'results'>('editor');
   const [selectedSample, setSelectedSample] = useState('');
 
-  // Fetch saved queries from backend
   const fetchQueries = useCallback(async () => {
     if (!projectId) return;
     try {
@@ -119,7 +102,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       setQueries(response || []);
     } catch (error) {
       console.error('Failed to fetch SPARQL queries:', error);
-      // Silently fail - queries are optional
     }
   }, [projectId, apiClient]);
 
@@ -127,16 +109,12 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     fetchQueries();
   }, [fetchQueries]);
 
-  // Handlers
   const handleSelectQuery = (query: SparqlQuery) => {
     setSelectedQuery(query);
     setQueryText(query.queryText);
     setQueryName(query.name);
     setResults(null);
     setError(null);
-    // Switching queries clears results (they belonged to whatever ran before) — jump back
-    // to the editor tab so the user actually sees the newly-loaded query instead of being
-    // left staring at a now-empty results tab with no visible way to run it.
     setActiveTab('editor');
   };
 
@@ -155,11 +133,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setQueryName(sample.name);
     setResults(null);
     setError(null);
-    // Switching samples clears results (they belonged to whatever ran before) — jump back
-    // to the editor tab so the user actually sees the newly-loaded query instead of being
-    // left staring at a now-empty results tab with no visible way to run it.
     setActiveTab('editor');
-    // Reset dropdown after a brief delay to show the selection
     setTimeout(() => setSelectedSample(''), 300);
   };
 
@@ -176,7 +150,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       const queryData = { name: queryName, queryText };
       
       if (selectedQuery) {
-        // Update existing query
         const updatedQuery = await apiClient.put<SparqlQuery>(
           `/api/sparql/${projectId}/queries/${selectedQuery.id}`,
           queryData
@@ -185,7 +158,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
         setSelectedQuery(updatedQuery);
         context.showNotification?.('Query saved successfully', 'success');
       } else {
-        // Create new query
         const newQuery = await apiClient.post<SparqlQuery>(
           `/api/sparql/${projectId}/queries`,
           queryData
@@ -229,16 +201,13 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     
     try {
       const response = await apiClient.post<any>(
-        `/api/sparql/query/${projectId}`,
+        `/api/sparql/query/${projectId}${draftMode ? '?draft=true' : ''}`,
         { query: queryText }
       );
-      // Backend returns { head: {vars:[]}, results: [{var: value,...}], executionTime }
-      // results is a flat array of {var: stringValue} maps (not SPARQL JSON {bindings:[...]} format)
       if (response.error) {
         setError(response.error);
         return;
       }
-      // Defensive: handle flat array, SPARQL JSON bindings wrapper, or JSON-string (double-encode)
       let resultsData = response.results;
       if (typeof resultsData === 'string') {
         try { resultsData = JSON.parse(resultsData); } catch { resultsData = []; }
@@ -343,7 +312,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     }
   };
 
-  // Resize handlers
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -359,7 +327,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       const bottom = rect?.bottom ?? window.innerHeight;
       const maxHeight = (rect?.height ?? window.innerHeight) * 0.8;
       const newHeight = bottom - e.clientY;
-      // Allow resize between 200px and 80% of available space
       if (newHeight >= 200 && newHeight <= maxHeight) {
         setResultsHeight(newHeight);
       }
@@ -385,14 +352,12 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     };
   }, [isResizing]);
 
-  // Generate prefix block for display
   const prefixBlock = prefixes.length > 0 
     ? prefixes.map(p => `PREFIX ${p.prefix}: <${p.namespace}>`).join('\n')
     : 'PREFIX owl: <http://www.w3.org/2002/07/owl#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>';
 
   return (
     <div className="h-full flex flex-col" style={{ backgroundColor: 'var(--bg)', color: 'var(--text-primary)' }}>
-      {/* Header */}
       <header
         className="px-4 py-3 border-b flex items-center justify-between"
         style={{ backgroundColor: 'var(--surface-1)', borderColor: 'var(--border)' }}
@@ -409,7 +374,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
             value={selectedSample}
             onChange={(e) => {
               const selectedValue = e.target.value;
-              setSelectedSample(selectedValue); // Show selection in dropdown
+              setSelectedSample(selectedValue);
               const sample = SAMPLE_QUERIES.find(s => s.name === selectedValue);
               if (sample) {
                 handleLoadSample(sample);
@@ -426,7 +391,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       </header>
 
       <div ref={mainAreaRef} className="flex flex-1 overflow-hidden">
-        {/* Sidebar - Saved Queries */}
         <aside className="w-72 bg-theme-surface border-r border-default flex flex-col">
           <div className="p-2 border-b border-default">
             <button
@@ -484,9 +448,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
           </div>
         </aside>
 
-        {/* Main Editor Area */}
         <main className="flex-1 flex flex-col overflow-hidden min-h-0">
-          {/* Tabs */}
           <div className="flex border-b" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--surface-1)' }}>
             <button
               onClick={() => setActiveTab('editor')}
@@ -514,12 +476,9 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
             </button>
           </div>
 
-          {/* Editor Tab Content */}
           {activeTab === 'editor' && (
           <div className="flex-1 min-h-0 overflow-auto p-4">
-          {/* Query Editor Panel */}
           <div className="theme-panel rounded-lg p-4 space-y-3">
-            {/* Query Name */}
             <input
               type="text"
               value={queryName}
@@ -528,7 +487,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               placeholder="Query Name"
             />
 
-            {/* Prefixes Accordion */}
             <div className="border border-default rounded-lg overflow-hidden">
               <button
                 onClick={() => setPrefixesVisible(!isPrefixesVisible)}
@@ -550,7 +508,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               )}
             </div>
 
-            {/* Query Text Area */}
             <textarea
               className="w-full h-48 p-3 font-mono text-sm rounded-lg theme-input resize-none"
               value={queryText}
@@ -559,7 +516,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               spellCheck={false}
             />
 
-            {/* Error Display */}
             {error && (
               <div
                 className="p-3 border rounded-lg text-sm text-error"
@@ -569,7 +525,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               </div>
             )}
 
-            {/* Action Buttons */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <button
@@ -615,13 +570,10 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
             </div>
           )}
 
-          {/* Results Tab Content */}
           {activeTab === 'results' && (
           <div className="flex-1 min-h-0 overflow-hidden p-4 flex flex-col">
-          {/* Results Panel */}
           <div className="theme-panel rounded-lg overflow-hidden flex flex-col" style={{ height: `${resultsHeight}px`, minHeight: '200px', maxHeight: '80%' }}>
 
-            {/* Results Header */}
             <div className="flex items-center justify-between p-3 border-b border-default" style={{ backgroundColor: 'var(--surface-2)' }}>
               <div className="flex items-center gap-4">
                 <span className="text-sm font-semibold text-primary flex items-center gap-2">
@@ -647,7 +599,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               
               {results && (
                 <div className="flex items-center gap-2">
-                  {/* Result format tabs */}
                   <div className="flex rounded-lg border border-default overflow-hidden">
                     <button
                       onClick={() => setActiveResultTab('table')}
@@ -694,7 +645,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               )}
             </div>
 
-            {/* Results Content */}
             <div className="flex-1 overflow-auto">
               {isLoading ? (
                 <div className="flex items-center justify-center h-64 text-secondary">
@@ -744,7 +694,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
             </div>
           </div>
           
-          {/* Resize Handle */}
           <div 
             onMouseDown={handleMouseDown}
             className="h-2 cursor-row-resize hover:bg-purple-500/20 transition-colors flex items-center justify-center"
@@ -757,7 +706,6 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
         </main>
       </div>
 
-      {/* Delete Confirmation Modal */}
       {showDeleteModal && (
         <div
           className="fixed inset-0 flex items-center justify-center z-50 p-4"

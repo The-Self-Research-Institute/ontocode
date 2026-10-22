@@ -8,6 +8,7 @@ export function setMatches(set: ChangeSet, query: string): boolean {
   if (includes(set.title, query) || includes(set.ai?.summary, query) || includes(set.author, query)) return true;
   return set.entities.some(entity =>
     includes(entity.label, query) ||
+    includes(entity.entry.entityUri, query) ||
     includes(entity.entry.description, query) ||
     entity.properties.some(p => includes(p.value, query) || includes(p.rawValue, query) || includes(p.label, query))
   );

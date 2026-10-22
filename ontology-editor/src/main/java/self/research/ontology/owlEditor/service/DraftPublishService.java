@@ -89,14 +89,21 @@ public class DraftPublishService {
         }
 
         DraftSession session = sessionOpt.get();
+        DraftPublishDiff diff = realComparison(projectId, userId);
         boolean mainChanged = currentRevision > session.getBaselineMainRevision()
-                || currentTripleCount != session.getBaselineMainTripleCount();
+                || currentTripleCount != session.getBaselineMainTripleCount()
+                || (diff != null && diff.publicChanged());
 
-        Set<String> draftIris = extractIris(userDrafts);
-        List<Map<String, Object>> overlapConflicts = findOverlappingConflicts(
-                projectId, userId, session.getBaselineAt(), draftIris);
-        if (enrichAxiomDetail && !overlapConflicts.isEmpty()) {
-            overlapConflicts = mergeService.enrichConflictsWithAxiomDetail(projectId, userId, overlapConflicts);
+        List<Map<String, Object>> overlapConflicts;
+        if (diff != null && diff.available()) {
+            overlapConflicts = attributeConflicts(projectId, userId, session.getBaselineAt(),
+                    diff.conflictRows(), enrichAxiomDetail);
+        } else {
+            Set<String> draftIris = extractIris(userDrafts);
+            overlapConflicts = findOverlappingConflicts(projectId, userId, session.getBaselineAt(), draftIris);
+            if (enrichAxiomDetail && !overlapConflicts.isEmpty()) {
+                overlapConflicts = mergeService.enrichConflictsWithAxiomDetail(projectId, userId, overlapConflicts);
+            }
         }
 
         DraftPublishAnalysis.ConflictType type = DraftPublishAnalysis.ConflictType.NONE;
@@ -139,14 +146,54 @@ public class DraftPublishService {
         }
     }
 
-    private List<Map<String, Object>> findOverlappingConflicts(String projectId,
-                                                               String userId,
-                                                               LocalDateTime baselineAt,
-                                                               Set<String> draftIris) {
-        if (draftIris.isEmpty()) {
+    private DraftPublishDiff realComparison(String projectId, String userId) {
+        try {
+            return mergeService.comparePublish(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not compare the draft with the shared ontology for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+            return null;
+        }
+    }
+
+    private List<Map<String, Object>> attributeConflicts(String projectId,
+                                                         String userId,
+                                                         LocalDateTime baselineAt,
+                                                         List<Map<String, Object>> conflictRows,
+                                                         boolean withAxioms) {
+        if (conflictRows.isEmpty()) {
             return List.of();
         }
+        Set<String> keys = conflictRows.stream()
+                .map(row -> (String) row.get("entityIRI"))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, OntologyChange> touchedByOthers = changesByOthers(projectId, userId, baselineAt, keys);
 
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map<String, Object> conflict : conflictRows) {
+            String iri = (String) conflict.get("entityIRI");
+            OntologyChange change = touchedByOthers.get(iri);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("entityIRI", iri);
+            row.put("entityLabel", conflict.get("entityLabel"));
+            row.put("changeType", change != null && change.getChangeType() != null ? change.getChangeType().name() : null);
+            row.put("changedBy", change != null ? change.getUsername() : null);
+            row.put("changedByUserId", change != null ? change.getUserId() : null);
+            row.put("description", change != null ? change.getDescription() : null);
+            row.put("timestamp", change != null ? change.getTimestampIso() : null);
+            if (withAxioms) {
+                row.put("yourAxioms", conflict.get("yourAxioms"));
+                row.put("mainAxioms", conflict.get("mainAxioms"));
+            }
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    private Map<String, OntologyChange> changesByOthers(String projectId,
+                                                        String userId,
+                                                        LocalDateTime baselineAt,
+                                                        Set<String> iris) {
         List<OntologyChange> recent = changeRepository
                 .findByProjectIdAndTimestampAfterOrderByTimestampDesc(projectId, baselineAt);
 
@@ -156,10 +203,22 @@ public class DraftPublishService {
                 continue;
             }
             String iri = change.getEntityIRI();
-            if (iri != null && draftIris.contains(iri) && !touchedByOthers.containsKey(iri)) {
+            if (iri != null && iris.contains(iri) && !touchedByOthers.containsKey(iri)) {
                 touchedByOthers.put(iri, change);
             }
         }
+        return touchedByOthers;
+    }
+
+    private List<Map<String, Object>> findOverlappingConflicts(String projectId,
+                                                               String userId,
+                                                               LocalDateTime baselineAt,
+                                                               Set<String> draftIris) {
+        if (draftIris.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, OntologyChange> touchedByOthers = changesByOthers(projectId, userId, baselineAt, draftIris);
 
         return touchedByOthers.entrySet().stream()
                 .map(e -> {

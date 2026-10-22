@@ -9,6 +9,7 @@ import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import self.research.ontology.owlEditor.service.Limit;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -18,13 +19,16 @@ import java.util.concurrent.ThreadPoolExecutor;
 public class AsyncConfig implements AsyncConfigurer {
     
     private static final Logger log = LoggerFactory.getLogger(AsyncConfig.class);
+
+    public AsyncConfig(CapacityProperties capacity) {
+    }
     
     @Bean(name = "owlParsingExecutor")
     public AsyncTaskExecutor owlParsingExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(200);
+        executor.setCorePoolSize(Math.min(Limit.OWL_PARSING_CORE_THREADS.value(), Limit.OWL_PARSING_MAX_THREADS.value()));
+        executor.setMaxPoolSize(Limit.OWL_PARSING_MAX_THREADS.value());
+        executor.setQueueCapacity(Limit.OWL_PARSING_QUEUE.value());
         executor.setThreadNamePrefix("owl-parse-");
         executor.setKeepAliveSeconds(60);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
@@ -45,9 +49,9 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = "hierarchyIndexExecutor")
     public Executor hierarchyIndexExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(2);
-        executor.setQueueCapacity(100);
+        executor.setCorePoolSize(Math.min(Limit.HIERARCHY_INDEX_CORE_THREADS.value(), Limit.HIERARCHY_INDEX_MAX_THREADS.value()));
+        executor.setMaxPoolSize(Limit.HIERARCHY_INDEX_MAX_THREADS.value());
+        executor.setQueueCapacity(Limit.HIERARCHY_INDEX_QUEUE.value());
         executor.setThreadNamePrefix("hierarchy-idx-");
         executor.setKeepAliveSeconds(60);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
@@ -64,9 +68,9 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = "dlQueryExecutor")
     public Executor dlQueryExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(2);
-        executor.setQueueCapacity(50);
+        executor.setCorePoolSize(Math.min(Limit.DL_QUERY_CORE_THREADS.value(), Limit.DL_QUERY_MAX_THREADS.value()));
+        executor.setMaxPoolSize(Limit.DL_QUERY_MAX_THREADS.value());
+        executor.setQueueCapacity(Limit.DL_QUERY_QUEUE.value());
         executor.setThreadNamePrefix("dl-query-");
         executor.setKeepAliveSeconds(60);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
@@ -79,9 +83,9 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = "desktopModelExecutor")
     public Executor desktopModelExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(2);
-        executor.setQueueCapacity(50);
+        executor.setCorePoolSize(Math.min(Limit.DESKTOP_MODEL_CORE_THREADS.value(), Limit.DESKTOP_MODEL_MAX_THREADS.value()));
+        executor.setMaxPoolSize(Limit.DESKTOP_MODEL_MAX_THREADS.value());
+        executor.setQueueCapacity(Limit.DESKTOP_MODEL_QUEUE.value());
         executor.setThreadNamePrefix("owl-model-");
         executor.setKeepAliveSeconds(60);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
@@ -100,9 +104,9 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = "desktopInteractiveWarmExecutor")
     public Executor desktopInteractiveWarmExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(1);
-        executor.setQueueCapacity(10);
+        executor.setCorePoolSize(Limit.DESKTOP_WARM_THREADS.value());
+        executor.setMaxPoolSize(Limit.DESKTOP_WARM_THREADS.value());
+        executor.setQueueCapacity(Limit.DESKTOP_WARM_QUEUE.value());
         executor.setThreadNamePrefix("owl-warm-ui-");
         executor.setKeepAliveSeconds(60);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
@@ -119,9 +123,9 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(name = "draftCopyExecutor")
     public Executor draftCopyExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(2);
-        executor.setQueueCapacity(20);
+        executor.setCorePoolSize(Math.min(Limit.DRAFT_COPY_CORE_THREADS.value(), Limit.DRAFT_COPY_MAX_THREADS.value()));
+        executor.setMaxPoolSize(Limit.DRAFT_COPY_MAX_THREADS.value());
+        executor.setQueueCapacity(Limit.DRAFT_COPY_QUEUE.value());
         executor.setThreadNamePrefix("draft-copy-");
         executor.setKeepAliveSeconds(60);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());

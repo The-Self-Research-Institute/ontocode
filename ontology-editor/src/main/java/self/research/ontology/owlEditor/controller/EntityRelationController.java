@@ -6,17 +6,15 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.OntologyHistoryService;
+import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Single endpoint for add / edit / delete of any entity relation.
@@ -33,69 +31,58 @@ public class EntityRelationController {
     private static final Logger log = LoggerFactory.getLogger(EntityRelationController.class);
     private static final String DESKTOP_USER_ID = "desktop-user-local";
 
-    private static final ExecutorService historyExecutor = Executors.newFixedThreadPool(4);
-
     private final OntologyMutationService mutationService;
     private final DraftTrackingService draftTrackingService;
-    private final OntologyHistoryService historyService;
+    private final ProjectWriteLockRegistry lockRegistry;
+    private final ExactChangeRecorder exactRecorder;
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
     public EntityRelationController(OntologyMutationService mutationService,
                                     DraftTrackingService draftTrackingService,
-                                    OntologyHistoryService historyService) {
+                                    ProjectWriteLockRegistry lockRegistry,
+                                    ExactChangeRecorder exactRecorder) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
-        this.historyService = historyService;
+        this.lockRegistry = lockRegistry;
+        this.exactRecorder = exactRecorder;
     }
 
     @PutMapping("/{projectId}/relation")
     public ResponseEntity<?> editRelation(
             @PathVariable String projectId,
             @RequestBody RelationRequest req,
-            @RequestParam(required = false, defaultValue = "true") boolean draft) {
+            @RequestParam(required = false, defaultValue = "true") boolean draft,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
 
-        log.info("[RELATION] op={} entity={} rel={} old={} new={}",
-                req.operation(), req.entityIri(), req.relationshipType(),
-                req.oldTargetIri(), req.targetIri());
+        log.info("[RELATION] op={} entity={} rel={} old={} new={}", req.operation(), req.entityIri(),
+                req.relationshipType(), req.oldTargetIri(), req.targetIri());
 
         try {
             List<MutationOp> ops = buildOps(req);
             if (ops.isEmpty()) {
-                return ResponseEntity.badRequest()
-                        .body(Map.of("success", false, "message", "No operations generated for request"));
+                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "No operations generated for request"));
             }
-            String userId = resolveUserId(req);
-            String username = req.username() != null ? req.username() : "Anonymous";
-            if (draft) {
-                mutationService.applyDraft(projectId, userId, ops);
-                draftTrackingService.recordDrafts(projectId, userId, username, ops,
-                        "relation_" + UUID.randomUUID());
-                try {
-                    historyService.recordGroupedMutations(projectId, userId, username, ops, true);
-                } catch (Exception e) {
-                    log.warn("[RELATION] Failed to record draft history for project={}: {}", projectId, e.getMessage());
-                }
-            } else {
-                mutationService.apply(projectId, ops);
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        historyService.recordGroupedMutations(projectId, userId, username, ops, false);
-                    } catch (Exception e) {
-                        log.warn("[RELATION] Failed to record history for project={}: {}", projectId, e.getMessage());
-                    }
-                }, historyExecutor);
-            }
-            return ResponseEntity.ok(Map.of("success", true, "draft", draft));
+            String userId = resolveUserId(req, httpRequest, draft);
+            String username = req.username() != null ? req.username() : userId;
+            String changeSetId = lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, draft,
+                    userId, username, ops, () -> {
+                        if (draft) {
+                            mutationService.applyDraft(projectId, userId, ops);
+                            draftTrackingService.recordDrafts(projectId, userId, username, ops,
+                                    "relation_" + UUID.randomUUID());
+                        } else {
+                            mutationService.apply(projectId, ops);
+                        }
+                    }));
+            return ResponseEntity.ok(ExactChangeRecorder.appliedBody(draft, "Relation updated", changeSetId));
         } catch (IllegalArgumentException e) {
             log.warn("[RELATION] Bad request for project={}: {}", projectId, e.getMessage());
-            return ResponseEntity.badRequest()
-                    .body(Map.of("success", false, "message", e.getMessage()));
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
             log.error("[RELATION] Failed for project={}: {}", projectId, e.getMessage(), e);
-            return ResponseEntity.status(500)
-                    .body(Map.of("success", false, "message", "Failed to apply relation operation"));
+            return ResponseEntity.status(500).body(Map.of("success", false, "message", "Failed to apply relation operation"));
         }
     }
 
@@ -258,8 +245,9 @@ public class EntityRelationController {
         };
     }
 
-    private String resolveUserId(RelationRequest req) {
-        String userId = req.userId() != null ? req.userId() : "anonymous";
+    private String resolveUserId(RelationRequest req, jakarta.servlet.http.HttpServletRequest httpRequest, boolean draft) {
+        String userId = self.research.ontology.owlEditor.service.RequestActor.forScope(
+                httpRequest, req.userId() != null ? req.userId() : "anonymous", draft);
         return desktopMode ? DESKTOP_USER_ID : userId;
     }
 

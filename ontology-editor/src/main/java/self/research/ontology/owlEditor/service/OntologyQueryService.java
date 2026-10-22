@@ -133,13 +133,7 @@ public class OntologyQueryService {
     @Cacheable(value = "topLevelClasses", key = "#projectId + '_statusCount_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
                condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()", sync = true)
     public int topLevelClassCount(String projectId) {
-        String countQuery = PREFIXES + """
-            SELECT (COUNT(DISTINCT ?c) AS ?count) WHERE {
-              ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
-              FILTER(isIRI(?c))
-              %s
-            }
-            """.formatted(draftEntityHiddenFilter(projectId, "?c"));
+        String countQuery = TopLevelClassSparql.explicitRootCount(PREFIXES);
         try {
             TupleQueryResult rs = datasetService.execSelect(projectId, countQuery);
             if (rs.hasNext()) {
@@ -205,15 +199,7 @@ public class OntologyQueryService {
         // disk reads. The old single-query approach used ORDER BY LCASE(?label) which forced
         // TDB2 to load every label from disk before LIMIT could trim anything.
         log.info("[PERF] Top-level classes (phase 1a - IRI scan) for project={}", projectId);
-        String phase1aQuery = PREFIXES + """
-            SELECT ?c WHERE {
-              ?c rdfs:subClassOf <http://www.w3.org/2002/07/owl#Thing> .
-              FILTER(isIRI(?c))
-              %s
-            }
-            ORDER BY ?c
-            LIMIT %d
-            """.formatted(draftEntityHiddenFilter(projectId, "?c"), Math.max(1, limit));
+        String phase1aQuery = TopLevelClassSparql.explicitRoots(PREFIXES, limit);
 
         List<String> p1Iris = new java.util.ArrayList<>();
         TupleQueryResult p1aRs = datasetService.execSelect(projectId, phase1aQuery);
@@ -280,22 +266,18 @@ public class OntologyQueryService {
         // rdfs:subClassOf owl:Thing children), we MUST run the orphan scan — skipping it
         // returns an empty tree, which is always wrong.
         boolean knownLarge = datasetService.isKnownLargeProject(projectId);
-        if (p1aDuration > 10000 && !phase1.isEmpty()) {
+        boolean mustScan = hasDraft || topLevelCacheService.needsOrphanScan(projectId);
+        if (canSkipOrphanScan(p1aDuration, phase1.isEmpty(), mustScan)) {
             log.info("[PERF] Skipping orphan scan for project={} (p1aDuration={}ms — cold Fuseki, phase1={})",
                      projectId, p1aDuration, phase1.size());
             List<OntologyDto.TreeNode> merged = new java.util.ArrayList<>(phase1);
             merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
             List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
             enrichWithEquivalentClasses(projectId, result);
-            // Persist to MongoDB — but never persist an empty result: cold Fuseki skipped the
-            // orphan scan so "empty" just means "not ready yet", not "ontology is empty".
-            final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
-            final int finalLimit = limit;
-            if (!toStore.isEmpty() && !hasDraft) {
-                CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
-            }
             return result;
         }
+
+        Long orphanScanStamp = hasDraft ? null : topLevelCacheService.orphanScanStarted(projectId);
 
         // Java-side orphan detection with VALUES-bounded complex-expression verification.
         //
@@ -454,6 +436,8 @@ public class OntologyQueryService {
                 n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
         List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
         enrichWithEquivalentClasses(projectId, result);
+
+        topLevelCacheService.orphanScanFinished(projectId, orphanScanStamp);
 
         // Persist fully-enriched result to MongoDB (L2 cache) asynchronously — never blocks response.
         // Skip write if empty: an empty result means the orphan scan is still running or timed out;
@@ -1616,6 +1600,10 @@ public class OntologyQueryService {
         }
         
         return result;
+    }
+
+    static boolean canSkipOrphanScan(long phase1aMillis, boolean phase1Empty, boolean mustScan) {
+        return phase1aMillis > 10000 && !phase1Empty && !mustScan;
     }
 
     private List<OntologyDto.TreeNode> mapTreeNodes(String projectId, String query, String parentIri) {

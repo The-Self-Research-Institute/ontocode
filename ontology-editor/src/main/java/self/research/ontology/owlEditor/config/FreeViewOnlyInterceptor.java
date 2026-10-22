@@ -42,12 +42,29 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/api/v1/code-assistant/sessions/*/tools/read_context",
         "/api/v1/code-assistant/sessions/*/tools/run_sparql",
         "/api/v1/code-assistant/sessions/*/provider-call",
-        "/api/v1/code-assistant/sessions/*/usage"
+        "/api/v1/code-assistant/sessions/*/usage",
+        "/api/ontology/*/expression/parse",
+        "/api/ontology/annotations/batch/**",
+        "/api/ontology/export-async/**"
+    );
+
+    private static final List<String> SPREADSHEET_IMPORT_READ_PATTERNS = List.of(
+        "/api/ontology/spreadsheet-import/*/parse",
+        "/api/ontology/spreadsheet-import/*/preview"
+    );
+
+    private static final List<String> DRAFT_EDITOR_ALLOW_PATTERNS = List.of(
+        "/api/ontology/*/changes/*/comments",
+        "/api/ontology/*/changes/*/resolve-conflict",
+        "/api/ontology/spreadsheet-import/*/rulesets",
+        "/api/ontology/spreadsheet-import/*/rulesets/*"
     );
 
     private static final List<String> FREE_PUT_DELETE_ALLOW_PATTERNS = List.of(
         "/api/sparql/*/queries/**",
-        "/api/preferences/**"
+        "/api/preferences/**",
+        "/api/ontology/*/reasoner/jobs/*",
+        "/api/dl-query/jobs/*"
     );
 
     private static final String PROPOSE_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/propose";
@@ -141,7 +158,9 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
                 boolean isDraftMutation = "true".equalsIgnoreCase(request.getParameter("draft"))
                         || "true".equalsIgnoreCase(request.getParameter("useDraft"));
                 boolean isDraftEndpoint = path.contains("/draft") || path.contains("/pull-from-public/")
-                        || path.contains("/rollback") || path.contains("/change-sets/") || path.contains("/undos/");
+                        || path.contains("/rollback") || path.contains("/change-sets/") || path.contains("/undos/")
+                        || SPREADSHEET_IMPORT_READ_PATTERNS.stream().anyMatch(p -> PATH.match(p, path))
+                        || DRAFT_EDITOR_ALLOW_PATTERNS.stream().anyMatch(p -> PATH.match(p, path));
                 boolean allowed = isCodeAssistantWrite(path)
                         ? isCodeAssistantSessionDraft(path)
                         : (isDraftMutation || isDraftEndpoint);

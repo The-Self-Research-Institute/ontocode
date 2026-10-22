@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.config;
 
 import org.springframework.context.annotation.Configuration;
+import org.springframework.format.FormatterRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.PathMatchConfigurer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -35,6 +36,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
     }
 
     @Override
+    public void addFormatters(FormatterRegistry registry) {
+        registry.addConverter(new StringToReasonerTypeConverter());
+    }
+
+    @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(internalApiAuthInterceptor)
                 .addPathPatterns("/internal/**")
@@ -43,7 +49,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .addPathPatterns("/api/**")
                 .order(0);
         registry.addInterceptor(sparqlQueryContextInterceptor)
-                .addPathPatterns("/api/ontology/**")
+                .addPathPatterns("/api/ontology/**", "/api/sparql/query/**")
                 .order(1);
         registry.addInterceptor(performanceLoggingInterceptor)
                 .addPathPatterns("/api/**");

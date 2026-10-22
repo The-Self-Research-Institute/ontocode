@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.CitationService;
+import self.research.ontology.owlEditor.service.RequestActor;
 
 import java.util.Map;
 
@@ -34,7 +35,8 @@ public class CitationController {
     @PostMapping("/{projectId}/insert")
     public ResponseEntity<?> insertCitation(
             @PathVariable String projectId,
-            @RequestBody InsertCitationRequest request) {
+            @RequestBody InsertCitationRequest request,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
         
         try {
             log.info("[CitationController] Inserting citation into project: {}, format: {}", 
@@ -58,7 +60,8 @@ public class CitationController {
 
             // Insert citation into GraphDB
             int lineNumber = request.lineNumber() != null ? request.lineNumber() : 0;
-            citationService.insertCitation(projectId, request.citation(), request.format(), request.metadata(), lineNumber);
+            citationService.insertCitation(projectId, request.citation(), request.format(), request.metadata(), lineNumber,
+                RequestActor.of(httpRequest, request.userId(), request.username()));
 
             log.info("[CitationController] Successfully inserted citation for project: {} at line: {}", projectId, lineNumber);
 
@@ -142,12 +145,26 @@ public class CitationController {
     @DeleteMapping("/{projectId}/{citationId}")
     public ResponseEntity<?> deleteCitation(
             @PathVariable String projectId,
-            @PathVariable String citationId) {
+            @PathVariable String citationId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String userId,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String username,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String draft,
+            jakarta.servlet.http.HttpServletRequest httpRequest) {
         
         try {
             log.info("[CitationController] Deleting citation {} from project: {}", citationId, projectId);
 
-            citationService.deleteCitation(projectId, citationId);
+            boolean inDraft = RequestActor.draftRequested(httpRequest, draft);
+            RequestActor actor = inDraft
+                    ? new RequestActor(RequestActor.forScope(httpRequest, userId, true), RequestActor.displayName(httpRequest, username))
+                    : RequestActor.of(httpRequest, userId, username);
+            if (inDraft && (actor.userId() == null || actor.userId().isBlank())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "userId is required to delete a citation from a draft"
+                ));
+            }
+            citationService.deleteCitation(projectId, citationId, actor, inDraft);
 
             return ResponseEntity.ok(Map.of(
                 "success", true,
@@ -170,6 +187,8 @@ public class CitationController {
         String citation,
         String format,
         Map<String, Object> metadata,
-        Integer lineNumber
+        Integer lineNumber,
+        String userId,
+        String username
     ) {}
 }

@@ -1,6 +1,17 @@
 import { AiInfo, ChangeSource, SubChange } from '../changeSets/types';
 
-export type ChangeType = 'class' | 'property' | 'individual' | 'axiom' | 'annotation' | 'import';
+export type ChangeType =
+  | 'class'
+  | 'property'
+  | 'individual'
+  | 'axiom'
+  | 'annotation'
+  | 'import'
+  | 'datatype'
+  | 'prefix'
+  | 'rename'
+  | 'rule'
+  | 'citation';
 export type ChangeAction = 'added' | 'deleted' | 'modified';
 export type ChangeStatus = 'saved' | 'draft' | 'reverted' | 'conflicted';
 export type AssistantTab = 'live' | 'drafts' | 'changes' | 'conflicts' | 'history' | 'stats';
@@ -36,6 +47,9 @@ export interface OntologyChange {
   revertedAuditId?: string;
   revertedWithSet?: boolean;
   rollbackAuditId?: string | null;
+  undoable?: boolean;
+  undoReason?: string | null;
+  draft?: boolean;
 }
 
 export interface ChangeComment {
@@ -66,6 +80,7 @@ export interface ChangeWarning {
 
 export interface ChangeStats {
   totalChanges: number;
+  undoneChanges: number;
   draftChanges: number;
   conflicts: number;
   activeAuthors: number;
@@ -90,6 +105,7 @@ export interface AssistantNotification {
 
 export const EMPTY_STATS: ChangeStats = {
   totalChanges: 0,
+  undoneChanges: 0,
   draftChanges: 0,
   conflicts: 0,
   activeAuthors: 0,

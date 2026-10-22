@@ -8,8 +8,11 @@ const ENTITY_NOUNS: Record<string, string> = {
   individual: 'individual'
 };
 
+const AXIOM_OPERATION = /subclassof|subpropertyof|disjoint|equivalent|statement|assertion|annotation|domain|range|inverse|characteristic/i;
+
 export function entityBadge(entry: ChangeEntry): string {
-  const noun = ENTITY_NOUNS[entry.type];
+  if (entry.operationType === 'SPREADSHEET_IMPORT') return 'Imported';
+  const noun = AXIOM_OPERATION.test(entry.operationType || '') ? undefined : ENTITY_NOUNS[entry.type];
   if (entry.action === 'added') return noun ? `Created ${noun}` : 'Added';
   if (entry.action === 'deleted') return noun ? `Deleted ${noun}` : 'Removed';
   return 'Modified';
@@ -56,7 +59,22 @@ function prefixRow(entry: ChangeEntry, raw: string, addition: boolean): Property
   };
 }
 
+const PREFIX_GROUP = 'prefixesChanged';
+
+function prefixGroupRows(entry: ChangeEntry): PropertyRow[] {
+  return (entry.subChanges || []).map(sc => {
+    const raw = (sc.addition ? sc.newValue ?? sc.oldValue : sc.oldValue ?? sc.newValue) ?? '';
+    return {
+      ...valueRow(entry, raw, !!sc.addition),
+      key: `${entry.id}:${sc.id}`,
+      label: `Prefix ${sc.predicate || ''}`.trim(),
+      value: raw
+    };
+  });
+}
+
 export function propertyRows(entry: ChangeEntry): PropertyRow[] {
+  if (entry.operationType === PREFIX_GROUP && (entry.subChanges || []).length > 0) return prefixGroupRows(entry);
   if (PREFIX_VERBS[entry.operationType || '']) {
     const prefixRows: PropertyRow[] = [];
     if (entry.oldValue) prefixRows.push(prefixRow(entry, entry.oldValue, false));
@@ -78,7 +96,10 @@ function latestUndo(rows: PropertyRow[]): PropertyRow | undefined {
 }
 
 export function canUndoEntry(entry: ChangeEntry): boolean {
-  return !!entry.entityUri && !/structural/i.test(entry.operationType || '');
+  if (typeof entry.undoable === 'boolean') return entry.undoable || !!entry.reverted;
+  const operation = entry.operationType || '';
+  return !!entry.entityUri && !!entry.id && !/structural/i.test(operation) && !/^(ROLLBACK_|REDO_)/i.test(operation)
+    && operation !== 'projectImported';
 }
 
 function otherChangesLabel(entry: ChangeEntry): string {
@@ -100,7 +121,7 @@ export function buildEntityRow(entry: ChangeEntry): EntityRow {
     entry,
     undoable,
     label: entry.entityLabel || (undoable ? 'Unnamed entity' : otherChangesLabel(entry)),
-    badge: undoable ? entityBadge(entry) : "Can't undo",
+    badge: undoable ? entityBadge(entry) : entry.undoReason ? `Can't undo: ${entry.undoReason}` : "Can't undo",
     properties,
     undone,
     undoneBy: entry.revertedBy || last?.undoneBy,
@@ -119,6 +140,17 @@ const PREFIX_VERBS: Record<string, string> = {
 export function manualHeading(entry: ChangeEntry): SetHeading {
   if (entry.operationType === 'projectImported') {
     return { verb: 'Imported', name: entry.entityLabel || (entry.description || '').replace(/^Imported\s+/, '') || 'file' };
+  }
+  if (entry.operationType === 'SPREADSHEET_IMPORT') {
+    const counts = (entry.description || '').match(/Imported ([\d,]+ axioms?) from .* \(([\d,]+ rows?)\)$/);
+    return {
+      verb: 'Imported',
+      name: entry.entityLabel || 'spreadsheet',
+      ...(counts ? { detail: `${counts[1]} from ${counts[2]}` } : {})
+    };
+  }
+  if (entry.operationType === PREFIX_GROUP) {
+    return { verb: 'Changed', name: entry.entityLabel || 'prefixes', ...(entry.description ? { detail: entry.description } : {}) };
   }
   const prefixVerb = PREFIX_VERBS[entry.operationType || ''];
   if (prefixVerb) {

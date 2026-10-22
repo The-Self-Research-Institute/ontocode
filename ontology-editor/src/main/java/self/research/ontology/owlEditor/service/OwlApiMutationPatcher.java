@@ -315,7 +315,7 @@ public class OwlApiMutationPatcher {
                     toAdd.add(df.getOWLAnnotationAssertionAxiom(
                             df.getRDFSLabel(), cls.get().getIRI(), df.getOWLLiteral(op.label())));
                 }
-                if (op.parent() != null && !op.parent().isBlank()) {
+                if (OntologyMutationService.isRealParentClass(op.parent())) {
                     Optional<OWLClass> parent = namedClass(op.parent(), df);
                     if (parent.isEmpty()) yield false;
                     toAdd.add(df.getOWLSubClassOfAxiom(cls.get(), parent.get()));

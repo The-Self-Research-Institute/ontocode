@@ -33,14 +33,33 @@ export async function fetchDraftSessionActive(projectId: string, userId: string)
   return data.status === 'READY' || data.status === 'COPYING';
 }
 
-export async function fetchRecentChanges(projectId: string): Promise<any> {
-  const response = await authFetch(`${apiBase()}/api/ontology/${projectId}/changes/recent?count=100`);
+export const FEED_PAGE_SIZE = 100;
+
+export async function fetchRecentChanges(projectId: string, offset = 0, userId = '', query = ''): Promise<any> {
+  const params = `count=${FEED_PAGE_SIZE}&offset=${offset}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+  const response = await authFetch(`${apiBase()}/api/ontology/${projectId}/changes/recent?${params}`);
   return response.json();
 }
 
 export async function fetchChangeDetails(projectId: string, changeId: string): Promise<any> {
   const response = await authFetch(changeUrl(projectId, changeId, 'details'));
   return response.json();
+}
+
+export async function fetchImportedItems(
+  projectId: string,
+  importId: string,
+  page?: { group: string; offset: number; limit: number },
+): Promise<any | null> {
+  const query = page
+    ? `?group=${encodeURIComponent(page.group)}&offset=${page.offset}&limit=${page.limit}`
+    : '';
+  const response = await authFetch(
+    `${apiBase()}/api/ontology/spreadsheet-import/${encodeURIComponent(projectId)}/imports/${encodeURIComponent(importId)}/items${query}`,
+  );
+  if (!response.ok) return null;
+  const body = await response.json();
+  return body?.success ? body.data : null;
 }
 
 export function postComment(projectId: string, changeId: string, body: object): Promise<Response> {

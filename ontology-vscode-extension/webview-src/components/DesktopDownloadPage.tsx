@@ -7,16 +7,20 @@ import { AppVersionBadge } from "./AppVersionBadge";
 
 const RELEASE_BASE = `${getGatewayUrl()}/api/downloads`;
 
-type PlatformKey = "windows-x64" | "linux-x64";
+type PlatformKey = "windows-x64" | "linux-x64" | "mac-arm64" | "mac-x64";
 
 const PLATFORM_META: Record<PlatformKey, { label: string; icon: typeof Monitor; os: string }> = {
   "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64 or ARM64)" },
   "linux-x64": { label: "Linux", icon: Terminal, os: "Ubuntu 20.04+ or equivalent (AppImage — runs on most distros)" },
+  "mac-arm64": { label: "Mac (Apple Silicon)", icon: Monitor, os: "Macs with an M1, M2, M3 or M4 chip" },
+  "mac-x64": { label: "Mac (Intel)", icon: Monitor, os: "Macs with an Intel processor (sold before about 2021)" },
 };
 
-/** Best default platform guess before /info tells us what's actually available. */
 function defaultPlatform(): PlatformKey {
-  return detectClientOs() === "linux" ? "linux-x64" : "windows-x64";
+  const os = detectClientOs();
+  if (os === "linux") return "linux-x64";
+  if (os === "macos") return "mac-arm64";
+  return "windows-x64";
 }
 
 type ReleaseInfo = {
@@ -147,6 +151,8 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   }, []);
 
   const release = releases[platform] ?? null;
+  const macPlatforms = availablePlatforms.filter((p) => p.startsWith("mac-"));
+  const tabPlatforms = availablePlatforms.filter((p) => !p.startsWith("mac-") || p === macPlatforms[0]);
 
   const openExternal = (url: string) => {
     // VS Code webviews are sandboxed iframes — a programmatic window.location.href
@@ -240,24 +246,30 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             Import, edit, reason and query ontologies up to millions of triples.
           </p>
           <p className="text-sm text-white/40 mt-3">
-            macOS builds are coming soon. Windows and Linux are available now.
+            {availablePlatforms.some((p) => p.startsWith("mac-"))
+              ? "Available for Windows, Linux and Mac."
+              : "Mac builds are coming soon. Windows and Linux are available now."}
           </p>
 
-          {availablePlatforms.length > 1 && (
+          {tabPlatforms.length > 1 && (
             <div className="inline-flex mt-6 bg-white/5 border border-white/10 rounded-full p-1">
-              {availablePlatforms.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPlatform(p)}
-                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${
-                    platform === p ? "bg-purple-600 text-white" : "text-white/50 hover:text-white/80"
-                  }`}
-                >
-                  {PLATFORM_META[p].icon === Monitor ? <Monitor size={14} /> : <Terminal size={14} />}
-                  {PLATFORM_META[p].label}
-                </button>
-              ))}
+              {tabPlatforms.map((p) => {
+                const mac = p.startsWith("mac-");
+                const active = mac ? platform.startsWith("mac-") : platform === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPlatform(mac && platform.startsWith("mac-") ? platform : p)}
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm transition-colors ${
+                      active ? "bg-purple-600 text-white" : "text-white/50 hover:text-white/80"
+                    }`}
+                  >
+                    {PLATFORM_META[p].icon === Monitor ? <Monitor size={14} /> : <Terminal size={14} />}
+                    {mac ? "Mac" : PLATFORM_META[p].label}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -267,7 +279,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             <div>
               <h2 className="text-xl font-semibold mb-1 flex items-center gap-2">
                 <PlatformIcon size={22} className="text-blue-400" />
-                {PLATFORM_META[platform].label}
+                {platform.startsWith("mac-") ? "Mac" : PLATFORM_META[platform].label}
               </h2>
               <p className="text-sm text-white/50">
                 {PLATFORM_META[platform].os}
@@ -275,6 +287,24 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             </div>
             <PlatformIcon size={32} className="text-white/30" />
           </div>
+
+          {platform.startsWith("mac-") && macPlatforms.length > 1 && (
+            <div className="inline-flex mb-4 bg-white/5 border border-white/10 rounded-full p-1" role="group" aria-label="Mac processor">
+              {macPlatforms.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPlatform(p)}
+                  aria-pressed={platform === p}
+                  className={`px-3 py-1 rounded-full text-xs transition-colors ${
+                    platform === p ? "bg-purple-600 text-white" : "text-white/50 hover:text-white/80"
+                  }`}
+                >
+                  {p === "mac-arm64" ? "Apple Silicon" : "Intel"}
+                </button>
+              ))}
+            </div>
+          )}
 
           <button
             type="button"
@@ -342,9 +372,20 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             </button>
           )}
 
+          {platform.startsWith("mac-") && (
+            <p className="text-xs text-white/50 mt-3 text-center">
+              Not sure which Mac you have? Apple menu → About This Mac: "Chip: Apple M…" means Apple Silicon, "Processor: Intel…" means Intel.
+              The app is not yet signed by Apple, so the first time right-click it and choose Open.
+            </p>
+          )}
+
           <p className="text-xs text-white/30 mt-4 text-center">
             No sign-up required · Free to use ·{" "}
-            {platform === "windows-x64" ? "Uninstall via Windows Settings → Apps" : "Uninstall by removing the AppImage / package"}
+            {platform === "windows-x64"
+              ? "Uninstall via Windows Settings → Apps"
+              : platform.startsWith("mac-")
+                ? "Uninstall by dragging the app from Applications to the Bin"
+                : "Uninstall by removing the AppImage / package"}
           </p>
         </div>
 

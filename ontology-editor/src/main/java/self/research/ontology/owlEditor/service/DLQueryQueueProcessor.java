@@ -44,7 +44,8 @@ public class DLQueryQueueProcessor {
                 Map<String, Object> result = dlQueryService.executeQuery(
                         job.getProjectId(),
                         job.getExpression(),
-                        job.getQueryTypes());
+                        job.getQueryTypes(),
+                        job.getDraftUserId());
                 long duration = System.currentTimeMillis() - start;
                 if (Boolean.FALSE.equals(result.get("success"))) {
                     String error = result.get("error") != null ? result.get("error").toString() : "DL Query failed";

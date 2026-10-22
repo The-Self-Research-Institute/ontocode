@@ -11,6 +11,8 @@ import self.research.ontology.owlEditor.model.IssueReport;
 import self.research.ontology.owlEditor.service.IssueReportService;
 import self.research.ontology.owlEditor.service.OpenProjectService;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -18,6 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class IssueReportControllerTest {
@@ -45,7 +49,7 @@ class IssueReportControllerTest {
                         .build());
 
         ResponseEntity<Map<String, Object>> response = controller.reportIssue(
-                new MockHttpServletRequest(), "title", "description", null, null, null, null,
+                new MockHttpServletRequest(), "title", "description", null, "person@example.com", null, null,
                 null, null, null, null, null, null, "Bug", null, null);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
@@ -67,7 +71,7 @@ class IssueReportControllerTest {
                         .build());
 
         ResponseEntity<Map<String, Object>> response = controller.reportIssue(
-                new MockHttpServletRequest(), "title", "description", null, null, null, null,
+                new MockHttpServletRequest(), "title", "description", null, "person@example.com", null, null,
                 null, null, null, null, null, null, "Bug", null, null);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
@@ -84,10 +88,47 @@ class IssueReportControllerTest {
                         .build());
 
         ResponseEntity<Map<String, Object>> response = controller.reportIssue(
-                new MockHttpServletRequest(), "", "description", null, null, null, null,
+                new MockHttpServletRequest(), "", "description", null, "person@example.com", null, null,
                 null, null, null, null, null, null, "Bug", null, null);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    }
+
+    @Test
+    void reportIssueRejectsMissingEmailWhenNotSignedIn() {
+        ResponseEntity<Map<String, Object>> response = controller.reportIssue(
+                new MockHttpServletRequest(), "title", "description", null, null, null, null,
+                null, null, null, null, null, null, "Bug", null, null);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertFalse((Boolean) response.getBody().get("success"));
+        verify(issueReportService, never()).submitIssueReport(any(), any());
+    }
+
+    @Test
+    void reportIssueRejectsInvalidEmailWhenNotSignedIn() {
+        ResponseEntity<Map<String, Object>> response = controller.reportIssue(
+                new MockHttpServletRequest(), "title", "description", null, "not-an-email", null, null,
+                null, null, null, null, null, null, "Task", null, null);
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        verify(issueReportService, never()).submitIssueReport(any(), any());
+    }
+
+    @Test
+    void reportIssueAcceptsSignedInUserWithoutContactEmail() {
+        when(issueReportService.submitIssueReport(any(), any())).thenReturn(
+                IssueReportService.IssueReportResult.builder().success(true).message("ok").build());
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        String payload = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"sub\":\"alice\",\"email\":\"alice@example.com\"}".getBytes(StandardCharsets.UTF_8));
+        request.addHeader("Authorization", "Bearer header." + payload + ".signature");
+
+        ResponseEntity<Map<String, Object>> response = controller.reportIssue(
+                request, "title", "description", null, null, null, null,
+                null, null, null, null, null, null, "Bug", null, null);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
     }
 
     @Test

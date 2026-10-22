@@ -60,6 +60,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContexts';
 import ErrorBoundary from './components/ErrorBoundary';
+import FeedbackHost from './components/FeedbackHost';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -72,6 +73,7 @@ root.render(
     <ErrorBoundary>
       <AuthProvider>
         <App />
+        <FeedbackHost />
       </AuthProvider>
     </ErrorBoundary>
   </React.StrictMode>

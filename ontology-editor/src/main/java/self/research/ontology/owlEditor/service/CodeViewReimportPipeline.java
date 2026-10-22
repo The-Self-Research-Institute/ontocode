@@ -151,7 +151,7 @@ public class CodeViewReimportPipeline {
             log.info("[CODE-VIEW-SAVE] GraphDB reimport complete");
 
             if (!req.scratch()) {
-                invalidateReasonerCaches(req.projectId());
+                invalidateReasonerCaches(req.projectId(), req.draft(), req.userId());
             }
 
             perf.mark("graphImport");
@@ -280,6 +280,7 @@ public class CodeViewReimportPipeline {
         try {
             Model oldModel = parseToModel(req.oldContentFileForDiff(), RdfFiles.snapshotFormat(req.oldContentFileForDiff()));
             Model newModel = parseToModel(files.importSourceFile, files.rdfFormat);
+            origin = req.origin() != null ? origin : ExactOrigins.manualWithDelta(oldModel, newModel);
             historyRecorder.record(req.projectId(), CodeViewHistoryRecorder.effectiveUserId(req.userId(), desktopMode),
                     CodeViewHistoryRecorder.effectiveUsername(req.username()), oldModel, newModel, req.draft(), origin,
                     !oldModel.getNamespaces().isEmpty());
@@ -343,7 +344,7 @@ public class CodeViewReimportPipeline {
                 projectId, snapshot.getFileName(), Files.size(snapshot), draft);
         String targetGraphOverride = draft ? datasetService.getDraftGraphUri(projectId, userId) : null;
         streamIntoGraphDb(projectId, snapshot, RdfFiles.snapshotFormat(snapshot), targetGraphOverride, false, null);
-        invalidateReasonerCaches(projectId);
+        invalidateReasonerCaches(projectId, draft, userId);
         if (draft) {
             invalidateAfterDraftReplaced(projectId, userId);
             log.info("[CODE-VIEW-SAVE] Project {} draft (user {}) restored from its pre-apply snapshot", projectId, userId);
@@ -384,11 +385,19 @@ public class CodeViewReimportPipeline {
     }
 
     private void invalidateReasonerCaches(String projectId) {
+        invalidateReasonerCaches(projectId, false, null);
+    }
+
+    private void invalidateReasonerCaches(String projectId, boolean draft, String userId) {
         if (ontologyMutationService == null) {
             return;
         }
         try {
-            ontologyMutationService.invalidateReasonerCaches(projectId);
+            if (draft) {
+                ontologyMutationService.invalidateReasonerCaches(projectId, true, userId);
+            } else {
+                ontologyMutationService.invalidateReasonerCaches(projectId);
+            }
         } catch (Exception cacheEx) {
             log.warn("[CODE-VIEW-SAVE] Failed busting reasoner caches for project {} (non-fatal): {}",
                     projectId, cacheEx.getMessage());

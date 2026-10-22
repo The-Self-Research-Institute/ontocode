@@ -45,7 +45,7 @@ import CreateProjectModal from "./CreateProjectModal";
 import ConfirmationModal from "./ConfirmationModal";
 const PlanDetailsModal = lazy(() => import("./PlanDetailsModal"));
 import { UserGuideModal } from "./UserGuideModal";
-import { ReportIssueModal } from "./ReportIssueModal";
+import { openFeedbackPage } from "../utils/feedback";
 import { Bug, ListOrdered } from "lucide-react";
 import AdminSettingsModal from "./AdminSettingsModal";
 import { OntoCodeLogo } from "./OntoCodeLogo";
@@ -486,7 +486,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const [appVersion, setAppVersion] = useState("");
   const [showPlanDetails, setShowPlanDetails] = useState(false);
   const [showUserGuide, setShowUserGuide] = useState(false);
-  const [reportIssueModalType, setReportIssueModalType] = useState<"Bug" | "Task" | null>(null);
   const [renaming, setRenaming] = useState<{ projectId: string; currentName: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
@@ -1514,14 +1513,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                 <HelpCircle size={20} />
               </button>
               <button
-                onClick={() => setReportIssueModalType("Bug")}
+                onClick={() => openFeedbackPage("bug")}
                 className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="Report Issue"
               >
                 <Bug size={20} />
               </button>
               <button
-                onClick={() => setReportIssueModalType("Task")}
+                onClick={() => openFeedbackPage("feature")}
                 className="h-9 w-9 inline-flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-lg"
                 title="Request a Feature"
               >
@@ -2354,13 +2353,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       {/* User Guide Modal */}
       <UserGuideModal isOpen={showUserGuide} onClose={() => setShowUserGuide(false)} />
 
-      {/* Report Issue Modal */}
-      {reportIssueModalType && (
-        <ReportIssueModal
-          initialIssueType={reportIssueModalType}
-          onClose={() => setReportIssueModalType(null)}
-        />
-      )}
     </div>
   );
 }

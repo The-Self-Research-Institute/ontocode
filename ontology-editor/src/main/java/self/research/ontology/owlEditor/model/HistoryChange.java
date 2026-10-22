@@ -2,6 +2,8 @@ package self.research.ontology.owlEditor.model;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
@@ -16,6 +18,10 @@ import java.util.Map;
  * This enables full feature support (approve, reject, comments) for GraphDB changes.
  */
 @Document(collection = "history_changes")
+@CompoundIndexes({
+    @CompoundIndex(name = "project_draft_user_ts", def = "{'projectId': 1, 'draft': 1, 'userId': 1, 'timestamp': -1}"),
+    @CompoundIndex(name = "project_entity_ts", def = "{'projectId': 1, 'entityIRI': 1, 'timestamp': -1}")
+})
 public class HistoryChange {
 
     @Id
@@ -79,6 +85,16 @@ public class HistoryChange {
 
     @Indexed
     private String changeSetId;
+    private String exactDeleted;
+    private String exactInserted;
+    private String coveredBy;
+    private int exactCovers;
+    private String documentStore;
+    private String undoBlockedReason;
+    private String operationGroupId;
+    private String documentId;
+    private String documentBefore;
+    private String documentAfter;
     private String source;
     private AiInfo ai;
 
@@ -92,6 +108,8 @@ public class HistoryChange {
         private String newValue;
         private String annotationProperty;
         private String category;
+        private String language;
+        private String datatype;
         private boolean addition;
 
         // Rollback tracking (granular rollback of this sub-change alone)
@@ -163,6 +181,22 @@ public class HistoryChange {
 
         public void setAnnotationProperty(String annotationProperty) {
             this.annotationProperty = annotationProperty;
+        }
+
+        public String getLanguage() {
+            return language;
+        }
+
+        public void setLanguage(String language) {
+            this.language = language;
+        }
+
+        public String getDatatype() {
+            return datatype;
+        }
+
+        public void setDatatype(String datatype) {
+            this.datatype = datatype;
         }
 
         public String getCategory() {
@@ -650,5 +684,99 @@ public class HistoryChange {
 
     public void setSyncedAt(LocalDateTime syncedAt) {
         this.syncedAt = syncedAt;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getExactDeleted() {
+        return exactDeleted;
+    }
+
+    public void setExactDeleted(String exactDeleted) {
+        this.exactDeleted = exactDeleted;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getExactInserted() {
+        return exactInserted;
+    }
+
+    public void setExactInserted(String exactInserted) {
+        this.exactInserted = exactInserted;
+    }
+
+    public String getCoveredBy() {
+        return coveredBy;
+    }
+
+    public void setCoveredBy(String coveredBy) {
+        this.coveredBy = coveredBy;
+    }
+
+    public int getExactCovers() {
+        return exactCovers;
+    }
+
+    public void setExactCovers(int exactCovers) {
+        this.exactCovers = exactCovers;
+    }
+
+    public String getDocumentStore() {
+        return documentStore;
+    }
+
+    public void setDocumentStore(String documentStore) {
+        this.documentStore = documentStore;
+    }
+
+    public String getDocumentId() {
+        return documentId;
+    }
+
+    public void setDocumentId(String documentId) {
+        this.documentId = documentId;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getDocumentBefore() {
+        return documentBefore;
+    }
+
+    public void setDocumentBefore(String documentBefore) {
+        this.documentBefore = documentBefore;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getDocumentAfter() {
+        return documentAfter;
+    }
+
+    public void setDocumentAfter(String documentAfter) {
+        this.documentAfter = documentAfter;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean carriesDocument() {
+        return documentStore != null && documentId != null;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getOperationGroupId() {
+        return operationGroupId;
+    }
+
+    public void setOperationGroupId(String operationGroupId) {
+        this.operationGroupId = operationGroupId;
+    }
+
+    public String getUndoBlockedReason() {
+        return undoBlockedReason;
+    }
+
+    public void setUndoBlockedReason(String undoBlockedReason) {
+        this.undoBlockedReason = undoBlockedReason;
+    }
+
+    public boolean carriesExactDelta() {
+        return exactDeleted != null || exactInserted != null;
     }
 }

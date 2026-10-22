@@ -13,12 +13,15 @@ import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.model.merge.ResolutionAction;
 import self.research.ontology.owlEditor.repository.DraftSessionRepository;
+import self.research.ontology.owlEditor.service.OntologyHeaderMerge.Field;
+import self.research.ontology.owlEditor.service.OntologyHeaderMerge.Header;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -112,10 +115,13 @@ public class DraftPublishMergeService {
 
         OWLOntology ours = buildOursOntology(projectId, userId, baselineRdf);
 
-        Set<String> conflictIris = analysis.getConflicts().stream()
-                .map(row -> (String) row.get("entityIRI"))
-                .filter(iri -> iri != null && !iri.isBlank())
-                .collect(Collectors.toSet());
+        Set<String> conflictIris = conflictingEntities(baseline, theirs, ours);
+        if (analysis != null) {
+            analysis.getConflicts().stream()
+                    .map(row -> (String) row.get("entityIRI"))
+                    .filter(iri -> iri != null && !iri.isBlank() && !OntologyHeaderMerge.isSectionKey(iri))
+                    .forEach(conflictIris::add);
+        }
 
         OWLOntology merged = mergeService.mergeDraftPublishThreeWay(
                 baseline, ours, theirs, conflictIris, resolutions);
@@ -127,6 +133,152 @@ public class DraftPublishMergeService {
 
         log.info("[DRAFT-MERGE] Published project {} user {} via three-way merge ({} conflict IRIs)",
                 projectId, userId, conflictIris.size());
+    }
+
+    public void publishReviewed(String projectId, String userId,
+                                Map<String, ConflictResolution> resolutions) throws Exception {
+        boolean hasBaseline = sessionRepository.findByProjectIdAndUserId(projectId, userId)
+                .flatMap(session -> readBaselineIfAvailable(projectId, userId, session))
+                .isPresent();
+        if (hasBaseline) {
+            publishWithThreeWayMerge(projectId, userId, null, resolutions);
+        } else {
+            publishDirect(projectId, userId, resolutions);
+        }
+    }
+
+    private void publishDirect(String projectId, String userId,
+                               Map<String, ConflictResolution> resolutions) throws Exception {
+        String draftRdf = exportDraft(projectId, userId);
+        if (draftRdf == null) {
+            throw new IllegalStateException("The draft has nothing to publish");
+        }
+        String mainRdf = exportMain(projectId);
+        OWLOntology draft = mergeService.loadOntologyFromRdf(draftRdf);
+        OWLOntology mainCopy = mergeService.loadOntologyFromRdf(mainRdf);
+        OWLOntology main = mergeService.loadOntologyFromRdf(mainRdf);
+
+        Set<String> differing = mergeService.collectTouchedIris(mainCopy, draft);
+        Map<String, ConflictResolution> effective = new HashMap<>();
+        for (String iriStr : differing) {
+            boolean inPublic = !mergeService.definingAxioms(mainCopy, IRI.create(iriStr)).isEmpty();
+            ResolutionAction chosen = actionOf(resolutions, iriStr);
+            effective.put(iriStr, resolution(!inPublic ? ResolutionAction.KEEP_SOURCE
+                    : chosen != null ? chosen : ResolutionAction.KEEP_TARGET));
+        }
+
+        Map<String, ConflictResolution> sectionChoices = new HashMap<>();
+        for (String key : List.of(OntologyHeaderMerge.ANNOTATIONS, OntologyHeaderMerge.IMPORTS,
+                OntologyHeaderMerge.OTHER_AXIOMS)) {
+            sectionChoices.put(key, resolution(ResolutionAction.MERGE));
+        }
+        for (String key : List.of(OntologyHeaderMerge.ONTOLOGY_IRI, OntologyHeaderMerge.VERSION_IRI)) {
+            if (actionOf(resolutions, key) == ResolutionAction.KEEP_SOURCE) {
+                sectionChoices.put(key, resolution(ResolutionAction.KEEP_SOURCE));
+            }
+        }
+        Header headerBaseline = Header.forChoices(mergeService.header(draft), mergeService.header(main), sectionChoices);
+
+        OWLOntology merged = mergeService.mergeDraftPublishThreeWay(
+                mainCopy, draft, main, differing, effective, headerBaseline);
+        datasetService.replaceMainGraphFromRdf(projectId, mergeService.saveOntologyToRdfXml(merged), RDFFormat.RDFXML);
+        datasetService.publishDraftPrefixesToPublic(projectId, userId);
+        datasetService.clearDraftGraph(projectId, userId);
+
+        log.info("[DRAFT-MERGE] Published project {} user {} by direct comparison ({} differing IRIs)",
+                projectId, userId, differing.size());
+    }
+
+    private Set<String> conflictingEntities(OWLOntology baseline, OWLOntology main, OWLOntology draft) {
+        Set<String> conflicts = new LinkedHashSet<>(mergeService.collectTouchedIris(baseline, main));
+        conflicts.retainAll(mergeService.collectTouchedIris(baseline, draft));
+        conflicts.removeIf(iri -> mergeService.definingAxioms(draft, IRI.create(iri))
+                .equals(mergeService.definingAxioms(main, IRI.create(iri))));
+        return conflicts;
+    }
+
+    public Map<String, Object> analyzePublish(String projectId, String userId) throws Exception {
+        return comparePublish(projectId, userId).payload();
+    }
+
+    public DraftPublishDiff comparePublish(String projectId, String userId) throws Exception {
+        Optional<DraftSession> sessionOpt = sessionRepository.findByProjectIdAndUserId(projectId, userId);
+        if (sessionOpt.isEmpty()) {
+            return DraftPublishDiff.unavailable();
+        }
+        String draftRdf = exportDraft(projectId, userId);
+        if (draftRdf == null) {
+            return DraftPublishDiff.unavailable();
+        }
+        DraftSession session = sessionOpt.get();
+        boolean movedSinceDraft = revisionService.getRevision(projectId) > session.getBaselineMainRevision()
+                || datasetService.countMainGraphTriples(projectId) != session.getBaselineMainTripleCount();
+        OWLOntology draft = mergeService.loadOntologyFromRdf(draftRdf);
+        OWLOntology main = mergeService.loadOntologyFromRdf(exportMain(projectId));
+        Optional<String> baselineRdf = readBaselineIfAvailable(projectId, userId, session);
+        if (baselineRdf.isEmpty()) {
+            return directPublishDiff(draft, main, movedSinceDraft);
+        }
+        return threeWayPublishDiff(mergeService.loadOntologyFromRdf(baselineRdf.get()), draft, main, movedSinceDraft);
+    }
+
+    private DraftPublishDiff threeWayPublishDiff(OWLOntology baseline, OWLOntology draft, OWLOntology main,
+                                                 boolean movedSinceDraft) {
+        Set<String> mainTouched = mergeService.collectTouchedIris(baseline, main);
+        DraftPublishDiff.Builder diff = new DraftPublishDiff.Builder();
+        for (String iriStr : mergeService.collectTouchedIris(baseline, draft)) {
+            IRI iri = IRI.create(iriStr);
+            Set<OWLAxiom> draftDefs = mergeService.definingAxioms(draft, iri);
+            Set<OWLAxiom> mainDefs = mergeService.definingAxioms(main, iri);
+            String change = mergeService.definingAxioms(baseline, iri).isEmpty() ? "added"
+                    : draftDefs.isEmpty() ? "removed" : "changed";
+            diff.entity(iri, DraftPublishDiff.labelOf(iri, draft, main, baseline),
+                    DraftPublishDiff.kindOf(iri, draft, baseline, main), change,
+                    draftDefs, mainDefs, mainTouched.contains(iriStr) && !draftDefs.equals(mainDefs));
+        }
+
+        Header base = mergeService.header(baseline);
+        Header mine = mergeService.header(draft);
+        Header pub = mergeService.header(main);
+        for (Field field : OntologyHeaderMerge.fields(base, mine, pub)) {
+            if (field.sourceChanged()) {
+                diff.field(field, field.baseline(), field.conflict());
+            }
+        }
+        diff.sets(base, mine, pub, true);
+
+        boolean publicChanged = movedSinceDraft || !mainTouched.isEmpty() || publicSideChanged(base, pub);
+        return diff.build(false, publicChanged, OntologyHeaderMerge.otherAxiomChanges(base, mine));
+    }
+
+    private DraftPublishDiff directPublishDiff(OWLOntology draft, OWLOntology main, boolean movedSinceDraft) {
+        DraftPublishDiff.Builder diff = new DraftPublishDiff.Builder();
+        for (String iriStr : mergeService.collectTouchedIris(main, draft)) {
+            IRI iri = IRI.create(iriStr);
+            Set<OWLAxiom> draftDefs = mergeService.definingAxioms(draft, iri);
+            Set<OWLAxiom> mainDefs = mergeService.definingAxioms(main, iri);
+            String change = mainDefs.isEmpty() ? "added" : draftDefs.isEmpty() ? "removed" : "changed";
+            diff.entity(iri, DraftPublishDiff.labelOf(iri, draft, main), DraftPublishDiff.kindOf(iri, draft, main),
+                    change, draftDefs, mainDefs, movedSinceDraft && !"added".equals(change));
+        }
+
+        Header mine = mergeService.header(draft);
+        Header pub = mergeService.header(main);
+        for (Field field : OntologyHeaderMerge.fields(pub, mine, pub)) {
+            if (field.sourceChanged()) {
+                diff.field(field, null, movedSinceDraft);
+            }
+        }
+        diff.sets(pub, mine, pub, false);
+
+        return diff.build(true, movedSinceDraft, OntologyHeaderMerge.otherAxiomChanges(pub, mine));
+    }
+
+    private static boolean publicSideChanged(Header baseline, Header main) {
+        return OntologyHeaderMerge.fields(baseline, main, baseline).stream().anyMatch(Field::sourceChanged)
+                || !OntologyHeaderMerge.changes(baseline.annotations(), main.annotations()).isEmpty()
+                || !OntologyHeaderMerge.changes(baseline.imports(), main.imports()).isEmpty()
+                || !OntologyHeaderMerge.otherAxiomChanges(baseline, main).isEmpty();
     }
 
     public List<Map<String, Object>> enrichConflictsWithAxiomDetail(String projectId,
@@ -217,8 +369,14 @@ public class DraftPublishMergeService {
             }
         }
 
+        List<Map<String, Object>> sectionRows = HeaderChangeRows.pull(
+                mergeService.header(baseline), mergeService.header(theirs), mergeService.header(ours));
+        for (Map<String, Object> row : sectionRows) {
+            (Boolean.TRUE.equals(row.get("conflict")) ? conflicts : safeChanges).add(row);
+        }
+
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("hasChanges", !mainTouched.isEmpty());
+        result.put("hasChanges", !mainTouched.isEmpty() || !sectionRows.isEmpty());
         result.put("hasConflicts", !conflicts.isEmpty());
         result.put("safeChanges", safeChanges);
         result.put("conflicts", conflicts);
@@ -249,6 +407,19 @@ public class DraftPublishMergeService {
         OWLOntology theirs = mergeService.loadOntologyFromRdf(mainRdf);
         OWLOntology ours = buildOursOntology(projectId, userId, baselineRdf);
 
+        Header base = mergeService.header(baseline);
+        Header pub = mergeService.header(theirs);
+        Header mine = mergeService.header(ours);
+        List<String> unresolved = OntologyHeaderMerge.fields(base, pub, mine).stream()
+                .filter(Field::conflict)
+                .map(Field::key)
+                .filter(key -> actionOf(resolutions, key) == null)
+                .toList();
+        if (!unresolved.isEmpty()) {
+            return choiceNeeded(unresolved);
+        }
+        int sectionCount = HeaderChangeRows.pull(base, pub, mine).size();
+
         Set<String> mainTouched = mergeService.collectTouchedIris(baseline, theirs);
         Set<String> draftTouched = mergeService.collectTouchedIris(baseline, ours);
         Set<String> conflictIris = new LinkedHashSet<>(mainTouched);
@@ -263,7 +434,7 @@ public class DraftPublishMergeService {
 
         advanceBaseline(projectId, userId, session);
 
-        int mergedCount = mainTouched.size();
+        int mergedCount = mainTouched.size() + sectionCount;
         int conflictCount = conflictIris.size();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
@@ -283,6 +454,9 @@ public class DraftPublishMergeService {
     private static final String DIRECT_COMPARE_MESSAGE =
             "The starting snapshot of your draft was lost, so we can't tell who changed what. Below is every "
                     + "difference between your draft and Public. Choose what to keep for each one.";
+
+    private static final String CHOICE_NEEDED_MESSAGE =
+            "Your draft and Public have a different Ontology IRI or version IRI. Choose which one to keep, then pull again.";
 
     private Map<String, Object> analyzeDirect(String projectId, String userId) throws Exception {
         String draftRdf = exportDraft(projectId, userId);
@@ -313,6 +487,7 @@ public class DraftPublishMergeService {
             row.put("yourAxioms", summarizeDifference(draft, publicOnt, iri));
             rows.add(row);
         }
+        rows.addAll(HeaderChangeRows.direct(mergeService.header(draft), mergeService.header(publicOnt)));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("hasChanges", !rows.isEmpty());
@@ -338,6 +513,17 @@ public class DraftPublishMergeService {
         OWLOntology draftTarget = mergeService.loadOntologyFromRdf(draftRdf);
         String publicRdf = exportMain(projectId);
         OWLOntology publicOnt = mergeService.loadOntologyFromRdf(publicRdf);
+
+        Header draftHeader = mergeService.header(draftCopy);
+        Header publicHeader = mergeService.header(publicOnt);
+        List<String> unresolved = OntologyHeaderMerge.fields(draftHeader, publicHeader, draftHeader).stream()
+                .filter(Field::incoming)
+                .map(Field::key)
+                .filter(key -> actionOf(resolutions, key) == null)
+                .toList();
+        if (!unresolved.isEmpty()) {
+            return choiceNeeded(unresolved);
+        }
 
         Set<String> differing = mergeService.collectTouchedIris(draftCopy, publicOnt);
         Map<String, ConflictResolution> effective = new java.util.HashMap<>();
@@ -368,23 +554,67 @@ public class DraftPublishMergeService {
             }
         }
 
+        List<Map<String, Object>> sectionRows = HeaderChangeRows.direct(draftHeader, publicHeader);
+        for (Map<String, Object> row : sectionRows) {
+            ResolutionAction wanted = actionOf(resolutions, (String) row.get("entityIri"));
+            if (wanted == ResolutionAction.KEEP_SOURCE
+                    || (wanted == ResolutionAction.MERGE && OntologyHeaderMerge.isSetSection((String) row.get("entityIri")))) {
+                taken++;
+            }
+        }
+        Header headerBaseline = Header.forChoices(publicHeader, draftHeader, resolutions);
+
         OWLOntology merged = mergeService.mergeDraftPublishThreeWay(
-                draftCopy, publicOnt, draftTarget, differing, effective);
+                draftCopy, publicOnt, draftTarget, differing, effective, headerBaseline);
         replaceDraftGraph(projectId, userId, mergeService.saveOntologyToRdfXml(merged));
 
         OWLOntology newBaseline = mergeService.loadOntologyFromRdf(publicRdf);
         declinedPublicOnly.forEach(iri -> mergeService.removeEntityDefinition(newBaseline, IRI.create(iri)));
+        mergeService.withholdFromOntology(newBaseline,
+                kept(resolutions, OntologyHeaderMerge.ANNOTATIONS)
+                        ? OntologyHeaderMerge.changes(draftHeader.annotations(), publicHeader.annotations()).added() : Set.of(),
+                kept(resolutions, OntologyHeaderMerge.IMPORTS)
+                        ? OntologyHeaderMerge.changes(draftHeader.imports(), publicHeader.imports()).added() : Set.of(),
+                kept(resolutions, OntologyHeaderMerge.OTHER_AXIOMS)
+                        ? OntologyHeaderMerge.otherAxiomChanges(draftHeader, publicHeader).added() : Set.of());
         recordBaseline(projectId, userId, session,
                 writeBaselineSnapshot(projectId, userId, mergeService.saveOntologyToRdfXml(newBaseline)));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("mergedCount", taken);
-        result.put("conflictsResolved", differing.size());
+        result.put("conflictsResolved", differing.size() + sectionRows.size());
         result.put("message", taken == 0
                 ? "Your draft was left as it is"
                 : "Took " + taken + " item(s) from Public into your draft");
         return result;
+    }
+
+    private static boolean kept(Map<String, ConflictResolution> resolutions, String key) {
+        ResolutionAction action = actionOf(resolutions, key);
+        return action != ResolutionAction.KEEP_SOURCE && action != ResolutionAction.MERGE;
+    }
+
+    private static Map<String, Object> choiceNeeded(List<String> unresolved) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", false);
+        result.put("needsChoice", true);
+        result.put("unresolved", unresolved);
+        result.put("mergedCount", 0);
+        result.put("conflictsResolved", 0);
+        result.put("message", CHOICE_NEEDED_MESSAGE);
+        return result;
+    }
+
+    private static ResolutionAction actionOf(Map<String, ConflictResolution> resolutions, String key) {
+        ConflictResolution chosen = resolutions != null ? resolutions.get(key) : null;
+        return chosen != null ? chosen.getAction() : null;
+    }
+
+    private static ConflictResolution resolution(ResolutionAction action) {
+        ConflictResolution resolution = new ConflictResolution();
+        resolution.setAction(action);
+        return resolution;
     }
 
     private String exportMain(String projectId) {

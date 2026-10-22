@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { withDraft } from './draftScope';
+import { useUndoRefresh } from './useUndoRefresh';
 import { Sparkles, Plus, Trash2, Save, Play, Download, Edit2, TrendingUp, Zap } from 'lucide-react';
 import MembershipFunctionCanvas from './components/MembershipFunctionCanvas';
 import { FuzzyOntology } from './core/FuzzyOntology';
@@ -20,7 +22,6 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
-// Fuzzy modifier functions
 
 const FUZZY_MODIFIERS = {
   'extremely': (degree: number) => Math.pow(degree, 4),
@@ -30,12 +31,11 @@ const FUZZY_MODIFIERS = {
   'somewhat': (degree: number) => Math.pow(degree, 0.33),
 };
 
-// Membership function types
 type MembershipFunctionType = 'singleton' | 'triangular' | 'trapezoidal' | 'gaussian' | 'sigmoid';
 
 interface MembershipFunction {
   type: MembershipFunctionType;
-  parameters: number[]; // varies by type
+  parameters: number[];
 }
 
 interface FuzzyMembership {
@@ -43,9 +43,9 @@ interface FuzzyMembership {
   entity: string;
   fuzzyClass: string;
   degree: number;
-  modifier?: keyof typeof FUZZY_MODIFIERS; // very, more_or_less, etc.
+  modifier?: keyof typeof FUZZY_MODIFIERS;
   membershipFunction?: MembershipFunction;
-  dataValue?: number; // for function evaluation
+  dataValue?: number;
 }
 
 interface FuzzyRule {
@@ -54,20 +54,20 @@ interface FuzzyRule {
   condition: string;
   action: string;
   enabled: boolean;
-  tNorm?: 'min' | 'product' | 'lukasiewicz'; // T-norm for AND
-  tConorm?: 'max' | 'probabilistic' | 'lukasiewicz'; // T-conorm for OR
+  tNorm?: 'min' | 'product' | 'lukasiewicz';
+  tConorm?: 'max' | 'probabilistic' | 'lukasiewicz';
 }
 
 interface FuzzyEditorEnhancedProps {
   projectId: string;
+  draftMode?: boolean;
 }
 
-const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) => {
+const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId, draftMode = false }) => {
   const [memberships, setMemberships] = useState<FuzzyMembership[]>([]);
   const [rules, setRules] = useState<FuzzyRule[]>([]);
   const [activeTab, setActiveTab] = useState<'memberships' | 'functions' | 'modifiers' | 'rules' | 'query'>('memberships');
   
-  // New membership form
   const [newEntity, setNewEntity] = useState('');
   const [newFuzzyClass, setNewFuzzyClass] = useState('');
   const [newDegree, setNewDegree] = useState(0.5);
@@ -76,60 +76,52 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
   const [newFunctionParams, setNewFunctionParams] = useState<number[]>([]);
   const [newDataValue, setNewDataValue] = useState<number>(0);
   
-  // Function editor state
   const [showFunctionEditor, setShowFunctionEditor] = useState(false);
   const [editingFunction, setEditingFunction] = useState<MembershipFunction | null>(null);
   
-  // Editing state
   const [editingMembershipId, setEditingMembershipId] = useState<string | null>(null);
   
-  // Success notification state
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   
-  // New rule form
   const [newRuleName, setNewRuleName] = useState('');
   const [newCondition, setNewCondition] = useState('');
   const [newAction, setNewAction] = useState('');
   const [newTNorm, setNewTNorm] = useState<'min' | 'product' | 'lukasiewicz'>('min');
   const [newTConorm, setNewTConorm] = useState<'max' | 'probabilistic' | 'lukasiewicz'>('max');
   
-  // Fuzzy query
   const [fuzzyQuery, setFuzzyQuery] = useState('');
   const [queryResults, setQueryResults] = useState<any[]>([]);
   const [queryError, setQueryError] = useState<string>('');
   const [loadError, setLoadError] = useState<string>('');
 
   useEffect(() => {
-    // Clear state when switching projects
     setMemberships([]);
     setRules([]);
     setQueryResults([]);
     setQueryError('');
     
-    // Load fuzzy data for the new project
     loadFuzzyData();
-  }, [projectId]);
+  }, [projectId, draftMode]);
 
-  // Escape string for SPARQL literal
+  useUndoRefresh(projectId, () => { void loadFuzzyData(); });
+
   const escapeSparqlString = (str: string): string => {
     return str
-      .replace(/\\/g, '\\\\')   // Escape backslashes first
-      .replace(/"/g, '\\"')      // Escape quotes
-      .replace(/\n/g, '\\n')     // Escape newlines
-      .replace(/\r/g, '\\r')     // Escape carriage returns
-      .replace(/\t/g, '\\t');    // Escape tabs
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t');
   };
 
   const isSafeIri = (iri: string): boolean => {
     return /^[^<>"{}|\\^`\s]+$/.test(iri);
   };
 
-  // Calculate effective degree with modifier
   const getEffectiveDegree = (membership: FuzzyMembership): number => {
     let degree = membership.degree;
     
-    // Apply membership function if exists
     if (membership.membershipFunction && membership.dataValue !== undefined) {
       degree = evaluateMembershipFunction(
         membership.membershipFunction,
@@ -137,7 +129,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       );
     }
     
-    // Apply modifier
     if (membership.modifier) {
       const modifierFn = FUZZY_MODIFIERS[membership.modifier];
       if (modifierFn) {
@@ -148,7 +139,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
     return Math.max(0, Math.min(1, degree));
   };
 
-  // Evaluate membership function
   const evaluateMembershipFunction = (func: MembershipFunction, value: number): number => {
     switch (func.type) {
       case 'singleton':
@@ -220,7 +210,7 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
   const loadFuzzyData = async () => {
     setLoadError('');
     try {
-      const membershipResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
+      const membershipResponse = await fetch(apiUrl(withDraft(`/api/sparql/query/${projectId}`, draftMode)), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -275,7 +265,7 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
         return;
       }
 
-      const ruleResponse = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
+      const ruleResponse = await fetch(apiUrl(withDraft(`/api/sparql/query/${projectId}`, draftMode)), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -340,7 +330,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       modifier: newModifier !== 'none' ? (newModifier as keyof typeof FUZZY_MODIFIERS) : undefined,
     };
     
-    // Add membership function if not singleton
     if (newFunctionType !== 'singleton' && newFunctionParams.length > 0) {
       membership.membershipFunction = {
         type: newFunctionType,
@@ -351,7 +340,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
     setMemberships([...memberships, membership]);
     
-    // Reset form
     setNewEntity('');
     setNewFuzzyClass('');
     setNewDegree(0.5);
@@ -404,7 +392,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       return m;
     }));
 
-    // Reset form
     setEditingMembershipId(null);
     setNewEntity('');
     setNewFuzzyClass('');
@@ -467,7 +454,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
         return;
       }
 
-      // Check if there's anything to save
       if (memberships.length === 0 && rules.length === 0) {
         console.warn('⚠️ No fuzzy data to save. Add memberships or rules first.');
         return;
@@ -548,7 +534,7 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
 
       console.log('💾 Saving fuzzy data (single atomic delete+insert)...');
 
-      const response = await fetch(apiUrl(`/api/sparql/update/${projectId}`), {
+      const response = await fetch(apiUrl(withDraft(`/api/sparql/update/${projectId}`, draftMode)), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -561,7 +547,7 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       } else {
         const errText = await response.text().catch(() => '');
         let msg = `Failed to save fuzzy ontology (${response.status})`;
-        try { msg = JSON.parse(errText).error || msg; } catch { /* ignore */ }
+        try { msg = JSON.parse(errText).error || msg; } catch {  }
         setQueryError(msg);
       }
     } catch (error) {
@@ -575,7 +561,6 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
       return;
     }
 
-    // Check for common copy-paste errors
     const trimmedQuery = fuzzyQuery.trim();
     if (trimmedQuery.startsWith('sparql') || trimmedQuery.startsWith('```')) {
       setQueryError('Invalid query: Remove "sparql" or "```" markdown markers. Query should start with PREFIX or SELECT.');
@@ -600,8 +585,8 @@ const FuzzyEditorEnhanced: React.FC<FuzzyEditorEnhancedProps> = ({ projectId }) 
     console.log('📝 Executing SPARQL Query:', fuzzyQuery);
 
     try {
-      setQueryError(''); // Clear previous errors
-      const response = await fetch(apiUrl(`/api/sparql/query/${projectId}`), {
+      setQueryError('');
+      const response = await fetch(apiUrl(withDraft(`/api/sparql/query/${projectId}`, draftMode)), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -677,7 +662,6 @@ ${rules.map(r => `<http://example.org/rules/${r.id}> a fuzzy:Rule ;
     URL.revokeObjectURL(url);
   };
 
-  // Render membership function editor
   const renderFunctionEditor = () => {
     if (!showFunctionEditor) return null;
 

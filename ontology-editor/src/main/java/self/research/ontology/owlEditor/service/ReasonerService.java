@@ -35,15 +35,25 @@ public class ReasonerService {
 
     private static final Logger log = LoggerFactory.getLogger(ReasonerService.class);
 
+    private static final int INFERRED_AXIOM_COUNT_MAX_CLASSES = 2000;
+
+    private enum Warmup { ALL, CLASS_HIERARCHY, NONE }
+
+    private final Set<CompletableFuture<OWLReasoner>> partialWarmupBuilds =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
     // (each reasoner holds the full ontology + inference state in heap)
-    private final Cache<String, OWLReasoner> reasonerCache = Caffeine.newBuilder()
+    private final Cache<String, CompletableFuture<OWLReasoner>> reasonerCache = Caffeine.newBuilder()
         .maximumSize(5)
         .expireAfterAccess(15, TimeUnit.MINUTES)
-        .removalListener((key, value, cause) -> {
-            if (value instanceof OWLReasoner reasoner) {
-                log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
-                try { reasoner.dispose(); } catch (Exception ignored) {}
+        .removalListener((String key, CompletableFuture<OWLReasoner> future, com.github.benmanes.caffeine.cache.RemovalCause cause) -> {
+            if (future != null) {
+                partialWarmupBuilds.remove(future);
+                future.thenAccept(reasoner -> {
+                    log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
+                    try { reasoner.dispose(); } catch (Exception ignored) {}
+                });
             }
         })
         .build();
@@ -62,6 +72,12 @@ public class ReasonerService {
 
     @Value("${ontocode.reasoner.save-consistency-timeout-ms:8000}")
     private long SAVE_CONSISTENCY_TIMEOUT_MS;
+
+    @Value("${ontocode.reasoner.save-consistency-setup-timeout-ms:8000}")
+    private long SAVE_CONSISTENCY_SETUP_TIMEOUT_MS;
+
+    @Value("${ontocode.reasoner.operation-timeout-ms:45000}")
+    private long reasonerOperationTimeoutMs;
     private final ExecutorService inferredTypesExecutor = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "reasoner-inferred-types-worker");
         t.setDaemon(true);
@@ -75,22 +91,113 @@ public class ReasonerService {
                 return t;
             }, new ThreadPoolExecutor.AbortPolicy());
 
+    private final ExecutorService saveConsistencySetupExecutor = new ThreadPoolExecutor(1, 2, 60, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(10), r -> {
+                Thread t = new Thread(r, "reasoner-save-setup-worker");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
+
+    private final ExecutorService reasonerBuildExecutor = new ThreadPoolExecutor(4, 4, 60, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(20), r -> {
+                Thread t = new Thread(r, "reasoner-build-worker");
+                t.setDaemon(true);
+                return t;
+            }, new ThreadPoolExecutor.AbortPolicy());
+
     /**
      * Create or get cached reasoner for an ontology
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
+        return obtainReasoner(ontology, type, Warmup.ALL);
+    }
+
+    public OWLReasoner getClassHierarchyReasoner(OWLOntology ontology, ReasonerType type) {
+        return obtainReasoner(ontology, type, Warmup.CLASS_HIERARCHY);
+    }
+
+    public OWLReasoner getUnwarmedReasoner(OWLOntology ontology, ReasonerType type) {
+        return obtainReasoner(ontology, type, Warmup.NONE);
+    }
+
+    private OWLReasoner obtainReasoner(OWLOntology ontology, ReasonerType type, Warmup warmup) {
         String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
 
-        OWLReasoner cached = reasonerCache.getIfPresent(cacheKey);
-        if (cached != null) {
-            try { cached.flush(); } catch (Exception e) {
-                log.warn("Failed to flush reasoner: {}", e.getMessage());
-            }
-            return cached;
+        CompletableFuture<OWLReasoner> future = reasonerCache.get(cacheKey,
+                k -> submitReasonerBuild(ontology, type, warmup));
+        OWLReasoner reasoner;
+        try {
+            reasoner = future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            reasonerCache.asMap().remove(cacheKey, future);
+            throw new RuntimeException(type.getDisplayName() + " reasoning timed out after "
+                    + (reasonerOperationTimeoutMs / 1000) + "s — the ontology may be too large or complex "
+                    + "for this reasoner. Try a different reasoner or a smaller scope.");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(type.getDisplayName() + " reasoning was interrupted", e);
+        } catch (Exception e) {
+            reasonerCache.asMap().remove(cacheKey, future);
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw cause instanceof RuntimeException re ? re : new RuntimeException(cause);
         }
 
+        if (warmup == Warmup.ALL && partialWarmupBuilds.remove(future)) {
+            precomputeAll(reasoner, type);
+        }
+
+        try {
+            reasoner.flush();
+        } catch (Exception e) {
+            log.warn("Failed to flush reasoner: {}", e.getMessage());
+        }
+        return reasoner;
+    }
+
+    private CompletableFuture<OWLReasoner> submitReasonerBuild(OWLOntology ontology, ReasonerType type,
+                                                               Warmup warmup) {
+        CompletableFuture<OWLReasoner> future = new CompletableFuture<>();
+        if (warmup != Warmup.ALL) {
+            partialWarmupBuilds.add(future);
+        }
+        try {
+            reasonerBuildExecutor.execute(() -> {
+                try {
+                    future.complete(switch (warmup) {
+                        case ALL -> buildReasonerWithPrecompute(ontology, type);
+                        case CLASS_HIERARCHY -> buildClassHierarchyReasoner(ontology, type);
+                        case NONE -> createReasoner(ontology, type);
+                    });
+                } catch (Throwable t) {
+                    future.completeExceptionally(t);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            future.completeExceptionally(
+                    new RuntimeException("Too many reasoning requests in progress — please try again shortly."));
+        }
+        return future;
+    }
+
+    private OWLReasoner buildReasonerWithPrecompute(OWLOntology ontology, ReasonerType type) {
         OWLReasoner reasoner = createReasoner(ontology, type);
         log.info("Precomputing inferences for new {} reasoner", type.getDisplayName());
+        precomputeAll(reasoner, type);
+        return reasoner;
+    }
+
+    private OWLReasoner buildClassHierarchyReasoner(OWLOntology ontology, ReasonerType type) {
+        OWLReasoner reasoner = createReasoner(ontology, type);
+        log.info("Precomputing the class hierarchy for new {} reasoner", type.getDisplayName());
+        try {
+            reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
+        } catch (Exception e) {
+            log.warn("Failed to precompute the class hierarchy, some results might be incomplete: {}", e.getMessage());
+        }
+        return reasoner;
+    }
+
+    private void precomputeAll(OWLReasoner reasoner, ReasonerType type) {
         try {
             if (type == ReasonerType.ELK) {
                 // ELK only supports EL profile inferences
@@ -106,75 +213,47 @@ public class ReasonerService {
                     InferenceType.CLASS_ASSERTIONS
                 );
             }
-        } catch (Throwable e) {
-            // Throwable: some reasoner libraries raise Errors (e.g. NoSuchMethodError) during
-            // precompute rather than at creation — never let those crash the request.
+        } catch (Exception e) {
             log.warn("Failed to precompute inferences, some results might be incomplete: {}", e.getMessage());
         }
-
-        reasonerCache.put(cacheKey, reasoner);
-        return reasoner;
     }
 
     /**
      * Create a new reasoner instance
      */
     private OWLReasoner createReasoner(OWLOntology ontology, ReasonerType type) {
-        log.info("Creating {} reasoner for ontology: {}", 
-            type.getDisplayName(), 
+        log.info("Creating {} reasoner for ontology: {}",
+            type.getDisplayName(),
             ontology.getOntologyID().getOntologyIRI().orElse(null));
 
-        OWLReasonerConfiguration config = new SimpleConfiguration();
-        
+        OWLReasonerConfiguration config = new SimpleConfiguration(reasonerOperationTimeoutMs);
+
         try {
-            switch (type) {
-                case HERMIT:
-                    // HermiT - Hypertableau-based reasoner, best for complex ontologies
-                    log.info("Using HermiT (Hypertableau) reasoner");
-                    // Note: HermiT 1.4.3.456 has a binary compatibility issue with OWLAPI 5.5.0
-                    // specifically regarding OWLOntologyID.getDefaultDocumentIRI()
-                    // Falling back to Openllet if HermiT fails to initialize
-                    try {
-                        return new ReasonerFactory().createReasoner(ontology, config);
-                    } catch (NoSuchMethodError e) {
-                        log.error("HermiT binary compatibility error with OWLAPI 5.5.0: {}. Falling back to Openllet.", e.getMessage());
-                        return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
-                    }
-                    
-                case PELLET:
-                case OPENLLET:
-                    // Use Openllet (OWLAPI 5.x compatible reasoner)
-                    log.info("Using Pellet/Openllet reasoner");
-                    return OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
-                    
-                case FACTPLUSPLUS:
-                    log.info("Using FaCT++ (JFact) reasoner");
-                    return new JFactFactory().createReasoner(ontology, config);
-
-                case ELK:
-                    // ELK: consequence-based OWL EL reasoner — 10-100x faster than HermiT,
-                    // fraction of memory usage. Uses io.github.liveontologies:elk-owlapi:0.6.0
-                    // (OWLAPI 5-compatible). Falls back to Structural if ELK can't handle the
-                    // ontology (non-EL constructs) or hits a library error.
-                    log.info("Using ELK reasoner (OWL EL profile)");
-                    try {
-                        return new ElkReasonerFactory().createReasoner(ontology, config);
-                    } catch (Throwable e) {
-                        log.warn("ELK failed (ontology may use non-EL constructs): {}. Falling back to Structural.", e.getMessage());
-                        return new StructuralReasonerFactory().createReasoner(ontology, config);
-                    }
-
-                case STRUCTURAL:
-                default:
-                    log.info("Using Structural reasoner (basic)");
-                    return new StructuralReasonerFactory().createReasoner(ontology, config);
-            }
+            return getReasonerFactory(type).createReasoner(ontology, config);
         } catch (Throwable e) {
-            // Catch Throwable (not just Exception) so binary-incompatibility Errors such as
-            // NoSuchMethodError from a reasoner library degrade to the Structural reasoner
-            // instead of bubbling up to the controller and surfacing as a UI "Reasoner error".
-            log.error("Failed to create {} reasoner, falling back to Structural", type, e);
-            return new StructuralReasonerFactory().createReasoner(ontology, config);
+            log.error("Failed to create {} reasoner", type, e);
+            throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
+        }
+    }
+
+    private OWLReasonerFactory getReasonerFactory(ReasonerType type) {
+        switch (type) {
+            case HERMIT:
+                return new ReasonerFactory();
+
+            case PELLET:
+            case OPENLLET:
+                return OpenlletReasonerFactory.getInstance();
+
+            case FACTPLUSPLUS:
+                return new JFactFactory();
+
+            case ELK:
+                return new ElkReasonerFactory();
+
+            case STRUCTURAL:
+            default:
+                return new StructuralReasonerFactory();
         }
     }
 
@@ -283,11 +362,16 @@ public class ReasonerService {
      * Get inferred subclasses for a class
      */
     public Set<OWLClass> getInferredSubClasses(OWLOntology ontology, OWLClass owlClass, ReasonerType type, boolean direct) {
-        OWLReasoner reasoner = getReasoner(ontology, type);
-        
+        return getInferredSubClasses(getReasoner(ontology, type), owlClass, direct);
+    }
+
+    public Set<OWLClass> getInferredSubClasses(OWLReasoner reasoner, OWLClass owlClass, boolean direct) {
         try {
             NodeSet<OWLClass> subClasses = reasoner.getSubClasses(owlClass, direct);
-            return subClasses.getFlattened();
+            return subClasses.getNodes().stream()
+                .filter(n -> !n.isBottomNode())
+                .flatMap(n -> n.getEntities().stream())
+                .collect(Collectors.toSet());
         } catch (Exception e) {
             log.error("Error getting inferred subclasses", e);
             return Collections.emptySet();
@@ -477,9 +561,9 @@ public class ReasonerService {
     public Optional<OWLReasoner> findCachedReasoner(OWLOntology ontology) {
         for (ReasonerType type : ReasonerType.values()) {
             String cacheKey = System.identityHashCode(ontology) + "-" + type.name();
-            OWLReasoner reasoner = reasonerCache.getIfPresent(cacheKey);
-            if (reasoner != null) {
-                return Optional.of(reasoner);
+            CompletableFuture<OWLReasoner> future = reasonerCache.getIfPresent(cacheKey);
+            if (future != null && future.isDone() && !future.isCompletedExceptionally()) {
+                return Optional.of(future.join());
             }
         }
         return Optional.empty();
@@ -553,12 +637,19 @@ public class ReasonerService {
             stats.put("supportsDatatypeReasoning", type != ReasonerType.STRUCTURAL);
             stats.put("supportsOWL2DL", type == ReasonerType.HERMIT || type == ReasonerType.PELLET);
             
-            // Inferred axioms estimate
-            try {
-                Set<OWLAxiom> inferredAxioms = getInferredAxioms(ontology, type);
-                stats.put("inferredAxioms", inferredAxioms.size());
-            } catch (Exception e) {
-                stats.put("inferredAxioms", 0);
+            // Inferred axioms estimate — getInferredAxioms() runs a per-class superclass and
+            // instance query against the reasoner, which is O(classCount) work. Fine for a
+            // handful of classes, but prohibitively slow as part of a "stats overview" call
+            // once the ontology gets large, so skip it past a sane threshold.
+            if (classCount <= INFERRED_AXIOM_COUNT_MAX_CLASSES) {
+                try {
+                    Set<OWLAxiom> inferredAxioms = getInferredAxioms(ontology, type);
+                    stats.put("inferredAxioms", inferredAxioms.size());
+                } catch (Exception e) {
+                    stats.put("inferredAxioms", 0);
+                }
+            } else {
+                stats.put("inferredAxioms", -1);
             }
             
         } catch (Exception e) {
@@ -610,8 +701,30 @@ public class ReasonerService {
         }
 
         long setupStart = System.currentTimeMillis();
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
-        OWLReasoner reasoner = createReasoner(reasoningOntology, type);
+        CompletableFuture<OWLReasoner> setup;
+        try {
+            setup = CompletableFuture.supplyAsync(() -> createReasoner(stripSwrlRules(ontology), type),
+                    saveConsistencySetupExecutor);
+        } catch (RejectedExecutionException ree) {
+            log.warn("Too many concurrent save-time reasoner setups; allowing save through unchecked");
+            return SaveConsistencyResult.timedOut();
+        }
+        OWLReasoner reasoner;
+        try {
+            reasoner = setup.get(SAVE_CONSISTENCY_SETUP_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            log.warn("Save-time setup (strip+create) took longer than {} ms; allowing save through unchecked",
+                    SAVE_CONSISTENCY_SETUP_TIMEOUT_MS);
+            setup.thenAccept(r -> { try { r.dispose(); } catch (Exception ignored) {} });
+            return SaveConsistencyResult.timedOut();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            setup.thenAccept(r -> { try { r.dispose(); } catch (Exception ignored) {} });
+            return SaveConsistencyResult.timedOut();
+        } catch (Exception e) {
+            log.warn("Save-time setup failed ({}); allowing save through unchecked", e.getMessage());
+            return SaveConsistencyResult.timedOut();
+        }
         long consistencyStart = System.currentTimeMillis();
         CompletableFuture<Boolean> future;
         try {
@@ -628,7 +741,13 @@ public class ReasonerService {
             log.info("[TIMING] Save-time reasoning: strip+create {} ms, isConsistent() {} ms",
                     consistencyStart - setupStart, System.currentTimeMillis() - consistencyStart);
         } catch (TimeoutException te) {
-            log.warn("Save-time consistency check timed out after {} ms; allowing save through unchecked", SAVE_CONSISTENCY_TIMEOUT_MS);
+            log.warn("Save-time consistency check timed out after {} ms; allowing save through unchecked",
+                    SAVE_CONSISTENCY_TIMEOUT_MS);
+            reasoner.interrupt();
+            future.whenComplete((r, ex) -> { try { reasoner.dispose(); } catch (Exception ignored) {} });
+            return SaveConsistencyResult.timedOut();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
             reasoner.interrupt();
             future.whenComplete((r, ex) -> { try { reasoner.dispose(); } catch (Exception ignored) {} });
             return SaveConsistencyResult.timedOut();
@@ -649,19 +768,32 @@ public class ReasonerService {
         return SaveConsistencyResult.inconsistent(GENERIC_INCONSISTENCY_MESSAGE, null);
     }
 
-    public List<String> getUnsatisfiableClassesQuick(OWLOntology ontology, ReasonerType type) {
-        OWLOntology reasoningOntology = stripSwrlRules(ontology);
+    public record QuickUnsatResult(List<String> unsatisfiableClasses, boolean inconsistent) {}
+
+    public QuickUnsatResult getUnsatisfiableClassesQuick(OWLOntology ontology, ReasonerType type,
+                                                         java.util.function.Consumer<OWLReasoner> onReasonerCreated) {
+        return getUnsatisfiableClassesQuickWithoutSwrl(stripSwrlRules(ontology), type, onReasonerCreated);
+    }
+
+    public OWLOntology withoutSwrlRules(OWLOntology ontology) {
+        return stripSwrlRules(ontology);
+    }
+
+    public QuickUnsatResult getUnsatisfiableClassesQuickWithoutSwrl(OWLOntology reasoningOntology, ReasonerType type,
+                                                                    java.util.function.Consumer<OWLReasoner> onReasonerCreated) {
         OWLReasoner reasoner = createReasoner(reasoningOntology, type);
         try {
+            onReasonerCreated.accept(reasoner);
             if (!reasoner.isConsistent()) {
-                return Collections.emptyList();
+                return new QuickUnsatResult(Collections.emptyList(), true);
             }
             Node<OWLClass> bottomNode = reasoner.getUnsatisfiableClasses();
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-            return bottomNode.getEntities().stream()
+            OWLDataFactory df = reasoningOntology.getOWLOntologyManager().getOWLDataFactory();
+            List<String> unsatisfiable = bottomNode.getEntities().stream()
                 .filter(c -> !c.equals(df.getOWLNothing()))
-                .map(c -> c.getIRI().toString().replaceAll("^.*[#/]", ""))
+                .map(c -> c.getIRI().toString())
                 .collect(Collectors.toList());
+            return new QuickUnsatResult(unsatisfiable, false);
         } finally {
             try { reasoner.dispose(); } catch (Exception ignored) {}
         }

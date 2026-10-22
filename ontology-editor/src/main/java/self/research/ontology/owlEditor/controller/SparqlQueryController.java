@@ -142,13 +142,16 @@ public class SparqlQueryController {
                                     @RequestBody SparqlRequest request,
                                     @RequestParam(required = false, defaultValue = "anonymous") String userId,
                                     @RequestParam(required = false, defaultValue = "Anonymous") String username,
-                                    @RequestParam(required = false, defaultValue = "false") boolean draft) {
+                                    @RequestParam(required = false, defaultValue = "false") boolean draft,
+                                    jakarta.servlet.http.HttpServletRequest httpRequest) {
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
         }
         try {
+        final String actorId = self.research.ontology.owlEditor.service.RequestActor.forScope(httpRequest, userId, draft);
+        final String actorName = "Anonymous".equals(username) ? actorId : username;
 
-        mutationService.applyRawUpdateWithHistory(projectId, request.query(), draft, userId, username);
+        mutationService.applyRawUpdateWithHistory(projectId, request.query(), draft, actorId, actorName);
 
         if (draft) {
             return ResponseEntity.ok(Map.of("success", true, "draft", true));
@@ -157,8 +160,8 @@ public class SparqlQueryController {
         Map<String, Object> sparqlUpdateNotification = Map.of(
             "type", "SPARQL_UPDATE",
             "projectId", projectId,
-            "userId", userId,
-            "username", username,
+            "userId", actorId,
+            "username", actorName,
             "timestamp", System.currentTimeMillis(),
             "message", "SPARQL update executed - please refresh"
         );

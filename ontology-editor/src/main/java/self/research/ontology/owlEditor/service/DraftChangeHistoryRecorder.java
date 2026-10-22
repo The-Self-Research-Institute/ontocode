@@ -5,12 +5,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.OntologyChange;
+import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class DraftChangeHistoryRecorder {
@@ -26,9 +29,18 @@ public class DraftChangeHistoryRecorder {
         this.historyService = historyService;
     }
 
+    private final Map<String, Set<String>> publishedEntities = new ConcurrentHashMap<>();
+
+    private static String publishKey(String projectId, String userId) {
+        return projectId + "::" + userId;
+    }
+
     public void markPublished(String projectId, String userId) {
         try {
-            historyService.markDraftHistoryPublished(projectId, userId);
+            Set<String> iris = historyService.markDraftHistoryPublished(projectId, userId);
+            if (iris != null && !iris.isEmpty()) {
+                publishedEntities.put(publishKey(projectId, userId), iris);
+            }
         } catch (Exception e) {
             log.warn("[DRAFT] Could not mark published draft history entries for project {} user {}: {}",
                     projectId, userId, e.getMessage());
@@ -36,8 +48,12 @@ public class DraftChangeHistoryRecorder {
     }
 
     public int record(String projectId, List<DraftChange> drafts) {
+        List<DraftChange> tracked = drafts.stream()
+                .filter(draft -> !SpreadsheetImportDraftSupport.isImportSession(draft.getSessionId())
+                        && !DraftMergeApplier.isMergeSession(draft.getSessionId()))
+                .toList();
         int failures = 0;
-        for (DraftChange draft : drafts) {
+        for (DraftChange draft : tracked) {
             try {
                 recordTrackedChange(projectId, draft);
             } catch (Exception e) {
@@ -46,8 +62,16 @@ public class DraftChangeHistoryRecorder {
                         draft.getId(), projectId, e.getMessage());
             }
         }
-        Map<String, List<DraftChange>> byEntity = groupByEntity(drafts);
-        for (List<DraftChange> group : byEntity.values()) {
+        Map<String, List<DraftChange>> byEntity = groupByEntity(tracked.stream()
+                .filter(draft -> !DraftTrackingService.isDescribed(draft))
+                .toList());
+        Set<String> alreadyRecorded = tracked.isEmpty() ? Set.of()
+                : publishedEntities.getOrDefault(publishKey(projectId, tracked.get(0).getUserId()), Set.of());
+        for (Map.Entry<String, List<DraftChange>> entry : byEntity.entrySet()) {
+            if (alreadyRecorded.contains(entry.getKey())) {
+                continue;
+            }
+            List<DraftChange> group = entry.getValue();
             try {
                 recordBundledHistory(projectId, group);
             } catch (Exception e) {
@@ -55,8 +79,11 @@ public class DraftChangeHistoryRecorder {
                 log.error("[DRAFT] Failed to record bundled history on project {}: {}", projectId, e.getMessage());
             }
         }
+        if (!tracked.isEmpty()) {
+            publishedEntities.remove(publishKey(projectId, tracked.get(0).getUserId()));
+        }
         log.info("[DRAFT] Recorded {} changes to change tracking and GraphDB history ({} bundled entries, {} failed)",
-                drafts.size(), byEntity.size(), failures);
+                tracked.size(), byEntity.size(), failures);
         return failures;
     }
 

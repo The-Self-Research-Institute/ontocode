@@ -21,7 +21,9 @@ public class ReasoningJob {
         REASONER_HIERARCHY,
         REASONER_OBJ_PROP_HIERARCHY,
         REASONER_DATA_PROP_HIERARCHY,
-        REASONER_EXPLAIN_INCONSISTENCY
+        REASONER_EXPLAIN_INCONSISTENCY,
+        REASONER_EXPLAIN_ENTAILMENT,
+        REASONER_SNAPSHOT
     }
 
     public enum Status {
@@ -36,6 +38,11 @@ public class ReasoningJob {
     private String reasonerType;
     private Integer maxJustifications;
     private String explanationMode;
+    private String entailmentType;
+    private String subjectIri;
+    private String targetIri;
+    private String propertyIri;
+    private String literalValue;
     private Status status;
     private int queuePosition;
     private long estimatedWaitTimeMs;
@@ -48,6 +55,8 @@ public class ReasoningJob {
     private String ownerEmail;
     private long tripleCount;
     private int slotWeight;
+    @Builder.Default
+    private int requesterCount = 1;
 
     public long getWaitTimeMs() {
         if (queuedAt == null) {

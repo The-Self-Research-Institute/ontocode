@@ -56,6 +56,21 @@ public final class JwtClaimUtils {
         return new String[]{plan, userId};
     }
 
+    public static String[] extractIdentityClaims(String authHeader) {
+        JsonNode claims = parsePayload(authHeader);
+        if (claims == null) {
+            return new String[0];
+        }
+        java.util.List<String> found = new java.util.ArrayList<>();
+        for (String name : new String[]{"userId", "id", "sub"}) {
+            JsonNode node = claims.get(name);
+            if (node != null && node.isTextual() && !node.asText().isBlank()) {
+                found.add(node.asText().trim());
+            }
+        }
+        return found.toArray(new String[0]);
+    }
+
     private static JsonNode parsePayload(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             return null;
