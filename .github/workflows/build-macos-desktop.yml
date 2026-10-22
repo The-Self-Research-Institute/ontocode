@@ -7,6 +7,10 @@ on:
         type: choice
         options: [arm64, x64, both]
         default: arm64
+      notarize:
+        description: Send the app to Apple for notarization (slower, run after signing works)
+        type: boolean
+        default: false
 concurrency:
   group: macos-desktop-${{ github.ref }}
   cancel-in-progress: true
@@ -74,16 +78,17 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARIZE: ${{ inputs.notarize }}
         run: |
           set -e
           if [ -n "$CSC_LINK" ]; then
             echo "Signing with the Developer ID certificate"
             args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false -c.mac.signIgnore=\.jsa\$"
-            if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            if [ "$NOTARIZE" = "true" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
               echo "Notarizing"
               args="$args -c.mac.notarize=true"
             else
-              echo "Apple ID secrets not set, skipping notarization"
+              echo "Skipping notarization (switch off or Apple ID secrets not set)"
             fi
           else
             echo "No certificate secret, signing ad-hoc"
