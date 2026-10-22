@@ -21,6 +21,7 @@ const svcMgr   = require('./services/ServiceManager');
 const syncMgr  = require('./services/SyncManager');
 const proxy    = require('./services/ProxyServer');
 const autoUpdater = require('./services/AutoUpdater');
+const { undoRedoKind } = require('./services/UndoShortcut');
 const detectJava = require('./scripts/detect-java');
 
 if (process.platform === 'linux') {
@@ -277,6 +278,14 @@ function createMainWindow() {
         if (isF12 || isCtrlShiftI) {
             mainWindow.webContents.toggleDevTools();
             event.preventDefault();
+            return;
+        }
+        const undoRedo = undoRedoKind(input);
+        if (undoRedo) {
+            event.preventDefault();
+            if (!input.isAutoRepeat) {
+                mainWindow.webContents.send('menu:undo-redo', undoRedo);
+            }
         }
     });
 

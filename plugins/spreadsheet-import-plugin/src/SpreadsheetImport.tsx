@@ -9,6 +9,9 @@ export interface SpreadsheetImportProps {
   username?: string;
   draftMode?: boolean;
   onImported?: () => void;
+  onViewOnlyAction?: () => void;
+  onDraftRequired?: () => void;
+  isDraftEditor?: boolean;
 }
 
 const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
@@ -18,6 +21,9 @@ const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
   username,
   draftMode,
   onImported,
+  onViewOnlyAction,
+  onDraftRequired,
+  isDraftEditor,
 }) => {
   setApiClient(context?.apiClient);
 
@@ -28,6 +34,9 @@ const SpreadsheetImport: React.FC<SpreadsheetImportProps> = ({
       username={username}
       draftMode={draftMode}
       onImported={onImported}
+      onViewOnlyAction={onViewOnlyAction}
+      onDraftRequired={onDraftRequired}
+      isDraftEditor={isDraftEditor}
     />
   );
 };
