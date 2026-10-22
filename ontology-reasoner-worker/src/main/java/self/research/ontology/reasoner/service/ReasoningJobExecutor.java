@@ -4,7 +4,16 @@ import org.semanticweb.owl.explanation.api.Explanation;
 import org.semanticweb.owl.explanation.api.ExplanationGenerator;
 import org.semanticweb.owl.explanation.api.ExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.api.ExplanationProgressMonitor;
+import org.semanticweb.owl.explanation.impl.blackbox.Configuration;
+import org.semanticweb.owl.explanation.impl.blackbox.ContractionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.DivideAndConquerContractionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.EntailmentCheckerFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.ExpansionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.InitialEntailmentCheckStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.StructuralTypePriorityExpansionStrategy;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.BlackBoxExplanationGeneratorFactory;
 import org.semanticweb.owl.explanation.impl.blackbox.checker.InconsistentOntologyExplanationGeneratorFactory;
+import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntailmentCheckerFactory;
 import org.semanticweb.owl.explanation.impl.laconic.LaconicExplanationGeneratorFactory;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.expression.OWLEntityChecker;
@@ -25,10 +34,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.EntailmentAxiomBuilder;
 import self.research.ontology.common.JustificationRendering;
 import self.research.ontology.reasoner.model.ReasoningJob;
 
 import java.util.*;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 @Service
@@ -76,6 +87,7 @@ public class ReasoningJobExecutor {
             case REASONER_RUN -> executeFullRun(job);
             case REASONER_INFERRED_AXIOMS -> executeInferredAxioms(job);
             case REASONER_EXPLAIN_INCONSISTENCY -> executeExplainInconsistency(job);
+            case REASONER_EXPLAIN_ENTAILMENT -> executeExplainEntailment(job);
             case REASONER_SNAPSHOT -> snapshotService.snapshot(job.getProjectId(), job.getReasonerType(), job.getOwnerEmail());
         };
     }
@@ -310,6 +322,66 @@ public class ReasoningJobExecutor {
             return explanation;
         }
     }
+
+    private Map<String, Object> executeExplainEntailment(ReasoningJob job) {
+        ReasonerType requestedType = parseReasonerType(job.getReasonerType());
+
+        Map<String, Object> result = new HashMap<>();
+        try {
+           
+            OWLOntology ontology = sessionService.loadForParse(job.getProjectId(), job.getOwnerEmail());
+            int maxJustifications = job.getMaxJustifications() != null ? job.getMaxJustifications() : defaultMaxJustifications;
+            String mode = job.getExplanationMode() != null && !job.getExplanationMode().isBlank()
+                    ? job.getExplanationMode() : "regular";
+
+            OWLAxiom entailment = EntailmentAxiomBuilder.buildEntailmentAxiom(job.getEntailmentType(), job.getSubjectIri(),
+                    job.getTargetIri(), job.getPropertyIri(), job.getLiteralValue());
+            List<Map<String, Object>> justifications = findEntailmentJustifications(ontology, entailment, maxJustifications, mode);
+
+            result.put("success", true);
+            result.put("usedReasoner", "HermiT");
+            if (requestedType != ReasonerType.HERMIT) {
+                result.put("reasonerUpgraded", true);
+            }
+            result.put("justifications", justifications);
+            long revision = sessionService.currentRevision(job.getProjectId());
+            if (revision >= 0) {
+                result.put("ontologyRevision", revision);
+            }
+            return result;
+        } catch (Exception e) {
+            rethrowIfInterrupted(e);
+            log.error("Error explaining entailment for project {}", job.getProjectId(), e);
+            result.put("success", false);
+            result.put("error", e.getMessage());
+            return result;
+        }
+    }
+
+    private List<Map<String, Object>> findEntailmentJustifications(
+            OWLOntology ontology, OWLAxiom entailment, int limit, String mode) {
+        OWLOntology reasoningOntology = JustificationRendering.stripSwrlRules(ontology);
+        Supplier<OWLOntologyManager> ontologyManagerSupplier = OWLManager::createOWLOntologyManager;
+
+        EntailmentCheckerFactory<OWLAxiom> checkerFactory =
+                new SatisfiabilityEntailmentCheckerFactory(new LenientHermitReasonerFactory(), ontologyManagerSupplier);
+        ExpansionStrategy<OWLAxiom> expansionStrategy =
+                new StructuralTypePriorityExpansionStrategy<>(InitialEntailmentCheckStrategy.PERFORM, ontologyManagerSupplier);
+        ContractionStrategy<OWLAxiom> contractionStrategy = new DivideAndConquerContractionStrategy<>();
+        Configuration<OWLAxiom> configuration =
+                new Configuration<>(checkerFactory, expansionStrategy, contractionStrategy, ontologyManagerSupplier);
+        ExplanationGeneratorFactory<OWLAxiom> baseFactory = new BlackBoxExplanationGeneratorFactory<>(configuration);
+
+        ExplanationGeneratorFactory<OWLAxiom> factory = "laconic".equals(mode)
+                ? new LaconicExplanationGeneratorFactory<>(baseFactory, ontologyManagerSupplier)
+                : baseFactory;
+
+        ExplanationGenerator<OWLAxiom> generator =
+                factory.createExplanationGenerator(reasoningOntology, new StopWhenThreadInterrupted());
+        Set<Explanation<OWLAxiom>> explanations = generator.getExplanations(entailment, limit);
+        return renderJustifications(explanations, ontology);
+    }
+
 
     private List<Map<String, Object>> findDisjointClassViolations(OWLOntology ontology) {
         List<Map<String, Object>> violations = new ArrayList<>();

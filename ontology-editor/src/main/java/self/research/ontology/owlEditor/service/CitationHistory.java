@@ -28,19 +28,22 @@ public class CitationHistory {
 
     public void around(String projectId, RequestActor actor, Entry entry, List<String> seeds, List<String> incoming,
                        Runnable apply) {
-        locks.exclusive(projectId, () -> {
-            recordAround(projectId, actor, entry, seeds, incoming, apply);
-            return null;
-        });
+        around(projectId, actor, entry, seeds, incoming, false, null, apply);
     }
 
-    private void recordAround(String projectId, RequestActor actor, Entry entry, List<String> seeds, List<String> incoming,
-                              Runnable apply) {
-        Optional<DeltaCapture> capture = begin(projectId, seeds, incoming);
+    public String around(String projectId, RequestActor actor, Entry entry, List<String> seeds, List<String> incoming,
+                         boolean draft, String draftUserId, Runnable apply) {
+        return locks.exclusive(projectId, () -> recordAround(projectId, actor, entry, seeds, incoming, draft, draftUserId,
+                apply));
+    }
+
+    private String recordAround(String projectId, RequestActor actor, Entry entry, List<String> seeds, List<String> incoming,
+                                boolean draft, String draftUserId, Runnable apply) {
+        Optional<DeltaCapture> capture = begin(projectId, seeds, incoming, draft, draftUserId);
         apply.run();
         DeltaCapture.Finish finished = capture.map(this::finish).orElse(new DeltaCapture.Finish(Optional.empty(), false));
         if (finished.unchanged()) {
-            return;
+            return null;
         }
         Optional<ExactDelta> delta = finished.delta();
         ChangeOrigin origin = ChangeOrigin.manual();
@@ -48,13 +51,16 @@ public class CitationHistory {
             origin = origin.withExact(new ExactCarrier(delta.get()));
         }
         historyService.recordEdit(projectId, actor.userId(), actor.username(), entry.operationType(), entry.citationIri(),
-                entry.label(), entry.oldText(), entry.newText(), entry.description(), null, null, false, origin);
+                entry.label(), entry.oldText(), entry.newText(), entry.description(), null, null, draft, origin);
+        return origin.changeSetId();
     }
 
-    private Optional<DeltaCapture> begin(String projectId, List<String> seeds, List<String> incoming) {
+    private Optional<DeltaCapture> begin(String projectId, List<String> seeds, List<String> incoming, boolean draft,
+                                         String draftUserId) {
         try {
             SparqlDatasetService.ProjectGraphTarget target = datasetService.graphTarget(projectId);
-            return DeltaCapture.begin(target.repository(), target.graphUri(), seeds, incoming);
+            String graph = draft ? datasetService.getDraftGraphUri(projectId, draftUserId) : target.graphUri();
+            return DeltaCapture.begin(target.repository(), graph, seeds, incoming);
         } catch (RuntimeException e) {
             log.warn("[UNDO] Could not read the graph before the citation change for project {}: {}", projectId, e.getMessage());
             return Optional.empty();

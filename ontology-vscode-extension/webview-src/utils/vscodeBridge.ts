@@ -30,6 +30,7 @@ import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { getGatewayUrl } from '../config/deploymentConfig';
 import { exportOntologyAsBlob } from '../services/exportService';
 import { uploadFormDataWithProgress, uploadBlobInChunks } from './uploadWithProgress';
+import { withDraftAndUser } from './draftScope';
 
 let browserZoteroLibrarySessionCounter = 0;
 
@@ -1374,7 +1375,7 @@ function handleBrowserMessage(message: any) {
             (async () => {
                 try {
                     const encodedUri = encodeURIComponent(message.citationUri);
-                    await apiClient.delete(`/api/citations/${message.projectId}/${encodedUri}`);
+                    await apiClient.delete(withDraftAndUser(`/api/citations/${message.projectId}/${encodedUri}`));
                     console.log('[BrowserBridge] removeCitationFromGraphDB success');
                 } catch (err: any) {
                     console.error('[BrowserBridge] removeCitationFromGraphDB error:', err);

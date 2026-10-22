@@ -46,7 +46,7 @@ class DraftControllerTest {
     }
 
     private DraftController.ReviewPRRequest reviewRequest() {
-        return new DraftController.ReviewPRRequest("reviewer1", "looks good");
+        return new DraftController.ReviewPRRequest("reviewer1", "looks good", null);
     }
 
     @Test
@@ -96,5 +96,50 @@ class DraftControllerTest {
         assertEquals(200, response.getStatusCode().value());
         assertEquals(DraftPullRequest.Status.APPROVED, pr.getStatus());
         assertEquals(3, ((Map<String, Object>) response.getBody()).get("appliedCount"));
+    }
+
+    private static org.springframework.mock.web.MockHttpServletRequest signedInAs(String userId) {
+        org.springframework.mock.web.MockHttpServletRequest request = new org.springframework.mock.web.MockHttpServletRequest();
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                ("{\"userId\":\"" + userId + "\",\"email\":\"" + userId + "@x.org\"}").getBytes());
+        request.addHeader("Authorization", "Bearer h." + payload + ".s");
+        return request;
+    }
+
+    @Test
+    void aDraftOnlyMemberCannotPublishStraightToPublic() {
+        self.research.ontology.owlEditor.util.JwtIdentityExtractor.requireSignature(null);
+
+        var response = controller.applyDrafts("p1", "drafter1", false, false, null, signedInAs("drafter1"));
+
+        assertEquals(403, response.getStatusCode().value());
+        assertEquals(true, response.getBody().get("pullRequestRequired"));
+        org.mockito.Mockito.verify(draftTrackingService, org.mockito.Mockito.never())
+                .applyDrafts(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    void publishingNeedsASignedInUser() {
+        var response = controller.applyDrafts("p1", "reviewer1", false, false, null,
+                new org.springframework.mock.web.MockHttpServletRequest());
+
+        assertEquals(401, response.getStatusCode().value());
+        org.mockito.Mockito.verify(draftTrackingService, org.mockito.Mockito.never())
+                .applyDrafts(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    void anEditorPublishesTheirOwnDraftWhateverUserIdTheUrlNames() {
+        self.research.ontology.owlEditor.util.JwtIdentityExtractor.requireSignature(null);
+        when(draftTrackingService.applyDrafts(eq("p1"), eq("reviewer1"), eq(false), eq(false), any()))
+                .thenReturn(new DraftTrackingService.ApplyDraftsResult(true, 2, "Published draft successfully", false, null));
+
+        var response = controller.applyDrafts("p1", "someone-else", false, false, null, signedInAs("reviewer1"));
+
+        assertEquals(200, response.getStatusCode().value());
+        org.mockito.Mockito.verify(draftTrackingService).applyDrafts(eq("p1"), eq("reviewer1"), eq(false), eq(false), any());
+        org.mockito.Mockito.verify(draftTrackingService, org.mockito.Mockito.never())
+                .applyDrafts(eq("p1"), eq("someone-else"), org.mockito.ArgumentMatchers.anyBoolean(),
+                        org.mockito.ArgumentMatchers.anyBoolean(), any());
     }
 }

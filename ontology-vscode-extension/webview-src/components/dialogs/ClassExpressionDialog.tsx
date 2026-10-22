@@ -521,9 +521,15 @@ const localName = (iri: string): string => {
           return;
         }
         if (projectId) {
-          const results = await Promise.all(
-            expressions.map((expr) => expressionService.parseExpression(projectId, expr))
-          );
+          let results: Awaited<ReturnType<typeof expressionService.parseExpression>>[];
+          try {
+            results = await Promise.all(
+              expressions.map((expr) => expressionService.parseExpression(projectId, expr))
+            );
+          } catch (err: unknown) {
+            notificationService.error('Invalid Expression', err instanceof Error ? err.message : 'Could not check the Manchester expression');
+            return;
+          }
           const firstFailure = results.findIndex((r) => !r.success);
           if (firstFailure !== -1) {
             const prefix = expressions.length > 1 ? `Expression ${firstFailure + 1}: ` : '';

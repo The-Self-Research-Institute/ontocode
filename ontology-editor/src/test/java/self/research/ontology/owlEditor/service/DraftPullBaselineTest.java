@@ -400,4 +400,45 @@ class DraftPullBaselineTest {
 
         verify(baselineStore).delete("p1", "u1");
     }
+
+    private void givenBaseline(String baselineRdf) throws Exception {
+        Path path = projectDir.resolve("baselines/u1.owl");
+        Files.createDirectories(path.getParent());
+        Files.writeString(path, baselineRdf);
+    }
+
+    @Test
+    void aThreeWayPullBringsPublicsNewClassKeepsTheDraftsOwnAndTheRealOntologyIri() throws Exception {
+        String classC = "http://ex.org/C";
+        givenBaseline(rdf(CLASS_A));
+        givenDraftAndPublic(rdf(CLASS_A, classC), rdf(CLASS_A, CLASS_B));
+
+        Map<String, Object> result = service.applyPull("p1", "u1", Map.of());
+
+        assertEquals(true, result.get("success"));
+        assertEquals(1, result.get("mergedCount"));
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains(CLASS_B));
+        assertTrue(merged.contains(classC));
+        assertTrue(merged.contains("rdf:about=\"http://ex.org/o\""));
+        assertFalse(merged.contains("merge-scratch"));
+        verify(sessionRepository).save(session);
+    }
+
+    @Test
+    void aThreeWayPullConflictFollowsTheUsersChoice() throws Exception {
+        givenBaseline(rdfWithLabels(CLASS_A, "Pizza"));
+        givenDraftAndPublic(rdfWithLabels(CLASS_A, "Alpha"), rdfWithLabels(CLASS_A, "Beta"));
+
+        Map<String, Object> analysis = service.analyzePull("p1", "u1");
+        assertEquals(true, analysis.get("hasConflicts"));
+
+        service.applyPull("p1", "u1", Map.of(CLASS_A,
+                choice(self.research.ontology.owlEditor.model.merge.ResolutionAction.KEEP_TARGET)));
+
+        String merged = appliedDraftRdf();
+        assertTrue(merged.contains("Alpha"));
+        assertFalse(merged.contains("Beta"));
+        assertFalse(merged.contains("merge-scratch"));
+    }
 }

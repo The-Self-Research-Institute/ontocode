@@ -44,6 +44,14 @@ public class CitationService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private OntologyMutationService mutationService;
+
+    @Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private DraftTrackingService draftTracking;
+
     private final HttpClient doiResolverClient = HttpClient.newBuilder()
         .followRedirects(HttpClient.Redirect.NORMAL)
         .connectTimeout(Duration.ofSeconds(10))
@@ -332,6 +340,10 @@ public class CitationService {
     }
 
     public void deleteCitation(String projectId, String citationIRI, RequestActor actor) {
+        deleteCitation(projectId, citationIRI, actor, false);
+    }
+
+    public void deleteCitation(String projectId, String citationIRI, RequestActor actor, boolean draft) {
         try {
             log.info("[CitationService] Deleting citation {} from project: {}", citationIRI, projectId);
 
@@ -352,11 +364,22 @@ public class CitationService {
                 }
                 """, citationIRI, citationIRI, citationIRI, citationIRI);
 
-            citationHistory.around(projectId, actor,
-                new CitationHistory.Entry("DELETE_CITATION", citationIRI, "Citation", citationIRI, null,
-                    "Deleted citation: " + citationIRI),
-                List.of(citationIRI), List.of(citationIRI),
-                () -> datasetService.execUpdate(projectId, sparqlUpdate));
+            CitationHistory.Entry entry = new CitationHistory.Entry("DELETE_CITATION", citationIRI, "Citation", citationIRI, null,
+                    "Deleted citation: " + citationIRI);
+            if (draft) {
+                if (mutationService == null) {
+                    throw new IllegalStateException("Draft editing is not available");
+                }
+                String changeSetId = citationHistory.around(projectId, actor, entry, List.of(citationIRI), List.of(citationIRI),
+                        true, actor.userId(), () -> mutationService.applyRawUpdate(projectId, sparqlUpdate, true, actor.userId()));
+                if (changeSetId != null && draftTracking != null) {
+                    draftTracking.recordDescribed(projectId, actor.userId(), actor.username(), DraftRecords.DELETE_CITATION,
+                            DraftRecords.citation(citationIRI), List.of(changeSetId));
+                }
+            } else {
+                citationHistory.around(projectId, actor, entry, List.of(citationIRI), List.of(citationIRI),
+                        () -> datasetService.execUpdate(projectId, sparqlUpdate));
+            }
 
             log.info("[CitationService] Successfully deleted citation from project: {}", projectId);
 

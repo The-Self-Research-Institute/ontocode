@@ -118,6 +118,23 @@ public class ReasoningQueueManager {
                                 String ownerEmail,
                                 Integer maxJustifications,
                                 String explanationMode) {
+        return enqueue(jobType, projectId, expression, queryTypes, reasonerType, ownerEmail,
+                maxJustifications, explanationMode, null, null, null, null, null);
+    }
+
+    public ReasoningJob enqueue(ReasoningJob.JobType jobType,
+                                String projectId,
+                                String expression,
+                                List<String> queryTypes,
+                                String reasonerType,
+                                String ownerEmail,
+                                Integer maxJustifications,
+                                String explanationMode,
+                                String entailmentType,
+                                String subjectIri,
+                                String targetIri,
+                                String propertyIri,
+                                String literalValue) {
         long tripleCount = editorClient.getTripleCount(projectId);
         ReasoningJob answered = answerFromCachedSnapshot(jobType, projectId, reasonerType, ownerEmail, tripleCount);
         if (answered != null) {
@@ -128,7 +145,8 @@ public class ReasoningQueueManager {
         ReasoningJob job;
         synchronized (this) {
             ReasoningJob duplicate = findInFlightDuplicate(jobType, projectId, expression, queryTypes,
-                    reasonerType, ownerEmail, maxJustifications, explanationMode);
+                    reasonerType, ownerEmail, maxJustifications, explanationMode,
+                    entailmentType, subjectIri, targetIri, propertyIri, literalValue);
             if (duplicate != null) {
                 duplicate.setRequesterCount(duplicate.getRequesterCount() + 1);
                 log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate ({} requesters)",
@@ -152,6 +170,11 @@ public class ReasoningQueueManager {
                     .reasonerType(reasonerType)
                     .maxJustifications(maxJustifications)
                     .explanationMode(explanationMode)
+                    .entailmentType(entailmentType)
+                    .subjectIri(subjectIri)
+                    .targetIri(targetIri)
+                    .propertyIri(propertyIri)
+                    .literalValue(literalValue)
                     .status(ReasoningJob.Status.QUEUED)
                     .queuePosition(queue.size() + 1)
                     .estimatedWaitTimeMs(0)
@@ -235,11 +258,14 @@ public class ReasoningQueueManager {
 
     private ReasoningJob findInFlightDuplicate(ReasoningJob.JobType jobType, String projectId, String expression,
                                                 List<String> queryTypes, String reasonerType, String ownerEmail,
-                                                Integer maxJustifications, String explanationMode) {
+                                                Integer maxJustifications, String explanationMode,
+                                                String entailmentType, String subjectIri, String targetIri,
+                                                String propertyIri, String literalValue) {
         for (ReasoningJob candidate : queue) {
             if (candidate.getStatus() == ReasoningJob.Status.QUEUED
                     && isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
-                    ownerEmail, maxJustifications, explanationMode)) {
+                    ownerEmail, maxJustifications, explanationMode,
+                    entailmentType, subjectIri, targetIri, propertyIri, literalValue)) {
                 return candidate;
             }
         }
@@ -248,7 +274,9 @@ public class ReasoningQueueManager {
 
     private boolean isSameRequest(ReasoningJob candidate, ReasoningJob.JobType jobType, String projectId,
                                    String expression, List<String> queryTypes, String reasonerType,
-                                   String ownerEmail, Integer maxJustifications, String explanationMode) {
+                                   String ownerEmail, Integer maxJustifications, String explanationMode,
+                                   String entailmentType, String subjectIri, String targetIri,
+                                   String propertyIri, String literalValue) {
         return Objects.equals(candidate.getJobType(), jobType)
                 && Objects.equals(candidate.getProjectId(), projectId)
                 && Objects.equals(candidate.getExpression(), expression)
@@ -256,7 +284,12 @@ public class ReasoningQueueManager {
                 && Objects.equals(candidate.getReasonerType(), reasonerType)
                 && Objects.equals(ownerKey(candidate.getOwnerEmail()), ownerKey(ownerEmail))
                 && Objects.equals(candidate.getMaxJustifications(), maxJustifications)
-                && Objects.equals(candidate.getExplanationMode(), explanationMode);
+                && Objects.equals(candidate.getExplanationMode(), explanationMode)
+                && Objects.equals(candidate.getEntailmentType(), entailmentType)
+                && Objects.equals(candidate.getSubjectIri(), subjectIri)
+                && Objects.equals(candidate.getTargetIri(), targetIri)
+                && Objects.equals(candidate.getPropertyIri(), propertyIri)
+                && Objects.equals(candidate.getLiteralValue(), literalValue);
     }
 
     private static String ownerKey(String ownerEmail) {

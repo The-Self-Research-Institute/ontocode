@@ -226,6 +226,86 @@ class DraftUndoTrackingTest {
                 anyString(), any(), any(), eq(true), any(ChangeOrigin.class));
     }
 
+    private static final String CLASS = "http://www.w3.org/2002/07/owl#Class";
+    private static final String OBJECT_PROPERTY = "http://www.w3.org/2002/07/owl#ObjectProperty";
+    private static final String INDIVIDUAL = "http://www.w3.org/2002/07/owl#NamedIndividual";
+    private static final String TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    private static final String LABEL = "http://www.w3.org/2000/01/rdf-schema#label";
+
+    private static void declare(Model model, String iri, String type, String label) {
+        var vf = SimpleValueFactory.getInstance();
+        model.add(vf.createIRI(iri), vf.createIRI(TYPE), vf.createIRI(type));
+        if (label != null) {
+            model.add(vf.createIRI(iri), vf.createIRI(LABEL), vf.createLiteral(label));
+        }
+    }
+
+    private HistoryChange mergeWithSummary() {
+        Model inserted = triple(A, B);
+        declare(inserted, "http://ex.org/Pizza", CLASS, "Pizza");
+        declare(inserted, "http://ex.org/PizzaTopping", CLASS, null);
+        declare(inserted, "http://ex.org/Pizza_imported", CLASS, "Pizza_imported");
+        declare(inserted, "http://ex.org/hasTopping", OBJECT_PROPERTY, "has topping");
+        Model deleted = new LinkedHashModel();
+        declare(deleted, "http://ex.org/oldOne", INDIVIDUAL, "Old one");
+        ExactDelta delta = new ExactDelta(deleted, inserted);
+        applier.apply(P, USER, NAME, delta, "Merged other.owl");
+        ArgumentCaptor<String> entity = ArgumentCaptor.forClass(String.class);
+        verify(history).recordEdit(eq(P), eq(USER), eq(NAME), eq("ontologyMerge"), entity.capture(), eq("Ontology merge"),
+                any(), any(), anyString(), any(), any(), eq(true), any(ChangeOrigin.class));
+        HistoryChange entry = draftEntry("m1", "ontologyMerge", entity.getValue(), "Ontology merge", inserted);
+        entry.setExactDeleted(ExactDelta.write(deleted));
+        entry.setDescription("Merged other.owl");
+        return entry;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> kind(Map<String, Object> summary, String kind) {
+        return ((List<Map<String, Object>>) summary.get("kinds")).stream()
+                .filter(row -> kind.equals(row.get("kind"))).findFirst().orElseThrow();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> markerSummary() {
+        assertEquals(1, pending());
+        return (Map<String, Object>) drafts.get(0).getOperationData().get(DraftMergeApplier.SUMMARY);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void aDraftMergeRecordsWhatItChangedGroupedByKind() {
+        mergeWithSummary();
+
+        Map<String, Object> summary = markerSummary();
+        assertEquals("Merged other.owl", summary.get("description"));
+        Map<String, Object> totals = (Map<String, Object>) summary.get("totals");
+        assertEquals(3, totals.get("added"));
+        assertEquals(1, totals.get("copies"));
+        assertEquals(1, totals.get("changed"));
+        assertEquals(1, totals.get("removed"));
+        Map<String, Object> classes = kind(summary, "class");
+        assertEquals(List.of("Pizza", "PizzaTopping"), classes.get("added"));
+        assertEquals(2, classes.get("addedCount"));
+        assertEquals(List.of("Pizza_imported"), classes.get("copies"));
+        assertEquals(List.of("has topping"), kind(summary, "objectProperty").get("added"));
+        assertEquals(List.of("Old one"), kind(summary, "individual").get("removed"));
+        assertEquals(List.of("A"), kind(summary, "other").get("changed"));
+        assertEquals("Merged other.owl", drafts.get(0).getOperationData().get("value"));
+    }
+
+    @Test
+    void redoingADraftMergeKeepsItsSummary() {
+        mergeWithSummary();
+        Map<String, Object> original = markerSummary();
+        Result undone = service.undoEntry(P, "m1", ACTOR, false);
+        assertEquals(0, pending());
+
+        Result redone = service.redoUndo(P, undone.auditId(), ACTOR, false);
+
+        assertTrue(redone.ok(), redone.message() + " " + redone.skipped());
+        assertEquals(original, markerSummary());
+    }
+
     private static MutationOp op(String type, String iri) {
         return new MutationOp(type, iri, null, null, null, null, null, null, null, null, null, null, null, null, null);
     }

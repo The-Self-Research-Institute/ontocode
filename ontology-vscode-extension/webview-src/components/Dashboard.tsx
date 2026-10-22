@@ -94,6 +94,7 @@ import {
   snapshotDataPropertyTree,
   snapshotInconsistencyMessage,
   snapshotInferredAxioms,
+  snapshotInferredAxiomsTotal,
   snapshotObjectPropertyTree,
   snapshotToConsistencyResult,
   snapshotToReasonerResults,
@@ -2062,6 +2063,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   isReasonerSyncedRef.current = isReasonerSynced;
   const [reasonerResults, setReasonerResults] = useState<any>(null);
   const [inferredAxioms, setInferredAxioms] = useState<any[]>([]);
+  const [inferredAxiomsTotal, setInferredAxiomsTotal] = useState(0);
   const [isReasonerLoading, setIsReasonerLoading] = useState(false);
   const [isConsistencyLoading, setIsConsistencyLoading] = useState(false);
   const [consistencyResult, setConsistencyResult] = useState<any | null>(null);
@@ -2568,7 +2570,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               maxWaitMs: MAX_POLL_TIME,
               push: startData?.async === true,
               signal: anySignal(reasonerJobAbortRef.current.signal, signal),
-              cancelUrl: startData?.async === true ? dlQueryJobUrl(taskId) : undefined,
+              cancelUrl: startData?.cancelUrl
+                ? `/plugin-service${startData.cancelUrl}`
+                : startData?.async === true
+                  ? dlQueryJobUrl(taskId)
+                  : undefined,
               isStale: () =>
                 shouldStop?.() === true || !isMountedRef.current || currentProjectIdRef.current !== startedProjectId,
               fetchJob: async () => {
@@ -3154,6 +3160,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     setInferredIndividuals([]);
     setInferredDatatypes([]);
     setInferredAxioms([]);
+    setInferredAxiomsTotal(0);
   }, []);
 
   const markReasonerResultInconsistent = useCallback(
@@ -3239,6 +3246,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       if (snapshot) {
         setInferredAxioms(snapshotInferredAxioms(snapshot));
+        setInferredAxiomsTotal(snapshotInferredAxiomsTotal(snapshot));
       } else {
         try {
           const axiomsResponse = await apiClient.get<any>(
@@ -3248,11 +3256,16 @@ const Dashboard: React.FC<DashboardProps> = ({
           const rawAxiomsPayload = axiomsResponse?.data || axiomsResponse;
           const axiomsPayload = await resolveHierarchyPayload(projectId, rawAxiomsPayload, isStaleRun);
           if (isStaleRun()) return;
-          setInferredAxioms(Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : []);
+          const axiomsList = Array.isArray(axiomsPayload?.axioms) ? axiomsPayload.axioms : [];
+          setInferredAxioms(axiomsList);
+          setInferredAxiomsTotal(
+            typeof axiomsPayload?.totalInferredAxioms === "number" ? axiomsPayload.totalInferredAxioms : axiomsList.length,
+          );
         } catch (axiomsError) {
           console.warn("[Dashboard] Inferred axioms fetch failed (non-fatal):", axiomsError);
           if (isStaleRun()) return;
           setInferredAxioms([]);
+          setInferredAxiomsTotal(0);
         }
       }
 
@@ -3291,7 +3304,17 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
     } catch (error: any) {
       if (isReasoningJobCancelled(error)) {
+        // A deliberate Stop click already shows its own "Reasoner Stopped" toast from
+        // stopReasoner() before this rejection lands here. But this same branch also
+        // catches an incidental abort racing with a genuine backend timeout (e.g. a
+        // project-switch effect firing mid-request) — that case got no toast at all
+        // and just silently reverted to "No Reasoner Running" with no explanation, so
+        // always surface something here rather than staying silent for that case.
         if (!isStaleRun()) {
+          notificationService.info(
+            "Reasoner Stopped",
+            "The reasoning run was interrupted before it finished.",
+          );
           setIsReasonerRunning(false);
         }
         return;
@@ -3471,6 +3494,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       if (snapshot) {
         setInferredAxioms(snapshotInferredAxioms(snapshot));
+        setInferredAxiomsTotal(snapshotInferredAxiomsTotal(snapshot));
       }
       console.log("[DEBUG] Auto-sync: Reasoner updated successfully");
     } catch (error: any) {
@@ -4998,7 +5022,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Adding annotation with payload:", payload);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), { ...payload, ...draftBodyFields() });
 
       const newAnnotation: any = {
         propertyIri,
@@ -5047,7 +5071,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Updating annotation with payload:", payload);
-      await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, { ...payload, ...draftBodyFields() });
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), { ...payload, ...draftBodyFields() });
 
       setOntologyAnnotations((prev) =>
         prev.map((ann) =>
@@ -5115,7 +5139,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleAddImport = async () => {
     if (!projectId || !importDraft.trim()) return;
     try {
-      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), {
         importIri: importDraft.trim(),
         ...draftBodyFields(),
       });
@@ -5193,7 +5217,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         }
         console.log("[Dashboard] ⚡ Optimistically added import to UI");
 
-        const addImportRes = await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
+        const addImportRes = await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), {
           importIri: importIriForBackend,
           ...draftBodyFields(),
         });
@@ -5268,7 +5292,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId || !importDraft.trim()) return;
     try {
       await apiClient.delete(withDraftAndUser(`/api/ontology/metadata/${projectId}/imports?importIri=${encodeURIComponent(oldIri)}`));
-      await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), {
         importIri: importDraft.trim(),
         ...draftBodyFields(),
       });
@@ -5330,7 +5354,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       console.log("[Dashboard] Saving prefix:", payload);
       const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
-      await apiClient.post(`/api/ontology/metadata/${projectId}/prefixes`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/prefixes`), {
         ...payload,
         ...draftBodyFields(),
         actorUserId: actor.userId,
@@ -5411,7 +5435,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         subClass: axiomDefinition,
         superClass: axiomSuperClass,
       });
-      await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
+      await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/gci`), {
         subClass: axiomDefinition,
         superClass: axiomSuperClass || "",
         draft: ontologyMutationService.resolveUseDraft(),
@@ -5491,7 +5515,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         newAxiom: { subClass, superClass },
       });
 
-      await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`, {
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/gci/${editingAxiomIndex}`), {
         oldValue,
         subClass,
         superClass: superClass || "",
@@ -7632,7 +7656,7 @@ const updateItemInState = useCallback(
     if (!projectId || !propertyIri || iris.length === 0) return;
     try {
       const res = await apiClient.post<any>(
-        `/api/ontology/annotations/batch/${encodeProjectId(projectId)}`,
+        withDraftAndUser(`/api/ontology/annotations/batch/${encodeProjectId(projectId)}`),
         { iris, propertyIri }
       );
       const data: Record<string, string> = res?.data ?? res ?? {};
@@ -9408,7 +9432,7 @@ const updateItemInState = useCallback(
             },
           ]);
 
-          await apiClient.post(`/api/ontology/metadata/${projectId}/annotations`, {
+          await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), {
             propertyIri,
             value,
             language: lang,
@@ -9525,7 +9549,7 @@ const updateItemInState = useCallback(
             return current;
           });
 
-          await apiClient.put(`/api/ontology/metadata/${projectId}/annotations`, {
+          await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`), {
             propertyIri,
             originalPropertyIri: originalPropertyIri || propertyIri,
             oldValue,
@@ -9577,7 +9601,7 @@ const updateItemInState = useCallback(
 
       try {
         const response = await apiClient.put<{ success?: boolean; error?: string; updatedImports?: UpdatedImport[]; skippedImports?: SkippedImport[] }>(
-          `/api/ontology/metadata/${projectId}/iri`,
+          withDraftScope(`/api/ontology/metadata/${projectId}/iri`),
           { ontologyIri: normalizedOntologyIri, versionIri: normalizedVersionIri, ...draftBodyFields() },
         );
         if (response?.success === false) {
@@ -9617,7 +9641,7 @@ const updateItemInState = useCallback(
         const gciActorId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
         const gciDraft = ontologyMutationService.resolveUseDraft();
         if (editGCIData) {
-          await apiClient.put(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`, {
+          await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`), {
             subClass,
             superClass,
             oldValue: editGCIData.value,
@@ -9625,7 +9649,7 @@ const updateItemInState = useCallback(
             userId: gciActorId,
           });
         } else {
-          await apiClient.post(`/api/ontology/metadata/${projectId}/gci`, {
+          await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/gci`), {
             subClass, superClass, draft: gciDraft, userId: gciActorId,
           });
         }
@@ -14765,6 +14789,11 @@ const updateItemInState = useCallback(
               userId={actor.userId}
               username={actor.username}
               draftMode={!isDesktop() && syncMode === "private"}
+              onViewOnlyAction={isViewOnlyMember ? handleViewOnlyAction : undefined}
+              onDraftRequired={!isDesktop() && isProjectDraftEditorRole && syncMode !== 'private'
+                ? () => setShowProPromptType('draftRequired')
+                : undefined}
+              isDraftEditor={!isDesktop() && isProjectDraftEditorRole}
               onImported={() => {
                 codeViewDirtyRef.current = true;
                 refreshAfterBulkWriteRef.current("spreadsheetImport");
@@ -14853,6 +14882,7 @@ const updateItemInState = useCallback(
                   inferredObjectPropertyHierarchy={inferredObjectPropertyHierarchy}
                   inferredDataPropertyHierarchy={inferredDataPropertyHierarchy}
                   inferredAxioms={inferredAxioms}
+                  inferredAxiomsTotal={inferredAxiomsTotal}
                   onStartReasoner={startReasoner}
                   onStopReasoner={stopReasoner}
                   onSelectReasoner={handleSelectReasoner}
@@ -16829,7 +16859,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         onClose={() => setShowImportDialog(false)}
         onAdd={async (importIri) => {
           if (!projectId) return;
-          await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri, ...draftBodyFields() });
+          await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), { importIri, ...draftBodyFields() });
           const importsRes = await apiClient.get<any>(withDraftScope(`/api/ontology/metadata/${projectId}/imports`));
           const importsPayload = importsRes?.data?.data ?? importsRes?.data ?? importsRes;
           const importsData = Array.isArray(importsPayload) ? importsPayload : [];
@@ -18057,7 +18087,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                 if (!projectId || !importIRI) return;
 
                 try {
-                  await apiClient.post(`/api/ontology/metadata/${projectId}/imports`, { importIri: importIRI, ...draftBodyFields() });
+                  await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), { importIri: importIRI, ...draftBodyFields() });
 
                   const metadataRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}`));
                   const annotationsRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/annotations`));

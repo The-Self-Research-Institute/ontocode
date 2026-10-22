@@ -9,6 +9,7 @@ import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLNamedIndividual;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import self.research.ontology.common.ReasoningSnapshot;
 import self.research.ontology.reasoner.model.ReasoningJob;
 
 import java.util.HashSet;
@@ -32,7 +33,7 @@ class ReasoningJobExecutorResultTest {
         OWLDataFactory df = manager.getOWLDataFactory();
         OWLOntology ontology = manager.createOntology(IRI.create("urn:test:chain"));
         Set<OWLAxiom> axioms = new HashSet<>();
-        for (int i = 0; i < 30; i++) {
+        for (int i = 0; i < 120; i++) {
             axioms.add(df.getOWLSubClassOfAxiom(cls(df, i), cls(df, i + 1)));
         }
         manager.addAxioms(ontology, axioms);
@@ -40,9 +41,10 @@ class ReasoningJobExecutorResultTest {
         Map<String, Object> result = run(manager, ontology, ReasonerType.STRUCTURAL,
                 ReasoningJob.JobType.REASONER_INFERRED_AXIOMS);
 
-        assertEquals(100, ((List<?>) result.get("axioms")).size());
+        int limit = ReasoningSnapshot.DEFAULT_INFERRED_AXIOM_LIMIT;
+        assertEquals(limit, ((List<?>) result.get("axioms")).size());
         assertEquals(true, result.get("totalIsPartial"));
-        assertTrue(((Number) result.get("totalInferredAxioms")).intValue() > 100);
+        assertTrue(((Number) result.get("totalInferredAxioms")).intValue() > limit);
         assertTrue(result.get("message").toString().contains("at least"));
     }
 
@@ -87,7 +89,7 @@ class ReasoningJobExecutorResultTest {
     }
 
     private static OWLClass cls(OWLDataFactory df, int i) {
-        return df.getOWLClass(IRI.create("urn:test#C" + String.format("%02d", i)));
+        return df.getOWLClass(IRI.create("urn:test#C" + String.format("%03d", i)));
     }
 
     private static Map<String, Object> run(OWLOntologyManager manager, OWLOntology ontology, ReasonerType type,

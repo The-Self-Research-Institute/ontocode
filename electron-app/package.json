@@ -7,6 +7,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test",
     "start:dev": "cross-env ELECTRON_IS_DEV=1 electron .",
     "start:dev:win": "set ELECTRON_IS_DEV=1 && electron .",
     "build-web": "cd ../ontology-vscode-extension/webview-src && npm run build:electron",

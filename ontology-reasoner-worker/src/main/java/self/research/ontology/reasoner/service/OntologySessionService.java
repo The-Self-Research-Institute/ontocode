@@ -265,8 +265,12 @@ public class OntologySessionService {
     }
 
     public OWLOntology loadForParse(String projectId) {
+        return loadForParse(projectId, null);
+    }
+
+    public OWLOntology loadForParse(String projectId, String userId) {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        return editorClient.loadOntologyStream(projectId, null, in -> {
+        return editorClient.loadOntologyStream(projectId, userId, in -> {
             try {
                 StreamDocumentSource source = new StreamDocumentSource(
                         in,

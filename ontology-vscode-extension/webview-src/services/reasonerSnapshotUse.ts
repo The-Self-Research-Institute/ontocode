@@ -20,6 +20,11 @@ export const snapshotClassTree = (snapshot: ReasonerSnapshot) => list(snapshot?.
 export const snapshotObjectPropertyTree = (snapshot: ReasonerSnapshot) => list(snapshot?.objectPropertyTree);
 export const snapshotDataPropertyTree = (snapshot: ReasonerSnapshot) => list(snapshot?.dataPropertyTree);
 export const snapshotInferredAxioms = (snapshot: ReasonerSnapshot) => list(snapshot?.inferredAxioms?.axioms);
+export const snapshotInferredAxiomsTotal = (snapshot: ReasonerSnapshot): number => {
+  const axioms = snapshot?.inferredAxioms as any;
+  const total = axioms?.totalInferredAxioms;
+  return typeof total === "number" ? total : list(axioms?.axioms).length;
+};
 export const snapshotInconsistencyMessage = (snapshot: ReasonerSnapshot): string =>
   snapshot?.inconsistency?.message || INCONSISTENT_MESSAGE;
 
