@@ -78,7 +78,7 @@ jobs:
           set -e
           if [ -n "$CSC_LINK" ]; then
             echo "Signing with the Developer ID certificate"
-            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false"
+            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false -c.mac.signIgnore=\.jsa\$"
             if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
               echo "Notarizing"
               args="$args -c.mac.notarize=true"
