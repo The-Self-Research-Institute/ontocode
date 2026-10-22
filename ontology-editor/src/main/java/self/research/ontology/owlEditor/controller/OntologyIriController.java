@@ -39,7 +39,7 @@ public class OntologyIriController {
         try {
             String ontologyIri = request.get("ontologyIri");
             String versionIri = request.get("versionIri");
-            boolean draft = Boolean.parseBoolean(request.get("draft"));
+            boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
 
             String username = request.get("username");

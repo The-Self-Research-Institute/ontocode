@@ -27,6 +27,14 @@ public record RequestActor(String userId, String username) {
         return JwtIdentityExtractor.extractEmail(request).orElse(given);
     }
 
+    public static boolean draftRequested(HttpServletRequest request, String bodyDraft) {
+        if (Boolean.parseBoolean(bodyDraft)) {
+            return true;
+        }
+        return request != null && ("true".equalsIgnoreCase(request.getParameter("draft"))
+                || "true".equalsIgnoreCase(request.getParameter("useDraft")));
+    }
+
     public static String recordedId(HttpServletRequest request, String given, boolean draft) {
         return draft || request == null ? given : JwtIdentityExtractor.extractEmail(request).orElse(given);
     }

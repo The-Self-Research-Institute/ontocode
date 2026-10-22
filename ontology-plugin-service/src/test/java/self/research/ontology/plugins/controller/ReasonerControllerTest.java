@@ -52,6 +52,7 @@ class ReasonerControllerTest {
         ReflectionTestUtils.setField(controller, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(controller, "editorServiceUrl", "http://owl-editor:8083");
         ReflectionTestUtils.setField(controller, "internalToken", "ontocode-internal");
+        ReflectionTestUtils.setField(controller, "classifyTimeoutMs", 600_000L);
     }
 
     private void stubWhatIfExport() {
@@ -148,7 +149,7 @@ class ReasonerControllerTest {
     @Test
     void classifyTaskFailsWithAMessageEvenWhenTheExceptionHasNone() throws Exception {
         cachePublishedOntology("proj-1");
-        doThrow(new NullPointerException()).when(reasonerService).classify(any(), any());
+        doThrow(new NullPointerException()).when(reasonerService).classify(any(), any(), any());
 
         ResponseEntity<Map<String, Object>> accepted = controller.classify("proj-1", Map.of("reasonerType", "HERMIT"));
         Map<String, Object> status = awaitClassifyTask((String) accepted.getBody().get("taskId"));

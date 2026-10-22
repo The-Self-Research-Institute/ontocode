@@ -145,6 +145,7 @@ interface ReasonerPluginProps {
   inferredObjectPropertyHierarchy?: any[];
   inferredDataPropertyHierarchy?: any[];
   inferredAxioms?: any[];
+  inferredAxiomsTotal?: number;
   onStartReasoner?: () => Promise<void>;
   onStopReasoner?: () => void;
   onSelectReasoner?: (reasoner: string) => void;
@@ -320,6 +321,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   inferredObjectPropertyHierarchy: dashboardInferredObjectPropertyHierarchy,
   inferredDataPropertyHierarchy: dashboardInferredDataPropertyHierarchy,
   inferredAxioms: dashboardInferredAxioms,
+  inferredAxiomsTotal: dashboardInferredAxiomsTotal,
   onStartReasoner: dashboardStartReasoner,
   onStopReasoner: dashboardStopReasoner,
   onSelectReasoner: dashboardSelectReasoner,
@@ -360,6 +362,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   }>>([]);
   const [inferredAxiomsTotal, setInferredAxiomsTotal] = useState(0);
   const [inferredAxiomsFilter, setInferredAxiomsFilter] = useState('');
+  const INFERRED_AXIOMS_PAGE_SIZE = 200;
+  const [inferredAxiomsShowCount, setInferredAxiomsShowCount] = useState(INFERRED_AXIOMS_PAGE_SIZE);
   const [hoveredClass, setHoveredClass] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
   const [explanations, setExplanations] = useState<Map<string, ExplanationData>>(new Map());
@@ -588,6 +592,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       if (data.axioms && Array.isArray(data.axioms)) {
         setInferredAxioms(data.axioms);
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
+        setInferredAxiomsShowCount(INFERRED_AXIOMS_PAGE_SIZE);
       } else {
         console.warn('[ReasonerPluginView] inferred-axioms response missing axioms array:', data);
       }
@@ -662,11 +667,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       if (result.taskId && task === 'classification') {
         const taskId = String(result.taskId);
-        const MAX_POLL_TIME = 600_000;
+        const MAX_POLL_TIME = 1_800_000;
         const workerJob = result.async === true;
-        if (workerJob) {
-          session.jobs.set(taskId, `${normalizedApiBaseUrl}/api/dl-query/jobs/${encodeURIComponent(taskId)}`);
-        }
+        session.jobs.set(
+          taskId,
+          result.cancelUrl
+            ? `${normalizedApiBaseUrl}/plugin-service${result.cancelUrl}`
+            : `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/${taskId}`,
+        );
         result = await pollJobUntilDone<any>(taskId, async () => {
           const statusRes = await authFetch(
             `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
@@ -679,7 +687,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           return undefined;
         }, {
           timeoutMs: MAX_POLL_TIME,
-          timeoutMessage: 'Classification timed out after 10 minutes',
+          timeoutMessage: 'Classification timed out after 30 minutes',
           push: workerJob,
           signal: session.controller.signal,
         }).finally(() => session.jobs.delete(taskId));
@@ -1078,6 +1086,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const inferredAxiomsToRender = dashboardInferredAxioms && dashboardInferredAxioms.length > 0
     ? dashboardInferredAxioms
     : inferredAxioms;
+  const effectiveInferredAxiomsTotal = dashboardInferredAxioms && dashboardInferredAxioms.length > 0
+    ? (dashboardInferredAxiomsTotal ?? dashboardInferredAxioms.length)
+    : inferredAxiomsTotal;
+
+  useEffect(() => {
+    setInferredAxiomsShowCount(INFERRED_AXIOMS_PAGE_SIZE);
+  }, [dashboardInferredAxioms]);
 
   const dataPropertyHierarchyToRender = useMemo(() => {
     const source = dashboardInferredDataPropertyHierarchy && dashboardInferredDataPropertyHierarchy.length > 0
@@ -1394,7 +1409,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               stopReasoner();
             }
           }}
-          disabled={!isRunning || isLoading}
+          disabled={!isRunning}
           className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
           title="Stop reasoner"
         >
@@ -1897,59 +1912,86 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         <input
                           type="text"
                           value={inferredAxiomsFilter}
-                          onChange={(e) => setInferredAxiomsFilter(e.target.value)}
+                          onChange={(e) => {
+                            setInferredAxiomsFilter(e.target.value);
+                            setInferredAxiomsShowCount(INFERRED_AXIOMS_PAGE_SIZE);
+                          }}
                           placeholder="Filter axioms..."
                           className={`flex-1 px-3 py-1.5 text-xs rounded border ${
                             isDark ? 'bg-gray-800 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'
                           }`}
                         />
                         <span className={`text-xs whitespace-nowrap ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          {inferredAxiomsTotal > inferredAxiomsToRender.length
-                            ? `Showing ${inferredAxiomsToRender.length} of ${inferredAxiomsTotal}`
+                          {effectiveInferredAxiomsTotal > inferredAxiomsToRender.length
+                            ? `Showing ${inferredAxiomsToRender.length} of ${effectiveInferredAxiomsTotal}`
                             : `${inferredAxiomsToRender.length} axioms`}
                         </span>
                       </div>
-                      <div className="space-y-1">
-                        {inferredAxiomsToRender
-                          .filter((ax) => {
-                            const q = inferredAxiomsFilter.trim().toLowerCase();
-                            if (!q) return true;
-                            return (
-                              (ax.readable || '').toLowerCase().includes(q) ||
-                              (ax.axiom || '').toLowerCase().includes(q) ||
-                              (ax.axiomType || '').toLowerCase().includes(q)
-                            );
-                          })
-                          .map((ax, idx) => (
-                            <div
-                              key={idx}
-                              className={`px-3 py-2 rounded border text-xs font-mono flex items-start justify-between gap-2 ${
-                                isDark ? 'bg-gray-800/50 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'
-                              }`}
-                            >
-                              <span className="min-w-0">
-                                <span className={`inline-block px-1.5 py-0.5 mr-2 rounded text-[10px] font-sans font-medium ${
-                                  isDark ? 'bg-purple-900/40 text-purple-300' : 'bg-purple-100 text-purple-700'
-                                }`}>
-                                  {ax.axiomType}
-                                </span>
-                                {ax.readable || ax.axiom}
-                              </span>
-                              {ax.entailment && (
-                                <button
-                                  onClick={() => openExplainEntailment(ax.entailment!, ax.readable || ax.axiom)}
-                                  className={`shrink-0 p-1 rounded font-sans transition-colors ${
-                                    isDark ? 'text-purple-300 hover:bg-purple-900/40' : 'text-purple-600 hover:bg-purple-100'
+                      {(() => {
+                        const q = inferredAxiomsFilter.trim().toLowerCase();
+                        const filtered = q
+                          ? inferredAxiomsToRender.filter(
+                              (ax) =>
+                                (ax.readable || '').toLowerCase().includes(q) ||
+                                (ax.axiom || '').toLowerCase().includes(q) ||
+                                (ax.axiomType || '').toLowerCase().includes(q),
+                            )
+                          : inferredAxiomsToRender;
+                        const visible = filtered.slice(0, inferredAxiomsShowCount);
+                        const remaining = filtered.length - visible.length;
+                        return (
+                          <>
+                            {q && (
+                              <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                                {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+                              </div>
+                            )}
+                            <div className="space-y-1">
+                              {visible.map((ax, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`px-3 py-2 rounded border text-xs font-mono flex items-start justify-between gap-2 ${
+                                    isDark ? 'bg-gray-800/50 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'
                                   }`}
-                                  title={`Why is '${ax.readable || ax.axiom}' inferred?`}
-                                  aria-label="Explain this inferred axiom"
                                 >
-                                  <HelpCircle size={13} />
-                                </button>
-                              )}
+                                  <span className="min-w-0">
+                                    <span className={`inline-block px-1.5 py-0.5 mr-2 rounded text-[10px] font-sans font-medium ${
+                                      isDark ? 'bg-purple-900/40 text-purple-300' : 'bg-purple-100 text-purple-700'
+                                    }`}>
+                                      {ax.axiomType}
+                                    </span>
+                                    {ax.readable || ax.axiom}
+                                  </span>
+                                  {ax.entailment && (
+                                    <button
+                                      onClick={() => openExplainEntailment(ax.entailment!, ax.readable || ax.axiom)}
+                                      className={`shrink-0 p-1 rounded font-sans transition-colors ${
+                                        isDark ? 'text-purple-300 hover:bg-purple-900/40' : 'text-purple-600 hover:bg-purple-100'
+                                      }`}
+                                      title={`Why is '${ax.readable || ax.axiom}' inferred?`}
+                                      aria-label="Explain this inferred axiom"
+                                    >
+                                      <HelpCircle size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                      </div>
+                            {remaining > 0 && (
+                              <button
+                                onClick={() => setInferredAxiomsShowCount((c) => c + INFERRED_AXIOMS_PAGE_SIZE)}
+                                className={`w-full py-1.5 text-xs rounded border font-sans ${
+                                  isDark
+                                    ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
+                                    : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                                }`}
+                              >
+                                Show {Math.min(INFERRED_AXIOMS_PAGE_SIZE, remaining)} more ({remaining} remaining)
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <div className={`flex items-center justify-center h-full text-sm italic ${isDark ? 'text-gray-600' : 'text-gray-500'}`}>

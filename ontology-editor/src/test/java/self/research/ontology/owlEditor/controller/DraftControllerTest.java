@@ -47,7 +47,7 @@ class DraftControllerTest {
     }
 
     private DraftController.ReviewPRRequest reviewRequest() {
-        return new DraftController.ReviewPRRequest("reviewer1", "looks good");
+        return new DraftController.ReviewPRRequest("reviewer1", "looks good", null);
     }
 
     @Test
@@ -130,5 +130,26 @@ class DraftControllerTest {
         var response = controller.rejectPullRequest("p1", "pr1", reviewRequest(), "mallory-id");
 
         org.junit.jupiter.api.Assertions.assertEquals(403, response.getStatusCode().value());
+    }
+
+    @Test
+    void aDraftOnlyMemberCannotPublishStraightToPublic() {
+        var response = controller.applyDrafts("p1", "drafter1", false, false, null);
+
+        assertEquals(403, response.getStatusCode().value());
+        assertEquals(true, response.getBody().get("pullRequestRequired"));
+        org.mockito.Mockito.verify(draftTrackingService, org.mockito.Mockito.never())
+                .applyDrafts(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    void anEditorPublishesTheirOwnDraft() {
+        when(draftTrackingService.applyDrafts(eq("p1"), eq("reviewer1"), eq(false), eq(false), any()))
+                .thenReturn(new DraftTrackingService.ApplyDraftsResult(true, 2, "Published draft successfully", false, null));
+
+        var response = controller.applyDrafts("p1", "reviewer1", false, false, null);
+
+        assertEquals(200, response.getStatusCode().value());
+        org.mockito.Mockito.verify(draftTrackingService).applyDrafts(eq("p1"), eq("reviewer1"), eq(false), eq(false), any());
     }
 }

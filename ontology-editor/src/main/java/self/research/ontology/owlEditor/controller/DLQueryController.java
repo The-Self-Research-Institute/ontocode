@@ -204,12 +204,15 @@ public class DLQueryController {
                 String username = !desktopMode && caller.email() != null ? caller.email()
                         : request.getUsername() != null ? request.getUsername() : "Anonymous";
                 if (draft) {
-                    mutationService.applyRawUpdateWithHistory(projectId, sparql, true, userId, username);
                     OntologyMutationService.MutationOp dlOp = new OntologyMutationService.MutationOp(
                             "addDlQueryClass", classIri, request.getClassName().trim(), null, null, null, null,
                             request.getExpression().trim(), null, null, null, null, null, null, null);
-                    draftTrackingService.recordDrafts(projectId, userId, username,
-                            List.of(dlOp), "dl-add-" + UUID.randomUUID());
+                    self.research.ontology.owlEditor.service.DraftRecordScope.Outcome<Object> written =
+                            self.research.ontology.owlEditor.service.DraftRecordScope.collect(() -> {
+                                mutationService.applyRawUpdateWithHistory(projectId, sparql, true, userId, username);
+                                return null;
+                            });
+                    draftTrackingService.recordDescribed(projectId, userId, username, dlOp, written.changeSetIds());
                 } else {
                     mutationService.applyRawUpdateWithHistory(projectId, sparql, false, userId, username);
                 }

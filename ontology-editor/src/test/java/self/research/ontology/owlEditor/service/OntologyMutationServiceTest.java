@@ -130,6 +130,71 @@ class OntologyMutationServiceTest {
                 org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.any());
     }
 
+    private org.eclipse.rdf4j.repository.sail.SailRepository draftGraphWith(java.util.function.Consumer<org.eclipse.rdf4j.repository.RepositoryConnection> change) {
+        var draftGraph = VF.createIRI("urn:draft:u1");
+        org.eclipse.rdf4j.repository.sail.SailRepository repository =
+                new org.eclipse.rdf4j.repository.sail.SailRepository(new org.eclipse.rdf4j.sail.memory.MemoryStore());
+        repository.init();
+        try (var connection = repository.getConnection()) {
+            connection.add(VF.createIRI("http://ex.org/A"), VF.createIRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+                    VF.createIRI("http://www.w3.org/2002/07/owl#Class"), draftGraph);
+        }
+        when(datasetService.graphTarget("proj-1")).thenReturn(new SparqlDatasetService.ProjectGraphTarget(repository, "urn:main"));
+        when(datasetService.getDraftGraphUri("proj-1", "u1")).thenReturn(draftGraph.stringValue());
+        doAnswer(invocation -> {
+            try (var connection = repository.getConnection()) {
+                change.accept(connection);
+            }
+            return null;
+        }).when(datasetService).execDraftUpdateCopyOnSwitch(anyString(), anyString(), anyString());
+        return repository;
+    }
+
+    private static void addUnnamedAxiom(org.eclipse.rdf4j.repository.RepositoryConnection connection) {
+        var draftGraph = VF.createIRI("urn:draft:u1");
+        var restriction = VF.createBNode();
+        connection.add(restriction, VF.createIRI("http://www.w3.org/2002/07/owl#onProperty"), VF.createIRI("http://ex.org/p"), draftGraph);
+        connection.add(restriction, VF.createIRI("http://www.w3.org/2002/07/owl#someValuesFrom"), VF.createIRI("http://ex.org/A"), draftGraph);
+    }
+
+    @Test
+    void aDraftEditThatOnlyChangesUnnamedAxiomsStillCountsAsADraftChange() {
+        draftGraphWith(OntologyMutationServiceTest::addUnnamedAxiom);
+
+        service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", true, "u1", "User One");
+
+        verify(draftTrackingService).recordDescribed(org.mockito.ArgumentMatchers.eq("proj-1"),
+                org.mockito.ArgumentMatchers.eq("u1"), org.mockito.ArgumentMatchers.eq("User One"),
+                org.mockito.ArgumentMatchers.eq("structuralGraphEdit"), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.argThat(ids -> ids != null && ids.size() == 1));
+        verify(draftTrackingService, org.mockito.Mockito.never()).recordDrafts(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.any(), anyString());
+    }
+
+    @Test
+    void aDescribedDraftEditLeavesTheGenericRecordsOutAndKeepsItsChangeSet() throws Exception {
+        draftGraphWith(connection -> connection.add(VF.createIRI("http://ex.org/A"),
+                VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label"), VF.createLiteral("A"), VF.createIRI("urn:draft:u1")));
+
+        DraftRecordScope.Outcome<Object> outcome = DraftRecordScope.collect(() -> {
+            service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", true, "u1", "User One");
+            return null;
+        });
+
+        assertEquals(1, outcome.changeSetIds().size());
+        org.mockito.Mockito.verifyNoInteractions(draftTrackingService);
+    }
+
+    @Test
+    void aPublicRawUpdateBumpsTheSharedRevision() {
+        MainGraphRevisionService revisions = org.mockito.Mockito.mock(MainGraphRevisionService.class);
+        ReflectionTestUtils.setField(service, "mainGraphRevisionService", revisions);
+
+        service.applyRawUpdate("proj-1", "INSERT DATA {...}", false, null);
+
+        verify(revisions).incrementRevision("proj-1");
+    }
+
     @Test
     void applyRawUpdateInvalidatesTheDraftCodeViewCache() {
         service.applyRawUpdate("proj-1", "INSERT DATA {...}", true, "u1");

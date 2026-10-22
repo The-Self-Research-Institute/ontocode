@@ -865,8 +865,11 @@ public class OntologyQueryController {
             if (iris.isEmpty()) {
                 return ResponseEntity.ok(Map.of());
             }
+            String ctxUserId = SparqlQueryContext.getUserId();
+            boolean hasDraft = ctxUserId != null && datasetService != null
+                    && datasetService.hasActiveDraftOverlay(projectId, ctxUserId);
             Map<String, String> result;
-            if (desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+            if (!hasDraft && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
                 result = desktopHierarchyService.batchAnnotations(projectId, iris, propertyIri);
             } else {
                 result = queryService.batchAnnotations(projectId, iris, propertyIri);
