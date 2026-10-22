@@ -80,7 +80,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NOTARIZE: ${{ inputs.notarize }}
         run: |
-          set -e
+          set -eo pipefail
           if [ -n "$CSC_LINK" ]; then
             echo "Signing with the Developer ID certificate"
             args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false -c.mac.signIgnore=\.jsa\$"
@@ -95,7 +95,15 @@ jobs:
             unset CSC_LINK CSC_KEY_PASSWORD
             args="-c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.gatekeeperAssess=false"
           fi
-          npm run dist:mac -- --${{ matrix.arch }} --publish never $args
+          for attempt in 1 2 3; do
+            if npm run dist:mac -- --${{ matrix.arch }} --publish never $args 2>&1 | tee dist-build.log; then
+              break
+            fi
+            if [ "$attempt" = 3 ] || ! grep -q -E "Failed to staple|network connection was lost" dist-build.log; then
+              exit 1
+            fi
+            echo "Apple could not be reached while stapling, trying again (attempt $((attempt + 1)) of 3)"
+          done
       - name: Check the app is signed
         working-directory: electron-app
         run: |
