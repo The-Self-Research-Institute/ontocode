@@ -14789,6 +14789,11 @@ const updateItemInState = useCallback(
               userId={actor.userId}
               username={actor.username}
               draftMode={!isDesktop() && syncMode === "private"}
+              onViewOnlyAction={isViewOnlyMember ? handleViewOnlyAction : undefined}
+              onDraftRequired={!isDesktop() && isProjectDraftEditorRole && syncMode !== 'private'
+                ? () => setShowProPromptType('draftRequired')
+                : undefined}
+              isDraftEditor={!isDesktop() && isProjectDraftEditorRole}
               onImported={() => {
                 codeViewDirtyRef.current = true;
                 refreshAfterBulkWriteRef.current("spreadsheetImport");
