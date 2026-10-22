@@ -21,7 +21,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.arch == 'arm64' && '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"}]' || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]' || '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"},{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       NODE_OPTIONS: --max-old-space-size=4096
       ONTOCODE_UPDATE_HOST: ontocodeapi.selfresearch.org
