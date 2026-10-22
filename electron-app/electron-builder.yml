@@ -117,6 +117,16 @@ mac:
   # notarize:
   #   teamId: YOUR_TEAM_ID
 
+mas: &masBase
+  hardenedRuntime: false
+  entitlements: build-assets/entitlements.mas.plist
+  entitlementsInherit: build-assets/entitlements.mas.inherit.plist
+  provisioningProfile: build-assets/embedded.provisionprofile
+  category: public.app-category.developer-tools
+
+masDev:
+  <<: *masBase
+
 dmg:
   window:
     width: 540

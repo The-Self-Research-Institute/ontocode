@@ -384,8 +384,10 @@ app.whenReady().then(async () => {
     });
 
     // ── Start Syncthing (optional, both modes) ─────────────────────────────
-    syncMgr.onLog((level, msg) => sendSplashLog(level, `[Sync] ${msg}`));
-    syncMgr.start().catch(e => console.warn('Sync engine failed to start:', e.message));
+    if (!process.mas) {
+        syncMgr.onLog((level, msg) => sendSplashLog(level, `[Sync] ${msg}`));
+        syncMgr.start().catch(e => console.warn('Sync engine failed to start:', e.message));
+    }
 
     if (IS_DEV) {
         // ── DEV MODE: skip bundled services, connect to Docker stack ───────
