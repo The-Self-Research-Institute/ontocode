@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import self.research.ontology.owlEditor.util.StandardVocabulary;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.io.FileDocumentSource;
@@ -48,6 +49,7 @@ public class OntologyMergeService {
     public static final String MERGE_OPERATION = "ontologyMerge";
     public static final String MERGE_CHECKPOINT_OPERATION = "ontologyMergeCheckpoint";
     public static final String MERGE_IRI_PREFIX = "urn:ontocode:merge:";
+    static final int MAX_LISTED_COPIES = 1000;
 
     private final SparqlDatasetService datasetService;
     private final ProjectImportService importService;
@@ -66,6 +68,8 @@ public class OntologyMergeService {
     private String authServiceUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
+
+    private final Map<OWLOntology, OWLOntologyID> headers = Collections.synchronizedMap(new WeakHashMap<>());
 
     public OntologyMergeService(SparqlDatasetService datasetService,
                                ProjectImportService importService,
@@ -132,46 +136,8 @@ public class OntologyMergeService {
         // Pre-build label index from source (IRI → label) in ONE pass
         Map<IRI, String> sourceLabelIndex = buildLabelIndex(sourceOntology);
         
-        // PERFORMANCE OPTIMIZATION: Run conflict detection in parallel (2-4x faster for large ontologies)
-        long analysisStart = System.nanoTime();
-        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(4);
-        try {
-            java.util.concurrent.Future<?> classFuture = executor.submit(() -> 
-                detectClassConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            java.util.concurrent.Future<?> propertyFuture = executor.submit(() -> 
-                detectPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            java.util.concurrent.Future<?> annotPropFuture = executor.submit(() -> 
-                detectAnnotationPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            java.util.concurrent.Future<?> individualFuture = executor.submit(() -> 
-                detectIndividualConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result)
-            );
-            
-            // Wait for all parallel tasks to complete
-            classFuture.get();
-            propertyFuture.get();
-            annotPropFuture.get();
-            individualFuture.get();
-            
-            long parallelDuration = (System.nanoTime() - analysisStart) / 1_000_000;
-            log.info("⚡ PERFORMANCE: Parallel conflict detection completed in {} ms", parallelDuration);
-            
-            // Axiom detection cannot be easily parallelized (shared result modification)
-            detectAxiomConflicts(sourceOntology, targetOntology, result);
-            
-        } catch (Exception e) {
-            log.error("[MERGE] Parallel conflict detection failed, falling back to sequential", e);
-            // Fallback to sequential if parallel fails
-            detectClassConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectAnnotationPropertyConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectIndividualConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
-            detectAxiomConflicts(sourceOntology, targetOntology, result);
-        } finally {
-            executor.shutdown();
-        }
+        detectEntityConflicts(sourceOntology, targetOntology, sourceAnnotIndex, targetAnnotIndex, result);
+        detectAxiomConflicts(sourceOntology, targetOntology, result);
         
         // Calculate statistics
         result.setSourceClassCount((int) sourceOntology.getClassesInSignature().stream().filter(c -> !c.isBuiltIn()).count());
@@ -445,9 +411,12 @@ public class OntologyMergeService {
             if (!isNewFile) {
                 // Only refresh metadata and reimport for "merge into existing" modes.
                 // For "save as new file", the auth upload + file-open flow handles this.
-                refreshMergedMetadata(importProjectId, targetOntology);
                 updateGridFsFile(importProjectId, targetFileName, outputPath);
-                importService.submitImport(importProjectId, outputPath);
+                if (!importService.trySubmitImport(importProjectId, outputPath)) {
+                    result.setReimportSkipped(true);
+                    log.warn("[MERGE] Project {} was already importing a file, so the merged file was not imported again; "
+                            + "the class tree and counts will not show the merge until the file is imported again", importProjectId);
+                }
             }
 
             result.setSuccess(true);
@@ -505,23 +474,6 @@ public class OntologyMergeService {
         } catch (IOException | RuntimeException e) {
             log.warn("[MERGE] Could not keep a copy of the merged file for project {}: {}", projectId, e.getMessage());
             return null;
-        }
-    }
-
-    private void refreshMergedMetadata(String projectId, OWLOntology ontology) {
-        try {
-            Map<String, Object> meta = metadataService.readMeta(projectId).orElseGet(HashMap::new);
-            meta.put("classCount", (int) ontology.getClassesInSignature().stream().filter(c -> !c.isBuiltIn()).count());
-            meta.put("objectPropertyCount", ontology.getObjectPropertiesInSignature().size());
-            meta.put("dataPropertyCount", ontology.getDataPropertiesInSignature().size());
-            meta.put("annotationPropertyCount", ontology.getAnnotationPropertiesInSignature().size());
-            meta.put("individualCount", ontology.getIndividualsInSignature().size());
-            meta.put("propertyCount",
-                ontology.getObjectPropertiesInSignature().size() + ontology.getDataPropertiesInSignature().size());
-            meta.put("axiomCount", ontology.getAxiomCount());
-            metadataService.writeMeta(projectId, meta);
-        } catch (Exception e) {
-            log.warn("[MERGE] Failed to refresh metadata after merge for {}: {}", projectId, e.getMessage());
         }
     }
 
@@ -947,20 +899,20 @@ public class OntologyMergeService {
                                 MergeResult result) {
         log.info("[MERGE] Performing keep both merge with renaming using OWLEntityRenamer");
         
-        String renameSuffix = options.getRenameSuffix() != null ? options.getRenameSuffix() : "_imported";
-        
+        String renameSuffix = options.getRenameSuffix() != null && !options.getRenameSuffix().isBlank()
+                ? options.getRenameSuffix() : "_imported";
+
         Map<OWLEntity, IRI> renameMap = new HashMap<>();
-        Set<OWLEntity> sourceEntities = source.getSignature();
-        
-        // Create rename map for conflicting entities
-        for (OWLEntity entity : sourceEntities) {
-            if (target.containsEntityInSignature(entity)) {
+        for (OWLEntity entity : source.getSignature()) {
+            if (isCopiedWhenKeepingBoth(entity)
+                    && !StandardVocabulary.contains(entity)
+                    && target.containsEntityInSignature(entity)) {
                 IRI newIRI = IRI.create(entity.getIRI().toString() + renameSuffix);
                 renameMap.put(entity, newIRI);
                 log.debug("[MERGE] Will rename {} to {}", entity.getIRI(), newIRI);
             }
         }
-        
+
         // Use OWLEntityRenamer to properly rename entities in all axioms
         OWLEntityRenamer renamer = new OWLEntityRenamer(manager, Collections.singleton(source));
         List<OWLOntologyChange> changes = renamer.changeIRI(renameMap);
@@ -968,7 +920,8 @@ public class OntologyMergeService {
         // Apply the renaming changes to the source ontology
         manager.applyChanges(changes);
         log.info("[MERGE] Applied {} renaming changes", changes.size());
-        
+        List<MergeCopy> copies = nameCopies(source, target, manager, renameMap, renameSuffix);
+
         // Now merge the renamed source into target
         int addedCount = 0;
         for (OWLAxiom axiom : source.getAxioms()) {
@@ -991,8 +944,89 @@ public class OntologyMergeService {
         }
         
         result.setEntitiesRenamed(renameMap.size());
+        result.setConflictsResolved(renameMap.size());
         result.setAxiomsAdded(addedCount);
-        log.info("[MERGE] Renamed {} entities, added {} axioms", renameMap.size(), addedCount);
+        result.setCopies(copies.size() > MAX_LISTED_COPIES ? new ArrayList<>(copies.subList(0, MAX_LISTED_COPIES)) : copies);
+        log.info("[MERGE] Kept both versions of {} shared entities, added {} axioms", renameMap.size(), addedCount);
+    }
+
+    private static boolean isCopiedWhenKeepingBoth(OWLEntity entity) {
+        return entity.isOWLClass() || entity.isOWLObjectProperty() || entity.isOWLDataProperty()
+                || entity.isOWLNamedIndividual();
+    }
+
+    private List<MergeCopy> nameCopies(OWLOntology source, OWLOntology target, OWLOntologyManager manager,
+                                       Map<OWLEntity, IRI> renameMap, String suffix) {
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLAnnotationProperty rdfsLabel = df.getRDFSLabel();
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        Map<IRI, String> shownLabels = new HashMap<>();
+        for (Map.Entry<OWLEntity, IRI> entry : renameMap.entrySet()) {
+            IRI original = entry.getKey().getIRI();
+            IRI copy = entry.getValue();
+            changes.add(new AddAxiom(source, df.getOWLDeclarationAxiom(df.getOWLEntity(entry.getKey().getEntityType(), copy))));
+            if (shownLabels.containsKey(copy)) {
+                continue;
+            }
+            List<OWLLiteral> names = new ArrayList<>();
+            source.annotationAssertionAxioms(copy)
+                    .filter(axiom -> axiom.getProperty().equals(rdfsLabel) && axiom.getValue().isLiteral())
+                    .forEach(axiom -> {
+                        OWLLiteral name = withSuffix(df, axiom.getValue().asLiteral().get(), suffix);
+                        changes.add(new RemoveAxiom(source, axiom));
+                        changes.add(new AddAxiom(source,
+                                df.getOWLAnnotationAssertionAxiom(rdfsLabel, copy, name, axiom.getAnnotations())));
+                        names.add(name);
+                    });
+            if (names.isEmpty()) {
+                target.annotationAssertionAxioms(original)
+                        .filter(axiom -> axiom.getProperty().equals(rdfsLabel) && axiom.getValue().isLiteral())
+                        .map(axiom -> withSuffix(df, axiom.getValue().asLiteral().get(), suffix))
+                        .distinct()
+                        .forEach(names::add);
+                if (names.isEmpty()) {
+                    names.add(df.getOWLLiteral(localName(original) + suffix));
+                }
+                names.forEach(name -> changes.add(new AddAxiom(source, df.getOWLAnnotationAssertionAxiom(rdfsLabel, copy, name))));
+            }
+            shownLabels.put(copy, preferredLabel(names));
+        }
+        manager.applyChanges(changes);
+        return renameMap.entrySet().stream()
+                .map(entry -> new MergeCopy(entry.getKey().getIRI().toString(), entry.getValue().toString(),
+                        shownLabels.get(entry.getValue()), kindOf(entry.getKey())))
+                .sorted(Comparator.comparing((MergeCopy copy) -> copy.label().toLowerCase(Locale.ROOT))
+                        .thenComparing(MergeCopy::newIri)
+                        .thenComparing(MergeCopy::kind))
+                .collect(Collectors.toList());
+    }
+
+    private static OWLLiteral withSuffix(OWLDataFactory df, OWLLiteral literal, String suffix) {
+        String text = literal.getLiteral() + suffix;
+        return literal.hasLang() || literal.isRDFPlainLiteral()
+                ? df.getOWLLiteral(text, literal.getLang())
+                : df.getOWLLiteral(text, literal.getDatatype());
+    }
+
+    private static String preferredLabel(List<OWLLiteral> names) {
+        return names.stream()
+                .min(Comparator.comparing((OWLLiteral name) -> !(name.getLang().isEmpty() || name.getLang().equalsIgnoreCase("en")))
+                        .thenComparing(OWLLiteral::getLiteral))
+                .map(OWLLiteral::getLiteral)
+                .orElse("");
+    }
+
+    private static String kindOf(OWLEntity entity) {
+        if (entity.isOWLClass()) {
+            return "Class";
+        }
+        if (entity.isOWLObjectProperty()) {
+            return "ObjectProperty";
+        }
+        if (entity.isOWLDataProperty()) {
+            return "DataProperty";
+        }
+        return "Individual";
     }
 
     /**
@@ -1101,12 +1135,51 @@ public class OntologyMergeService {
 
     // ========== Conflict Detection Methods ==========
 
+    private void detectEntityConflicts(OWLOntology source, OWLOntology target,
+                                       Map<IRI, Set<OWLAnnotationAssertionAxiom>> srcAnnot,
+                                       Map<IRI, Set<OWLAnnotationAssertionAxiom>> tgtAnnot,
+                                       MergeAnalysisResult result) {
+        long analysisStart = System.nanoTime();
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            java.util.concurrent.Future<?> classFuture = executor.submit(() ->
+                detectClassConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+            java.util.concurrent.Future<?> propertyFuture = executor.submit(() ->
+                detectPropertyConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+            java.util.concurrent.Future<?> annotPropFuture = executor.submit(() ->
+                detectAnnotationPropertyConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+            java.util.concurrent.Future<?> individualFuture = executor.submit(() ->
+                detectIndividualConflicts(source, target, srcAnnot, tgtAnnot, result)
+            );
+
+            classFuture.get();
+            propertyFuture.get();
+            annotPropFuture.get();
+            individualFuture.get();
+
+            long parallelDuration = (System.nanoTime() - analysisStart) / 1_000_000;
+            log.info("PERFORMANCE: Parallel conflict detection completed in {} ms", parallelDuration);
+        } catch (Exception e) {
+            log.error("[MERGE] Parallel conflict detection failed, falling back to sequential", e);
+            result.getConflicts().clear();
+            detectClassConflicts(source, target, srcAnnot, tgtAnnot, result);
+            detectPropertyConflicts(source, target, srcAnnot, tgtAnnot, result);
+            detectAnnotationPropertyConflicts(source, target, srcAnnot, tgtAnnot, result);
+            detectIndividualConflicts(source, target, srcAnnot, tgtAnnot, result);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
     private void detectClassConflicts(OWLOntology source, OWLOntology target,
                                      Map<IRI, Set<OWLAnnotationAssertionAxiom>> srcAnnot,
                                      Map<IRI, Set<OWLAnnotationAssertionAxiom>> tgtAnnot,
                                      MergeAnalysisResult result) {
         Set<OWLClass> sourceClasses = source.getClassesInSignature().stream()
-                                            .filter(c -> !c.isBuiltIn())
+                                            .filter(c -> !StandardVocabulary.contains(c))
                                             .collect(Collectors.toSet());
         Set<OWLClass> targetClasses = target.getClassesInSignature();
         
@@ -1143,7 +1216,7 @@ public class OntologyMergeService {
         Set<OWLObjectProperty> targetObjProps = target.getObjectPropertiesInSignature();
         
         for (OWLObjectProperty prop : sourceObjProps) {
-            if (targetObjProps.contains(prop)) {
+            if (!StandardVocabulary.contains(prop) && targetObjProps.contains(prop)) {
                 Set<OWLObjectPropertyAxiom> sourceAxioms = source.getAxioms(prop);
                 Set<OWLObjectPropertyAxiom> targetAxioms = target.getAxioms(prop);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(prop.getIRI(), Collections.emptySet());
@@ -1170,7 +1243,7 @@ public class OntologyMergeService {
         Set<OWLDataProperty> targetDataProps = target.getDataPropertiesInSignature();
         
         for (OWLDataProperty prop : sourceDataProps) {
-            if (targetDataProps.contains(prop)) {
+            if (!StandardVocabulary.contains(prop) && targetDataProps.contains(prop)) {
                 Set<OWLDataPropertyAxiom> sourceAxioms = source.getAxioms(prop);
                 Set<OWLDataPropertyAxiom> targetAxioms = target.getAxioms(prop);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(prop.getIRI(), Collections.emptySet());
@@ -1201,7 +1274,7 @@ public class OntologyMergeService {
         Set<OWLNamedIndividual> targetIndividuals = target.getIndividualsInSignature();
         
         for (OWLNamedIndividual individual : sourceIndividuals) {
-            if (targetIndividuals.contains(individual)) {
+            if (!StandardVocabulary.contains(individual) && targetIndividuals.contains(individual)) {
                 Set<OWLIndividualAxiom> sourceAxioms = source.getAxioms(individual);
                 Set<OWLIndividualAxiom> targetAxioms = target.getAxioms(individual);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(individual.getIRI(), Collections.emptySet());
@@ -1232,7 +1305,7 @@ public class OntologyMergeService {
         Set<OWLAnnotationProperty> targetAnnotProps = target.getAnnotationPropertiesInSignature();
 
         for (OWLAnnotationProperty prop : sourceAnnotProps) {
-            if (targetAnnotProps.contains(prop)) {
+            if (!StandardVocabulary.contains(prop) && targetAnnotProps.contains(prop)) {
                 Set<OWLAnnotationAxiom> sourceAxioms = source.getAxioms(prop);
                 Set<OWLAnnotationAxiom> targetAxioms = target.getAxioms(prop);
                 Set<OWLAnnotationAssertionAxiom> sourceAnnotations = srcAnnot.getOrDefault(prop.getIRI(), Collections.emptySet());
@@ -1653,6 +1726,10 @@ public class OntologyMergeService {
     private String lookupLabel(Map<IRI, String> labelIndex, IRI entityIri) {
         String cached = labelIndex.get(entityIri);
         if (cached != null) return cached;
+        return localName(entityIri);
+    }
+
+    private static String localName(IRI entityIri) {
         String iri = entityIri.toString();
         String local = iri.contains("#") ? iri.substring(iri.lastIndexOf('#') + 1) : iri.substring(iri.lastIndexOf('/') + 1);
         return local.isBlank() ? iri : local;
@@ -1666,13 +1743,83 @@ public class OntologyMergeService {
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
         OWLOntology loaded = manager.loadOntologyFromOntologyDocument(
                 new StringDocumentSource(rdfXml), config);
-        return cloneAsAnonymousOntology(manager, loaded);
+        OWLOntology clone = cloneAsAnonymousOntology(manager, loaded);
+        headers.put(clone, loaded.getOntologyID());
+        manager.removeOntology(loaded);
+        return clone;
+    }
+
+    public OWLOntologyID headerOf(OWLOntology ontology) {
+        OWLOntologyID remembered = headers.get(ontology);
+        return remembered != null ? remembered : ontology.getOntologyID();
+    }
+
+    public OntologyHeaderMerge.Header header(OWLOntology ontology) {
+        return OntologyHeaderMerge.Header.of(headerOf(ontology), ontology);
+    }
+
+    public Set<OWLAxiom> definingAxioms(OWLOntology ontology, IRI entityIRI) {
+        return getDefiningAxioms(ontology, entityIRI);
+    }
+
+    public void withholdFromOntology(OWLOntology ontology, Set<OWLAnnotation> annotations,
+                                     Set<OWLImportsDeclaration> imports, Set<OWLAxiom> axioms) {
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        annotations.forEach(annotation -> changes.add(new RemoveOntologyAnnotation(ontology, annotation)));
+        imports.forEach(declaration -> changes.add(new RemoveImport(ontology, declaration)));
+        axioms.forEach(axiom -> changes.add(new RemoveAxiom(ontology, axiom)));
+        if (!changes.isEmpty()) {
+            ontology.getOWLOntologyManager().applyChanges(changes);
+        }
     }
 
     public String saveOntologyToRdfXml(OWLOntology ontology) throws OWLOntologyStorageException {
+        OWLOntologyID header = headerOf(ontology);
+        if (OntologyHeaderMerge.isScratch(header.getOntologyIRI().orElse(null))) {
+            header = new OWLOntologyID();
+        }
+        OWLOntologyID working = ontology.getOntologyID();
+        if (header.equals(working)) {
+            return renderRdfXml(ontology);
+        }
+        OWLOntologyManager manager = ontology.getOWLOntologyManager();
+        manager.applyChange(new SetOntologyID(ontology, header));
+        try {
+            String rdf = renderRdfXml(ontology);
+            return header.isAnonymous() ? withoutBareHeader(rdf) : rdf;
+        } finally {
+            manager.applyChange(new SetOntologyID(ontology, working));
+        }
+    }
+
+    private static String renderRdfXml(OWLOntology ontology) throws OWLOntologyStorageException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ontology.getOWLOntologyManager().saveOntology(ontology, new RDFXMLDocumentFormat(), out);
         return out.toString(StandardCharsets.UTF_8);
+    }
+
+    private static String withoutBareHeader(String rdfXml) {
+        try {
+            org.eclipse.rdf4j.model.Model model = org.eclipse.rdf4j.rio.Rio.parse(
+                    new java.io.StringReader(rdfXml), "", org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
+            List<org.eclipse.rdf4j.model.Resource> bare = model
+                    .filter(null, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE,
+                            org.eclipse.rdf4j.model.vocabulary.OWL.ONTOLOGY)
+                    .subjects().stream()
+                    .filter(subject -> subject instanceof org.eclipse.rdf4j.model.BNode)
+                    .filter(subject -> model.filter(subject, null, null).size() == 1)
+                    .toList();
+            if (bare.isEmpty()) {
+                return rdfXml;
+            }
+            bare.forEach(subject -> model.remove(subject, null, null));
+            java.io.StringWriter out = new java.io.StringWriter();
+            org.eclipse.rdf4j.rio.Rio.write(model, out, org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
+            return out.toString();
+        } catch (Exception e) {
+            log.warn("[DRAFT-MERGE] Could not tidy the unnamed ontology header: {}", e.getMessage());
+            return rdfXml;
+        }
     }
 
     public void removeEntityFromOntology(OWLOntology ontology, IRI entityIRI) {
@@ -1689,6 +1836,16 @@ public class OntologyMergeService {
                                                  OWLOntology theirs,
                                                  Set<String> conflictEntityIris,
                                                  Map<String, ConflictResolution> resolutions)
+            throws OWLOntologyCreationException {
+        return mergeDraftPublishThreeWay(baseline, ours, theirs, conflictEntityIris, resolutions, header(baseline));
+    }
+
+    public OWLOntology mergeDraftPublishThreeWay(OWLOntology baseline,
+                                                 OWLOntology ours,
+                                                 OWLOntology theirs,
+                                                 Set<String> conflictEntityIris,
+                                                 Map<String, ConflictResolution> resolutions,
+                                                 OntologyHeaderMerge.Header headerBaseline)
             throws OWLOntologyCreationException {
         OWLOntologyManager manager = theirs.getOWLOntologyManager();
         Set<String> touchedIris = collectTouchedIris(baseline, ours);
@@ -1721,7 +1878,7 @@ public class OntologyMergeService {
 
         if (conflictEntityIris != null) {
             for (String iriStr : conflictEntityIris) {
-                if (touchedIris.contains(iriStr)) {
+                if (touchedIris.contains(iriStr) || OntologyHeaderMerge.isSectionKey(iriStr)) {
                     continue;
                 }
                 IRI iri = IRI.create(iriStr);
@@ -1733,6 +1890,10 @@ public class OntologyMergeService {
                 applyDraftConflictResolution(ours, theirs, iri, resolution, manager);
             }
         }
+
+        OntologyHeaderMerge.Header oursHeader = header(ours);
+        OntologyHeaderMerge.Header theirsHeader = header(theirs);
+        headers.put(theirs, OntologyHeaderMerge.apply(headerBaseline, oursHeader, theirsHeader, theirs, safeResolutions));
         return theirs;
     }
 

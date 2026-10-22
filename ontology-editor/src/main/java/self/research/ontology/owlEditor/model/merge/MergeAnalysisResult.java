@@ -32,7 +32,7 @@ public class MergeAnalysisResult {
     private Map<String, List<String>> classHierarchy = new HashMap<>();
     private Map<String, List<String>> propertyHierarchy = new HashMap<>();
 
-    public void addConflict(MergeConflict conflict) {
+    public synchronized void addConflict(MergeConflict conflict) {
         this.conflicts.add(conflict);
     }
 

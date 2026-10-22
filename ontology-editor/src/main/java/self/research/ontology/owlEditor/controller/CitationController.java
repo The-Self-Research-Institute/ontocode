@@ -148,12 +148,23 @@ public class CitationController {
             @PathVariable String citationId,
             @org.springframework.web.bind.annotation.RequestParam(required = false) String userId,
             @org.springframework.web.bind.annotation.RequestParam(required = false) String username,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String draft,
             jakarta.servlet.http.HttpServletRequest httpRequest) {
         
         try {
             log.info("[CitationController] Deleting citation {} from project: {}", citationId, projectId);
 
-            citationService.deleteCitation(projectId, citationId, RequestActor.of(httpRequest, userId, username));
+            boolean inDraft = RequestActor.draftRequested(httpRequest, draft);
+            RequestActor actor = inDraft
+                    ? new RequestActor(RequestActor.forScope(httpRequest, userId, true), RequestActor.displayName(httpRequest, username))
+                    : RequestActor.of(httpRequest, userId, username);
+            if (inDraft && (actor.userId() == null || actor.userId().isBlank())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "userId is required to delete a citation from a draft"
+                ));
+            }
+            citationService.deleteCitation(projectId, citationId, actor, inDraft);
 
             return ResponseEntity.ok(Map.of(
                 "success", true,

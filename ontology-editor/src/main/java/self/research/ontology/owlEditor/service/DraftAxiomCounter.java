@@ -2,7 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.rdf4j.rio.RDFFormat;
-import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.parameters.Imports;
@@ -37,7 +37,7 @@ final class DraftAxiomCounter {
             }
             OWLOntology ont;
             try (InputStream in = Files.newInputStream(tempFile)) {
-                ont = OWLManager.createOWLOntologyManager().loadOntologyFromOntologyDocument(in);
+                ont = OWLFormatConverter.createManagerWithSilentImports().loadOntologyFromOntologyDocument(in);
             }
             OntologyMetrics.OwlApiAxiomCounts counts = countsOf(ont);
             log.info("[PERF] Draft OWLAPI axiom counts for project {} computed in {}ms", projectId,

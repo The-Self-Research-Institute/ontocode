@@ -6,8 +6,10 @@ import org.springframework.lang.Nullable;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.UndoIntentDocument;
+import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.RollbackAudit;
+import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.delta.ExactReversal;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 import self.research.ontology.owlEditor.service.RollbackMutationPlanner.Kind;
@@ -29,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -73,6 +76,9 @@ public class ChangeRollbackService {
 
     @Autowired(required = false)
     private RollbackActionRunner actionRunner;
+
+    @Autowired(required = false)
+    private DraftMergeApplier mergeApplier;
 
     @Autowired(required = false)
     private OperationGroups groups;
@@ -200,13 +206,13 @@ public class ChangeRollbackService {
                     audit = recorder.saveAudit(req, entries, 0);
                     UndoOperationContext.audit(audit.getId());
                 }
-                applyWork(req, work, audit.getId());
+                applyWork(req, work, audit);
                 done.add(work);
                 applied.addAll(appliedItems(work));
             }
             if (audit != null) {
                 for (Work pending : completions) {
-                    applyWork(req, pending, audit.getId());
+                    applyWork(req, pending, audit);
                 }
             }
         } catch (RuntimeException e) {
@@ -396,15 +402,13 @@ public class ChangeRollbackService {
         return new Work(entry, plan, targets, skipped, completes, false);
     }
 
-    private void applyWork(Request req, Work work, String auditId) {
+    private void applyWork(Request req, Work work, RollbackAudit audit) {
+        String auditId = audit.getId();
         HistoryChange entry = work.entry();
         boolean draft = entry.isDraft() && entry.getUserId() != null && !entry.getUserId().isBlank();
         if (!work.plan().mutations().isEmpty()) {
             if (draft) {
                 mutations.applyDraftForRollback(req.projectId(), entry.getUserId(), work.plan().mutations());
-                if (entry.getEntityIRI() != null) {
-                    draftTracking.discardDraftsByIris(req.projectId(), entry.getUserId(), Set.of(entry.getEntityIRI()));
-                }
             } else {
                 mutations.applyForRollback(req.projectId(), work.plan().mutations());
             }
@@ -423,6 +427,9 @@ public class ChangeRollbackService {
         }
         UndoOperationContext.stage(UndoIntentDocument.Stage.DOCUMENTS_APPLIED);
         boolean undo = UNDO.equals(req.direction());
+        if (draft) {
+            trackDraftChange(req, work, undo, audit);
+        }
         if (isSpreadsheetImport(entry)) {
             spreadsheetImports.markUndone(req.projectId(), entry, undo, req.actor().username());
         }
@@ -432,6 +439,56 @@ public class ChangeRollbackService {
             historySync.setEntryReverted(entry.getId(), undo, undo ? auditId : null);
         }
         UndoOperationContext.stage(UndoIntentDocument.Stage.HISTORY_MARKED);
+    }
+
+    private void trackDraftChange(Request req, Work work, boolean undo, RollbackAudit audit) {
+        String projectId = req.projectId();
+        HistoryChange entry = work.entry();
+        if (work.plan().mutations().isEmpty() && !work.completesEntry()) {
+            return;
+        }
+        boolean tracked = tracksDraftChange(entry);
+        if (undo) {
+            List<DraftChange> undone = draftTracking.discardForUndo(projectId, entry.getUserId(), entry.getChangeSetId(),
+                    tracked ? entry.getEntityIRI() : null);
+            if (!undone.isEmpty()) {
+                audit.getDraftRecords().addAll(undone);
+                audits.save(audit);
+            }
+            return;
+        }
+        RollbackAudit undoAudit = recorder.findUndo(projectId, req.undoAuditId());
+        List<DraftChange> stashed = undoAudit == null ? null : undoAudit.getDraftRecords();
+        int before = stashed == null ? 0 : stashed.size();
+        if (draftTracking.restoreForRedo(projectId, entry.getUserId(), entry.getChangeSetId(), stashed)) {
+            if (undoAudit != null && stashed.size() != before) {
+                audits.save(undoAudit);
+            }
+            return;
+        }
+        if (!tracked) {
+            return;
+        }
+        if (OntologyMergeService.MERGE_OPERATION.equals(entry.getOperationType())) {
+            DraftMergeApplier.recordMarker(draftTracking, projectId, entry.getUserId(), entry.getUsername(),
+                    entry.getEntityIRI(), mergeApplier != null ? mergeApplier.summarize(projectId, entry)
+                            : DraftMergeApplier.summaryOf(entry, null));
+        } else {
+            List<MutationOp> ops = work.plan().mutations().isEmpty() ? List.of(redoneOp(entry)) : work.plan().mutations();
+            draftTracking.recordDrafts(projectId, entry.getUserId(), entry.getUsername(), ops, UUID.randomUUID().toString());
+        }
+    }
+
+    private static boolean tracksDraftChange(HistoryChange entry) {
+        return entry.getEntityIRI() != null && !entry.getEntityIRI().isBlank() && entry.getOperationType() != null
+                && !SpreadsheetImportService.isImportEntry(entry.getOperationType())
+                && RollbackMutationPlanner.kindOf(entry) != Kind.PREFIX;
+    }
+
+    private static MutationOp redoneOp(HistoryChange entry) {
+        return new MutationOp(entry.getOperationType(), entry.getEntityIRI(), entry.getEntityLabel(), null,
+                entry.getAnnotationProperty(), entry.getNewValue(), null, null, null, null, null, entry.getOldValue(),
+                null, null, null);
     }
 
     private boolean actionsHold(Request req, HistoryChange entry, Plan plan) {

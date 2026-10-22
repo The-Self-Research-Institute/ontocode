@@ -26,7 +26,7 @@ public final class ReasoningSnapshot {
 
     public static final int DEFAULT_TREE_DEPTH = 3;
     public static final int DEFAULT_MAX_MAPPED_CLASSES = 200_000;
-    public static final int DEFAULT_INFERRED_AXIOM_LIMIT = 100;
+    public static final int DEFAULT_INFERRED_AXIOM_LIMIT = 5000;
 
     private final OWLOntology ontology;
     private final OWLDataFactory df;

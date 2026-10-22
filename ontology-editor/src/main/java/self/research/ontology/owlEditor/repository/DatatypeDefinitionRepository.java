@@ -10,7 +10,13 @@ import java.util.Optional;
 @Repository
 public interface DatatypeDefinitionRepository extends MongoRepository<DatatypeDefinitionEntity, String> {
 
-    List<DatatypeDefinitionEntity> findByProjectIdAndDatatypeIriOrderByCreatedAtDesc(String projectId, String datatypeIri);
+    List<DatatypeDefinitionEntity> findByProjectIdAndDatatypeIriAndDraftNotOrderByCreatedAtDesc(
+            String projectId, String datatypeIri, boolean draft);
+
+    List<DatatypeDefinitionEntity> findByProjectIdAndDatatypeIriAndOwnerUserIdAndDraftTrue(
+            String projectId, String datatypeIri, String ownerUserId);
+
+    List<DatatypeDefinitionEntity> findByProjectIdAndOwnerUserIdAndDraftTrue(String projectId, String ownerUserId);
 
     Optional<DatatypeDefinitionEntity> findByIdAndProjectId(String id, String projectId);
 }

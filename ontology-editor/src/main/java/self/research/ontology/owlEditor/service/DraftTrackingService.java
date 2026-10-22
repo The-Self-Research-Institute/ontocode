@@ -11,7 +11,6 @@ import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.delta.DeltaCapture;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
-import self.research.ontology.owlEditor.service.spreadsheet.SpreadsheetImportDraftSupport;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -127,8 +126,8 @@ public class DraftTrackingService {
         
         DraftChange draft = new DraftChange(projectId, userId, username, operationType, operationData);
         draft.setSessionId(sessionId);
-        
-        return draftRepository.save(draft);
+
+        return draftRepository.saveAll(List.of(draft)).get(0);
     }
     
     /**
@@ -137,34 +136,118 @@ public class DraftTrackingService {
     public List<DraftChange> recordDrafts(String projectId, String userId, String username,
                                          List<MutationOp> operations, String sessionId) {
         log.info("[DRAFT] Recording {} draft operations for project {}", operations.size(), projectId);
-        
+
         List<DraftChange> drafts = operations.stream()
             .map(op -> {
-                Map<String, Object> data = new HashMap<>();
-                data.put("type", op.type());
-                data.put("iri", op.iri());
-                if (op.label() != null) data.put("label", op.label());
-                if (op.parent() != null) data.put("parent", op.parent());
-                if (op.property() != null) data.put("property", op.property());
-                if (op.value() != null) data.put("value", op.value());
-                if (op.target() != null) data.put("target", op.target());
-                if (op.classIri() != null) data.put("classIri", op.classIri());
-                if (op.restrictionType() != null) data.put("restrictionType", op.restrictionType());
-                if (op.cardinality() != null) data.put("cardinality", op.cardinality());
-                if (op.axiomType() != null) data.put("axiomType", op.axiomType());
-                if (op.oldValue() != null) data.put("oldValue", op.oldValue());
-                if (op.language() != null) data.put("language", op.language());
-                if (op.datatype() != null) data.put("datatype", op.datatype());
-                
-                log.info("[DRAFT CREATION] operationType: {}, iri: {}, value: '{}', oldValue: '{}'", 
+                log.info("[DRAFT CREATION] operationType: {}, iri: {}, value: '{}', oldValue: '{}'",
                     op.type(), op.iri(), op.value(), op.oldValue());
-                
-                return new DraftChange(projectId, userId, username, op.type(), data);
+
+                return new DraftChange(projectId, userId, username, op.type(), operationData(op));
             })
             .peek(draft -> draft.setSessionId(sessionId))
             .collect(Collectors.toList());
-        
+
         return draftRepository.saveAll(drafts);
+    }
+
+    private static Map<String, Object> operationData(MutationOp op) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("type", op.type());
+        data.put("iri", op.iri());
+        if (op.label() != null) data.put("label", op.label());
+        if (op.parent() != null) data.put("parent", op.parent());
+        if (op.property() != null) data.put("property", op.property());
+        if (op.value() != null) data.put("value", op.value());
+        if (op.target() != null) data.put("target", op.target());
+        if (op.classIri() != null) data.put("classIri", op.classIri());
+        if (op.restrictionType() != null) data.put("restrictionType", op.restrictionType());
+        if (op.cardinality() != null) data.put("cardinality", op.cardinality());
+        if (op.axiomType() != null) data.put("axiomType", op.axiomType());
+        if (op.oldValue() != null) data.put("oldValue", op.oldValue());
+        if (op.language() != null) data.put("language", op.language());
+        if (op.datatype() != null) data.put("datatype", op.datatype());
+        return data;
+    }
+
+    public static final String CHANGE_SETS = "changeSetIds";
+
+    public DraftChange recordDescribed(String projectId, String userId, String username, String operationType,
+                                       Map<String, Object> data, Collection<String> changeSetIds) {
+        Map<String, Object> operationData = new LinkedHashMap<>();
+        data.forEach((key, value) -> {
+            if (value != null) {
+                operationData.put(key, value);
+            }
+        });
+        operationData.put("type", operationType);
+        operationData.put(CHANGE_SETS, new ArrayList<>(changeSetIds));
+        DraftChange draft = new DraftChange(projectId, userId, username, operationType, operationData);
+        draft.setSessionId(UUID.randomUUID().toString());
+        log.info("[DRAFT] Recording {} for project {} ({} change set(s))", operationType, projectId, changeSetIds.size());
+        return draftRepository.saveAll(List.of(draft)).get(0);
+    }
+
+    public DraftChange recordDescribed(String projectId, String userId, String username, MutationOp op,
+                                       Collection<String> changeSetIds) {
+        return recordDescribed(projectId, userId, username, op.type(), operationData(op), changeSetIds);
+    }
+
+    public static boolean isDescribed(DraftChange draft) {
+        return draft.getOperationData() != null && draft.getOperationData().get(CHANGE_SETS) instanceof Collection<?>;
+    }
+
+    static boolean describedBy(DraftChange draft, String changeSetId) {
+        return changeSetId != null && draft.getOperationData() != null
+                && draft.getOperationData().get(CHANGE_SETS) instanceof Collection<?> ids && ids.contains(changeSetId);
+    }
+
+    public List<DraftChange> discardForUndo(String projectId, String userId, String changeSetId, String entityIri) {
+        ReentrantLock lock = getProjectLock(projectId);
+        boolean lockAcquired = false;
+        try {
+            lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!lockAcquired) {
+                log.warn("[DRAFT] Could not acquire lock for project {} to discard undone drafts", projectId);
+                return List.of();
+            }
+            List<DraftChange> candidates = userId != null && !userId.isBlank()
+                    ? getUnappliedDraftsForUser(projectId, userId)
+                    : getUnappliedDrafts(projectId);
+            List<DraftChange> described = candidates.stream().filter(d -> describedBy(d, changeSetId)).toList();
+            List<DraftChange> byEntity = entityIri == null ? List.of() : candidates.stream()
+                    .filter(d -> !isDescribed(d) && d.getOperationData() != null
+                            && d.getOperationData().get("iri") != null
+                            && entityIri.equals(d.getOperationData().get("iri").toString()))
+                    .toList();
+            described.forEach(d -> draftRepository.deleteById(d.getId()));
+            byEntity.forEach(d -> draftRepository.deleteById(d.getId()));
+            return described;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } finally {
+            if (lockAcquired) {
+                lock.unlock();
+            }
+        }
+    }
+
+    public boolean restoreForRedo(String projectId, String userId, String changeSetId, List<DraftChange> stash) {
+        if (changeSetId == null) {
+            return false;
+        }
+        List<DraftChange> matching = stash == null ? List.of()
+                : stash.stream().filter(d -> describedBy(d, changeSetId)).toList();
+        if (!matching.isEmpty()) {
+            matching.forEach(d -> d.setApplied(false));
+            draftRepository.saveAll(matching);
+            stash.removeAll(matching);
+            return true;
+        }
+        List<DraftChange> candidates = userId != null && !userId.isBlank()
+                ? getUnappliedDraftsForUser(projectId, userId)
+                : getUnappliedDrafts(projectId);
+        return candidates.stream().anyMatch(d -> describedBy(d, changeSetId));
     }
     
     /**
@@ -294,37 +377,70 @@ public class DraftTrackingService {
                 log.warn("[DRAFT] {} for project {} user {}", message, projectId, userId);
                 return new ApplyDraftsResult(false, 0, message, true, analysis);
             }
-            Optional<DeltaCapture> committed = beginCommit(projectId);
-            try {
-                draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions);
-            } catch (Exception e) {
-                log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
-                return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
-            }
-            reconcileCommit(projectId, userId, committed);
-            draftChangeHistory.markPublished(projectId, userId);
-            promoteSpreadsheetImports(projectId, userId);
+            return publishThroughMerge(projectId, userId, unappliedDrafts, analysis,
+                    () -> draftPublishMergeService.publishWithThreeWayMerge(projectId, userId, analysis, resolutions));
+        }
 
+        if (resolutions != null && !force) {
+            DraftPublishDiff diff;
             try {
-                mainGraphRevisionService.incrementRevision(projectId);
-                draftPublishService.clearBaseline(projectId, userId);
-                if (springCacheEviction != null) {
-                    springCacheEviction.evictForProject(projectId);
-                }
-                invalidateHierarchyCaches(projectId);
-                int recordingFailures = finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
-                return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                        "Published draft with merge" + recordingFailureSuffix(recordingFailures), false, analysis);
+                diff = draftPublishMergeService.comparePublish(projectId, userId);
             } catch (Exception e) {
-                log.error("[DRAFT] Merge publish succeeded but follow-up bookkeeping failed for project {} user {} — "
-                        + "data is already live, do not retry", projectId, userId, e);
-                return new ApplyDraftsResult(true, unappliedDrafts.size(),
-                        "Published, but some follow-up updates failed (" + e.getMessage()
-                                + "). Refresh to see the latest state.", false, analysis);
+                log.error("[DRAFT] Could not compare the draft with the shared ontology for project {} user {}",
+                        projectId, userId, e);
+                return new ApplyDraftsResult(false, 0,
+                        "Could not compare the draft with the shared ontology: " + e.getMessage(), false, null);
+            }
+            if (diff != null && diff.available() && diff.publicChanged()) {
+                Set<String> unresolved = diff.unresolved(resolutions);
+                if (!unresolved.isEmpty()) {
+                    String message = "The shared ontology changed since this draft started and " + unresolved.size()
+                            + " item(s) were changed on both sides — choose what to keep for each";
+                    log.warn("[DRAFT] {} for project {} user {}", message, projectId, userId);
+                    return new ApplyDraftsResult(false, 0, message, true, null);
+                }
+                return publishThroughMerge(projectId, userId, unappliedDrafts, null,
+                        () -> draftPublishMergeService.publishReviewed(projectId, userId, resolutions));
             }
         }
 
         return applyDraftsViaMoveGraph(projectId, userId, force, false, unappliedDrafts);
+    }
+
+    private interface MergePublish {
+        void run() throws Exception;
+    }
+
+    private ApplyDraftsResult publishThroughMerge(String projectId, String userId, List<DraftChange> unappliedDrafts,
+                                                  DraftPublishAnalysis analysis, MergePublish publish) {
+        Optional<DeltaCapture> committed = beginCommit(projectId);
+        try {
+            publish.run();
+        } catch (Exception e) {
+            log.error("[DRAFT] Merge publish failed for project {} user {}", projectId, userId, e);
+            return new ApplyDraftsResult(false, 0, "Failed to publish draft: " + e.getMessage(), false, null);
+        }
+        reconcileCommit(projectId, userId, committed);
+        draftChangeHistory.markPublished(projectId, userId);
+        draftDocuments.promote(projectId, userId);
+
+        try {
+            mainGraphRevisionService.incrementRevision(projectId);
+            draftPublishService.clearBaseline(projectId, userId);
+            if (springCacheEviction != null) {
+                springCacheEviction.evictForProject(projectId);
+            }
+            invalidateHierarchyCaches(projectId);
+            int recordingFailures = finalizeAppliedDrafts(projectId, userId, unappliedDrafts);
+            return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                    "Published draft with merge" + recordingFailureSuffix(recordingFailures), false, analysis);
+        } catch (Exception e) {
+            log.error("[DRAFT] Merge publish succeeded but follow-up bookkeeping failed for project {} user {} — "
+                    + "data is already live, do not retry", projectId, userId, e);
+            return new ApplyDraftsResult(true, unappliedDrafts.size(),
+                    "Published, but some follow-up updates failed (" + e.getMessage()
+                            + "). Refresh to see the latest state.", false, analysis);
+        }
     }
 
     private Optional<DeltaCapture> beginCommit(String projectId) {
@@ -337,23 +453,11 @@ public class DraftTrackingService {
         }
     }
 
-    private SpreadsheetImportDraftSupport spreadsheetImportDrafts;
+    private DraftDocuments draftDocuments = DraftDocuments.none();
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
-    void setSpreadsheetImportDrafts(SpreadsheetImportDraftSupport spreadsheetImportDrafts) {
-        this.spreadsheetImportDrafts = spreadsheetImportDrafts;
-    }
-
-    private void promoteSpreadsheetImports(String projectId, String userId) {
-        if (spreadsheetImportDrafts == null) {
-            return;
-        }
-        try {
-            spreadsheetImportDrafts.promoteDraftImports(projectId, userId);
-        } catch (Exception e) {
-            log.warn("[DRAFT] Could not mark spreadsheet imports as published for project {} user {}: {}",
-                    projectId, userId, e.getMessage());
-        }
+    void setDraftDocuments(DraftDocuments draftDocuments) {
+        this.draftDocuments = draftDocuments;
     }
 
     private int finalizeAppliedDrafts(String projectId, String userId, List<DraftChange> unappliedDrafts) {
@@ -409,7 +513,7 @@ public class DraftTrackingService {
         }
         reconcileCommit(projectId, userId, committed);
         draftChangeHistory.markPublished(projectId, userId);
-        promoteSpreadsheetImports(projectId, userId);
+        draftDocuments.promote(projectId, userId);
 
         try {
             mainGraphRevisionService.incrementRevision(projectId);
@@ -481,6 +585,7 @@ public class DraftTrackingService {
         if (userId != null && !userId.isBlank()) {
             datasetService.clearDraftGraph(projectId, userId);
             draftPublishService.clearBaseline(projectId, userId);
+            draftDocuments.discard(projectId, userId);
         } else {
             unappliedDrafts.stream()
                     .map(DraftChange::getUserId)
@@ -489,6 +594,7 @@ public class DraftTrackingService {
                     .forEach(id -> {
                         datasetService.clearDraftGraph(projectId, id);
                         draftPublishService.clearBaseline(projectId, id);
+                        draftDocuments.discard(projectId, id);
                     });
         }
 

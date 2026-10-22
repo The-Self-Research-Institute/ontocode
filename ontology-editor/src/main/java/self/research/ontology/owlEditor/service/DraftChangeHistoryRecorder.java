@@ -62,7 +62,9 @@ public class DraftChangeHistoryRecorder {
                         draft.getId(), projectId, e.getMessage());
             }
         }
-        Map<String, List<DraftChange>> byEntity = groupByEntity(tracked);
+        Map<String, List<DraftChange>> byEntity = groupByEntity(tracked.stream()
+                .filter(draft -> !DraftTrackingService.isDescribed(draft))
+                .toList());
         Set<String> alreadyRecorded = tracked.isEmpty() ? Set.of()
                 : publishedEntities.getOrDefault(publishKey(projectId, tracked.get(0).getUserId()), Set.of());
         for (Map.Entry<String, List<DraftChange>> entry : byEntity.entrySet()) {

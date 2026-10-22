@@ -274,13 +274,6 @@ public class OntologyQueryService {
             merged.sort(java.util.Comparator.comparing(n -> n.getLabel() != null ? n.getLabel().toLowerCase() : n.getId()));
             List<OntologyDto.TreeNode> result = merged.size() > limit ? merged.subList(0, limit) : merged;
             enrichWithEquivalentClasses(projectId, result);
-            // Persist to MongoDB — but never persist an empty result: cold Fuseki skipped the
-            // orphan scan so "empty" just means "not ready yet", not "ontology is empty".
-            final List<OntologyDto.TreeNode> toStore = new java.util.ArrayList<>(result);
-            final int finalLimit = limit;
-            if (!toStore.isEmpty() && !hasDraft) {
-                CompletableFuture.runAsync(() -> topLevelCacheService.put(projectId, toStore, finalLimit));
-            }
             return result;
         }
 

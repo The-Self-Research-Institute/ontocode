@@ -20,7 +20,6 @@ jobs:
     timeout-minutes: 60
     env:
       NODE_OPTIONS: --max-old-space-size=4096
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
       ONTOCODE_UPDATE_HOST: ontocodeapi.selfresearch.org
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +56,9 @@ jobs:
           chmod +x data/mongodb/bin/darwin/mongod
       - name: Build backend jars
         run: |
-          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -pl ontology-swrl -am package -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -N install -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean install -pl shared/common-models,shared/common-utils -DskipTests -Djava.version=17 -Dmaven.compiler.source=17 -Dmaven.compiler.target=17 -Dmaven.compiler.release=17
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean package -pl ontology-swrl -DskipTests
           JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -Dgit.commit="$GITHUB_SHA"
           (cd ontology-desktop && JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q clean package -DskipTests -Dgit.commit="$GITHUB_SHA")
       - name: Install web dependencies
@@ -67,7 +68,41 @@ jobs:
           done
       - name: Build the dmg
         working-directory: electron-app
-        run: npm run dist:mac -- --${{ matrix.arch }} --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -e
+          if [ -n "$CSC_LINK" ]; then
+            echo "Signing with the Developer ID certificate"
+            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false -c.mac.signIgnore=\.jsa\$"
+            if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+              echo "Notarizing"
+              args="$args -c.mac.notarize=true"
+            else
+              echo "Apple ID secrets not set, skipping notarization"
+            fi
+          else
+            echo "No certificate secret, signing ad-hoc"
+            unset CSC_LINK CSC_KEY_PASSWORD
+            args="-c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.gatekeeperAssess=false"
+          fi
+          npm run dist:mac -- --${{ matrix.arch }} --publish never $args
+      - name: Check the app is signed
+        working-directory: electron-app
+        run: |
+          set -e
+          dmg=$(ls dist-electron/*.dmg | head -1)
+          mnt=$(mktemp -d)
+          hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -readonly
+          app=$(ls -d "$mnt"/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -E "Signature|Authority|TeamIdentifier|Identifier"
+          xcrun stapler validate "$app" || echo "Not notarized"
+          hdiutil detach "$mnt"
       - uses: actions/upload-artifact@v4
         with:
           name: ontocode-macos-${{ matrix.arch }}
