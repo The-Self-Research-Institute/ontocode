@@ -66,7 +66,29 @@ jobs:
           done
       - name: Build the dmg
         working-directory: electron-app
-        run: npm run dist:mac -- --${{ matrix.arch }} --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.gatekeeperAssess=false
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -e
+          if [ -n "$CSC_LINK" ]; then
+            echo "Signing with the Developer ID certificate"
+            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false"
+            if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+              echo "Notarizing"
+              args="$args -c.mac.notarize=true"
+            else
+              echo "Apple ID secrets not set, skipping notarization"
+            fi
+          else
+            echo "No certificate secret, signing ad-hoc"
+            unset CSC_LINK CSC_KEY_PASSWORD
+            args="-c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.gatekeeperAssess=false"
+          fi
+          npm run dist:mac -- --${{ matrix.arch }} --publish never $args
       - name: Check the app is signed
         working-directory: electron-app
         run: |
@@ -76,7 +98,8 @@ jobs:
           hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -readonly
           app=$(ls -d "$mnt"/*.app | head -1)
           codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -dv "$app" 2>&1 | grep -E "Signature|Identifier"
+          codesign -dv "$app" 2>&1 | grep -E "Signature|Authority|TeamIdentifier|Identifier"
+          xcrun stapler validate "$app" || echo "Not notarized"
           hdiutil detach "$mnt"
       - uses: actions/upload-artifact@v4
         with:
