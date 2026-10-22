@@ -56,7 +56,9 @@ jobs:
           chmod +x data/mongodb/bin/darwin/mongod
       - name: Build backend jars
         run: |
-          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -pl ontology-swrl -am package -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -N install -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean install -pl shared/common-models,shared/common-utils -DskipTests -Djava.version=17 -Dmaven.compiler.source=17 -Dmaven.compiler.target=17 -Dmaven.compiler.release=17
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean package -pl ontology-swrl -DskipTests
           JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -Dgit.commit="$GITHUB_SHA"
           (cd ontology-desktop && JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q clean package -DskipTests -Dgit.commit="$GITHUB_SHA")
       - name: Install web dependencies
@@ -76,7 +78,7 @@ jobs:
           set -e
           if [ -n "$CSC_LINK" ]; then
             echo "Signing with the Developer ID certificate"
-            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false"
+            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false -c.mac.signIgnore=\.jsa\$"
             if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
               echo "Notarizing"
               args="$args -c.mac.notarize=true"
