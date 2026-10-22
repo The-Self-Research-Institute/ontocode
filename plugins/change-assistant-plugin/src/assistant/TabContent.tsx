@@ -15,6 +15,7 @@ interface TabContentProps {
   liveActivity: LiveActivity[];
   changes: OntologyChange[];
   draftChanges: OntologyChange[];
+  filteredDrafts: OntologyChange[];
   stats: ChangeStats;
   filteredChanges: OntologyChange[];
   typeFilteredChanges: OntologyChange[];
@@ -25,21 +26,38 @@ interface TabContentProps {
   onResolveClick: (change: OntologyChange, conflictIndex: number) => void;
   onAutoResolve: (changeId: string, resolution: string) => void;
   onSelectTimeline: (changeId: string) => void;
+  hasMore: boolean;
+  isLoadingOlder: boolean;
+  onLoadOlder: () => void;
 }
 
 const TabContent: React.FC<TabContentProps> = (props) => (
   <div className="flex-1 overflow-auto p-4">
     {props.activeTab === 'live' && <LiveActivityTab activities={props.liveActivity} />}
-    {props.activeTab === 'drafts' && <DraftsTab drafts={props.draftChanges} />}
+    {props.activeTab === 'drafts' && <DraftsTab drafts={props.filteredDrafts} />}
     {props.activeTab === 'changes' && (
-      <ChangeSetList
-        projectId={props.projectId}
-        entries={props.typeFilteredChanges}
-        searchQuery={props.searchQuery}
-        sourceFilter={props.sourceFilter}
-        onChanged={props.onRollback}
-        onOpenDetails={props.onOpenDetails}
-      />
+      <>
+        <ChangeSetList
+          projectId={props.projectId}
+          entries={props.typeFilteredChanges}
+          searchQuery={props.searchQuery}
+          sourceFilter={props.sourceFilter}
+          onChanged={props.onRollback}
+          onOpenDetails={props.onOpenDetails}
+        />
+        {props.hasMore && (
+          <div className="text-center mt-3">
+            <button
+              type="button"
+              onClick={props.onLoadOlder}
+              disabled={props.isLoadingOlder}
+              className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50 disabled:opacity-50"
+            >
+              {props.isLoadingOlder ? 'Loading…' : 'Load older changes'}
+            </button>
+          </div>
+        )}
+      </>
     )}
     {props.activeTab === 'conflicts' && (
       <ConflictsTab changes={props.changes} onResolveClick={props.onResolveClick} onAutoResolve={props.onAutoResolve} />

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Loader2, Plus, Users, Crown, Building2, ChevronRight, Trash, AlertTriangle, Bug, ListOrdered, CreditCard, Mail, CheckCircle, XCircle } from "lucide-react";
 import apiClient from "../services/apiClient";
-import { ReportIssueModal } from "./ReportIssueModal";
+import { openFeedbackPage } from "../utils/feedback";
 import { validateWorkspaceName, validateDescription } from "../utils/validation";
 import { useAuth } from "../custom-hook/useAuth";
 import { SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "../utils/sessionCleanup";
@@ -125,8 +125,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
       }));
     }
   }, [user?.subscriptionPlan]);
-  // Report Issue modal state — available in workspace selection screen
-  const [reportIssueModalType, setReportIssueModalType] = useState<"Bug" | "Task" | null>(null);
 
   const showConfirmDialog = useCallback((title: string, message: string, confirmLabel = "OK"): Promise<boolean> => {
     return new Promise<boolean>((resolve) => {
@@ -563,7 +561,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           )}
           <button
             type="button"
-            onClick={() => setReportIssueModalType("Bug")}
+            onClick={() => openFeedbackPage("bug")}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
             title="Report a bug"
           >
@@ -572,7 +570,7 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setReportIssueModalType("Task")}
+            onClick={() => openFeedbackPage("feature")}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm"
             title="Request a feature"
           >
@@ -1001,13 +999,6 @@ const WorkspaceSelection: React.FC<WorkspaceSelectionProps> = ({
         </div>
       )}
 
-      {/* Report Issue Modal — available from workspace selection */}
-      {reportIssueModalType && (
-        <ReportIssueModal
-          initialIssueType={reportIssueModalType}
-          onClose={() => setReportIssueModalType(null)}
-        />
-      )}
     </div>
   );
 };

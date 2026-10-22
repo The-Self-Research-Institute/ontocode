@@ -142,6 +142,16 @@ public class ProjectWriteLockRegistry {
         }
     }
 
+    public <T> T exclusive(String projectId, java.util.function.Supplier<T> work) {
+        try {
+            return runExclusive(projectId, work::get);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e.getMessage(), e);
+        }
+    }
+
     public <T> T runShared(String projectId, Callable<T> work) throws Exception {
         long waitStart = System.nanoTime();
         ReentrantReadWriteLock.ReadLock lock = lockFor(projectId).readLock();

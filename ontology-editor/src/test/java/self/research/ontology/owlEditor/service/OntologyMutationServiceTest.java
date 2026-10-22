@@ -18,6 +18,7 @@ import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,6 +42,10 @@ class OntologyMutationServiceTest {
     @Mock
     private DraftCopyService draftCopyService;
 
+    @Mock
+    private DraftTrackingService draftTrackingService;
+
+    private RawUpdateHistory rawUpdateHistory;
     private OntologyMutationService service;
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
@@ -51,6 +56,10 @@ class OntologyMutationServiceTest {
         Executor directExecutor = Runnable::run;
         service = new OntologyMutationService(datasetService, indexService, metadataService,
                 graphGeneratingService, topLevelCacheService, storageManager, directExecutor);
+        rawUpdateHistory = new RawUpdateHistory(datasetService);
+        ReflectionTestUtils.setField(rawUpdateHistory, "historyService", historyService);
+        ReflectionTestUtils.setField(rawUpdateHistory, "draftTrackingService", draftTrackingService);
+        ReflectionTestUtils.setField(service, "rawUpdateHistory", rawUpdateHistory);
         ReflectionTestUtils.setField(service, "historyService", historyService);
         ReflectionTestUtils.setField(service, "draftCopyService", draftCopyService);
         when(draftCopyService.isReady(anyString(), org.mockito.ArgumentMatchers.any())).thenReturn(true);
@@ -91,10 +100,99 @@ class OntologyMutationServiceTest {
     }
 
     @Test
-    void applyRawUpdateWithHistorySkipsRecordingForDraftUpdates() {
-        service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", true, "u1", "User One");
+    void applyRawUpdateWithHistoryRecordsDraftUpdatesFromTheDraftGraph() {
+        var subject = VF.createIRI("http://ex.org/Pizza");
+        var predicate = VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label");
+        var draftGraph = VF.createIRI("urn:draft:u1");
+        org.eclipse.rdf4j.repository.sail.SailRepository repository =
+                new org.eclipse.rdf4j.repository.sail.SailRepository(new org.eclipse.rdf4j.sail.memory.MemoryStore());
+        repository.init();
+        try (var connection = repository.getConnection()) {
+            connection.add(subject, predicate, VF.createLiteral("Pizza"), draftGraph);
+        }
+        when(datasetService.graphTarget("proj-1")).thenReturn(new SparqlDatasetService.ProjectGraphTarget(repository, "urn:main"));
+        when(datasetService.getDraftGraphUri("proj-1", "u1")).thenReturn(draftGraph.stringValue());
+        doAnswer(invocation -> {
+            try (var connection = repository.getConnection()) {
+                connection.clear(draftGraph);
+                connection.add(subject, predicate, VF.createLiteral("Pizza Margherita"), draftGraph);
+            }
+            return null;
+        }).when(datasetService).execDraftUpdateCopyOnSwitch(anyString(), anyString(), anyString());
+
+        service.applyRawUpdateWithHistory("proj-1", "DELETE {...} INSERT {...} WHERE {...}", true, "u1", "User One");
 
         verify(datasetService, org.mockito.Mockito.never()).execConstructAll(anyString());
+        verify(historyService).recordEdit(anyString(), anyString(), anyString(), anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), anyString(),
+                org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.argThat(subChanges -> subChanges != null && !subChanges.isEmpty()),
+                org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.any());
+    }
+
+    private org.eclipse.rdf4j.repository.sail.SailRepository draftGraphWith(java.util.function.Consumer<org.eclipse.rdf4j.repository.RepositoryConnection> change) {
+        var draftGraph = VF.createIRI("urn:draft:u1");
+        org.eclipse.rdf4j.repository.sail.SailRepository repository =
+                new org.eclipse.rdf4j.repository.sail.SailRepository(new org.eclipse.rdf4j.sail.memory.MemoryStore());
+        repository.init();
+        try (var connection = repository.getConnection()) {
+            connection.add(VF.createIRI("http://ex.org/A"), VF.createIRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+                    VF.createIRI("http://www.w3.org/2002/07/owl#Class"), draftGraph);
+        }
+        when(datasetService.graphTarget("proj-1")).thenReturn(new SparqlDatasetService.ProjectGraphTarget(repository, "urn:main"));
+        when(datasetService.getDraftGraphUri("proj-1", "u1")).thenReturn(draftGraph.stringValue());
+        doAnswer(invocation -> {
+            try (var connection = repository.getConnection()) {
+                change.accept(connection);
+            }
+            return null;
+        }).when(datasetService).execDraftUpdateCopyOnSwitch(anyString(), anyString(), anyString());
+        return repository;
+    }
+
+    private static void addUnnamedAxiom(org.eclipse.rdf4j.repository.RepositoryConnection connection) {
+        var draftGraph = VF.createIRI("urn:draft:u1");
+        var restriction = VF.createBNode();
+        connection.add(restriction, VF.createIRI("http://www.w3.org/2002/07/owl#onProperty"), VF.createIRI("http://ex.org/p"), draftGraph);
+        connection.add(restriction, VF.createIRI("http://www.w3.org/2002/07/owl#someValuesFrom"), VF.createIRI("http://ex.org/A"), draftGraph);
+    }
+
+    @Test
+    void aDraftEditThatOnlyChangesUnnamedAxiomsStillCountsAsADraftChange() {
+        draftGraphWith(OntologyMutationServiceTest::addUnnamedAxiom);
+
+        service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", true, "u1", "User One");
+
+        verify(draftTrackingService).recordDescribed(org.mockito.ArgumentMatchers.eq("proj-1"),
+                org.mockito.ArgumentMatchers.eq("u1"), org.mockito.ArgumentMatchers.eq("User One"),
+                org.mockito.ArgumentMatchers.eq("structuralGraphEdit"), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.argThat(ids -> ids != null && ids.size() == 1));
+        verify(draftTrackingService, org.mockito.Mockito.never()).recordDrafts(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.any(), anyString());
+    }
+
+    @Test
+    void aDescribedDraftEditLeavesTheGenericRecordsOutAndKeepsItsChangeSet() throws Exception {
+        draftGraphWith(connection -> connection.add(VF.createIRI("http://ex.org/A"),
+                VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label"), VF.createLiteral("A"), VF.createIRI("urn:draft:u1")));
+
+        DraftRecordScope.Outcome<Object> outcome = DraftRecordScope.collect(() -> {
+            service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", true, "u1", "User One");
+            return null;
+        });
+
+        assertEquals(1, outcome.changeSetIds().size());
+        org.mockito.Mockito.verifyNoInteractions(draftTrackingService);
+    }
+
+    @Test
+    void aPublicRawUpdateBumpsTheSharedRevision() {
+        MainGraphRevisionService revisions = org.mockito.Mockito.mock(MainGraphRevisionService.class);
+        ReflectionTestUtils.setField(service, "mainGraphRevisionService", revisions);
+
+        service.applyRawUpdate("proj-1", "INSERT DATA {...}", false, null);
+
+        verify(revisions).incrementRevision("proj-1");
     }
 
     @Test
@@ -115,6 +213,7 @@ class OntologyMutationServiceTest {
     @Test
     void applyRawUpdateWithoutHistoryStillWorksWhenHistoryServiceIsAbsent() {
         ReflectionTestUtils.setField(service, "historyService", null);
+        ReflectionTestUtils.setField(rawUpdateHistory, "historyService", null);
 
         service.applyRawUpdateWithHistory("proj-1", "INSERT DATA {...}", false, "u1", "User One");
 
@@ -184,5 +283,47 @@ class OntologyMutationServiceTest {
         verify(entityUsageIndexService, org.mockito.Mockito.never()).dropAll(anyString());
         verify(topLevelCacheService, org.mockito.Mockito.never()).evict(anyString());
         verify(hierarchyIndexService).markStale("proj-1");
+    }
+
+    @Test
+    void draftWriteOnlyDropsThatUsersDraftReasonerEntries() {
+        EditorReasonerCacheService reasonerCache = org.mockito.Mockito.mock(EditorReasonerCacheService.class);
+        ReflectionTestUtils.setField(service, "editorReasonerCacheService", reasonerCache);
+
+        service.applyRawUpdate("proj-1", "INSERT DATA { <urn:a> <urn:b> <urn:c> }", true, "user-1");
+
+        verify(reasonerCache).invalidateDraft("proj-1", "user-1");
+        verify(reasonerCache, org.mockito.Mockito.never()).invalidateOntology(anyString());
+    }
+
+    @Test
+    void publishedWriteStillDropsThePublishedReasonerCache() {
+        EditorReasonerCacheService reasonerCache = org.mockito.Mockito.mock(EditorReasonerCacheService.class);
+        ReflectionTestUtils.setField(service, "editorReasonerCacheService", reasonerCache);
+
+        service.invalidateReasonerCaches("proj-1", false);
+
+        verify(reasonerCache).invalidateOntology("proj-1");
+        verify(reasonerCache, org.mockito.Mockito.never()).invalidateDraft(anyString(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void deletingAClassDoesNotAddExtraHistoryRowsForItsStatements() {
+        List<String> names = List.of("p", "o");
+        org.eclipse.rdf4j.query.BindingSet parent = new org.eclipse.rdf4j.query.impl.ListBindingSet(names,
+                VF.createIRI("http://www.w3.org/2000/01/rdf-schema#subClassOf"), VF.createIRI("http://ex.org/PizzaBase"));
+        org.eclipse.rdf4j.query.BindingSet label = new org.eclipse.rdf4j.query.impl.ListBindingSet(names,
+                VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label"), VF.createLiteral("Thin crust"));
+        when(datasetService.execSelect(anyString(), anyString())).thenAnswer(inv ->
+                new org.eclipse.rdf4j.query.impl.IteratingTupleQueryResult(names, List.of(parent, label)));
+        OntologyMutationService.MutationOp delete = new OntologyMutationService.MutationOp("deleteClass",
+                "http://ex.org/ThinCrust", "Thin crust", null, null, null, null, null, null, null, null, null, null, null, null);
+
+        service.apply("proj-1", List.of(delete));
+
+        org.mockito.Mockito.verify(historyService, org.mockito.Mockito.never()).recordEdit(anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), anyString(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 }

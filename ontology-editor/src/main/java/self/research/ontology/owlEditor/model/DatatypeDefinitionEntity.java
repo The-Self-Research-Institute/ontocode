@@ -16,6 +16,10 @@ public class DatatypeDefinitionEntity {
     private String definitionType;
     private Date createdAt = new Date();
     private Date updatedAt = new Date();
+    private boolean draft;
+    private String ownerUserId;
+    private String replacesId;
+    private boolean deleted;
 
     public String getId() {
         return id;
@@ -71,5 +75,57 @@ public class DatatypeDefinitionEntity {
 
     public void setUpdatedAt(Date updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public boolean isDraft() {
+        return draft;
+    }
+
+    public void setDraft(boolean draft) {
+        this.draft = draft;
+    }
+
+    public String getOwnerUserId() {
+        return ownerUserId;
+    }
+
+    public void setOwnerUserId(String ownerUserId) {
+        this.ownerUserId = ownerUserId;
+    }
+
+    public String getReplacesId() {
+        return replacesId;
+    }
+
+    public void setReplacesId(String replacesId) {
+        this.replacesId = replacesId;
+    }
+
+    public boolean isDeleted() {
+        return deleted;
+    }
+
+    public void setDeleted(boolean deleted) {
+        this.deleted = deleted;
+    }
+
+    public DatatypeDefinitionEntity copy() {
+        DatatypeDefinitionEntity copy = new DatatypeDefinitionEntity();
+        copy.id = id;
+        copy.projectId = projectId;
+        copy.datatypeIri = datatypeIri;
+        copy.expression = expression;
+        copy.definitionType = definitionType;
+        copy.createdAt = createdAt;
+        copy.updatedAt = updatedAt;
+        copy.draft = draft;
+        copy.ownerUserId = ownerUserId;
+        copy.replacesId = replacesId;
+        copy.deleted = deleted;
+        return copy;
+    }
+
+    public boolean isOwnedBy(String userId) {
+        return draft && ownerUserId != null && ownerUserId.equals(userId);
     }
 }

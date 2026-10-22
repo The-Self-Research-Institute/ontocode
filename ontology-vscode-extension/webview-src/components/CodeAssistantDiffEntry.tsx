@@ -10,10 +10,29 @@ interface CodeAssistantDiffEntryProps {
   onShowInCodeView?: (format: string, startLine: number) => void;
 }
 
-function lineLabel(startLine: number, lineCount: number): string {
+const FORMAT_NAMES: Record<string, string> = {
+  turtle: "Turtle",
+  ttl: "Turtle",
+  rdfxml: "RDF/XML",
+  rdf: "RDF/XML",
+  owl: "RDF/XML",
+  xml: "RDF/XML",
+  owlxml: "OWL/XML",
+  functional: "OWL Functional",
+  manchester: "Manchester",
+  ntriples: "N-Triples",
+  jsonld: "JSON-LD",
+};
+
+export function formatName(format: string): string {
+  return FORMAT_NAMES[(format || "").toLowerCase()] ?? format;
+}
+
+export function lineLabel(startLine: number, lineCount: number, format?: string): string {
   const first = startLine + 1;
-  if (lineCount <= 1) return `line ${first}`;
-  return `lines ${first}–${first + lineCount - 1}`;
+  const where = format ? ` of the ${formatName(format)} file` : "";
+  if (lineCount <= 1) return `line ${first}${where}`;
+  return `lines ${first}–${first + lineCount - 1}${where}`;
 }
 
 function clip(text: string, expanded: boolean): { text: string; hidden: number } {
@@ -58,8 +77,8 @@ export const CodeAssistantDiffEntry: React.FC<CodeAssistantDiffEntryProps> = ({ 
     <div className="text-xs font-mono bg-gray-50 rounded p-2 space-y-1">
       <div className="flex items-center gap-2 text-gray-500">
         <span>
-          {entry.targetPath}
-          {hasRange && ` · ${entry.lineCount === 0 ? `insert at line ${(entry.startLine as number) + 1}` : lineLabel(entry.startLine as number, entry.lineCount ?? 1)}`}
+          {formatName(entry.targetPath)}
+          {hasRange && ` · ${entry.lineCount === 0 ? `insert at line ${(entry.startLine as number) + 1} of the ${formatName(entry.targetPath)} file` : lineLabel(entry.startLine as number, entry.lineCount ?? 1, entry.targetPath)}`}
         </span>
         {hasRange && onShowInCodeView && (
           <button

@@ -496,4 +496,30 @@ class FreeViewOnlyInterceptorTest {
                 new MockHttpServletResponse(), new Object()));
         verify(workspaceOwnershipService, never()).isViewerInProject(anyString(), anyString());
     }
+
+    @Test
+    void viewerOnFreePlanCanCancelReasonerJobsLikeTheyCanPollThem() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);
+
+        MockHttpServletRequest projectJob = postRequest("/api/ontology/proj-5/reasoner/jobs/job-1", "FREE");
+        projectJob.setMethod("DELETE");
+        MockHttpServletRequest dlQueryJob = postRequest("/api/dl-query/jobs/job-1", "FREE");
+        dlQueryJob.setMethod("DELETE");
+
+        assertTrue(interceptor.preHandle(projectJob, new MockHttpServletResponse(), new Object()));
+        assertTrue(interceptor.preHandle(dlQueryJob, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void viewerStillCannotDeleteOtherProjectResources() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);
+        MockHttpServletRequest request = postRequest("/api/ontology/proj-5/classes/job-1", "FREE");
+        request.setMethod("DELETE");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(request, response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
 }

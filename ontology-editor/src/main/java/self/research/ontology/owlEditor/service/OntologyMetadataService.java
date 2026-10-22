@@ -45,6 +45,10 @@ public class OntologyMetadataService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OntologyHistoryService historyService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @Lazy
+    private DraftTrackingService draftTracking;
+
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
@@ -82,7 +86,8 @@ public class OntologyMetadataService {
         this.storageManager = storageManager;
         this.countQueries = new OntologyCountQueries(datasetService);
         this.metrics = new OntologyMetrics(datasetService, projectMetadataService, importService,
-                manchesterExpressionService, countQueries, this::getOntologyIri);
+                manchesterExpressionService, countQueries, this::getOntologyIri,
+                (project, user) -> storageManager == null ? 0L : storageManager.getDraftGraphVersion(project, user));
     }
 
     /**
@@ -325,7 +330,16 @@ public class OntologyMetadataService {
 
     public void addOntologyAnnotation(String projectId, String propertyIri, String value, String language, String datatype,
                                       boolean draft, String userId, String username) {
-        String ontologyIri = getOntologyIri(projectId);
+        Map<String, Object> record = DraftRecords.annotation(propertyIri, null, null, value, language, datatype);
+        DraftRecords.run(draftTracking, draft, projectId, userId, username, DraftRecords.ADD_ANNOTATION, record,
+                () -> record.put("iri", writeOntologyAnnotation(projectId, propertyIri, value, language, datatype, draft,
+                        userId, username)));
+    }
+
+    private String writeOntologyAnnotation(String projectId, String propertyIri, String value, String language,
+                                           String datatype, boolean draft, String userId, String username) {
+        String ontologyIri = getOntologyIri(projectId, draft, userId);
+        String plainIri = ontologyIri;
         if (ontologyIri == null) {
             // If no ontology triple exists, create one using a stable IRI based on project ID
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
@@ -334,6 +348,7 @@ public class OntologyMetadataService {
             if (!draft) {
                 ontologyIriCache.put(projectId, ontologyIri);
             }
+            plainIri = ontologyIri;
             ontologyIri = "<" + ontologyIri + ">";
         } else {
             // Format the ontology IRI for SPARQL
@@ -350,6 +365,7 @@ public class OntologyMetadataService {
             """, ontologyIri, prop, literal);
 
         mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
+        return plainIri;
     }
 
     /**
@@ -378,11 +394,21 @@ public class OntologyMetadataService {
                     boolean draft,
                     String userId,
                     String username) {
-        String ontologyIri = getOntologyIri(projectId);
-        if (ontologyIri == null) {
+        Map<String, Object> record = DraftRecords.annotation(propertyIri, originalPropertyIri, oldValue, newValue,
+                language, datatype);
+        DraftRecords.run(draftTracking, draft, projectId, userId, username, DraftRecords.UPDATE_ANNOTATION, record,
+                () -> record.put("iri", rewriteOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language,
+                        datatype, originalPropertyIri, draft, userId, username)));
+    }
+
+    private String rewriteOntologyAnnotation(String projectId, String propertyIri, String oldValue, String newValue,
+                                             String language, String datatype, String originalPropertyIri,
+                                             boolean draft, String userId, String username) {
+        String plainIri = getOntologyIri(projectId, draft, userId);
+        if (plainIri == null) {
             throw new RuntimeException("Ontology IRI not found for project " + projectId);
         }
-        ontologyIri = formatResource(ontologyIri);
+        String ontologyIri = formatResource(plainIri);
 
                 String insertProp = formatResource(propertyIri);
                 String deleteProp = formatResource(
@@ -407,6 +433,7 @@ public class OntologyMetadataService {
                                  ontologyIri, deleteProp, escapeString(oldValue));
 
         mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
+        return plainIri;
     }
 
     /**
@@ -418,15 +445,23 @@ public class OntologyMetadataService {
 
     public void deleteOntologyAnnotation(String projectId, String propertyIri, String value, String language,
                                          boolean draft, String userId, String username) {
-        String ontologyIri = getOntologyIri(projectId);
-        if (ontologyIri == null) {
+        Map<String, Object> record = DraftRecords.annotation(propertyIri, null, null, value, language, null);
+        DraftRecords.run(draftTracking, draft, projectId, userId, username, DraftRecords.DELETE_ANNOTATION, record,
+                () -> record.put("iri", removeOntologyAnnotation(projectId, propertyIri, value, language, draft, userId,
+                        username)));
+    }
+
+    private String removeOntologyAnnotation(String projectId, String propertyIri, String value, String language,
+                                            boolean draft, String userId, String username) {
+        String plainIri = getOntologyIri(projectId, draft, userId);
+        if (plainIri == null) {
             throw new RuntimeException("Ontology IRI not found for project " + projectId);
         }
-        ontologyIri = formatResource(ontologyIri);
+        String ontologyIri = formatResource(plainIri);
 
         String prop = formatResource(propertyIri);
         
-        // Use robust delete that matches by string value
+        String languageTag = language == null ? "" : language.trim().toLowerCase(java.util.Locale.ROOT);
         String update = PREFIXES + String.format("""
             DELETE {
               %s %s ?v .
@@ -434,11 +469,13 @@ public class OntologyMetadataService {
             WHERE {
               %s %s ?v .
               FILTER(STR(?v) = "%s")
+              FILTER(!isLiteral(?v) || LCASE(LANG(?v)) = "%s")
             }
             """, ontologyIri, prop,
-                 ontologyIri, prop, escapeString(value));
+                 ontologyIri, prop, escapeString(value), escapeString(languageTag));
 
         mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
+        return plainIri;
     }
 
     private String formatLiteral(String value, String language, String datatype) {
@@ -558,14 +595,36 @@ public class OntologyMetadataService {
     }
 
     public void addOntologyImport(String projectId, String importIri, boolean draft, String userId, String username) {
+        addOntologyImport(projectId, importIri, draft, userId, username, () -> null);
+    }
+
+    public <T> T addOntologyImport(String projectId, String importIri, boolean draft, String userId, String username,
+                                   java.util.function.Supplier<T> afterwards) {
+        Map<String, Object> record = DraftRecords.ontologyImport(importIri);
+        try {
+            return DraftRecords.describe(draftTracking, draft, projectId, userId, username, DraftRecords.ADD_IMPORT,
+                    record, () -> {
+                        record.put("iri", writeOntologyImport(projectId, importIri, draft, userId, username));
+                        return afterwards.get();
+                    });
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private String writeOntologyImport(String projectId, String importIri, boolean draft, String userId, String username) {
         log.info("Adding import '{}' to project {} (draft={})", importIri, projectId, draft);
 
-        String ontologyIri = getOntologyIri(projectId);
+        String ontologyIri = getOntologyIri(projectId, draft, userId);
+        String plainIri = ontologyIri;
         if (ontologyIri == null) {
             // If no ontology triple exists, create one using a stable IRI
             ontologyIri = "http://ontocode.org/resource/ontology/" + projectId;
             String initUpdate = PREFIXES + String.format("INSERT DATA { <%s> a owl:Ontology . }", ontologyIri);
             mutationService.applyRawUpdateWithHistory(projectId, initUpdate, draft, userId, username);
+            plainIri = ontologyIri;
             ontologyIri = "<" + ontologyIri + ">";
             log.info("Created new ontology IRI: {}", ontologyIri);
         } else {
@@ -603,6 +662,7 @@ public class OntologyMetadataService {
         log.debug("SPARQL Update: {}", update);
         mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
         log.info("✅ Successfully added import '{}' to project {}", importIri, projectId);
+        return plainIri;
     }
 
     /**
@@ -613,11 +673,17 @@ public class OntologyMetadataService {
     }
 
     public void deleteOntologyImport(String projectId, String importIri, boolean draft, String userId, String username) {
-        String ontologyIri = getOntologyIri(projectId);
-        if (ontologyIri == null) {
+        Map<String, Object> record = DraftRecords.ontologyImport(importIri);
+        DraftRecords.run(draftTracking, draft, projectId, userId, username, DraftRecords.DELETE_IMPORT, record,
+                () -> record.put("iri", removeOntologyImport(projectId, importIri, draft, userId, username)));
+    }
+
+    private String removeOntologyImport(String projectId, String importIri, boolean draft, String userId, String username) {
+        String plainIri = getOntologyIri(projectId, draft, userId);
+        if (plainIri == null) {
             throw new RuntimeException("Ontology IRI not found");
         }
-        ontologyIri = formatResource(ontologyIri);
+        String ontologyIri = formatResource(plainIri);
 
         // Handle relative imports (starting with ./ or ../) differently
         String formattedImportIri;
@@ -640,6 +706,7 @@ public class OntologyMetadataService {
             """, ontologyIri, formattedImportIri, ontologyIri, formattedImportIri);
 
         mutationService.applyRawUpdateWithHistory(projectId, update, draft, userId, username);
+        return plainIri;
     }
 
     /**
@@ -742,7 +809,24 @@ public class OntologyMetadataService {
         if (superClassExpr == null || superClassExpr.isBlank()) {
             throw new IllegalArgumentException("GCA super-class is required");
         }
+        DraftRecords.run(draftTracking, draft, projectId, userId, username, DraftRecords.ADD_GCI,
+                DraftRecords.gci(null, DraftRecords.gciText(subClassExpr, superClassExpr)),
+                () -> writeGCI(projectId, subClassExpr, superClassExpr, draft, userId, username));
+    }
 
+    public void updateGCI(String projectId, String oldValue, String subClassExpr, String superClassExpr, boolean draft,
+                          String userId, String username) {
+        DraftRecords.run(draftTracking, draft, projectId, userId, username, DraftRecords.UPDATE_GCI,
+                DraftRecords.gci(oldValue, DraftRecords.gciText(subClassExpr, superClassExpr)), () -> {
+                    if (oldValue != null) {
+                        deleteGCI(projectId, oldValue, draft, userId, username);
+                    }
+                    addGCI(projectId, subClassExpr, superClassExpr, draft, userId, username);
+                });
+    }
+
+    private void writeGCI(String projectId, String subClassExpr, String superClassExpr, boolean draft, String userId,
+                          String username) {
         try {
             generalClassAxiomService.addGeneralClassAxiom(
                     projectId, subClassExpr.trim(), superClassExpr.trim(), draft, userId, username);
@@ -782,7 +866,10 @@ public class OntologyMetadataService {
             mutationService.apply(projectId, List.of(op));
         }
         if (historyService != null) {
-            historyService.recordGroupedMutations(projectId, userId, username, List.of(op), draft);
+            String changeSetId = historyService.recordGroupedMutations(projectId, userId, username, List.of(op), draft);
+            if (draft) {
+                DraftRecordScope.link(changeSetId);
+            }
         }
     }
 
@@ -799,10 +886,14 @@ public class OntologyMetadataService {
      */
     public void deleteGCI(String projectId, String gciValue, boolean draft, String userId, String username) {
         if (gciValue == null || gciValue.isBlank()) return;
+        DraftRecords.run(draftTracking, draft, projectId, userId, username, DraftRecords.DELETE_GCI,
+                DraftRecords.gci(null, gciValue), () -> removeGCI(projectId, gciValue, draft, userId, username));
+    }
 
+    private void removeGCI(String projectId, String gciValue, boolean draft, String userId, String username) {
         // Legacy custom-predicate string storage
         if (gciValue.contains(" SubClassOf ")) {
-            String ontologyIri = getOntologyIri(projectId);
+            String ontologyIri = getOntologyIri(projectId, draft, userId);
             if (ontologyIri != null) {
                 String formattedOntologyIri = formatResource(ontologyIri);
                 String legacyValue = gciValue.contains(" SubClassOf ")
@@ -840,7 +931,10 @@ public class OntologyMetadataService {
                 mutationService.apply(projectId, ops);
             }
             if (historyService != null) {
-                historyService.recordGroupedMutations(projectId, userId, username, ops, draft);
+                String changeSetId = historyService.recordGroupedMutations(projectId, userId, username, ops, draft);
+                if (draft) {
+                    DraftRecordScope.link(changeSetId);
+                }
             }
         }
     }
@@ -901,7 +995,40 @@ public class OntologyMetadataService {
 
     public void updateOntologyIRIs(String projectId, String newOntologyIri, String newVersionIri,
                                    boolean draft, String userId, String username) {
-        String oldOntologyIri = getOntologyIri(projectId);
+        String oldOntologyIri = getOntologyIri(projectId, draft, userId);
+        if (!draft || draftTracking == null) {
+            moveOntologyIri(projectId, oldOntologyIri, newOntologyIri, newVersionIri, draft, userId, username);
+            return;
+        }
+        String newVersion = newVersionIri == null || newVersionIri.isEmpty() ? null : newVersionIri;
+        Map<String, Object> record = DraftRecords.ontologyIri(oldOntologyIri, newOntologyIri,
+                versionIri(projectId, oldOntologyIri, userId), newVersion);
+        DraftRecords.run(draftTracking, true, projectId, userId, username, DraftRecords.ONTOLOGY_IRI, record,
+                () -> moveOntologyIri(projectId, oldOntologyIri, newOntologyIri, newVersionIri, true, userId, username));
+    }
+
+    private String versionIri(String projectId, String ontologyIri, String userId) {
+        if (ontologyIri == null) {
+            return null;
+        }
+        String previousUser = SparqlQueryContext.getUserId();
+        boolean previousWantsDraft = SparqlQueryContext.wantsDraft();
+        SparqlQueryContext.setUserId(userId);
+        SparqlQueryContext.setWantsDraft(true);
+        try (TupleQueryResult rs = datasetService.execSelect(projectId,
+                PREFIXES + "SELECT ?v WHERE { " + formatResource(ontologyIri) + " owl:versionIRI ?v } LIMIT 1")) {
+            return rs.hasNext() ? rs.next().getValue("v").stringValue() : null;
+        } catch (Exception e) {
+            log.debug("Could not read the draft version IRI for project {}: {}", projectId, e.getMessage());
+            return null;
+        } finally {
+            SparqlQueryContext.setUserId(previousUser);
+            SparqlQueryContext.setWantsDraft(previousWantsDraft);
+        }
+    }
+
+    private void moveOntologyIri(String projectId, String oldOntologyIri, String newOntologyIri, String newVersionIri,
+                                 boolean draft, String userId, String username) {
         String formattedOld = oldOntologyIri != null ? formatResource(oldOntologyIri) : null;
         String formattedNew = formatResource(newOntologyIri);
 
@@ -914,11 +1041,10 @@ public class OntologyMetadataService {
         }
         // Ensure the new IRI is declared as owl:Ontology (in case old IRI had no triples)
         update.append("\nINSERT DATA { ").append(formattedNew).append(" a owl:Ontology . } ;");
+        update.append("\nDELETE { ").append(formattedNew).append(" owl:versionIRI ?v } ");
+        update.append("WHERE  { ").append(formattedNew).append(" owl:versionIRI ?v }");
         if (newVersionIri != null && !newVersionIri.isEmpty()) {
-            // Replace any existing versionIRI with the supplied one
-            update.append("\nDELETE { ").append(formattedNew).append(" owl:versionIRI ?v } ");
-            update.append("WHERE  { ").append(formattedNew).append(" owl:versionIRI ?v } ;");
-            update.append("\nINSERT DATA { ").append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . }");
+            update.append(" ;\nINSERT DATA { ").append(formattedNew).append(" owl:versionIRI <").append(newVersionIri).append("> . }");
         }
 
         mutationService.applyRawUpdateWithHistory(projectId, update.toString(), draft, userId, username);
@@ -937,6 +1063,39 @@ public class OntologyMetadataService {
                 }
                 projectMetadataService.writeMeta(projectId, meta);
             });
+        }
+    }
+
+    @org.springframework.context.event.EventListener
+    public void onMainGraphChanged(MainGraphRevisionService.MainGraphChanged event) {
+        ontologyIriCache.remove(event.projectId());
+    }
+
+    public void refreshOntologyMetadata(String projectId) {
+        ontologyIriCache.remove(projectId);
+        String iri = getOntologyIri(projectId);
+        String version = null;
+        if (iri != null) {
+            try (TupleQueryResult rs = datasetService.execSelect(projectId,
+                    PREFIXES + "SELECT ?v WHERE { " + formatResource(iri) + " owl:versionIRI ?v } LIMIT 1")) {
+                version = rs.hasNext() ? rs.next().getValue("v").stringValue() : null;
+            }
+        }
+        final String currentIri = iri;
+        final String currentVersion = version;
+        projectMetadataService.readMeta(projectId).ifPresent(cached -> {
+            Map<String, Object> meta = new HashMap<>(cached);
+            putOrRemove(meta, "ontologyIRI", currentIri);
+            putOrRemove(meta, "versionIRI", currentVersion);
+            projectMetadataService.writeMeta(projectId, meta);
+        });
+    }
+
+    private static void putOrRemove(Map<String, Object> meta, String key, String value) {
+        if (value == null) {
+            meta.remove(key);
+        } else {
+            meta.put(key, value);
         }
     }
 
@@ -1039,11 +1198,22 @@ public class OntologyMetadataService {
     public void updatePrefix(String projectId, String prefix, String iri, String oldPrefix,
                              boolean draft, String userId, String actorId, String actorName) {
         if (draft) {
-            datasetService.updateDraftPrefix(projectId, userId, prefix, iri, oldPrefix);
-            storageManager.bumpDraftGraphVersion(projectId, userId);
             boolean changed = oldPrefix != null && !oldPrefix.isBlank();
-            recordPrefixHistory(projectId, actorId, actorName, true, changed ? "prefixModified" : "prefixAdded",
-                    prefix, oldPrefix, null, iri);
+            String draftPrevious = datasetService.readProjectPrefixes(projectId, true, userId).get(changed ? oldPrefix : prefix);
+            boolean renamedInDraft = changed && !oldPrefix.equals(prefix);
+            String draftType = changed || draftPrevious != null ? "prefixModified" : "prefixAdded";
+            Runnable write = () -> {
+                datasetService.updateDraftPrefix(projectId, userId, prefix, iri, oldPrefix);
+                storageManager.bumpDraftGraphVersion(projectId, userId);
+                recordPrefixHistory(projectId, actorId, actorName, true, draftType, prefix, renamedInDraft ? oldPrefix : null,
+                        draftPrevious, iri);
+            };
+            if (!renamedInDraft && iri != null && iri.equals(draftPrevious)) {
+                write.run();
+            } else {
+                DraftRecords.run(draftTracking, true, projectId, userId, actorName, DraftRecords.prefixOperation(draftType),
+                        DraftRecords.prefix(prefix, renamedInDraft ? oldPrefix : null, draftPrevious, iri), write);
+            }
             return;
         }
         // 1. Update in MongoDB
@@ -1103,14 +1273,18 @@ public class OntologyMetadataService {
     private void recordPrefixHistory(String projectId, String actorId, String actorName, boolean draft,
                                      String opType, String prefix, String oldPrefix, String oldNamespace,
                                      String newNamespace) {
-        if (historyService == null) {
+        if (historyService == null || PrefixRollbackActions.historySuppressed()) {
             return;
         }
         try {
+            ChangeOrigin origin = ChangeOrigin.manual();
             historyService.recordEdit(projectId, CodeViewHistoryRecorder.effectiveUserId(actorId, desktopMode),
                     CodeViewHistoryRecorder.effectiveUsername(actorName), opType, null, prefix, oldNamespace,
                     newNamespace, describePrefixEdit(opType, prefix, oldPrefix, oldNamespace, newNamespace),
-                    null, null, draft, ChangeOrigin.manual());
+                    oldPrefix, null, draft, origin);
+            if (draft) {
+                DraftRecordScope.link(origin.changeSetId());
+            }
         } catch (Exception e) {
             log.warn("[Prefix] Could not record the prefix change in the history for project {}: {}",
                     projectId, e.getMessage());
@@ -1147,9 +1321,18 @@ public class OntologyMetadataService {
     public void deletePrefix(String projectId, String prefix, boolean draft, String userId,
                              String actorId, String actorName) {
         if (draft) {
-            datasetService.deleteDraftPrefix(projectId, userId, prefix);
-            storageManager.bumpDraftGraphVersion(projectId, userId);
-            recordPrefixHistory(projectId, actorId, actorName, true, "prefixDeleted", prefix, null, null, null);
+            String draftRemoved = datasetService.readProjectPrefixes(projectId, true, userId).get(prefix);
+            Runnable write = () -> {
+                datasetService.deleteDraftPrefix(projectId, userId, prefix);
+                storageManager.bumpDraftGraphVersion(projectId, userId);
+                recordPrefixHistory(projectId, actorId, actorName, true, "prefixDeleted", prefix, null, draftRemoved, null);
+            };
+            if (draftRemoved == null) {
+                write.run();
+            } else {
+                DraftRecords.run(draftTracking, true, projectId, userId, actorName, DraftRecords.DELETE_PREFIX,
+                        DraftRecords.prefix(prefix, null, draftRemoved, null), write);
+            }
             return;
         }
         // 1. Update in MongoDB
@@ -1192,9 +1375,36 @@ public class OntologyMetadataService {
     /**
      * Get the ontology IRI for a project
      */
+    public String currentOntologyIri(String projectId, boolean draft, String userId) {
+        return getOntologyIri(projectId, draft, userId);
+    }
+
+    private String getOntologyIri(String projectId, boolean draft, String userId) {
+        String previousUser = SparqlQueryContext.getUserId();
+        boolean previousWantsDraft = SparqlQueryContext.wantsDraft();
+        SparqlQueryContext.setUserId(draft ? userId : previousUser);
+        SparqlQueryContext.setWantsDraft(draft);
+        try {
+            return resolveOntologyIri(projectId, !draft);
+        } finally {
+            SparqlQueryContext.setUserId(previousUser);
+            SparqlQueryContext.setWantsDraft(previousWantsDraft);
+        }
+    }
+
     private String getOntologyIri(String projectId) {
+        return resolveOntologyIri(projectId, !SparqlQueryContext.wantsDraft());
+    }
+
+    private void rememberOntologyIri(String projectId, String iri, boolean useCache) {
+        if (useCache) {
+            ontologyIriCache.put(projectId, iri);
+        }
+    }
+
+    private String resolveOntologyIri(String projectId, boolean useCache) {
         // 1. Check cache
-        if (ontologyIriCache.containsKey(projectId)) {
+        if (useCache && ontologyIriCache.containsKey(projectId)) {
             return ontologyIriCache.get(projectId);
         }
 
@@ -1206,7 +1416,7 @@ public class OntologyMetadataService {
                 BindingSet sol = rs.next();
                 if (sol.hasBinding("ont")) {
                     String iri = sol.getValue("ont").stringValue();
-                    ontologyIriCache.put(projectId, iri);
+                    rememberOntologyIri(projectId, iri, useCache);
                     return iri;
                 }
             }
@@ -1218,7 +1428,7 @@ public class OntologyMetadataService {
                 BindingSet sol = rs.next();
                 if (sol.hasBinding("ont")) {
                     String iri = sol.getValue("ont").stringValue();
-                    ontologyIriCache.put(projectId, iri);
+                    rememberOntologyIri(projectId, iri, useCache);
                     return iri;
                 }
             }
@@ -1238,7 +1448,7 @@ public class OntologyMetadataService {
                 BindingSet sol = rs.next();
                 if (sol.hasBinding("ont")) {
                     String iri = sol.getValue("ont").stringValue();
-                    ontologyIriCache.put(projectId, iri);
+                    rememberOntologyIri(projectId, iri, useCache);
                     return iri;
                 }
             }

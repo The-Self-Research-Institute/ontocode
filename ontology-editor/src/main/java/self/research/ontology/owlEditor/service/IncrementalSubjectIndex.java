@@ -18,7 +18,6 @@ import java.util.Set;
 
 final class IncrementalSubjectIndex {
 
-    private static final long MAX_REGION_LINES = 200_000;
 
     private IncrementalSubjectIndex() {
     }
@@ -65,7 +64,7 @@ final class IncrementalSubjectIndex {
             }
             delta += edit.newLineCount() - edit.lineCount();
         }
-        if (Math.max(oldTo, oldTo + delta) - oldFrom > MAX_REGION_LINES) {
+        if (Math.max(oldTo, oldTo + delta) - oldFrom > Limit.CODE_VIEW_REGION_LINES.value()) {
             return Optional.empty();
         }
         return Optional.of(new Region(oldFrom, oldTo, delta));

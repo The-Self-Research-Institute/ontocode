@@ -27,7 +27,6 @@ import java.util.Set;
 @Slf4j
 final class OwlFormatPatchPlanner {
 
-    private static final int MAX_CHANGED_SUBJECTS = 2_000;
     private static final Set<String> FORMATS = Set.of("owlxml", "manchester", "manchestersyntax", "functional",
             "functionalsyntax");
 
@@ -47,7 +46,7 @@ final class OwlFormatPatchPlanner {
             return Optional.empty();
         }
         Set<IRI> changed = changedSubjects(oldModel, newModel, oldOwned, newOwned);
-        if (changed.size() > MAX_CHANGED_SUBJECTS) {
+        if (changed.size() > Limit.PATCH_MAX_CHANGED_SUBJECTS.value()) {
             return Optional.empty();
         }
         log.info("[PERF] OWL-format patch plan: {} changed subjects of {} + {} triples in {}ms", changed.size(),

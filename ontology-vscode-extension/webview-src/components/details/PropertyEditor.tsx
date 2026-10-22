@@ -5,7 +5,7 @@ import { ManchesterSyntaxEditor, PropertyChainDialog, IRIEditorDialog } from '..
 import apiClient from '../../services/apiClient';
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
-import { withDraftScope } from '../../utils/draftScope';
+import { withDraftScope, withDraftAndUser } from '../../utils/draftScope';
 import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { Property } from '../../types';
 import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
@@ -156,6 +156,7 @@ const PropertyEditor: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
     user?: { email?: string; username?: string; userId?: string };
     existingIris?: string[];
+    syncMode?: 'private' | 'public';
 }> = ({
         item,
         onUpdate,
@@ -177,6 +178,7 @@ const PropertyEditor: React.FC<{
         onNavigate,
         user,
         existingIris = [],
+        syncMode = 'public',
 }) => {
     const [activeTab, setActiveTab] = useState<'annotations' | 'description' | 'usage'>('description');
     const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -240,7 +242,7 @@ const PropertyEditor: React.FC<{
             }
         })();
         return () => { alive = false; };
-    }, [projectId]);
+    }, [projectId, syncMode]);
 
     useEffect(() => {
         // Always reset previous entity's inferred details immediately so we
@@ -254,7 +256,7 @@ const PropertyEditor: React.FC<{
 
         (async () => {
             try {
-                const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(currentId)}`);
+                const res = await apiClient.get<any>(withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(currentId)}`));
                 if (!alive || currentId !== item.id) return;
                 const data = res?.data?.data || res?.data || {};
                 setInferredDetails(data);
@@ -266,11 +268,11 @@ const PropertyEditor: React.FC<{
         })();
 
         return () => { alive = false; clearTimeout(watchdog); };
-    }, [viewMode, item.id, projectId]);
+    }, [viewMode, item.id, projectId, syncMode]);
 
     const loadInferredDetails = async () => {
         try {
-            const res = await apiClient.get<any>(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(item.id)}`);
+            const res = await apiClient.get<any>(withDraftAndUser(`/api/ontology/${projectId}/reasoner/inferred-property-details?propertyIri=${encodeURIComponent(item.id)}`));
             const data = res?.data?.data || res?.data || {};
             setInferredDetails(data);
         } catch (error) {
@@ -585,7 +587,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                                 onAddClick={onAddEquivalentClick}
                                 onDelete={prop => handleDeleteRelation('equivalent', prop)}
                                 themeColor={isObjectProperty ? 'blue' : 'green'}
-                                itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                                itemEntityType={isObjectProperty ? 'objectProperty' : isAnnotationProperty ? 'annotationProperty' : 'dataProperty'}
                                 isViewOnly={isViewOnly}
                                 onViewOnlyAction={onViewOnlyAction}
                                 onNavigate={handleNavigate}
@@ -600,7 +602,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             onAddClick={onAddSubPropertyClick}
                             onDelete={prop => handleDeleteRelation('subProperty', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
-                            itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            itemEntityType={isObjectProperty ? 'objectProperty' : isAnnotationProperty ? 'annotationProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={handleNavigate}
@@ -664,7 +666,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                             onAddClick={onAddDisjointClick}
                             onDelete={prop => handleDeleteRelation('disjoint', prop)}
                             themeColor={isObjectProperty ? 'blue' : 'green'}
-                            itemEntityType={isObjectProperty ? 'objectProperty' : 'dataProperty'}
+                            itemEntityType={isObjectProperty ? 'objectProperty' : isAnnotationProperty ? 'annotationProperty' : 'dataProperty'}
                             isViewOnly={isViewOnly}
                             onViewOnlyAction={onViewOnlyAction}
                             onNavigate={handleNavigate}

@@ -19,6 +19,7 @@ import {
   Equal, Sparkles, Search
 } from 'lucide-react';
 import type { TreeNode } from '../types';
+import { withDraftScope } from '../utils/draftScope';
 
 // Types
 interface DLQueryResult {
@@ -410,7 +411,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
     
     try {
       const submit = await apiClient.post<DLQueryResponse>(
-        `/api/ontology/${projectId}/dl-query`,
+        withDraftScope(`/api/ontology/${projectId}/dl-query`),
         { 
           expression: query,
           queryTypes: selectedTypes

@@ -17,6 +17,8 @@ public class ExportJob {
     private String jobId;
     private String projectId;
     private String format;
+    private boolean draft;
+    private String userId;
     private Status status;
     private Path resultPath;
     private String error;

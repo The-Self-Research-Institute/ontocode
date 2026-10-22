@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import EntityHierarchy from '../EntityHierarchy';
 import ontologyMutationService from '../../services/ontologyMutationService';
+import { labelForNewEntity } from '../../utils/entityIri';
 import expressionService from '../../services/expressionService';
 import { notificationService } from '../../services/notificationService';
 import type { TreeNode, Property } from '../../types';
@@ -520,9 +521,15 @@ const localName = (iri: string): string => {
           return;
         }
         if (projectId) {
-          const results = await Promise.all(
-            expressions.map((expr) => expressionService.parseExpression(projectId, expr))
-          );
+          let results: Awaited<ReturnType<typeof expressionService.parseExpression>>[];
+          try {
+            results = await Promise.all(
+              expressions.map((expr) => expressionService.parseExpression(projectId, expr))
+            );
+          } catch (err: unknown) {
+            notificationService.error('Invalid Expression', err instanceof Error ? err.message : 'Could not check the Manchester expression');
+            return;
+          }
           const firstFailure = results.findIndex((r) => !r.success);
           if (firstFailure !== -1) {
             const prefix = expressions.length > 1 ? `Expression ${firstFailure + 1}: ` : '';
@@ -732,7 +739,7 @@ const localName = (iri: string): string => {
       await ontologyMutationService.createClass(
         projectId,
         newClassIri,
-        '',
+        labelForNewEntity(inlineClassName),
         parentIri,
         'anonymous',
         'Anonymous'

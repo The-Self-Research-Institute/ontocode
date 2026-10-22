@@ -2,7 +2,14 @@ import React, { useEffect, useState, useCallback } from "react";
 import { X, Download, AlertTriangle, CheckCircle, Loader2, RefreshCw, GitMerge } from "lucide-react";
 import apiClient from "../services/apiClient";
 import { extractLocalName } from "../utils/draftChangeHelpers";
-import { applyRefusal, canKeepBoth, phaseForAnalysis, rowKindLabel } from "./pullPreviewState";
+import {
+  applyFailure,
+  applyRefusal,
+  canKeepBoth,
+  isSectionRow,
+  phaseForAnalysis,
+  rowKindLabel,
+} from "./pullPreviewState";
 
 interface PullPreviewDialogProps {
   isOpen: boolean;
@@ -18,6 +25,7 @@ interface ChangeRow {
   publicAxioms?: string;
   yourAxioms?: string;
   kind?: string;
+  field?: string;
 }
 
 type Resolution = "keep_draft" | "take_public" | "merge";
@@ -70,6 +78,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
   };
 
   const allResolved = conflicts.length === 0 || conflicts.every((c) => resolutions[c.entityIri]);
+  const headerChanges = safeChanges.filter(isSectionRow);
 
   const applyPull = () => {
     setPhase("merging");
@@ -80,6 +89,12 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
         if (refusal) {
           setErrorMsg(refusal);
           setPhase("baseline_lost");
+          return;
+        }
+        const failure = applyFailure(res?.data || res);
+        if (failure) {
+          setErrorMsg(failure);
+          setPhase("error");
           return;
         }
         setPhase("done");
@@ -237,6 +252,21 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                 </div>
               )}
 
+              {headerChanges.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  {headerChanges.map((row) => (
+                    <div
+                      key={row.entityIri}
+                      className="rounded-md border px-3 py-2"
+                      style={{ borderColor: "var(--color-border)" }}
+                    >
+                      <div className="text-[11px] font-medium">{row.entityLabel}</div>
+                      <p className="opacity-70 leading-relaxed whitespace-pre-wrap break-words">{row.publicAxioms}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Conflict resolution cards */}
               {conflicts.length > 0 && (
                 <div className="flex flex-col gap-2">
@@ -294,7 +324,7 @@ const PullPreviewDialog: React.FC<PullPreviewDialogProps> = ({
                             </p>
                           </button>
                         </div>
-                        {canKeepBoth(c.kind) && (
+                        {canKeepBoth(c.kind, c.field) && (
                           <button
                             onClick={() => setResolution(c.entityIri, "merge")}
                             className="w-full text-left px-2.5 py-2 border-t transition-colors hover:opacity-90"

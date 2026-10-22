@@ -39,6 +39,11 @@ const FilterBar: React.FC<FilterBarProps> = (props) => (
         <option value="axiom">Axioms</option>
         <option value="annotation">Annotations</option>
         <option value="import">Imports</option>
+        <option value="datatype">Datatypes</option>
+        <option value="prefix">Prefixes</option>
+        <option value="rename">Renames</option>
+        <option value="rule">Rules</option>
+        <option value="citation">Citations</option>
       </select>
       <select
         value={props.filterStatus}

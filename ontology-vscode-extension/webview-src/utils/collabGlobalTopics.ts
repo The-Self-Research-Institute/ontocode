@@ -3,6 +3,7 @@ import { Client, IMessage, StompSubscription } from "@stomp/stompjs";
 interface TopicFilters {
   shareIsNew: (n: any) => boolean;
   forbiddenDest: (payload: any) => string | null;
+  onForbidden?: (destination: string) => void;
 }
 
 const relay = (event: string, pick: (payload: any) => any = (p) => p) => (msg: IMessage) => {
@@ -29,7 +30,11 @@ export function subscribeGlobalTopics(
   subs.set("userShares", client.subscribe("/user/queue/shares", onShare));
   subs.set("errors", client.subscribe("/user/queue/errors", (msg) => {
     try {
-      const dest = filters.forbiddenDest(JSON.parse(msg.body));
+      const payload = JSON.parse(msg.body);
+      if (payload?.code === "WS_FORBIDDEN") {
+        filters.onForbidden?.(String(payload.destination ?? ""));
+      }
+      const dest = filters.forbiddenDest(payload);
       if (dest !== null) {
         console.warn("[CollaborationContext] Subscription not permitted:", dest);
       }

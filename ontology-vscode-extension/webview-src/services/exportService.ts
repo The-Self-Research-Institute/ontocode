@@ -19,9 +19,18 @@ interface ExportJobStatusResponse {
   error?: string;
 }
 
-async function submitExportJob(baseUrl: string, projectId: string, format: string): Promise<string> {
+export interface ExportScope {
+  draft?: boolean;
+  userId?: string;
+}
+
+function scopeQuery(scope?: ExportScope): string {
+  return scope?.draft ? `&draft=true&userId=${encodeURIComponent(scope.userId || '')}` : '';
+}
+
+async function submitExportJob(baseUrl: string, projectId: string, format: string, scope?: ExportScope): Promise<string> {
   const res = await apiClient.post<SubmitExportResponse>(
-    `${baseUrl}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}`,
+    `${baseUrl}/api/ontology/export-async/${encodeURIComponent(projectId)}?format=${encodeURIComponent(format)}${scopeQuery(scope)}`,
   );
   if (!res?.jobId) {
     throw new Error('Export could not be started.');
@@ -137,6 +146,7 @@ export async function exportOntologyAsBlob(
   projectId: string,
   format: string,
   filename?: string,
+  scope?: ExportScope,
 ): Promise<Blob | void> {
   const safeName = filename || `ontology-export.${format === 'turtle' ? 'ttl' : format === 'ntriples' ? 'nt' : 'owl'}`;
 
@@ -155,7 +165,7 @@ export async function exportOntologyAsBlob(
   let outcome: ExportStatus = 'failed';
 
   try {
-    const jobId = await submitExportJob(baseUrl, projectId, format);
+    const jobId = await submitExportJob(baseUrl, projectId, format, scope);
     await waitForExportJob(baseUrl, jobId, signal);
 
     const downloadUrl = `${baseUrl}/api/ontology/export-async/download/${jobId}`;

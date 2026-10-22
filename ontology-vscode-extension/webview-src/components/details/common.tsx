@@ -5,17 +5,17 @@ import { useTheme } from "../../contexts/ThemeContext";
 import apiClient from "../../services/apiClient";
 import axiomAnnotationService from "../../services/axiomAnnotationService";
 import { notificationService } from "../../services/notificationService";
-import { isDraftScopeActive } from "../../utils/draftScope";
-import { resolveMutationActor } from "../../utils/mutationActor";
+import { draftBodyFields } from "../../utils/draftScope";
+import { extractLocalName } from "../../utils/draftChangeHelpers";
+import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
+import type { Axiom } from '../../types';
 
 function copyEntityIdToClipboard(iri: string, kind: 'IRI' | 'Fragment'): void {
-  const text = kind === 'Fragment' ? (iri.includes('#') ? iri.split('#').pop()! : iri.split('/').pop()!) : iri;
+  const text = kind === 'Fragment' ? extractLocalName(iri) : iri;
   navigator.clipboard.writeText(text)
     .then(() => notificationService.info('Copied', `${kind} copied to clipboard`))
     .catch(() => notificationService.error('Copy failed', `Could not copy ${kind.toLowerCase()} to clipboard`));
 }
-import ManchesterSyntaxEditor from './ManchesterSyntaxEditor';
-import type { Axiom } from '../../types';
 
 // Text is BLACK, only keywords are colored (magenta/pink)
 // Links are shown as underlined text for clickable entities
@@ -314,6 +314,86 @@ type EntailmentJustification = {
   axioms: Array<{ text: string; membershipNote: string; role?: 'CONFLICT' | 'CONTRIBUTING'; entities?: { iri: string; label: string; kind: string }[] }>;
 };
 
+function useExplainEntailment(projectId: string | undefined, explainPayload: EntailmentPayload | null) {
+  const [showExplain, setShowExplain] = useState(false);
+  const [explainMode, setExplainMode] = useState<'regular' | 'laconic'>('regular');
+  const [explainLimitAll, setExplainLimitAll] = useState(false);
+  const [explainLimitValue, setExplainLimitValue] = useState(10);
+  const [explainJustifications, setExplainJustifications] = useState<EntailmentJustification[] | null>(null);
+  const [explainWarnings, setExplainWarnings] = useState<string[] | undefined>(undefined);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
+  const explainRequestIdRef = useRef(0);
+
+  const fetchExplainEntailment = useCallback(async (mode: 'regular' | 'laconic', limit: number) => {
+    if (!projectId || !explainPayload) return;
+    const requestId = ++explainRequestIdRef.current;
+    setExplainLoading(true);
+    setExplainError(null);
+    try {
+      const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
+        ...explainPayload,
+        mode,
+        maxJustifications: limit,
+        ...draftBodyFields(),
+      });
+      if (requestId !== explainRequestIdRef.current) return;
+      const data = (res as any)?.data ?? res;
+      setExplainJustifications(data?.justifications ?? []);
+      setExplainWarnings(data?.warnings);
+    } catch (e: any) {
+      if (requestId !== explainRequestIdRef.current) return;
+      setExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
+    } finally {
+      if (requestId === explainRequestIdRef.current) setExplainLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri,
+      explainPayload?.propertyIri, explainPayload?.literalValue]);
+
+  useEffect(() => {
+    if (showExplain) {
+      setExplainJustifications(null);
+      setExplainWarnings(undefined);
+      fetchExplainEntailment(explainMode, explainLimitAll ? 99 : explainLimitValue);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showExplain]);
+
+  return {
+    showExplain, setShowExplain,
+    explainMode, setExplainMode,
+    explainLimitAll, setExplainLimitAll,
+    explainLimitValue, setExplainLimitValue,
+    explainJustifications, explainWarnings, explainLoading, explainError,
+    fetchExplainEntailment,
+  };
+}
+
+function CopyIriButtons({ iri, buttonClassName }: { iri: string | undefined; buttonClassName: string }) {
+  if (!iri || !iri.startsWith('http')) return null;
+  return (
+    <>
+      <button
+        onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(iri, 'IRI'); }}
+        className={buttonClassName}
+        title="Copy IRI"
+        aria-label="Copy IRI"
+      >
+        <Copy size={14} />
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(iri, 'Fragment'); }}
+        className={buttonClassName}
+        title="Copy Fragment"
+        aria-label="Copy Fragment"
+      >
+        <Hash size={14} />
+      </button>
+    </>
+  );
+}
+
 const OWL_AXIOM_KEYWORDS = [
   'SubClassOf', 'EquivalentClasses', 'EquivalentTo', 'DisjointClasses', 'DisjointWith',
   'DisjointUnionOf', 'SubPropertyOf', 'SubObjectPropertyOf', 'SubDataPropertyOf',
@@ -378,18 +458,21 @@ export const ExplanationModal: React.FC<{
   loading: boolean;
   error: string | null;
   justifications: EntailmentJustification[] | null;
+  warnings?: string[];
   mode: 'regular' | 'laconic';
   onModeChange: (mode: 'regular' | 'laconic') => void;
   limitAll: boolean;
   onLimitAllChange: (all: boolean) => void;
   limitValue: number;
-  /** Fires once, on blur/Enter, with the parsed+clamped value — not per keystroke. */
+
   onLimitCommit: (value: number) => void;
   onNavigate?: (iri: string, type: string) => void;
-}> = ({ isOpen, onClose, label, loading, error, justifications, mode, onModeChange, limitAll, onLimitAllChange, limitValue, onLimitCommit, onNavigate }) => {
+}> = ({ isOpen, onClose, label, loading, error, justifications, warnings, mode, onModeChange, limitAll, onLimitAllChange, limitValue, onLimitCommit, onNavigate }) => {
  
   const [limitInput, setLimitInput] = useState(String(limitValue));
   useEffect(() => { setLimitInput(String(limitValue)); }, [limitValue]);
+
+  const committedByEnterRef = useRef(false);
 
   const commitLimitInput = (raw: string) => {
     const parsed = Math.max(1, Math.min(99, parseInt(raw, 10) || 1));
@@ -425,8 +508,20 @@ export const ExplanationModal: React.FC<{
             <input
               type="number" min={1} max={99} value={limitInput}
               onChange={(e) => setLimitInput(e.target.value)}
-              onBlur={(e) => commitLimitInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { commitLimitInput(e.currentTarget.value); e.currentTarget.blur(); } }}
+              onBlur={(e) => {
+                if (committedByEnterRef.current) {
+                  committedByEnterRef.current = false;
+                  return;
+                }
+                commitLimitInput(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  committedByEnterRef.current = true;
+                  commitLimitInput(e.currentTarget.value);
+                  e.currentTarget.blur();
+                }
+              }}
               className="w-12 px-1 py-0 border border-gray-300 rounded text-[11px]"
             />
           </label>
@@ -441,6 +536,11 @@ export const ExplanationModal: React.FC<{
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 text-xs">
+          {warnings && warnings.length > 0 && (
+            <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-amber-800 space-y-1">
+              {warnings.map((w, wi) => <div key={wi}>{w}</div>)}
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center gap-2 text-gray-500">
               <Loader size={14} className="animate-spin" /> Computing explanation…
@@ -512,14 +612,6 @@ export const AxiomRow: React.FC<{
   const [annotationsLoading, setAnnotationsLoading] = useState(false);
   const [deletingAnnotIdx, setDeletingAnnotIdx] = useState<number | null>(null);
   const [isSavingAnnot, setIsSavingAnnot] = useState(false);
-  const [showExplain, setShowExplain] = useState(false);
-  const [explainMode, setExplainMode] = useState<'regular' | 'laconic'>('regular');
-  const [explainLimitAll, setExplainLimitAll] = useState(false);
-  const [explainLimitValue, setExplainLimitValue] = useState(10);
-  const [explainJustifications, setExplainJustifications] = useState<EntailmentJustification[] | null>(null);
-  const [explainLoading, setExplainLoading] = useState(false);
-  const [explainError, setExplainError] = useState<string | null>(null);
-  const explainRequestIdRef = useRef(0);
 
   const relatedIri = axiom.id?.includes('|||') ? axiom.id.split('|||')[0] : axiom.id;
   const hasAxiomAnnotations = hasAxiomAnnotationsProp || axiomAnnotations.length > 0;
@@ -550,8 +642,11 @@ export const AxiomRow: React.FC<{
       && !!axiom.propertyIri && axiom.fillerIri?.startsWith('http');
     const isObjectRestrictionCandidate = isRestrictionCandidate && !isDataPropertyRestriction;
     if (isRestrictionCandidate && (axiom.restrictionType === 'some' || axiom.restrictionType === 'only')) {
+      const isEquivalentRow = axiom.type === 'EquivalentTo';
       return {
-        entailmentType: isDataPropertyRestriction ? 'SUBCLASS_OF_DATA_RESTRICTION' : 'SUBCLASS_OF_OBJECT_RESTRICTION',
+        entailmentType: isEquivalentRow
+          ? (isDataPropertyRestriction ? 'EQUIVALENT_DATA_RESTRICTION' : 'EQUIVALENT_OBJECT_RESTRICTION')
+          : (isDataPropertyRestriction ? 'SUBCLASS_OF_DATA_RESTRICTION' : 'SUBCLASS_OF_OBJECT_RESTRICTION'),
         subjectIri: parentEntityIri,
         targetIri: axiom.fillerIri,
         propertyIri: axiom.propertyIri,
@@ -564,7 +659,7 @@ export const AxiomRow: React.FC<{
       && axiom.cardinality !== undefined && axiom.cardinality !== null
     ) {
       return {
-        entailmentType: 'SUBCLASS_OF_OBJECT_CARDINALITY',
+        entailmentType: axiom.type === 'EquivalentTo' ? 'EQUIVALENT_OBJECT_RESTRICTION' : 'SUBCLASS_OF_OBJECT_CARDINALITY',
         subjectIri: parentEntityIri,
         targetIri: axiom.fillerIri,
         propertyIri: axiom.propertyIri,
@@ -585,38 +680,14 @@ export const AxiomRow: React.FC<{
     return null;
   })();
 
-  const fetchExplainEntailment = useCallback(async (mode: 'regular' | 'laconic', limit: number) => {
-    if (!projectId || !explainPayload) return;
-    
-    const requestId = ++explainRequestIdRef.current;
-    setExplainLoading(true);
-    setExplainError(null);
-    try {
-      const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
-        ...explainPayload,
-        mode,
-        maxJustifications: limit,
-        ...(isDraftScopeActive() ? { userId: resolveMutationActor().userId } : {}),
-      });
-      if (requestId !== explainRequestIdRef.current) return;
-      const data = (res as any)?.data ?? res;
-      setExplainJustifications(data?.justifications ?? []);
-    } catch (e: any) {
-      if (requestId !== explainRequestIdRef.current) return;
-      setExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
-    } finally {
-      if (requestId === explainRequestIdRef.current) setExplainLoading(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri]);
-
-  useEffect(() => {
-    if (showExplain) {
-      setExplainJustifications(null);
-      fetchExplainEntailment(explainMode, explainLimitAll ? 99 : explainLimitValue);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showExplain]);
+  const {
+    showExplain, setShowExplain,
+    explainMode, setExplainMode,
+    explainLimitAll, setExplainLimitAll,
+    explainLimitValue, setExplainLimitValue,
+    explainJustifications, explainWarnings, explainLoading, explainError,
+    fetchExplainEntailment,
+  } = useExplainEntailment(projectId, explainPayload);
 
   const loadAxiomAnnotations = useCallback(async () => {
     if (!projectId || !parentEntityIri || !relatedIri) return;
@@ -795,26 +866,10 @@ export const AxiomRow: React.FC<{
               </button>
             )}
 
-            {!!relatedIri && relatedIri.startsWith('http') && (
-              <>
-                <button
-                  onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(relatedIri, 'IRI'); }}
-                  className={`p-1 rounded hover:bg-blue-100 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-400 hover:text-blue-600`}
-                  title="Copy IRI"
-                  aria-label="Copy IRI"
-                >
-                  <Copy size={14} />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(relatedIri, 'Fragment'); }}
-                  className={`p-1 rounded hover:bg-blue-100 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-400 hover:text-blue-600`}
-                  title="Copy Fragment"
-                  aria-label="Copy Fragment"
-                >
-                  <Hash size={14} />
-                </button>
-              </>
-            )}
+            <CopyIriButtons
+              iri={relatedIri}
+              buttonClassName={`p-1 rounded hover:bg-blue-100 transition-all ${isFocused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} text-gray-400 hover:text-blue-600`}
+            />
 
             {/* Axiom Annotations button */}
             <button
@@ -987,6 +1042,7 @@ export const AxiomRow: React.FC<{
           loading={explainLoading}
           error={explainError}
           justifications={explainJustifications}
+          warnings={explainWarnings}
           mode={explainMode}
           onModeChange={(mode) => { setExplainMode(mode); fetchExplainEntailment(mode, explainLimitAll ? 99 : explainLimitValue); }}
           limitAll={explainLimitAll}
@@ -1439,14 +1495,6 @@ export const MultiSelectItem: React.FC<{
     const [isDeleting, setIsDeleting] = useState(false);
     const [showAnnotations, setShowAnnotations] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
-    const [showExplain, setShowExplain] = useState(false);
-    const [explainMode, setExplainMode] = useState<'regular' | 'laconic'>('regular');
-    const [explainLimitAll, setExplainLimitAll] = useState(false);
-    const [explainLimitValue, setExplainLimitValue] = useState(10);
-    const [explainJustifications, setExplainJustifications] = useState<EntailmentJustification[] | null>(null);
-    const [explainLoading, setExplainLoading] = useState(false);
-    const [explainError, setExplainError] = useState<string | null>(null);
-    const explainRequestIdRef = useRef(0);
     const [showAddAnnotationForm, setShowAddAnnotationForm] = useState(false);
     const [newAnnotProp, setNewAnnotProp] = useState('http://www.w3.org/2000/01/rdf-schema#comment');
     const [newAnnotValue, setNewAnnotValue] = useState('');
@@ -1484,6 +1532,7 @@ export const MultiSelectItem: React.FC<{
 
     const explainPayload: EntailmentPayload | null = (() => {
         if (!parentEntityIri || !propertyIri || !propertyIri.startsWith('http')) return null;
+        if (entityType === 'annotationProperty') return null;
         const isDataPropertyContext = themeColor === 'green';
         switch (sectionName) {
             case 'SubProperty Of':
@@ -1506,42 +1555,35 @@ export const MultiSelectItem: React.FC<{
                     subjectIri: parentEntityIri,
                     targetIri: propertyIri,
                 };
+            case 'Equivalent To':
+                return {
+                    entailmentType: isDataPropertyContext ? 'EQUIVALENT_DATA_PROPERTIES' : 'EQUIVALENT_OBJECT_PROPERTIES',
+                    subjectIri: parentEntityIri,
+                    targetIri: propertyIri,
+                };
+            case 'Disjoint With':
+                return {
+                    entailmentType: isDataPropertyContext ? 'DISJOINT_DATA_PROPERTIES' : 'DISJOINT_OBJECT_PROPERTIES',
+                    subjectIri: parentEntityIri,
+                    targetIri: propertyIri,
+                };
+            case 'Same Individual As':
+                return { entailmentType: 'SAME_INDIVIDUAL', subjectIri: parentEntityIri, targetIri: propertyIri };
+            case 'Different Individual From':
+                return { entailmentType: 'DIFFERENT_INDIVIDUALS', subjectIri: parentEntityIri, targetIri: propertyIri };
             default:
                 return null;
         }
     })();
 
-    const fetchExplainEntailment = useCallback(async (mode: 'regular' | 'laconic', limit: number) => {
-        if (!projectId || !explainPayload) return;
-        const requestId = ++explainRequestIdRef.current;
-        setExplainLoading(true);
-        setExplainError(null);
-        try {
-            const res = await apiClient.post<any>(`/plugin-service/api/reasoner/${projectId}/explain-entailment`, {
-                ...explainPayload,
-                mode,
-                maxJustifications: limit,
-                ...(isDraftScopeActive() ? { userId: resolveMutationActor().userId } : {}),
-            });
-            if (requestId !== explainRequestIdRef.current) return;
-            const data = (res as any)?.data ?? res;
-            setExplainJustifications(data?.justifications ?? []);
-        } catch (e: any) {
-            if (requestId !== explainRequestIdRef.current) return;
-            setExplainError(e?.response?.data?.error ?? e?.message ?? 'Failed to load explanation');
-        } finally {
-            if (requestId === explainRequestIdRef.current) setExplainLoading(false);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectId, explainPayload?.entailmentType, explainPayload?.subjectIri, explainPayload?.targetIri]);
-
-    useEffect(() => {
-        if (showExplain) {
-            setExplainJustifications(null);
-            fetchExplainEntailment(explainMode, explainLimitAll ? 99 : explainLimitValue);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showExplain]);
+    const {
+        showExplain, setShowExplain,
+        explainMode, setExplainMode,
+        explainLimitAll, setExplainLimitAll,
+        explainLimitValue, setExplainLimitValue,
+        explainJustifications, explainWarnings, explainLoading, explainError,
+        fetchExplainEntailment,
+    } = useExplainEntailment(projectId, explainPayload);
 
     // Check if this is a restriction expression (contains 'some', 'only', 'min', 'max', 'exactly', 'value')
     const restrictionKeywords = ['some', 'only', 'min', 'max', 'exactly', 'value', 'and', 'or', 'not'];
@@ -1686,26 +1728,10 @@ export const MultiSelectItem: React.FC<{
                             <HelpCircle size={14} />
                         </button>
                     )}
-                    {!!displayItem && displayItem.startsWith('http') && (
-                        <>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(displayItem, 'IRI'); }}
-                                className="p-1 rounded transition-all text-gray-400 hover:bg-blue-100 hover:text-blue-600"
-                                title="Copy IRI"
-                                aria-label="Copy IRI"
-                            >
-                                <Copy size={14} />
-                            </button>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); copyEntityIdToClipboard(displayItem, 'Fragment'); }}
-                                className="p-1 rounded transition-all text-gray-400 hover:bg-blue-100 hover:text-blue-600"
-                                title="Copy Fragment"
-                                aria-label="Copy Fragment"
-                            >
-                                <Hash size={14} />
-                            </button>
-                        </>
-                    )}
+                    <CopyIriButtons
+                        iri={displayItem}
+                        buttonClassName="p-1 rounded transition-all text-gray-400 hover:bg-blue-100 hover:text-blue-600"
+                    />
                     {!isInferred && (
                         <>
                             {/* @ — Axiom annotations */}
@@ -1764,6 +1790,7 @@ export const MultiSelectItem: React.FC<{
                     loading={explainLoading}
                     error={explainError}
                     justifications={explainJustifications}
+                    warnings={explainWarnings}
                     mode={explainMode}
                     onModeChange={(mode) => { setExplainMode(mode); fetchExplainEntailment(mode, explainLimitAll ? 99 : explainLimitValue); }}
                     limitAll={explainLimitAll}

@@ -13,6 +13,7 @@ import { useCommentDialog } from './assistant/hooks/useCommentDialog';
 import { useConflictResolution } from './assistant/hooks/useConflictResolution';
 import { useLiveActivity } from './assistant/hooks/useLiveActivity';
 import { useNotification } from './assistant/hooks/useNotification';
+import { useRequestedTab } from './assistant/hooks/useRequestedTab';
 import { AssistantTab, OntologyChange } from './assistant/types';
 
 interface ChangeAssistantProps {
@@ -21,11 +22,17 @@ interface ChangeAssistantProps {
 
 const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const [activeTab, setActiveTab] = useState<AssistantTab>('live');
+  useRequestedTab(setActiveTab);
   const [selectedChange, setSelectedChange] = useState<OntologyChange | null>(null);
   const { notification, showNotification } = useNotification();
-  const feed = useChangeFeed(projectId);
+  const [serverQuery, setServerQuery] = useState('');
+  const feed = useChangeFeed(projectId, serverQuery);
   const liveActivity = useLiveActivity(projectId, feed.loadChanges);
-  const filters = useChangeFilters(feed.changes);
+  const filters = useChangeFilters(feed.changes, feed.draftChanges);
+  React.useEffect(() => {
+    const timer = setTimeout(() => setServerQuery(filters.searchQuery.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [filters.searchQuery]);
   const details = useChangeDetails(projectId, feed.changes, showNotification, feed.loadChanges);
   const conflicts = useConflictResolution(projectId, feed.loadChanges, showNotification);
   const comments = useCommentDialog(projectId, selectedChange, feed.loadChanges, showNotification);
@@ -56,12 +63,13 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       <TabBar activeTab={activeTab} onSelect={setActiveTab} liveCount={liveActivity.length} stats={feed.stats} isDraftActive={feed.isDraftActive} />
       <TabContent
         projectId={projectId} activeTab={activeTab} liveActivity={liveActivity}
-        changes={feed.changes} draftChanges={feed.draftChanges} stats={feed.stats}
+        changes={feed.changes} draftChanges={feed.draftChanges} filteredDrafts={filters.filteredDrafts} stats={feed.stats}
         filteredChanges={filters.filteredChanges} typeFilteredChanges={filters.typeFilteredChanges}
         searchQuery={filters.searchQuery} sourceFilter={filters.sourceFilter}
         onRollback={feed.refreshAfterRollback} onOpenDetails={openChangeDetails}
         onResolveClick={conflicts.handleConflictClick} onAutoResolve={conflicts.resolveConflict}
         onSelectTimeline={selectTimelineChange}
+        hasMore={feed.hasMore} isLoadingOlder={feed.isLoadingOlder} onLoadOlder={feed.loadOlder}
       />
       {conflicts.showConflictResolver && conflicts.selectedConflict && (
         <ConflictResolver
@@ -75,6 +83,7 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
       {notification && <NotificationToast notification={notification} />}
       {details.showDetailsDialog && (
         <DetailsDialog
+          projectId={projectId}
           loading={details.detailsLoading} details={details.changeDetails}
           newComment={comments.newComment} setNewComment={comments.setNewComment}
           onAddComment={details.addCommentToChange} onClose={details.closeDetails}

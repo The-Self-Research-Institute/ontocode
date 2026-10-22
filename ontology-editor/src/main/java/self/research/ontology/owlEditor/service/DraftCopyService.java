@@ -78,7 +78,11 @@ public class DraftCopyService {
 
  try {
             datasetService.clearDraftGraph(projectId, userId);
-            executeGraphCopyAsync(projectId, userId);
+            if (tripleCount == 0) {
+                updateStatus(projectId, userId, DraftCopyStatus.READY);
+            } else {
+                executeGraphCopyAsync(projectId, userId);
+            }
         } catch (RuntimeException e) {
             log.error("[DRAFT-COPY] Failed to initiate copy for project {} user {} — marking session FAILED",
                     projectId, userId, e);

@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -10,7 +11,10 @@ import org.springframework.web.multipart.MultipartFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import self.research.ontology.owlEditor.model.merge.*;
+import self.research.ontology.owlEditor.service.DraftMergeTooLargeException;
+import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.OntologyMergeService;
+import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 
 import java.nio.file.Path;
@@ -42,12 +46,19 @@ public class OntologyMergeController {
         this.metadataService = metadataService;
     }
 
-    private String effectiveUserId(String userId) {
-        return desktopMode ? DESKTOP_USER_ID : (userId != null && !userId.isBlank() ? userId : "anonymous");
+    private String effectiveUserId(HttpServletRequest request, String userId, boolean draft) {
+        if (desktopMode) {
+            return DESKTOP_USER_ID;
+        }
+        return draft ? RequestActor.forScope(request, userId, true) : RequestActor.of(request, userId, null).userId();
     }
 
-    private String effectiveUsername(String username) {
-        return username != null && !username.isBlank() ? username : "Anonymous";
+    private ResponseEntity<?> draftMergeRefusal(RuntimeException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
+    }
+
+    private String effectiveUsername(HttpServletRequest request, String userId, String username) {
+        return RequestActor.of(request, userId, username).username();
     }
 
     /**
@@ -64,7 +75,10 @@ public class OntologyMergeController {
             @PathVariable String projectId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "targetProjectId", required = false) String targetProjectId,
-            @RequestParam(value = "targetFileName", required = false) String targetFileName) {
+            @RequestParam(value = "targetFileName", required = false) String targetFileName,
+            @RequestParam(value = "draft", defaultValue = "false") boolean draft,
+            @RequestParam(value = "userId", required = false) String userId,
+            HttpServletRequest httpRequest) {
         
         log.info("[MERGE] Analyzing merge for project {}, file: {}", projectId, file.getOriginalFilename());
         
@@ -87,7 +101,8 @@ public class OntologyMergeController {
                 projectId + "_source",  // source project ID (not used, just for logging)
                 tempFile,
                 effectiveTargetProjectId,
-                targetFileName
+                targetFileName,
+                draft ? effectiveUserId(httpRequest, userId, true) : null
             );
             
             log.info("[MERGE] Analysis complete: {} conflicts found", result.getTotalConflicts());
@@ -148,7 +163,9 @@ public class OntologyMergeController {
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
             @RequestParam(value = "conflictResolutions", required = false) String conflictResolutionsJson,
             @RequestParam(value = "userId", required = false) String userId,
-            @RequestParam(value = "username", required = false) String username) {
+            @RequestParam(value = "username", required = false) String username,
+            @RequestParam(value = "draft", defaultValue = "false") boolean draft,
+            HttpServletRequest httpRequest) {
 
         log.info("[MERGE] Executing merge for project {}", projectId);
         log.info("[MERGE] Strategy: {}, Rename suffix: {}", strategy, renameSuffix);
@@ -182,8 +199,9 @@ public class OntologyMergeController {
                 targetFileName,
                 outputFileName,
                 options,
-                effectiveUserId(userId),
-                effectiveUsername(username)
+                effectiveUserId(httpRequest, userId, draft),
+                effectiveUsername(httpRequest, userId, username),
+                draft
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
@@ -203,6 +221,8 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (DraftNotReadyException | DraftMergeTooLargeException e) {
+            return draftMergeRefusal(e);
         } catch (StackOverflowError soe) {
             log.error("[MERGE] Stack overflow during merge — ontology may be too large or circular", soe);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -229,7 +249,8 @@ public class OntologyMergeController {
             @RequestParam(value = "outputFileName", required = false) String outputFileName,
             @RequestParam(value = "userId", required = false) String userId,
             @RequestParam(value = "username", required = false) String username,
-            @RequestBody MergeOptions options) {
+            @RequestBody MergeOptions options,
+            HttpServletRequest httpRequest) {
 
         log.info("[MERGE] Executing merge with manual resolutions for project {}", projectId);
         log.info("[MERGE] Resolutions provided: {}", options.getConflictResolutions().size());
@@ -248,8 +269,8 @@ public class OntologyMergeController {
                 targetFileName,
                 outputFileName,
                 options,
-                effectiveUserId(userId),
-                effectiveUsername(username)
+                effectiveUserId(httpRequest, userId, false),
+                effectiveUsername(httpRequest, userId, username)
             );
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);

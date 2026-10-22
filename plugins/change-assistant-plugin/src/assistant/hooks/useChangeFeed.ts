@@ -4,7 +4,7 @@ import { fetchDraftList, fetchDraftSessionActive, fetchRecentChanges } from '../
 import { computeStats, parseChange, parseDraft } from '../changeParsing';
 import { ChangeStats, EMPTY_STATS, OntologyChange } from '../types';
 
-export function useChangeFeed(projectId: string) {
+export function useChangeFeed(projectId: string, query = '') {
   const [changes, setChanges] = useState<OntologyChange[]>([]);
   const [draftChanges, setDraftChanges] = useState<OntologyChange[]>([]);
   const draftChangesRef = useRef<OntologyChange[]>(draftChanges);
@@ -13,8 +13,14 @@ export function useChangeFeed(projectId: string) {
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [isDraftActive, setIsDraftActive] = useState(false);
+  const [olderChanges, setOlderChanges] = useState<OntologyChange[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const draftSeqRef = useRef(0);
   const changesSeqRef = useRef(0);
+  const firstPageSizeRef = useRef(0);
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
   const loadDraftChanges = async () => {
     const seq = ++draftSeqRef.current;
@@ -32,20 +38,43 @@ export function useChangeFeed(projectId: string) {
     }
   };
 
+  const olderRef = useRef<OntologyChange[]>([]);
+  olderRef.current = olderChanges;
+
+  const loadOlder = async () => {
+    if (isLoadingOlder || !hasMore) return;
+    setIsLoadingOlder(true);
+    try {
+      const offset = firstPageSizeRef.current + olderRef.current.length;
+      const data = await fetchRecentChanges(projectId, offset, currentActor().userId, queryRef.current);
+      if (!data.success) return;
+      const seen = new Set([...changes, ...olderRef.current].map(change => change.id));
+      const fresh = data.changes.map((change: any) => parseChange(change)).filter((change: OntologyChange) => !seen.has(change.id));
+      setOlderChanges(previous => [...previous, ...fresh]);
+      setHasMore(!!data.hasMore);
+    } catch (error) {
+      console.error('Failed to load older changes:', error);
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  };
+
   const loadChanges = async () => {
     const seq = ++changesSeqRef.current;
     setIsLoading(true);
     try {
-      const data = await fetchRecentChanges(projectId);
+      const data = await fetchRecentChanges(projectId, 0, currentActor().userId, queryRef.current);
       if (seq !== changesSeqRef.current) return;
       if (!data.success) {
         console.error('[ChangeAssistant] Failed to load changes:', data.error);
         return;
       }
       const parsedChanges = data.changes.map((change: any) => parseChange(change));
+      firstPageSizeRef.current = parsedChanges.length;
       setChanges(parsedChanges);
+      setHasMore(olderRef.current.length === 0 ? !!data.hasMore : true);
       setLastRefresh(new Date());
-      setStats(computeStats(parsedChanges, draftChangesRef.current));
+      if (!queryRef.current) setStats(computeStats([...parsedChanges, ...olderRef.current], draftChangesRef.current));
     } catch (error) {
       console.error('Failed to load changes:', error);
     } finally {
@@ -54,6 +83,8 @@ export function useChangeFeed(projectId: string) {
   };
 
   useEffect(() => {
+    setOlderChanges([]);
+    setHasMore(false);
     loadChanges();
     loadDraftChanges();
     const interval = setInterval(() => {
@@ -67,12 +98,25 @@ export function useChangeFeed(projectId: string) {
         loadDraftChanges();
       }
     };
+    let committedTimer: ReturnType<typeof setTimeout> | undefined;
+    const handleCommitted = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail && detail.projectId !== projectId) return;
+      clearTimeout(committedTimer);
+      committedTimer = setTimeout(() => {
+        loadChanges();
+        loadDraftChanges();
+      }, 400);
+    };
     window.addEventListener('ontologyChangesSaved', handleSaved);
+    window.addEventListener('ontocode:committed-change', handleCommitted);
     return () => {
       clearInterval(interval);
+      clearTimeout(committedTimer);
       window.removeEventListener('ontologyChangesSaved', handleSaved);
+      window.removeEventListener('ontocode:committed-change', handleCommitted);
     };
-  }, [projectId]);
+  }, [projectId, query]);
 
   const refreshAll = () => {
     loadChanges();
@@ -86,5 +130,10 @@ export function useChangeFeed(projectId: string) {
     }, 1200);
   };
 
-  return { changes, draftChanges, stats, isLoading, lastRefresh, isDraftActive, loadChanges, refreshAll, refreshAfterRollback };
+  const allChanges = olderChanges.length === 0 ? changes : [...changes, ...olderChanges.filter(older => !changes.some(c => c.id === older.id))];
+
+  return {
+    changes: allChanges, draftChanges, stats, isLoading, lastRefresh, isDraftActive, loadChanges, refreshAll,
+    refreshAfterRollback, hasMore, isLoadingOlder, loadOlder
+  };
 }

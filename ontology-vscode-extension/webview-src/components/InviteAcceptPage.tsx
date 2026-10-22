@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../custom-hook/useAuth';
 import apiClient from '../services/apiClient';
 import { Bug } from 'lucide-react';
-import ReportIssueModal from './ReportIssueModal';
+import { openFeedbackPage } from "../utils/feedback";
 
 interface InvitationDetails {
     invitationToken: string;
@@ -28,7 +28,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [accepting, setAccepting] = useState(false);
-    const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
     
     const { user } = useAuth();
     
@@ -289,7 +288,7 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
             {/* Report Issue floating button */}
             <button
-              onClick={() => setIsReportIssueModalOpen(true)}
+              onClick={() => openFeedbackPage("bug")}
               className="fixed bottom-4 right-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50"
               title="Report an issue"
             >
@@ -297,9 +296,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
               Report Issue
             </button>
 
-            {isReportIssueModalOpen && (
-              <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
-            )}
         </div>
     );
 };

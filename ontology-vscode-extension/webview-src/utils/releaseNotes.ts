@@ -18,6 +18,22 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.6-beta.1",
+    webVersion: "1.2.6",
+    date: "October 16, 2026",
+    title: "Undo and Redo",
+    highlights: [
+      "ONTOCODE-194: Undo and Redo — Edit > Undo and Edit > Redo now work, with Ctrl+Z and Ctrl+Shift+Z. They reverse creating and deleting entities, adding and removing axioms, drag-and-drop in the class hierarchy, annotation and axiom-annotation edits, characteristic changes, prefix changes, renames, and ontology IRI changes.",
+      "ONTOCODE-194: Undo and Redo — An operation that changes several things at once, such as Change IRI or an AI edit, is undone as a single unit. Undo restores the exact previous triples.",
+      "ONTOCODE-194: Undo and Redo — In shared projects, Undo only reverses your own changes. If someone else has since changed or built on the same item, Undo tells you why it can't proceed instead of silently reverting their work.",
+      "ONTOCODE-194: Undo and Redo — Every undo and redo is recorded in the Change Assistant and is safe if the connection drops or the server restarts partway through. Repeating the same request never applies it twice.",
+      "ONTOCODE-194: Undo and Redo — Also covers datatype definitions, fuzzy and SWRL rules, citations, and, on desktop, ontologies edited offline.",
+      "ONTOCODE-194: Change Assistant — The number of changes on a card, on the Undo all button, and in the undo preview now always agree, and times are shown in your local time zone so an undo appears after the edit it undid.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.5-beta.1",
     webVersion: "1.2.5",
     date: "October 7, 2026",

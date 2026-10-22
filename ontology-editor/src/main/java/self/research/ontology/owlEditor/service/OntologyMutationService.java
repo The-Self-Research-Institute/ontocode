@@ -81,8 +81,14 @@ public class OntologyMutationService {
     @Autowired(required = false) @Nullable
     private OntologyHistoryService historyService;
 
+    @Autowired(required = false) @Nullable
+    private RawUpdateHistory rawUpdateHistory;
+
     @Value("${ontology.plugin-service.url:http://localhost:8087}")
     private String pluginServiceUrl;
+
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
 
     private final RestTemplate reasonerCacheInvalidationRestTemplate = buildShortTimeoutRestTemplate();
 
@@ -126,19 +132,38 @@ public class OntologyMutationService {
     }
 
     public void invalidateReasonerCaches(String projectId) {
+        invalidateReasonerCaches(projectId, false);
+    }
+
+    public void invalidateReasonerCaches(String projectId, boolean draft) {
+        invalidateReasonerCaches(projectId, draft, null);
+    }
+
+    public void invalidateReasonerCaches(String projectId, boolean draft, @Nullable String userId) {
         if (editorReasonerCacheService != null) {
             try {
-                editorReasonerCacheService.invalidateOntology(projectId);
+                if (draft) {
+                    editorReasonerCacheService.invalidateDraft(projectId, userId);
+                } else {
+                    editorReasonerCacheService.invalidateOntology(projectId);
+                }
             } catch (Exception e) {
                 log.warn("[MUTATION] Failed invalidating editor reasoner cache for project {}", projectId, e);
             }
+        }
+
+        if (draft) {
+            return;
         }
 
         metadataExecutor.execute(() -> {
             try {
                 String url = pluginServiceUrl + "/api/reasoner/clear-cache/"
                     + URLEncoder.encode(projectId, StandardCharsets.UTF_8);
-                reasonerCacheInvalidationRestTemplate.postForEntity(url, null, Map.class);
+                org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+                headers.set("X-Ontocode-Internal-Token", internalToken);
+                reasonerCacheInvalidationRestTemplate.postForEntity(
+                        url, new org.springframework.http.HttpEntity<>(headers), Map.class);
             } catch (Exception e) {
                 log.warn("[MUTATION] Failed busting plugin-service reasoner cache for project {} (non-fatal)",
                     projectId, e);
@@ -179,22 +204,22 @@ public class OntologyMutationService {
     }
 
     public void apply(String projectId, List<MutationOp> ops) {
-        apply(projectId, ops, false, null, false);
+        apply(projectId, ops, false, null);
     }
 
     public void applyDraft(String projectId, String userId, List<MutationOp> ops) {
-        apply(projectId, ops, true, userId, false);
+        apply(projectId, ops, true, userId);
     }
 
     public void applyForRollback(String projectId, List<MutationOp> ops) {
-        apply(projectId, ops, false, null, true);
+        apply(projectId, ops, false, null);
     }
 
     public void applyDraftForRollback(String projectId, String userId, List<MutationOp> ops) {
-        apply(projectId, ops, true, userId, true);
+        apply(projectId, ops, true, userId);
     }
 
-    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId, boolean skipHistorySnapshot) {
+    private void apply(String projectId, List<MutationOp> ops, boolean draft, String userId) {
         if (ops == null || ops.isEmpty()) {
             log.warn("[MUTATION] No operations to apply for project: {}", projectId);
             return;
@@ -217,12 +242,6 @@ public class OntologyMutationService {
 
         log.info("[MUTATION] Generated SPARQL (BEFORE graph injection):");
         log.info("[MUTATION] {}", sparql);
-
-        if (!skipHistorySnapshot) {
-            for (MutationOp op : ops) {
-                snapshotAxiomsBeforeDelete(projectId, op, userId, draft);
-            }
-        }
 
         java.util.Set<String> reverseReferenceIris = new java.util.LinkedHashSet<>();
         for (MutationOp op : ops) {
@@ -264,7 +283,7 @@ public class OntologyMutationService {
 
             invalidatePublicCodeViewCache(projectId, draft);
             invalidateEntityCaches(projectId, affectedIris(ops, reverseReferenceIris), draft);
-            invalidateReasonerCaches(projectId);
+            invalidateReasonerCaches(projectId, draft, userId);
             log.info("[MUTATION] Graph cache cleared after mutations");
 
             if (ops.stream().anyMatch(op -> "addDisjointUnion".equals(op.type()))) {
@@ -304,6 +323,8 @@ public class OntologyMutationService {
                     verifyRestrictionInserted(projectId, verifyGraphUri, op, false);
                 }
             }
+        } catch (DraftNotReadyException e) {
+            throw e;
         } catch (Exception e) {
             log.error("[MUTATION] ❌ Failed to apply mutations: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to apply mutations", e);
@@ -335,28 +356,31 @@ public class OntologyMutationService {
 
     public void applyRawUpdateWithHistory(String projectId, String sparql, boolean draft,
                                            String userId, String username) {
-        org.eclipse.rdf4j.model.Model oldModel = null;
-        if (!draft && historyService != null) {
-            try (var result = datasetService.execConstructAll(projectId)) {
-                oldModel = org.eclipse.rdf4j.query.QueryResults.asModel(result);
-            }
-        }
-
+        org.eclipse.rdf4j.model.Model before = rawUpdateHistory == null ? null : rawUpdateHistory.snapshot(projectId, draft, userId);
         applyRawUpdate(projectId, sparql, draft, userId);
-
-        if (oldModel != null) {
-            org.eclipse.rdf4j.model.Model newModel;
-            try (var result = datasetService.execConstructAll(projectId)) {
-                newModel = org.eclipse.rdf4j.query.QueryResults.asModel(result);
-            }
-            new CodeViewHistoryRecorder(historyService, null)
-                    .record(projectId, userId, username, oldModel, newModel, false, ChangeOrigin.manual());
+        if (before != null) {
+            rawUpdateHistory.record(projectId, draft, userId, username, before);
         }
     }
 
     public void applyRawUpdate(String projectId, String sparql, boolean draft, String userId) {
         if (sparql == null || sparql.isBlank()) {
             log.warn("[MUTATION] Empty raw SPARQL update for project={}", projectId);
+            return;
+        }
+
+        if (!draft && desktopOwlApiMutationService != null && desktopOwlApiMutationService.tryApplyRaw(projectId, sparql)) {
+            long version = metadataService.incrementMutationVersion(projectId);
+            if (ontologyCache != null) {
+                ontologyCache.updateCachedVersion(projectId, version);
+            }
+            topLevelCacheService.evict(projectId);
+            invalidatePublicCodeViewCache(projectId, false);
+            if (classDetailCacheService != null) {
+                classDetailCacheService.dropAll(projectId);
+            }
+            bumpMainGraphRevision(projectId);
+            invalidateReasonerCaches(projectId);
             return;
         }
 
@@ -375,7 +399,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
-         invalidateReasonerCaches(projectId);
+         invalidateReasonerCaches(projectId, draft, userId);
         if (!draft && classDetailCacheService != null) {
              classDetailCacheService.dropAll(projectId);
         }
@@ -431,7 +455,7 @@ public class OntologyMutationService {
         if (visualizationController != null) {
             visualizationController.clearCache(projectId);
         }
-        invalidateReasonerCaches(projectId);
+        invalidateReasonerCaches(projectId, draft, userId);
 
         if (!draft) {
             CompletableFuture.runAsync(() -> {
@@ -462,7 +486,7 @@ public class OntologyMutationService {
             return "INSERT DATA {\n"
                 + "<" + op.iri() + "> a owl:Class .\n"
                 + optionalLabel(op.iri(), op.label()) + "\n"
-                + "<" + op.iri() + "> rdfs:subClassOf <" + op.parent() + "> .\n"
+                + (isRealParentClass(op.parent()) ? "<" + op.iri() + "> rdfs:subClassOf <" + op.parent() + "> .\n" : "")
                 + "}";
         } else if (type.equals("updateClassLabel")) {
             return "DELETE { <" + op.iri() + "> rdfs:label ?o }\n"
@@ -952,6 +976,11 @@ public class OntologyMutationService {
 
     private boolean isBlankNodeRef(String target) {
         return target == null || !(target.startsWith("http://") || target.startsWith("https://"));
+    }
+
+    public static boolean isRealParentClass(String parent) {
+        return parent != null && !parent.isBlank()
+            && !"http://www.w3.org/2002/07/owl#Thing".equals(parent) && !"owl:Thing".equals(parent);
     }
 
     private String optionalLabel(String iri, String label) {
@@ -1912,38 +1941,6 @@ public class OntologyMutationService {
     private boolean isComplexExpression(String expression) {
         if (expression == null) return false;
         return expression.contains(" ") && !expression.trim().startsWith("<") && !expression.trim().startsWith("_:");
-    }
-
-    private void snapshotAxiomsBeforeDelete(String projectId, MutationOp op, String userId, boolean draft) {
-        if (historyService == null || op.iri() == null) return;
-        String type = op.type();
-        if (type == null || !type.startsWith("delete")) return;
-
-        String query = PREFIXES + """
-            SELECT ?p ?o WHERE { <%s> ?p ?o }
-            """.formatted(op.iri());
-        try (TupleQueryResult result = datasetService.execSelect(projectId, query)) {
-            String effectiveUsername = userId != null ? userId : "System";
-            while (result.hasNext()) {
-                BindingSet bs = result.next();
-                String predicate = bs.getValue("p").stringValue();
-                String object = bs.getValue("o").stringValue();
-                if (predicate.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")) {
-                    continue;
-                }
-                if (predicate.equals("http://www.w3.org/2000/01/rdf-schema#subClassOf")) {
-                    historyService.recordEdit(projectId, userId, effectiveUsername,
-                            "removeSubClassOf", op.iri(), op.label(), object, null,
-                            "subClassOf changed via " + type, null, null, draft);
-                } else {
-                    historyService.recordEdit(projectId, userId, effectiveUsername,
-                            "removeStatement", op.iri(), op.label(), object, null,
-                            "Property assertion changed via " + type + " (" + predicate + ")", predicate, null, draft);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("[MUTATION] Could not snapshot axioms before delete for {}: {}", op.iri(), e.getMessage());
-        }
     }
 
     private java.util.List<String> collectReverseReferenceIris(String projectId, MutationOp op) {

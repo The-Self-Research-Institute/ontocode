@@ -13,7 +13,6 @@ import java.util.regex.Pattern;
 
 final class PrefixScanner {
 
-    private static final int MAX_LINES = 5_000;
 
     private static final Pattern TURTLE = Pattern.compile(
             "^\\s*(?:@prefix|PREFIX)\\s+([^\\s:]*):\\s*<([^>]*)>", Pattern.CASE_INSENSITIVE);
@@ -21,7 +20,19 @@ final class PrefixScanner {
     private static final Pattern FUNCTIONAL = Pattern.compile("^\\s*Prefix\\(\\s*([^:=\\s]*):?\\s*=\\s*<([^>]*)>\\s*\\)");
     private static final Pattern MANCHESTER = Pattern.compile("^\\s*Prefix:\\s*([^:\\s]*):\\s*<([^>]*)>");
 
+    private static final Pattern DECLARATION_MARKER = Pattern.compile(
+            "@prefix|\\bPREFIX\\b|\\bPrefix\\s*\\(|\\bPrefix:|xmlns|<!ENTITY", Pattern.CASE_INSENSITIVE);
+
     private PrefixScanner() {
+    }
+
+    static boolean mentionsDeclaration(Iterable<String> texts) {
+        for (String text : texts) {
+            if (text != null && DECLARATION_MARKER.matcher(text).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static Map<String, String> scan(Path file, String format) throws IOException {
@@ -43,7 +54,7 @@ final class PrefixScanner {
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line;
             int count = 0;
-            while ((line = reader.readLine()) != null && count++ < MAX_LINES) {
+            while ((line = reader.readLine()) != null && count++ < Limit.PREFIX_SCAN_MAX_LINES.value()) {
                 Matcher matcher = pattern.matcher(line);
                 if (matcher.find()) {
                     prefixes.putIfAbsent(matcher.group(1), matcher.group(2));
@@ -59,7 +70,7 @@ final class PrefixScanner {
         try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line;
             int count = 0;
-            while ((line = reader.readLine()) != null && count++ < MAX_LINES) {
+            while ((line = reader.readLine()) != null && count++ < Limit.PREFIX_SCAN_MAX_LINES.value()) {
                 if (!inRootTag && (line.contains("<rdf:RDF") || line.contains("<Ontology") || line.contains("<RDF"))) {
                     inRootTag = true;
                 }

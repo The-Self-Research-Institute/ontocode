@@ -14,6 +14,8 @@ export {
   REASONER_ID_MAP,
   REASONER_OPTIONS,
   normalizeReasonerType,
+  isTerminalPollError,
+  pollErrorMessage,
   buildHierarchyTree,
   extractResponseData,
   normalizePrefixMappings,

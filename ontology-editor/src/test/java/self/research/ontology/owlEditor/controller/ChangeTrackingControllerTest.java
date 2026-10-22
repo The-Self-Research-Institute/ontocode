@@ -30,6 +30,8 @@ class ChangeTrackingControllerTest {
     private WorkspaceOwnershipService workspaceOwnershipService;
     @Mock
     private RollbackAuditRepository rollbackAuditRepository;
+    @Mock
+    private self.research.ontology.owlEditor.repository.HistoryChangeRepository historyRepository;
 
     private ChangeTrackingController controller;
 
@@ -40,6 +42,8 @@ class ChangeTrackingControllerTest {
         ReflectionTestUtils.setField(controller, "historySyncService", historySyncService);
         ReflectionTestUtils.setField(controller, "rollbackSupport", new RollbackRequestSupport(workspaceOwnershipService));
         ReflectionTestUtils.setField(controller, "rollbackAuditRepository", rollbackAuditRepository);
+        ReflectionTestUtils.setField(controller, "changeFeedService",
+                new self.research.ontology.owlEditor.service.ChangeFeedService(historyRepository));
         when(historySyncService.addComment(anyString(), anyString(), anyString(), anyString())).thenReturn(true);
     }
 
@@ -147,10 +151,12 @@ class ChangeTrackingControllerTest {
         change.setEntityIRI("http://example.org#Pizza");
         change.setSubChanges(List.of(sub));
 
-        when(historySyncService.getHistoryChanges("proj-1")).thenReturn(List.of(change));
+        when(historyRepository.findByProjectId(org.mockito.ArgumentMatchers.eq("proj-1"),
+                org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Pageable.class))).thenReturn(List.of(change));
         when(historySyncService.computeConflicts(List.of(change))).thenReturn(Map.of());
 
-        Map<String, Object> body = controller.getRecentChanges("proj-1", 100).getBody();
+        Map<String, Object> body = controller.getRecentChanges("proj-1", 100, 0, null, null, null, true, "u1",
+                new MockHttpServletRequest()).getBody();
         List<Map<String, Object>> changes = (List<Map<String, Object>>) body.get("changes");
         List<Map<String, Object>> subChanges = (List<Map<String, Object>>) changes.get(0).get("subChanges");
         assertEquals("ANNOTATION", subChanges.get(0).get("category"));
@@ -180,9 +186,12 @@ class ChangeTrackingControllerTest {
         reverted.setStatus("PENDING");
         reverted.setReverted(true);
         reverted.setRevertedAuditId("audit-1");
-        when(historySyncService.getHistoryChanges("proj-1")).thenReturn(List.of(saved, draft, reverted));
+        when(historyRepository.findByProjectId(org.mockito.ArgumentMatchers.eq("proj-1"),
+                org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(List.of(saved, draft, reverted));
 
-        Map<String, Object> body = controller.getRecentChanges("proj-1", 100).getBody();
+        Map<String, Object> body = controller.getRecentChanges("proj-1", 100, 0, null, null, null, true, "u1",
+                new MockHttpServletRequest()).getBody();
 
         List<Map<String, Object>> changes = (List<Map<String, Object>>) body.get("changes");
         assertEquals(List.of("SAVED", "DRAFT", "REVERTED"), changes.stream().map(c -> c.get("status")).toList());

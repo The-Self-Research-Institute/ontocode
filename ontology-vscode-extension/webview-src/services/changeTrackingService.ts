@@ -213,24 +213,6 @@ export const changeTrackingService = {
     }
   },
 
-  async revertChange(
-    projectId: string,
-    changeId: string,
-  ): Promise<{ success: boolean; error?: string; message?: string }> {
-    try {
-      const actor = resolveActor();
-      const response = await apiClient.post(
-        `/api/ontology/${encodeURIComponent(projectId)}/changes/${encodeURIComponent(changeId)}/revert`,
-        { userId: actor.userId, username: actor.username },
-      );
-      const data = response.data || response;
-      return { success: data.success !== false, error: data.error, message: data.message };
-    } catch (error) {
-      console.error('[changeTrackingService] revertChange failed:', error);
-      return { success: false, error: 'Revert request failed' };
-    }
-  },
-
   async addComment(
     projectId: string,
     changeId: string,

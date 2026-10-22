@@ -49,7 +49,8 @@ class CodeViewHistoryRecorderPrefixTest {
 
         verify(history).recordEdit(eq("p"), eq("u@x.com"), eq("u@x.com"), eq("prefixesChanged"),
                 isNull(), eq("3 prefixes"), isNull(), isNull(), anyString(),
-                isNull(), isNull(), anyBoolean(), any());
+                isNull(), org.mockito.ArgumentMatchers.<java.util.List<java.util.Map<String, String>>>argThat(
+                        parts -> parts != null && parts.size() == 3), anyBoolean(), any());
         verify(history, never()).recordEdit(anyString(), anyString(), anyString(), eq("prefixAdded"),
                 any(), any(), any(), any(), anyString(), any(), any(), anyBoolean(), any());
         verify(history, never()).recordEdit(anyString(), anyString(), anyString(), eq("prefixModified"),

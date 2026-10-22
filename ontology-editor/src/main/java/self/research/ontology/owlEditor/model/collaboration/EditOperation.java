@@ -82,7 +82,6 @@ public class EditOperation {
         GCI_REMOVED,
 
         SPARQL_UPDATE,
-        CHANGE_REVERTED,
 
         BULK_IMPORT,
         BULK_DELETE

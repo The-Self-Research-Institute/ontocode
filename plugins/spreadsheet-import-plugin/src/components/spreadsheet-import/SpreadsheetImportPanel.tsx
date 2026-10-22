@@ -20,6 +20,7 @@ import SheetGrid, { type GridHighlight } from "./SheetGrid";
 import RuleEditorDialog from "./RuleEditorDialog";
 import ImportPreviewDialog from "./ImportPreviewDialog";
 import SaveRuleSetDialog from "./SaveRuleSetDialog";
+import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
 import {
   commitImport,
   deleteRuleSet,
@@ -39,6 +40,7 @@ import {
   type SavedRuleSet,
   type TransformationRule,
 } from "../../services/spreadsheetImportService";
+import { clearImportWork, loadImportWork, saveImportFile, saveImportRules, workKey } from "../../services/importWorkStore";
 interface SpreadsheetImportPanelProps {
   projectId: string | null;
   userId?: string;
@@ -120,15 +122,93 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
   const [savingSet, setSavingSet] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [ruleSetNotice, setRuleSetNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ kind: "rule"; id: string } | { kind: "ruleSet" } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [restoredAt, setRestoredAt] = useState<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const ruleFileInput = useRef<HTMLInputElement>(null);
+  const hydratedKey = useRef<string | null>(null);
+  const savedFile = useRef<{ key: string | null; file: File | null; workbook: PanelState["workbook"] }>({
+    key: null,
+    file: null,
+    workbook: null,
+  });
+  const [hydrationTick, setHydrationTick] = useState(0);
+  const storeKey = workKey(userId, key);
 
   const { file, workbook, activeSheet, rules, ruleSet, ruleSetSnapshot } = state;
 
   useEffect(() => {
-    setState(stateByProject.get(key) ?? emptyState);
+    const inMemory = stateByProject.get(key);
+    setState(inMemory ?? emptyState);
     setSelectedRuleId(null);
-  }, [key]);
+    setRestoredAt(null);
+    hydratedKey.current = null;
+    if (inMemory || !projectId) {
+      savedFile.current = { key: storeKey, file: inMemory?.file ?? null, workbook: inMemory?.workbook ?? null };
+      hydratedKey.current = storeKey;
+      setHydrationTick((t) => t + 1);
+      return;
+    }
+    let cancelled = false;
+    loadImportWork(storeKey).then((work) => {
+      if (cancelled) return;
+      if (work && !stateByProject.has(key)) {
+        const restored: PanelState = {
+          file: new File([work.file], work.fileName, { type: work.fileType }),
+          workbook: work.workbook,
+          activeSheet: work.activeSheet,
+          rules: work.rules,
+          ruleSet: work.ruleSet,
+          ruleSetSnapshot: work.ruleSetSnapshot,
+        };
+        stateByProject.set(key, restored);
+        savedFile.current = { key: storeKey, file: restored.file, workbook: restored.workbook };
+        setState(restored);
+        setRestoredAt(work.savedAt);
+      }
+      hydratedKey.current = storeKey;
+      setHydrationTick((t) => t + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, storeKey]);
+
+  useEffect(() => {
+    if (!projectId || hydratedKey.current !== storeKey) return;
+    if (savedFile.current.key === storeKey && savedFile.current.file === file && savedFile.current.workbook === workbook) return;
+    savedFile.current = { key: storeKey, file, workbook };
+    if (file && workbook) {
+      void saveImportFile(storeKey, {
+        fileName: file.name,
+        fileType: file.type,
+        file,
+        workbook,
+        savedAt: Date.now(),
+      });
+    } else {
+      void clearImportWork(storeKey);
+    }
+  }, [file, workbook, storeKey, hydrationTick]);
+
+  useEffect(() => {
+    if (!projectId || hydratedKey.current !== storeKey || !file || !workbook) return;
+    if (savedFile.current.key !== storeKey || savedFile.current.file !== file) return;
+    const timer = setTimeout(() => {
+      void saveImportRules(storeKey, { activeSheet, rules, ruleSet, ruleSetSnapshot, savedAt: Date.now() });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [activeSheet, rules, ruleSet, ruleSetSnapshot, file, workbook, storeKey, hydrationTick]);
+
+  const discardWork = () => {
+    void clearImportWork(storeKey);
+    stateByProject.delete(key);
+    setState(emptyState);
+    setRestoredAt(null);
+    setSelectedRuleId(null);
+    setPreview(null);
+  };
 
   const update = (next: Partial<PanelState>) =>
     setState((prev) => {
@@ -278,6 +358,9 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
       const result = await commitImport(projectId, file, rules, draftMode, actor.userId, actor.username);
       setPreview(null);
       setImported({ ...result, fileName: file.name });
+      setRestoredAt(null);
+      savedFile.current = { key: storeKey, file: null, workbook: null };
+      void clearImportWork(storeKey);
       onImported?.();
     } catch (e: any) {
       setCommitError(errorText(e) || "The import failed");
@@ -340,12 +423,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
 
   const removeRuleSet = async () => {
     if (!projectId || !ruleSet) return;
-    if (pendingLoad !== `delete:${ruleSet.id}`) {
-      setPendingLoad(`delete:${ruleSet.id}`);
-      setRuleSetNotice({ ok: false, text: `Click delete again to remove "${ruleSet.name}" from the project. Your current rules stay on screen.` });
-      return;
-    }
-    setPendingLoad(null);
+    setDeleting(true);
     try {
       await deleteRuleSet(projectId, ruleSet.id);
       setRuleSetNotice({ ok: true, text: `Deleted "${ruleSet.name}".` });
@@ -353,8 +431,13 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
       refreshSavedSets();
     } catch (e: any) {
       setRuleSetNotice({ ok: false, text: errorText(e) || "Could not delete the rule set" });
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(null);
     }
   };
+
+  const confirmTarget = confirmDelete?.kind === "rule" ? rules.find((r) => r.id === confirmDelete.id) ?? null : null;
 
   const exportRules = () => {
     const name = ruleSet?.name || "spreadsheet-rules";
@@ -439,6 +522,25 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
         </div>
       )}
 
+      {restoredAt && workbook && (
+        <div
+          className="mx-4 mt-2 px-3 py-2 text-xs rounded flex items-center gap-2"
+          style={{ background: "rgba(147, 51, 234, 0.12)", border: "1px solid rgba(147, 51, 234, 0.35)" }}
+        >
+          <FolderOpen size={14} className="text-purple-600" />
+          <span>
+            Restored your unsaved import of {workbook.fileName} from {new Date(restoredAt).toLocaleString()}. It stays here
+            until you add it to the ontology or discard it.
+          </span>
+          <button onClick={discardWork} className="ml-auto px-2 py-0.5 rounded border hover:bg-gray-50">
+            Discard
+          </button>
+          <button onClick={() => setRestoredAt(null)} className="p-0.5 rounded hover:bg-gray-100" aria-label="Dismiss">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {uploadError && (
         <div className="mx-4 mt-2 px-3 py-2 text-xs rounded bg-red-50 text-red-700 border border-red-200 flex items-center gap-2">
           <AlertCircle size={14} /> {uploadError}
@@ -508,7 +610,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
                 <Copy size={12} /> Duplicate
               </button>
               <button
-                onClick={() => selectedRule && deleteRule(selectedRule.id)}
+                onClick={() => selectedRule && setConfirmDelete({ kind: "rule", id: selectedRule.id })}
                 disabled={!selectedRule}
                 className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border hover:bg-gray-50 disabled:opacity-40"
               >
@@ -576,7 +678,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
                 </button>
                 {ruleSet && (
                   <button
-                    onClick={removeRuleSet}
+                    onClick={() => setConfirmDelete({ kind: "ruleSet" })}
                     title={`Delete "${ruleSet.name}" from the project`}
                     className="p-1 rounded border hover:bg-red-50 text-red-600"
                     aria-label="Delete saved rule set"
@@ -648,10 +750,19 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
                             if (!missingSheet) update({ activeSheet: r.sheetName });
                           }}
                           onDoubleClick={() => setEditing({ rule: r, isNew: false })}
+                          aria-selected={r.id === selectedRuleId}
                           className={`align-top border-t cursor-pointer ${
-                            r.id === selectedRuleId ? "bg-purple-50" : "hover:bg-gray-50"
+                            r.id === selectedRuleId ? "" : "hover:bg-gray-50"
                           } ${r.active ? "" : "opacity-50"}`}
-                          style={{ borderColor: "var(--color-border)" }}
+                          style={
+                            r.id === selectedRuleId
+                              ? {
+                                  borderColor: "var(--color-border)",
+                                  background: "rgba(147, 51, 234, 0.18)",
+                                  boxShadow: "inset 3px 0 0 #9333ea",
+                                }
+                              : { borderColor: "var(--color-border)" }
+                          }
                         >
                           <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
                             <input type="checkbox" checked={r.active} onChange={() => toggleActive(r.id)} title="Run this rule" />
@@ -714,6 +825,43 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
           draftMode={draftMode}
           onCommit={runCommit}
           onClose={() => setPreview(null)}
+        />
+      )}
+
+      {confirmDelete?.kind === "rule" && confirmTarget && (
+        <ConfirmDeleteDialog
+          title="Delete rule?"
+          message={
+            <>
+              <p>
+                Delete the rule for <span className="font-mono">{confirmTarget.sheetName}!{confirmTarget.startColumn}{confirmTarget.startRow}</span>
+                {confirmTarget.comment ? <> ({confirmTarget.comment})</> : null}?
+              </p>
+              <p className="mt-1 text-gray-500">It is removed from the list. A saved rule set keeps it until you save again.</p>
+            </>
+          }
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            deleteRule(confirmTarget.id);
+            setConfirmDelete(null);
+          }}
+        />
+      )}
+
+      {confirmDelete?.kind === "ruleSet" && ruleSet && (
+        <ConfirmDeleteDialog
+          title="Delete saved rule set?"
+          message={
+            <>
+              <p>
+                Delete <span className="font-semibold">"{ruleSet.name}"</span> from this project?
+              </p>
+              <p className="mt-1 text-gray-500">This can't be undone. The rules on screen stay, so you can save them again.</p>
+            </>
+          }
+          busy={deleting}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={removeRuleSet}
         />
       )}
 

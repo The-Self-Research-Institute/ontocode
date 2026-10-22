@@ -20,7 +20,6 @@ import java.util.concurrent.Executor;
 @Service
 public class OntologyExportJobService {
 
-    private static final Duration STUCK_JOB_TIMEOUT = Duration.ofMinutes(45);
     private static final Duration FINISHED_JOB_RETENTION = Duration.ofHours(1);
 
     private final Executor owlParsingExecutor;
@@ -40,12 +39,18 @@ public class OntologyExportJobService {
     }
 
     public ExportJob submit(String projectId, String format) {
-        String key = dedupKey(projectId, format);
+        return submit(projectId, format, StorageManager.ContentScope.publicScope());
+    }
+
+    public ExportJob submit(String projectId, String format, StorageManager.ContentScope scope) {
+        String key = dedupKey(projectId, format, scope);
         String jobId = UUID.randomUUID().toString();
         ExportJob newJob = ExportJob.builder()
                 .jobId(jobId)
                 .projectId(projectId)
                 .format(format)
+                .draft(scope.draft())
+                .userId(scope.userId())
                 .status(ExportJob.Status.PENDING)
                 .createdAt(Instant.now())
                 .build();
@@ -88,6 +93,9 @@ public class OntologyExportJobService {
         try {
             Path exportPath;
 
+            if (job.isDraft()) {
+                exportPath = storageManager.ensureDraftCodeViewFile(job.getProjectId(), job.getUserId(), job.getFormat());
+            } else {
             importService.syncProjectToFuseki(job.getProjectId());
             Optional<String> cachedContent = storageManager.getCodeViewCache(job.getProjectId(), job.getFormat());
             if (cachedContent.isPresent()) {
@@ -99,6 +107,7 @@ public class OntologyExportJobService {
                 Files.writeString(exportPath, cachedContent.get());
             } else {
                 exportPath = storageManager.exportOntologyForJob(job.getProjectId(), job.getFormat());
+            }
             }
 
             ExportJob current = jobs.get(jobId);
@@ -122,7 +131,7 @@ public class OntologyExportJobService {
                         .build());
             }
         } finally {
-            activeJobByKey.remove(dedupKey(job.getProjectId(), job.getFormat()), jobId);
+            activeJobByKey.remove(dedupKey(job.getProjectId(), job.getFormat(), scopeOf(job)), jobId);
         }
     }
 
@@ -133,14 +142,14 @@ public class OntologyExportJobService {
             ExportJob job = entry.getValue();
             if (job.getStatus() == ExportJob.Status.PROCESSING
                     && job.getCreatedAt() != null
-                    && Duration.between(job.getCreatedAt(), now).compareTo(STUCK_JOB_TIMEOUT) > 0) {
-                log.warn("[Export] Job {} exceeded {} — marking as timed out", entry.getKey(), STUCK_JOB_TIMEOUT);
+                    && Duration.between(job.getCreatedAt(), now).compareTo(Duration.ofMinutes(Limit.EXPORT_STUCK_JOB_MINUTES.value())) > 0) {
+                log.warn("[Export] Job {} exceeded {} — marking as timed out", entry.getKey(), Duration.ofMinutes(Limit.EXPORT_STUCK_JOB_MINUTES.value()));
                 jobs.put(entry.getKey(), job.toBuilder()
                         .status(ExportJob.Status.ERROR)
-                        .error("Export timed out after " + STUCK_JOB_TIMEOUT.toMinutes() + " minutes")
+                        .error("Export timed out after " + Duration.ofMinutes(Limit.EXPORT_STUCK_JOB_MINUTES.value()).toMinutes() + " minutes")
                         .completedAt(now)
                         .build());
-                activeJobByKey.remove(dedupKey(job.getProjectId(), job.getFormat()), entry.getKey());
+                activeJobByKey.remove(dedupKey(job.getProjectId(), job.getFormat(), scopeOf(job)), entry.getKey());
             }
         }
         jobs.entrySet().removeIf(entry -> {
@@ -152,7 +161,12 @@ public class OntologyExportJobService {
         });
     }
 
-    private String dedupKey(String projectId, String format) {
-        return projectId + "::" + (format == null ? "rdfxml" : format.toLowerCase());
+    private static StorageManager.ContentScope scopeOf(ExportJob job) {
+        return new StorageManager.ContentScope(job.isDraft(), job.getUserId());
+    }
+
+    private String dedupKey(String projectId, String format, StorageManager.ContentScope scope) {
+        String owner = scope.draft() ? "draft:" + scope.userId() : "public";
+        return projectId + "::" + (format == null ? "rdfxml" : format.toLowerCase()) + "::" + owner;
     }
 }

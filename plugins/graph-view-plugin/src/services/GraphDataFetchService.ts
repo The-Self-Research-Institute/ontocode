@@ -10,10 +10,17 @@ export class GraphDataFetchService {
   private ontologyId: string;
   private authToken: string | null;
 
-  constructor(apiBaseUrl: string, ontologyId: string, authToken: string | null) {
+  private draftMode: boolean;
+
+  constructor(apiBaseUrl: string, ontologyId: string, authToken: string | null, draftMode: boolean = false) {
+    this.draftMode = draftMode;
     this.apiBaseUrl = apiBaseUrl;
     this.ontologyId = ontologyId;
     this.authToken = authToken;
+  }
+
+  private scoped(url: string): string {
+    return this.draftMode ? url + (url.includes('?') ? '&draft=true' : '?draft=true') : url;
   }
 
   private get headers() {
@@ -156,7 +163,7 @@ export class GraphDataFetchService {
     console.log('[GraphDataFetchService] 🚀 TRYING BULK FETCH from:', bulkUrl);
 
     try {
-      const response = await fetch(bulkUrl, { headers: this.headers });
+      const response = await fetch(this.scoped(bulkUrl), { headers: this.headers });
 
       if (response.ok) {
         const data = await response.json();
@@ -174,7 +181,7 @@ export class GraphDataFetchService {
     console.log('[GraphDataFetchService] 📦 Falling back to top-level + recursive children fetch');
 
     try {
-      const response = await fetch(topLevelUrl, { headers: this.headers });
+      const response = await fetch(this.scoped(topLevelUrl), { headers: this.headers });
 
       if (!response.ok) {
         console.warn('[GraphDataFetchService] ❌ Top-level classes endpoint failed:', response.status);
@@ -192,7 +199,7 @@ export class GraphDataFetchService {
         visited.add(parentIri);
         try {
           const childUrl = `${this.apiBaseUrl}/api/ontology/classes/children/${this.ontologyId}?parentIri=${encodeURIComponent(parentIri)}&limit=1000`;
-          const childResp = await fetch(childUrl, { headers: this.headers });
+          const childResp = await fetch(this.scoped(childUrl), { headers: this.headers });
           if (!childResp.ok) return [];
           const childData = await childResp.json();
           const children = Array.isArray(childData) ? childData : (childData.children || childData.classes || []);
@@ -225,7 +232,7 @@ export class GraphDataFetchService {
     const url = `${this.apiBaseUrl}/api/ontology/classes/children/${this.ontologyId}?parentIri=${encodeURIComponent(parentIri)}&limit=10000`;
 
     try {
-      const response = await fetch(url, { headers: this.headers });
+      const response = await fetch(this.scoped(url), { headers: this.headers });
       if (!response.ok) {
         return [];
       }
@@ -266,7 +273,7 @@ export class GraphDataFetchService {
     console.log('[GraphDataFetchService] Fetching classes from:', url);
 
     try {
-      const response = await fetch(url, { headers: this.headers });
+      const response = await fetch(this.scoped(url), { headers: this.headers });
       if (!response.ok) {
         console.warn('[GraphDataFetchService] Classes endpoint failed:', response.status);
         return [];
@@ -285,7 +292,7 @@ export class GraphDataFetchService {
     console.log('[GraphDataFetchService] Fetching individuals from:', url);
 
     try {
-      const response = await fetch(url, { headers: this.headers });
+      const response = await fetch(this.scoped(url), { headers: this.headers });
       if (!response.ok) return [];
 
       const data = await response.json();
@@ -301,7 +308,7 @@ export class GraphDataFetchService {
     console.log('🔵 Fetching object properties from:', url);
 
     try {
-      const response = await fetch(url, { headers: this.headers });
+      const response = await fetch(this.scoped(url), { headers: this.headers });
       if (!response.ok) {
         console.warn('❌ Object properties fetch failed:', response.status);
         return [];
@@ -322,7 +329,7 @@ export class GraphDataFetchService {
     console.log('🟡 Fetching data properties from:', url);
 
     try {
-      const response = await fetch(url, { headers: this.headers });
+      const response = await fetch(this.scoped(url), { headers: this.headers });
       if (!response.ok) {
         console.warn('❌ Data properties fetch failed:', response.status);
         return [];
@@ -342,7 +349,7 @@ export class GraphDataFetchService {
     const url = `${this.apiBaseUrl}/api/ontology/annotation-properties/${this.ontologyId}?limit=10000`;
 
     try {
-      const response = await fetch(url, { headers: this.headers });
+      const response = await fetch(this.scoped(url), { headers: this.headers });
       if (!response.ok) return [];
 
       const data = await response.json();
@@ -358,7 +365,7 @@ export class GraphDataFetchService {
 
     try {
       console.log('[GraphDataFetchService] Fetching datatypes from:', url);
-      const response = await fetch(url, { headers: this.headers });
+      const response = await fetch(this.scoped(url), { headers: this.headers });
       if (!response.ok) {
         console.warn('[GraphDataFetchService] Datatypes fetch failed with status:', response.status);
         return [];
@@ -617,7 +624,7 @@ export class GraphDataFetchService {
 
     try {
       const childrenUrl = `${this.apiBaseUrl}/api/ontology/classes/children/${this.ontologyId}?parentIri=${encodeURIComponent(classIri)}&limit=10000`;
-      const response = await fetch(childrenUrl, { headers: this.headers });
+      const response = await fetch(this.scoped(childrenUrl), { headers: this.headers });
 
       if (response.ok) {
         const childrenData = await response.json();
@@ -766,8 +773,8 @@ export class GraphDataFetchService {
               from: domain,
               to: range,
               type: 'propertyRelation',
-              label: propLabel, // Use the property label directly
-              bidirectional: isSymmetric, // symmetric properties are visually bidirectional
+              label: propLabel,
+              bidirectional: isSymmetric,
               metadata: {
                 propertyIri: propIri,
                 propertyType: 'objectProperty',
@@ -951,7 +958,7 @@ export class GraphDataFetchService {
               from: domain,
               to: range,
               type: 'propertyRelation',
-              label: propLabel, // Use the property label directly
+              label: propLabel,
               metadata: {
                 propertyIri: propIri,
                 propertyType: 'dataProperty',
@@ -1126,6 +1133,6 @@ export class GraphDataFetchService {
   }
 }
 
-export const createGraphDataFetchService = (apiBaseUrl: string, ontologyId: string, authToken: string | null) => {
-  return new GraphDataFetchService(apiBaseUrl, ontologyId, authToken);
+export const createGraphDataFetchService = (apiBaseUrl: string, ontologyId: string, authToken: string | null, draftMode: boolean = false) => {
+  return new GraphDataFetchService(apiBaseUrl, ontologyId, authToken, draftMode);
 };

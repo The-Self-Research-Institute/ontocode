@@ -15,6 +15,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Slf4j
@@ -22,6 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @RequestMapping("/api/v1/issues")
 @CrossOrigin(originPatterns = "*", allowedHeaders = "*", allowCredentials = "false", methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class IssueReportController {
+
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
     private final IssueReportService issueReportService;
 
@@ -98,6 +101,15 @@ public class IssueReportController {
             String reporterEmail = userInfo.get("email");
 
             log.info("Reporter: {} ({})", reporterUsername, reporterEmail);
+
+            boolean signedIn = reporterEmail != null && !reporterEmail.isBlank();
+            boolean validContactEmail = userEmail != null && EMAIL_PATTERN.matcher(userEmail.trim()).matches();
+            if (!signedIn && !validContactEmail) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
+                    "success", false,
+                    "message", "An email address is required so we can reply to you."
+                ));
+            }
 
             IssueReport.SystemInfo systemInfo = IssueReport.SystemInfo.builder()
                 .osName(osName)

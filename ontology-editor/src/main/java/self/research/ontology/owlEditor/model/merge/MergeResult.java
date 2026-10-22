@@ -1,5 +1,8 @@
 package self.research.ontology.owlEditor.model.merge;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class MergeResult {
 
     private boolean success;
@@ -11,6 +14,8 @@ public class MergeResult {
     private int entitiesRenamed;
     private int conflictsResolved;
     private long durationMs;
+    private List<MergeCopy> copies = new ArrayList<>();
+    private boolean reimportSkipped;
 
     public boolean isSuccess() {
         return success;
@@ -82,5 +87,21 @@ public class MergeResult {
 
     public void setDurationMs(long durationMs) {
         this.durationMs = durationMs;
+    }
+
+    public List<MergeCopy> getCopies() {
+        return copies;
+    }
+
+    public void setCopies(List<MergeCopy> copies) {
+        this.copies = copies;
+    }
+
+    public boolean isReimportSkipped() {
+        return reimportSkipped;
+    }
+
+    public void setReimportSkipped(boolean reimportSkipped) {
+        this.reimportSkipped = reimportSkipped;
     }
 }

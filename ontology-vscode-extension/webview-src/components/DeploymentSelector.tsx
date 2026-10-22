@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Cloud, Server, Check, Bug } from 'lucide-react';
-import ReportIssueModal from './ReportIssueModal';
+import { openFeedbackPage } from "../utils/feedback";
 
 interface DeploymentSelectorProps {
     onSelect: (deploymentType: 'self-hosted' | 'cloud') => void;
@@ -9,7 +9,6 @@ interface DeploymentSelectorProps {
 const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => {
     const [selected, setSelected] = useState<'self-hosted' | 'cloud' | null>(null);
     const [isConfirming, setIsConfirming] = useState(false);
-    const [isReportIssueModalOpen, setIsReportIssueModalOpen] = useState(false);
 
     const handleSelect = (type: 'self-hosted' | 'cloud') => {
         setSelected(type);
@@ -154,7 +153,7 @@ const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => 
 
         {/* Report Issue floating button */}
         <button
-          onClick={() => setIsReportIssueModalOpen(true)}
+          onClick={() => openFeedbackPage("bug")}
           className="fixed bottom-4 right-4 left-4 sm:left-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-xs font-medium text-white transition-colors backdrop-blur-sm z-50 max-w-[10rem] sm:max-w-none ml-auto"
           title="Report an issue"
         >
@@ -163,9 +162,6 @@ const DeploymentSelector: React.FC<DeploymentSelectorProps> = ({ onSelect }) => 
           <span className="hidden sm:inline">Report Issue</span>
         </button>
 
-        {isReportIssueModalOpen && (
-          <ReportIssueModal onClose={() => setIsReportIssueModalOpen(false)} />
-        )}
       </div>
     );
 };

@@ -21,6 +21,11 @@ public class SubmitReasoningJobRequest {
     private String reasonerType;
     private Integer maxJustifications;
     private String explanationMode;
+    private String entailmentType;
+    private String subjectIri;
+    private String targetIri;
+    private String propertyIri;
+    private String literalValue;
     private String ownerEmail;
     private Map<String, Object> params;
 }

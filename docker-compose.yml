@@ -163,7 +163,7 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "8083:8083"
+      - "127.0.0.1:8083:8083"
     environment:
       ONTOLOGY_SWRL_SERVICE_URL: http://swrl-service:8084
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin

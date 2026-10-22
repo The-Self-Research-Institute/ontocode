@@ -35,10 +35,17 @@ public class OntologyHistoryService {
     @Lazy
     private OntologyHistoryService self;
 
-    public void markDraftHistoryPublished(String projectId, String userId) {
-        if (historySyncService != null) {
-            historySyncService.markDraftsPublished(projectId, userId);
+    @Autowired
+    @Lazy
+    private ExactCoverService exactCoverService;
+
+    public Set<String> markDraftHistoryPublished(String projectId, String userId) {
+        if (historySyncService == null) {
+            return Set.of();
         }
+        Set<String> iris = historySyncService.draftEntityIris(projectId, userId);
+        historySyncService.markDraftsPublished(projectId, userId);
+        return iris;
     }
 
     private static final ValueFactory vf = SimpleValueFactory.getInstance();
@@ -116,12 +123,14 @@ public class OntologyHistoryService {
                 if (origin.ai() != null) changeData.put("ai", origin.ai());
                 if (origin.revertsChangeSetId() != null) changeData.put("revertsChangeSetId", origin.revertsChangeSetId());
                 if (origin.rollbackAuditId() != null) changeData.put("rollbackAuditId", origin.rollbackAuditId());
+                if (origin.exact() != null) origin.exact().stamp(changeData, editId);
             }
 
             String entityType = determineEntityType(operationType);
             changeData.put("entityType", entityType);
 
             historySyncService.syncChange(projectId, editId, changeData);
+            if (origin != null && origin.exact() != null) exactCoverService.record(projectId, origin.exact());
         } catch (Exception e) {
             log.error("[OntologyHistory] Failed to sync change to MongoDB", e);
         }
@@ -177,6 +186,7 @@ public class OntologyHistoryService {
     private static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
     private static final String RDFS_SUBPROPERTYOF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
     private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    private static final String OWL_DISJOINT_WITH = "http://www.w3.org/2002/07/owl#disjointWith";
 
     private static final java.util.Set<String> ENTITY_LEVEL_OP_TYPES = java.util.Set.of(
             "createClass", "deleteClass",
@@ -186,12 +196,11 @@ public class OntologyHistoryService {
             "createDatatype", "deleteDatatype",
             "createIndividual", "deleteIndividual");
 
-    public void recordGroupedMutations(String projectId, String userId, String username,
+    public String recordGroupedMutations(String projectId, String userId, String username,
                                         List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> ops,
                                         boolean draft) {
-        if (ops == null || ops.isEmpty()) {
-            return;
-        }
+        if (ops == null || ops.isEmpty()) { return null; }
+        ChangeOrigin origin = ChangeOrigin.manual();
         Map<String, List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp>> byIri = new LinkedHashMap<>();
         for (self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op : ops) {
             if (op.iri() == null) {
@@ -218,15 +227,15 @@ public class OntologyHistoryService {
                 if (op == primary) {
                     continue;
                 }
-                Map<String, String> sc = mutationOpToSubChange(op);
-                if (sc != null) {
-                    subChanges.add(sc);
+                List<Map<String, String>> scs = mutationOpToSubChanges(op);
+                if (!scs.isEmpty()) {
+                    subChanges.addAll(scs);
                 } else {
                     unsupported.add(op);
                 }
             }
 
-            addCreationParent(primary, subChanges);
+            HistoryCreationParent.addTo(primary, subChanges);
 
             String primaryOpType;
             String label;
@@ -239,69 +248,52 @@ public class OntologyHistoryService {
             } else if (!subChanges.isEmpty()) {
                 Map<String, String> first = subChanges.get(0);
                 boolean firstIsAddition = "true".equals(first.get("addition"));
+                boolean firstIsUpdate = subChanges.stream().anyMatch(sc -> "true".equals(sc.get("addition")) && subChanges.stream()
+                        .anyMatch(other -> "false".equals(other.get("addition")) && java.util.Objects.equals(other.get("predicate"), sc.get("predicate"))));
                 primaryOpType = RDFS_SUBCLASSOF.equals(first.get("predicate"))
-                        ? (firstIsAddition ? "addSubClassOf" : "removeSubClassOf")
-                        : (firstIsAddition ? "addStatement" : "removeStatement");
+                        ? (firstIsUpdate ? "updateSubClassOf" : firstIsAddition ? "addSubClassOf" : "removeSubClassOf")
+                        : (firstIsUpdate ? "updateStatement" : firstIsAddition ? "addStatement" : "removeStatement");
                 label = group.get(0).label();
                 description = "Modified " + subChanges.size() + " propert"
                         + (subChanges.size() == 1 ? "y" : "ies") + " (" + describeSubChanges(subChanges) + ")";
             } else {
                 for (self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op : unsupported) {
                     recordEdit(projectId, userId, username, op.type(), op.iri(), op.label(),
-                            op.oldValue(), op.value(), op.type() + " operation", op.property(), null, draft);
+                            HistoryClassification.oldValue(op), HistoryClassification.newValue(op), op.type() + " operation", op.property(), null, draft, origin);
                 }
                 continue;
             }
 
-            recordEdit(projectId, userId, username, primaryOpType, iri, label, null, null, description, null, subChanges, draft);
+            recordEdit(projectId, userId, username, primaryOpType, iri, label, null, null, description, null, subChanges, draft, origin);
 
             for (self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op : unsupported) {
                 recordEdit(projectId, userId, username, op.type(), op.iri(), op.label(),
-                        op.oldValue(), op.value(), op.type() + " operation", op.property(), null, draft);
+                        HistoryClassification.oldValue(op), HistoryClassification.newValue(op), op.type() + " operation", op.property(), null, draft, origin);
             }
         }
+        return origin.changeSetId();
     }
 
-    private static final String OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing";
-
-    static void addCreationParent(
-            self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp primary,
-            List<Map<String, String>> subChanges) {
-        if (primary == null || primary.type() == null || !primary.type().startsWith("create")) {
-            return;
+    private List<Map<String, String>> mutationOpToSubChanges(
+            self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op) {
+        String type = op.type();
+        if ("updateSubClassOf".equals(type) || "updateDisjointWith".equals(type)) {
+            String predicate = "updateSubClassOf".equals(type) ? RDFS_SUBCLASSOF : OWL_DISJOINT_WITH;
+            String category = determineEntityType(type);
+            Map<String, String> removed = new HashMap<>();
+            removed.put("predicate", predicate);
+            removed.put("oldValue", op.value());
+            removed.put("addition", "false");
+            removed.put("category", category);
+            Map<String, String> added = new HashMap<>();
+            added.put("predicate", predicate);
+            added.put("newValue", op.target());
+            added.put("addition", "true");
+            added.put("category", category);
+            return List.of(removed, added);
         }
-        String predicate;
-        String parent;
-        switch (primary.type()) {
-            case "createClass" -> {
-                predicate = RDFS_SUBCLASSOF;
-                parent = primary.parent();
-            }
-            case "createObjectProperty", "createDataProperty", "createAnnotationProperty" -> {
-                predicate = RDFS_SUBPROPERTYOF;
-                parent = primary.parent();
-            }
-            case "createIndividual" -> {
-                predicate = RDF_TYPE;
-                parent = primary.classIri();
-            }
-            default -> {
-                return;
-            }
-        }
-        if (parent == null || parent.isBlank() || OWL_THING_IRI.equals(parent)) {
-            return;
-        }
-        for (Map<String, String> existing : subChanges) {
-            if (predicate.equals(existing.get("predicate")) && parent.equals(existing.get("newValue"))) {
-                return;
-            }
-        }
-        Map<String, String> sc = new HashMap<>();
-        sc.put("predicate", predicate);
-        sc.put("newValue", parent);
-        sc.put("addition", "true");
-        subChanges.add(0, sc);
+        Map<String, String> single = mutationOpToSubChange(op);
+        return single == null ? List.of() : List.of(single);
     }
 
     private Map<String, String> mutationOpToSubChange(
@@ -313,6 +305,10 @@ public class OntologyHistoryService {
         boolean addition = type.startsWith("add") || type.startsWith("create");
         Map<String, String> sc = new HashMap<>();
         switch (type) {
+            case "addDisjointWith", "deleteDisjointWith" -> {
+                sc.put("predicate", OWL_DISJOINT_WITH);
+                sc.put(addition ? "newValue" : "oldValue", op.target());
+            }
             case "addSubClassOf", "deleteSubClassOf" -> {
                 sc.put("predicate", RDFS_SUBCLASSOF);
                 sc.put(addition ? "newValue" : "oldValue", op.target());
@@ -325,10 +321,16 @@ public class OntologyHistoryService {
                 sc.put("predicate", RDF_TYPE);
                 sc.put(addition ? "newValue" : "oldValue", op.classIri());
             }
+            case "addCharacteristic", "deleteCharacteristic" -> {
+                sc.put("predicate", RDF_TYPE);
+                sc.put(addition ? "newValue" : "oldValue", op.target());
+            }
             case "addAnnotation", "deleteAnnotation" -> {
                 sc.put("predicate", op.property());
                 sc.put("annotationProperty", op.property());
                 sc.put(addition ? "newValue" : "oldValue", op.value());
+                putIfPresent(sc, "language", op.language());
+                putIfPresent(sc, "datatype", op.datatype());
             }
             default -> {
                 return null;
@@ -337,6 +339,12 @@ public class OntologyHistoryService {
         sc.put("addition", String.valueOf(addition));
         sc.put("category", determineEntityType(type));
         return sc;
+    }
+
+    private static void putIfPresent(Map<String, String> target, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            target.put(key, value);
+        }
     }
 
     private String describeSubChanges(List<Map<String, String>> subChanges) {
@@ -352,17 +360,7 @@ public class OntologyHistoryService {
     }
 
     private String determineEntityType(String operationType) {
-        if (operationType == null) return "OTHER";
-
-        String upper = operationType.toUpperCase();
-        if (upper.contains("DATATYPE")) return "DATATYPE";
-        if (upper.contains("CLASS")) return "CLASS";
-        if (upper.contains("PROPERTY")) return "PROPERTY";
-        if (upper.contains("INDIVIDUAL")) return "INDIVIDUAL";
-        if (upper.contains("ANNOTATION")) return "ANNOTATION";
-        if (upper.contains("AXIOM")) return "AXIOM";
-
-        return "OTHER";
+        return HistoryClassification.entityType(operationType);
     }
 
     public List<Map<String, Object>> getHistory(String projectId, int limit) {

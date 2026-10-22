@@ -1,150 +1,199 @@
+import { apiErrorDetails } from '../utils/apiErrorDetails';
 import apiClient from './apiClient';
-import changeTrackingService, { type OntologyChange } from './changeTrackingService';
+import { isDraftScopeActive } from '../utils/draftScope';
+import { emitCommittedChange } from '../utils/committedChange';
+import { newOpId } from '../utils/opId';
 
-export interface RollbackChangePayload {
-  id: string;
-  changeType: string;
-  action: string;
-  entityIRI: string;
-  entityLabel?: string;
-  oldValue?: string;
-  newValue?: string;
+export interface UndoDependent {
+  changeId: string;
+  username?: string;
+  entityIRI?: string;
+  label?: string;
 }
 
-const redoStack: RollbackChangePayload[] = [];
-
-function mapChangeType(change: OntologyChange): string {
-  return change.changeType || change.changeCategory || 'modified';
+export interface UndoStep {
+  available: boolean;
+  direction: 'UNDO' | 'REDO';
+  changeId?: string;
+  changeSetId?: string;
+  auditId?: string;
+  entityIRI?: string;
+  label?: string;
+  reason?: string;
+  dependents: UndoDependent[];
 }
 
-function mapAction(change: OntologyChange): string {
-  const t = (change.changeType || '').toLowerCase();
-  if (t.includes('create') || t.includes('add') || t.includes('insert')) return 'added';
-  if (t.includes('delete') || t.includes('remove')) return 'deleted';
-  if (change.oldValue && change.newValue) return 'modified';
-  return 'modified';
+export interface UndoState {
+  undo: UndoStep;
+  redo: UndoStep;
 }
 
-function toPayload(change: OntologyChange): RollbackChangePayload {
+export interface QueueStep {
+  changeId: string;
+  changeSetId?: string;
+  auditId?: string;
+  entityIRI?: string;
+  label?: string;
+  changeCount?: number;
+  sourceView?: string;
+  available?: boolean;
+  source?: string;
+  affected?: string;
+  restoring?: string;
+}
+
+export interface QueueBlock {
+  changeId?: string;
+  changeSetId?: string;
+  label?: string;
+  reason?: string;
+  dependents?: UndoDependent[];
+}
+
+export interface QueueResponse {
+  steps: QueueStep[];
+  blocked: QueueBlock | null;
+}
+
+export type StepOutcome =
+  | { kind: 'done'; auditId?: string; state?: UndoState }
+  | { kind: 'refused'; message: string; state?: UndoState }
+  | { kind: 'running' }
+  | { kind: 'unknown'; message: string };
+
+interface ServerBody extends Partial<UndoState> {
+  success?: boolean;
+  auditId?: string;
+  changeSetId?: string;
+  error?: string;
+  message?: string;
+  dependents?: UndoDependent[];
+  status?: string;
+  inProgress?: boolean;
+  steps?: QueueStep[];
+  blocked?: QueueBlock | null;
+}
+
+function isStillRunning(body: ServerBody, status?: number): boolean {
+  return status === 202 || body.inProgress === true || /^(RUNNING|IN_PROGRESS)$/i.test(body.status || '')
+    || (status === 409 && /still running/i.test(body.message || body.error || ''));
+}
+
+function base(projectId: string): string {
+  return `/api/ontology/${encodeURIComponent(projectId)}`;
+}
+
+function draftFlag(): string {
+  return isDraftScopeActive() ? 'true' : 'false';
+}
+
+function unwrap(res: unknown): ServerBody {
+  const body = res as { data?: ServerBody } & ServerBody;
+  return body?.data || body || {};
+}
+
+function stateOf(body: ServerBody): UndoState | undefined {
+  return body.undo && body.redo ? { undo: body.undo, redo: body.redo } : undefined;
+}
+
+function failureText(error: unknown): { text: string; body?: ServerBody } {
+  const body = apiErrorDetails<ServerBody>(error).data;
+  if (body) {
+    const dependents = body.dependents || [];
+    const names = Array.from(new Set(dependents.map((d) => d.username).filter(Boolean)));
+    const suffix = names.length ? ` (changed by ${names.join(', ')})` : '';
+    return { text: `${body.error || body.message || 'The request failed'}${suffix}`, body };
+  }
+  return { text: error instanceof Error && error.message ? error.message : 'The request failed' };
+}
+
+function announce(projectId: string, step: UndoStep, isRedo: boolean, auditId?: string): void {
+  emitCommittedChange({
+    projectId,
+    direction: isRedo ? 'REDO' : 'UNDO',
+    opId: auditId,
+    auditId,
+    changeSetId: step.changeSetId,
+    entityIRIs: step.entityIRI ? [step.entityIRI] : [],
+    draft: isDraftScopeActive(),
+  });
+  window.dispatchEvent(
+    new CustomEvent('ontologyRollback', {
+      detail: {
+        projectId,
+        changeId: step.changeId,
+        entityIRI: step.entityIRI || '',
+        entityLabel: step.label,
+        username: '',
+        ...(isRedo ? { isRedo: true } : {}),
+      },
+    }),
+  );
+}
+
+function toStep(step: QueueStep, isRedo: boolean): UndoStep {
   return {
-    id: change.id,
-    changeType: mapChangeType(change),
-    action: mapAction(change),
-    entityIRI: change.entityIRI || '',
-    entityLabel: change.entityLabel,
-    oldValue: change.oldValue,
-    newValue: change.newValue,
+    available: true,
+    direction: isRedo ? 'REDO' : 'UNDO',
+    changeId: step.changeId,
+    changeSetId: step.changeSetId,
+    auditId: step.auditId,
+    entityIRI: step.entityIRI,
+    label: step.label,
+    dependents: [],
   };
 }
 
-function invertAction(action: string): string {
-  const lower = action.toLowerCase();
-  if (lower === 'added') return 'deleted';
-  if (lower === 'deleted') return 'added';
-  return 'modified';
-}
-
-async function rollbackPayload(
-  projectId: string,
-  payload: RollbackChangePayload,
-  userId: string,
-  username: string,
-): Promise<{ success: boolean; error?: string }> {
-  const res = await apiClient.post<{ success: boolean; error?: string; message?: string }>(
-    `/api/ontology/${encodeURIComponent(projectId)}/changes/rollback`,
-    {
-      changeId: payload.id,
-      changeType: payload.changeType,
-      action: payload.action,
-      entityIRI: payload.entityIRI,
-      entityLabel: payload.entityLabel,
-      oldValue: payload.oldValue,
-      newValue: payload.newValue,
-      userId,
-      username,
-    },
-  );
-  const data = (res as { data?: { success: boolean; error?: string } }).data || res;
-  return { success: data.success !== false, error: data.error };
-}
-
 export const undoRedoService = {
-  canRedo(): boolean {
-    return redoStack.length > 0;
+  async fetchQueue(projectId: string, count: number): Promise<QueueResponse> {
+    const body = unwrap(await apiClient.get<ServerBody>(`${base(projectId)}/undo/queue?draft=${draftFlag()}&count=${count}`));
+    return { steps: body.steps || [], blocked: body.blocked || null };
   },
 
-  clearRedoStack(): void {
-    redoStack.length = 0;
-  },
-
-  async undo(
+  async sendStep(
     projectId: string,
-    userId: string,
-    username: string,
-  ): Promise<{ success: boolean; error?: string; change?: RollbackChangePayload }> {
-    const changes = await changeTrackingService.getRecentChanges(projectId, 50);
-    const target = changes.find((c) => !c.reverted && c.entityIRI);
-    if (!target) {
-      return { success: false, error: 'No changes to undo' };
+    kind: 'undo' | 'redo',
+    expected: { changeId?: string; auditId?: string },
+    opId: string,
+  ): Promise<StepOutcome> {
+    const guard =
+      kind === 'undo'
+        ? expected.changeId ? `&expectedChangeId=${encodeURIComponent(expected.changeId)}` : ''
+        : expected.auditId ? `&expectedAuditId=${encodeURIComponent(expected.auditId)}` : '';
+    try {
+      const res = (await apiClient.post<ServerBody>(
+        `${base(projectId)}/${kind}?draft=${draftFlag()}&opId=${encodeURIComponent(opId)}${guard}`,
+        {},
+      )) as { status?: number } & ServerBody;
+      const body = unwrap(res);
+      if (isStillRunning(body, res?.status)) return { kind: 'running' };
+      if (body.success === false) {
+        return { kind: 'refused', message: body.error || body.message || 'The request failed', state: stateOf(body) };
+      }
+      return { kind: 'done', auditId: body.auditId, state: stateOf(body) };
+    } catch (error) {
+      const { status } = apiErrorDetails(error);
+      const { text, body } = failureText(error);
+      if (body && isStillRunning(body, status)) return { kind: 'running' };
+      if (!body || (status !== undefined && status >= 500)) return { kind: 'unknown', message: text };
+      return { kind: 'refused', message: text, state: stateOf(body) };
     }
-
-    const payload = toPayload(target);
-    const result = await rollbackPayload(projectId, payload, userId, username);
-    if (result.success) {
-      redoStack.push(payload);
-      window.dispatchEvent(
-        new CustomEvent('ontologyRollback', {
-          detail: {
-            projectId,
-            changeId: payload.id,
-            entityIRI: payload.entityIRI,
-            entityLabel: payload.oldValue || payload.entityLabel,
-            originalAction: payload.action,
-            username,
-          },
-        }),
-      );
-      return { success: true, change: payload };
-    }
-    return result;
   },
 
-  async redo(
-    projectId: string,
-    userId: string,
-    username: string,
-  ): Promise<{ success: boolean; error?: string }> {
-    const payload = redoStack.pop();
-    if (!payload) {
-      return { success: false, error: 'Nothing to redo' };
-    }
+  announceStep(projectId: string, step: QueueStep, kind: 'undo' | 'redo', auditId?: string): void {
+    announce(projectId, toStep(step, kind === 'redo'), kind === 'redo', auditId);
+  },
 
-    const redoPayload: RollbackChangePayload = {
-      ...payload,
-      action: invertAction(payload.action),
-      oldValue: payload.newValue,
-      newValue: payload.oldValue,
-    };
+  notifyRefusal(projectId: string): void {
+    window.dispatchEvent(new CustomEvent('ontologyChangesSaved', { detail: { projectId } }));
+  },
 
-    const result = await rollbackPayload(projectId, redoPayload, userId, username);
-    if (!result.success) {
-      redoStack.push(payload);
-    } else {
-      window.dispatchEvent(
-        new CustomEvent('ontologyRollback', {
-          detail: {
-            projectId,
-            changeId: payload.id,
-            entityIRI: payload.entityIRI,
-            entityLabel: payload.newValue || payload.entityLabel,
-            originalAction: redoPayload.action,
-            username,
-            isRedo: true,
-          },
-        }),
-      );
+  async fetchState(projectId: string): Promise<UndoState | undefined> {
+    try {
+      return stateOf(unwrap(await apiClient.get<ServerBody>(`${base(projectId)}/undo/next?draft=${draftFlag()}&opId=${newOpId()}`)));
+    } catch {
+      return undefined;
     }
-    return result;
   },
 };
 

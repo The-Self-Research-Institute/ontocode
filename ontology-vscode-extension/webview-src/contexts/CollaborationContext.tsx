@@ -5,6 +5,13 @@ import { getAuthHeaders } from "../utils/authenticatedFetch";
 import { useAuth } from "../custom-hook/useAuth";
 import { useCollabSocket } from "../hooks/useCollabSocket";
 import { subscribeGlobalTopics } from "../utils/collabGlobalTopics";
+import {
+  REASONING_TOPIC_PREFIX,
+  attachReasoningSocket,
+  detachReasoningSocket,
+  installReasoningJobWindowBridge,
+  markReasoningDestinationForbidden,
+} from "../services/reasoningJobTopic";
 import { isDesktop, getDesktopLicense, DESKTOP_LICENSE_UPDATED_EVENT } from "../utils/desktop";
 import {
   OP_BATCH_MS,
@@ -125,7 +132,21 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       subscriptionsRef.current.clear();
       setConnectionEpoch((epoch) => epoch + 1);
       setState((prev) => ({ ...prev, connected: true }));
-      subscribeGlobalTopics(client, subscriptionsRef.current, userRef.current, { shareIsNew, forbiddenDest });
+      subscribeGlobalTopics(client, subscriptionsRef.current, userRef.current, {
+        shareIsNew,
+        forbiddenDest,
+        onForbidden: markReasoningDestinationForbidden,
+      });
+      attachReasoningSocket((jobId, onMessage) => {
+        const sub = client.subscribe(`${REASONING_TOPIC_PREFIX}${jobId}`, (msg) => {
+          try {
+            onMessage(JSON.parse(msg.body));
+          } catch (e) {
+            console.error("[CollaborationContext] Reasoning job parse error:", e);
+          }
+        });
+        return () => sub.unsubscribe();
+      });
       if (currentProjectRef.current) {
         joinRef.current(client, currentProjectRef.current);
       }
@@ -134,6 +155,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       }
     },
     onClosing: (client) => {
+      detachReasoningSocket();
       const projectId = currentProjectRef.current;
       if (projectId && client.connected) {
         publishPresence(client, projectId, "USER_LEFT");
@@ -141,7 +163,10 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       subscriptionsRef.current.forEach((sub) => sub.unsubscribe());
       subscriptionsRef.current.clear();
     },
-    onDown: () => setState((prev) => (prev.connected ? { ...prev, connected: false } : prev)),
+    onDown: () => {
+      detachReasoningSocket();
+      setState((prev) => (prev.connected ? { ...prev, connected: false } : prev));
+    },
     onGiveUp: () => {
       addNotificationRef.current?.({
         type: "warning",
@@ -167,6 +192,8 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       }),
     });
   };
+
+  useEffect(() => installReasoningJobWindowBridge(window), []);
 
   useEffect(() => {
     const jobSubscriptions = new Map<string, StompSubscription>();

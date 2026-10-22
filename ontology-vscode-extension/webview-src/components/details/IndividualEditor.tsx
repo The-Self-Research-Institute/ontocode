@@ -6,8 +6,9 @@ import { ManchesterSyntaxEditor, IndividualSelectorDialog, PropertyAssertionDial
 import ontologyMutationService from '../../services/ontologyMutationService';
 import { notificationService } from '../../services/notificationService';
 import apiClient from '../../services/apiClient';
-import { withDraftScope } from '../../utils/draftScope';
+import { withDraftScope, withDraftAndUser } from '../../utils/draftScope';
 import { useCollaboration } from '../../contexts/CollaborationContext';
+import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
 
 interface UsageItem {
   type: string;
@@ -150,7 +151,8 @@ const IndividualEditor: React.FC<{
   onNavigate?: (iri: string, type: string) => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
-}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT', existingIris = [] }) => {
+  syncMode?: 'private' | 'public';
+}> = ({ item, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, projectId, userId, username, objectPropertyHierarchy = [], dataPropertyHierarchy = [], classHierarchy = [], objectProperties = [], dataProperties = [], expandedNodes, onToggleNode, isViewOnly = false, onViewOnlyAction, onNavigate, isReasonerRunning = false, selectedReasoner = 'HERMIT', syncMode = 'public', existingIris = [] }) => {
   const [isAddingAssertion, setIsAddingAssertion] = useState(false);
   const [isNegativeAssertion, setIsNegativeAssertion] = useState(false);
   const [newAssertion, setNewAssertion] = useState({ propertyLabel: '', targetLabel: '', isObjectProperty: true });
@@ -207,7 +209,7 @@ const IndividualEditor: React.FC<{
     (async () => {
       try {
         const response = await apiClient.get<any>(
-          `/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(selectedReasoner)}`,
+          withDraftAndUser(`/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-individual-types?individualIri=${encodeURIComponent(item.id)}&reasonerType=${encodeURIComponent(normalizeReasonerType(selectedReasoner))}`),
         );
         const payload = response?.data ?? response;
         const types = payload?.inferredTypes ?? payload?.data?.inferredTypes ?? [];
@@ -219,7 +221,7 @@ const IndividualEditor: React.FC<{
       }
     })();
     return () => { alive = false; };
-  }, [projectId, item.id, isReasonerRunning, selectedReasoner]);
+  }, [projectId, item.id, isReasonerRunning, selectedReasoner, syncMode]);
 
   // Fetch individual details when component mounts or item changes.
   // Uses an "alive" flag so stale responses from a previously selected
@@ -278,7 +280,7 @@ const IndividualEditor: React.FC<{
 
     return () => { alive = false; clearTimeout(watchdog); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, projectId]);
+  }, [item.id, projectId, syncMode]);
 
   // Auto-reload when a collaborator modifies this individual
   useEffect(() => {

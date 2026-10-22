@@ -23,7 +23,6 @@ import java.util.*;
 public class HierarchySnapshotBuildService {
 
     private static final Logger log = LoggerFactory.getLogger(HierarchySnapshotBuildService.class);
-    private static final int TOP_LEVEL_STORE_LIMIT = 50_000;
 
     private final StorageManager storageManager;
     private final HierarchySnapshotBuilder snapshotBuilder;
@@ -101,7 +100,7 @@ public class HierarchySnapshotBuildService {
 
             int topLevelTotal = snapshotBuilder.countTopLevelCandidates(ontology, reasoner);
             List<OntologyDto.TreeNode> topLevel =
-                    snapshotBuilder.buildTopLevel(ontology, reasoner, TOP_LEVEL_STORE_LIMIT, 0);
+                    snapshotBuilder.buildTopLevel(ontology, reasoner, Limit.HIERARCHY_TOP_LEVEL_STORE_LIMIT.value(), 0);
             Map<String, List<OntologyDto.TreeNode>> childrenIndex =
                     snapshotBuilder.buildChildrenIndex(ontology, reasoner);
             Map<String, Object> meta = new LinkedHashMap<>(metricsComputer.compute(ontology, reasoner));
@@ -113,7 +112,7 @@ public class HierarchySnapshotBuildService {
             HierarchySnapshotDoc doc = snapshotRepository.findById(projectId).orElse(building);
             doc.setTopLevelNodes(topLevel);
             doc.setTopLevelTotal(topLevelTotal);
-            doc.setTopLevelComputedLimit(TOP_LEVEL_STORE_LIMIT);
+            doc.setTopLevelComputedLimit(Limit.HIERARCHY_TOP_LEVEL_STORE_LIMIT.value());
             doc.setChildrenByParent(childrenIndex);
             doc.setMeta(meta);
             doc.setAlgorithmVersion(HierarchyAlgorithmVersion.CURRENT);

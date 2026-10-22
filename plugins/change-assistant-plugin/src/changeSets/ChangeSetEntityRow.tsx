@@ -9,9 +9,10 @@ interface Props {
   entity: EntityRow;
   onUndo: (target: OperationTarget) => void;
   onDetails: (changeId: string) => void;
+  showDetails?: boolean;
 }
 
-const ChangeSetEntityRow: React.FC<Props> = ({ entity, onUndo, onDetails }) => {
+const ChangeSetEntityRow: React.FC<Props> = ({ entity, onUndo, onDetails, showDetails = true }) => {
   if (isSingleLine(entity)) {
     return (
       <div className="cs-entity">
@@ -33,7 +34,7 @@ const ChangeSetEntityRow: React.FC<Props> = ({ entity, onUndo, onDetails }) => {
         </div>
         {entity.undone && <span className="cs-note">{undoneNote(entity.undoneBy, entity.undoneAt)}</span>}
         <RowTools label={entity.label} canUndo={!!target} onUndo={() => target && onUndo(target)}
-          onDetails={() => onDetails(entity.entry.id)} commentCount={entity.entry.commentCount}
+          onDetails={showDetails ? () => onDetails(entity.entry.id) : undefined} commentCount={entity.entry.commentCount}
           onRedo={redo ? () => onUndo(redo) : undefined} />
       </div>
       {entity.properties.length > 0 && (

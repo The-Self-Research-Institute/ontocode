@@ -126,4 +126,42 @@ class DraftTrackingServiceTest {
         assertEquals("Published draft successfully", result.getMessage());
         verify(draftChangeHistory, org.mockito.Mockito.never()).record(anyString(), anyList());
     }
+    @Test
+    void publishPromotesDraftDocumentsOnlyAfterTheGraphMove() {
+        DraftDocumentSupport documents = mock(DraftDocumentSupport.class);
+        service.setDraftDocuments(new DraftDocuments(List.of(documents)));
+        List<DraftChange> drafts = List.of(draft("d1"));
+        when(draftRepository.findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc("p1", "u1")).thenReturn(drafts);
+        when(draftChangeHistory.record("p1", drafts)).thenReturn(0);
+
+        DraftTrackingService.ApplyDraftsResult result = service.applyDrafts("p1", "u1", false);
+
+        assertTrue(result.isSuccess());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(datasetService, documents);
+        order.verify(datasetService).moveDraftToMain("p1", "u1");
+        order.verify(documents).promote("p1", "u1");
+    }
+
+    @Test
+    void aFailingDraftDocumentPromotionDoesNotFailThePublish() {
+        DraftDocumentSupport documents = mock(DraftDocumentSupport.class);
+        org.mockito.Mockito.doThrow(new IllegalStateException("db down")).when(documents).promote("p1", "u1");
+        service.setDraftDocuments(new DraftDocuments(List.of(documents)));
+        List<DraftChange> drafts = List.of(draft("d1"));
+        when(draftRepository.findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc("p1", "u1")).thenReturn(drafts);
+        when(draftChangeHistory.record("p1", drafts)).thenReturn(0);
+
+        assertTrue(service.applyDrafts("p1", "u1", false).isSuccess());
+    }
+
+    @Test
+    void discardRemovesTheUsersDraftDocumentsToo() {
+        DraftDocumentSupport documents = mock(DraftDocumentSupport.class);
+        service.setDraftDocuments(new DraftDocuments(List.of(documents)));
+        when(draftRepository.findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc("p1", "u1")).thenReturn(List.of());
+
+        service.discardDrafts("p1", "u1");
+
+        verify(documents).discard("p1", "u1");
+    }
 }

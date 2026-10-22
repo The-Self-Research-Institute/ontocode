@@ -56,7 +56,7 @@ class OntologyMergeServiceTest {
         when(storageManager.findCurrentOntology("proj-1")).thenReturn(Optional.of(targetFile));
         when(metadataService.readMeta(anyString())).thenReturn(Optional.empty());
         doNothing().when(metadataService).writeMeta(anyString(), any());
-        doNothing().when(importService).submitImport(anyString(), any());
+        when(importService.trySubmitImport(anyString(), any())).thenReturn(true);
     }
 
     private static void writeOntologyWithClass(Path path, String classIri) throws Exception {
@@ -81,7 +81,16 @@ class OntologyMergeServiceTest {
                 "proj-1_source", sourceFile, "proj-1", null, null, options, "u1", "User One");
 
         assertTrue(result.isSuccess());
+        org.mockito.ArgumentCaptor<ChangeOrigin> origin = org.mockito.ArgumentCaptor.forClass(ChangeOrigin.class);
+        org.mockito.ArgumentCaptor<String> iri = org.mockito.ArgumentCaptor.forClass(String.class);
         verify(historyService).recordEdit(eq("proj-1"), eq("u1"), eq("User One"), eq("ontologyMerge"),
-                isNull(), isNull(), isNull(), isNull(), org.mockito.ArgumentMatchers.contains("added"));
+                iri.capture(), eq("Ontology merge"), isNull(), isNull(), org.mockito.ArgumentMatchers.contains("added"),
+                isNull(), isNull(), eq(false), origin.capture());
+        assertTrue(iri.getValue().startsWith("urn:ontocode:merge:"));
+        assertTrue(origin.getValue().exact() != null);
+        java.util.Map<String, Object> stamped = new java.util.HashMap<>();
+        origin.getValue().exact().stamp(stamped, "e1");
+        assertTrue(String.valueOf(stamped.get("exactInserted")).contains("http://ex.org/Source"));
+        org.junit.jupiter.api.Assertions.assertFalse(stamped.containsKey("exactDeleted"));
     }
 }

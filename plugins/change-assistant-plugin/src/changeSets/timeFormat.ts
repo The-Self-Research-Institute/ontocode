@@ -22,9 +22,17 @@ export function formatTime(date: Date, now: Date = new Date()): string {
   return `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
 }
 
+const ZONELESS_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+export function parseServerTime(value: string | number | Date): Date {
+  if (value instanceof Date) return value;
+  if (typeof value === 'string' && ZONELESS_ISO.test(value)) return new Date(`${value}Z`);
+  return new Date(value);
+}
+
 export function toDate(value?: string | Date | null): Date | undefined {
   if (!value) return undefined;
-  const date = value instanceof Date ? value : new Date(value);
+  const date = parseServerTime(value);
   return isNaN(date.getTime()) ? undefined : date;
 }
 

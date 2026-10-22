@@ -17,7 +17,6 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 final class CodeViewSubjectIndex {
 
-    private static final int MAX_CACHED_FILES = 512;
     private static final ConcurrentHashMap<String, Cached> CACHE = new ConcurrentHashMap<>();
 
     private record Cached(long lastModified, long size, SubjectRangeIndex index) {}
@@ -52,7 +51,7 @@ final class CodeViewSubjectIndex {
         }
         long started = System.nanoTime();
         SubjectRangeIndex index = build(file, format);
-        if (CACHE.size() >= MAX_CACHED_FILES) {
+        if (CACHE.size() >= Limit.CODE_VIEW_SUBJECT_INDEX_FILES.value()) {
             CACHE.clear();
         }
         CACHE.put(key, new Cached(lastModified, size, index));
@@ -65,7 +64,7 @@ final class CodeViewSubjectIndex {
         if (file == null || index == null || !Files.exists(file)) {
             return;
         }
-        if (CACHE.size() >= MAX_CACHED_FILES) {
+        if (CACHE.size() >= Limit.CODE_VIEW_SUBJECT_INDEX_FILES.value()) {
             CACHE.clear();
         }
         CACHE.put(file.toString(), new Cached(Files.getLastModifiedTime(file).toMillis(), Files.size(file), index));

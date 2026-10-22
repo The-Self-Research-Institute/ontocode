@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLAnnotationValue;
 import org.semanticweb.owlapi.model.OWLAxiom;
@@ -90,7 +91,7 @@ final class AxiomPlainText {
             return shorten(data.getProperty().toString()) + ": \"" + data.getObject().getLiteral() + "\"";
         }
         if (axiom instanceof OWLAnnotationAssertionAxiom annotation) {
-            return annotationLine(annotation);
+            return annotationLine(annotation.getProperty().getIRI().toString(), annotation.getValue());
         }
         if (axiom instanceof OWLPropertyDomainAxiom<?> domain) {
             return "Applies to: " + render(domain.getDomain());
@@ -101,9 +102,19 @@ final class AxiomPlainText {
         return shorten(axiom.toString());
     }
 
-    private static String annotationLine(OWLAnnotationAssertionAxiom annotation) {
-        String property = annotation.getProperty().getIRI().toString();
-        String value = annotationValue(annotation.getValue());
+    static String describe(OWLAnnotation annotation) {
+        return annotationLine(annotation.getProperty().getIRI().toString(), annotation.getValue());
+    }
+
+    static String describeOther(OWLAxiom axiom) {
+        if (axiom instanceof OWLSubClassOfAxiom sub) {
+            return "Rule: " + render(sub.getSubClass()) + " → " + render(sub.getSuperClass());
+        }
+        return shorten(axiom.toString());
+    }
+
+    private static String annotationLine(String property, OWLAnnotationValue annotationValue) {
+        String value = annotationValue(annotationValue);
         if (RDFS_LABEL.equals(property)) {
             return "Label: \"" + value + "\"";
         }

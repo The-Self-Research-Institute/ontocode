@@ -47,4 +47,5 @@ export interface SparqlQueryEditorProps {
   projectId: string;
   prefixes?: OntologyPrefix[];
   context: PluginContext;
+  draftMode?: boolean;
 }

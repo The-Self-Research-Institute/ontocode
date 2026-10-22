@@ -17,10 +17,9 @@ import self.research.ontology.owlEditor.service.DLQueryQueueProcessor;
 import self.research.ontology.owlEditor.service.DLQueryService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
-import self.research.ontology.owlEditor.service.ReasonerService;
-import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
+import self.research.ontology.owlEditor.service.SparqlQueryContext;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -40,9 +39,6 @@ public class DLQueryController {
 
     @Autowired
     private DraftTrackingService draftTrackingService;
-
-    @Autowired
-    private ReasonerService reasonerService;
 
     @Autowired
     private DLQueryService dlQueryService;
@@ -81,6 +77,9 @@ public class DLQueryController {
             log.info("DL Query enqueue for project {}: expression='{}', types={}",
                     projectId, request.getExpression(), request.getQueryTypes());
 
+            String contextUserId = SparqlQueryContext.wantsDraft() ? SparqlQueryContext.getUserId() : null;
+            String draftUserId = contextUserId != null && !contextUserId.isBlank() ? contextUserId : null;
+
             if (reasonerWorkerEnabled && reasonerWorkerClient != null && reasoningJobRelayService != null) {
                 Map<String, Object> worker = reasonerWorkerClient.submitJob(
                         "DL_QUERY",
@@ -88,7 +87,7 @@ public class DLQueryController {
                         request.getExpression().trim(),
                         request.getQueryTypes(),
                         null,
-                        request.getUserEmail());
+                        draftUserId != null ? draftUserId : request.getUserEmail());
                 if (Boolean.FALSE.equals(worker.get("success"))) {
                     return ResponseEntity.status(500).body(Map.of(
                             "success", false,
@@ -111,11 +110,18 @@ public class DLQueryController {
                 return ResponseEntity.accepted().body(response);
             }
 
+            if (draftUserId != null && dlQueryQueueProcessor == null) {
+                Map<String, Object> result = dlQueryService.executeQuery(
+                        projectId, request.getExpression().trim(), request.getQueryTypes(), draftUserId);
+                return ResponseEntity.ok(result);
+            }
+
             DLQueryJob job = dlQueryQueueManager.enqueue(
                     projectId,
                     request.getExpression().trim(),
                     request.getQueryTypes(),
-                    request.getUserEmail());
+                    request.getUserEmail(),
+                    draftUserId);
             if (dlQueryQueueProcessor != null) {
                 dlQueryQueueProcessor.processNext();
             }
@@ -193,12 +199,15 @@ public class DLQueryController {
                 String userId = resolveDraftUserId(request);
                 String username = request.getUsername() != null ? request.getUsername() : "Anonymous";
                 if (draft) {
-                    mutationService.applyRawUpdateWithHistory(projectId, sparql, true, userId, username);
                     OntologyMutationService.MutationOp dlOp = new OntologyMutationService.MutationOp(
                             "addDlQueryClass", classIri, request.getClassName().trim(), null, null, null, null,
                             request.getExpression().trim(), null, null, null, null, null, null, null);
-                    draftTrackingService.recordDrafts(projectId, userId, username,
-                            List.of(dlOp), "dl-add-" + UUID.randomUUID());
+                    self.research.ontology.owlEditor.service.DraftRecordScope.Outcome<Object> written =
+                            self.research.ontology.owlEditor.service.DraftRecordScope.collect(() -> {
+                                mutationService.applyRawUpdateWithHistory(projectId, sparql, true, userId, username);
+                                return null;
+                            });
+                    draftTrackingService.recordDescribed(projectId, userId, username, dlOp, written.changeSetIds());
                 } else {
                     mutationService.applyRawUpdateWithHistory(projectId, sparql, false, userId, username);
                 }
@@ -431,316 +440,4 @@ public class DLQueryController {
         }
     }
 
-    @PostMapping("/{projectId}/explain-axiom")
-    public ResponseEntity<Map<String, Object>> explainAxiom(
-            @PathVariable String projectId,
-            @RequestBody ExplainAxiomRequest request
-    ) {
-        long t0 = System.currentTimeMillis();
-        try {
-            log.info("explain-axiom project={} entity={} related={} section={}",
-                    projectId, request.getEntityIri(), request.getRelatedIri(), request.getSectionName());
-
-            OWLOntology ontology = dlQueryService.loadOntologyForParse(projectId);
-            try {
-            OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-
-            String sec = request.getSectionName() != null
-                    ? request.getSectionName().toLowerCase() : "";
-            int maxJ = request.getMaxJustifications() > 0 ? request.getMaxJustifications() : 99;
-
-            boolean laconic = request.getJustificationType() != null
-                    && request.getJustificationType().toLowerCase().contains("laconic");
-
-            Set<OWLAxiom> matchedOwlAxioms = findMatchingOwlAxioms(
-                    ontology, df, request.getEntityIri(), request.getRelatedIri(), sec);
-
-            boolean isInferred = false;
-            if (matchedOwlAxioms.isEmpty()) {
-                isInferred = isInferredRelationship(
-                        ontology, df, request.getEntityIri(), request.getRelatedIri(), sec);
-                if (isInferred) {
-                    matchedOwlAxioms = findSupportingAxioms(
-                            ontology, df, request.getEntityIri(), request.getRelatedIri(), sec);
-                }
-            }
-
-            List<Map<String, Object>> rawAxioms = matchedOwlAxioms.stream()
-                    .map(ax -> axiomToMap(ontology, ax))
-                    .collect(Collectors.toList());
-
-            List<Map<String, Object>> justifications = new ArrayList<>();
-            if (laconic && !rawAxioms.isEmpty()) {
-                Map<String, Object> j = new LinkedHashMap<>();
-                j.put("index", 1);
-                j.put("axioms", rawAxioms.stream().limit(maxJ).collect(Collectors.toList()));
-                j.put("isAsserted", !isInferred);
-                j.put("isInferred", isInferred);
-                justifications.add(j);
-            } else {
-                for (int i = 0; i < Math.min(rawAxioms.size(), maxJ); i++) {
-                    Map<String, Object> j = new LinkedHashMap<>();
-                    j.put("index", i + 1);
-                    j.put("axioms", List.of(rawAxioms.get(i)));
-                    j.put("isAsserted", !isInferred);
-                    j.put("isInferred", isInferred);
-                    justifications.add(j);
-                }
-            }
-
-            Map<String, Object> resp = new LinkedHashMap<>();
-            resp.put("success", true);
-            resp.put("justifications", justifications);
-            resp.put("totalFound", rawAxioms.size());
-            resp.put("executionTimeMs", System.currentTimeMillis() - t0);
-            return ResponseEntity.ok(resp);
-            } finally {
-                dlQueryService.disposeOntology(ontology);
-            }
-
-        } catch (Exception e) {
-            log.error("explain-axiom failed for project {}: {}", projectId, e.getMessage(), e);
-            return ResponseEntity.status(500).body(Map.of(
-                    "success", false,
-                    "error", e.getMessage() != null ? e.getMessage() : "Failed to explain axiom"
-            ));
-        }
-    }
-
-    private List<Map<String, Object>> findMatchingAxioms(
-            OWLOntology ontology, OWLDataFactory df,
-            String entityIri, String relatedIri, String sec) {
-        return findMatchingOwlAxioms(ontology, df, entityIri, relatedIri, sec).stream()
-                .map(ax -> axiomToMap(ontology, ax))
-                .collect(Collectors.toList());
-    }
-
-    private Set<OWLAxiom> findMatchingOwlAxioms(
-            OWLOntology ontology, OWLDataFactory df,
-            String entityIri, String relatedIri, String sec) {
-
-        Set<OWLAxiom> results = new LinkedHashSet<>();
-        if (entityIri == null || relatedIri == null) return results;
-
-        IRI eIri = IRI.create(entityIri);
-
-        try {
-            if (sec.contains("range")) {
-                df.getOWLDataProperty(eIri).accept(new org.semanticweb.owlapi.model.OWLPropertyExpressionVisitor() {
-                    @Override public void visit(OWLDataProperty p) {
-                        ontology.getDataPropertyRangeAxioms(p).stream()
-                                .filter(ax -> axiomInvolves(ax, relatedIri))
-                                .forEach(results::add);
-                    }
-                    @Override public void visit(OWLObjectProperty p) {}
-                    @Override public void visit(OWLObjectInverseOf p) {}
-                });
-                ontology.getObjectPropertyRangeAxioms(df.getOWLObjectProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("domain")) {
-                ontology.getDataPropertyDomainAxioms(df.getOWLDataProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-                ontology.getObjectPropertyDomainAxioms(df.getOWLObjectProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("subclass") || sec.contains("sub class")) {
-                ontology.getSubClassAxiomsForSubClass(df.getOWLClass(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("equivalent")) {
-                ontology.getEquivalentClassesAxioms(df.getOWLClass(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-                ontology.getEquivalentObjectPropertiesAxioms(df.getOWLObjectProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-                ontology.getEquivalentDataPropertiesAxioms(df.getOWLDataProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("disjoint")) {
-                ontology.getDisjointClassesAxioms(df.getOWLClass(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-                ontology.getDisjointObjectPropertiesAxioms(df.getOWLObjectProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("inverse")) {
-                ontology.getInverseObjectPropertyAxioms(df.getOWLObjectProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("subproperty") || sec.contains("superprop") || sec.contains("super property")) {
-                ontology.getObjectSubPropertyAxiomsForSubProperty(df.getOWLObjectProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-                ontology.getDataSubPropertyAxiomsForSubProperty(df.getOWLDataProperty(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("same")) {
-                ontology.getSameIndividualAxioms(df.getOWLNamedIndividual(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else if (sec.contains("different")) {
-                ontology.getDifferentIndividualAxioms(df.getOWLNamedIndividual(eIri)).stream()
-                        .filter(ax -> axiomInvolves(ax, relatedIri))
-                        .forEach(results::add);
-
-            } else {
-                IRI rIri = IRI.create(relatedIri);
-                ontology.getAxioms().stream()
-                        .filter(ax -> ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(eIri))
-                                   && ax.getSignature().stream().anyMatch(e -> e.getIRI().equals(rIri)))
-                        .forEach(results::add);
-            }
-        } catch (Exception e) {
-            log.warn("findMatchingOwlAxioms error entity={} related={}: {}", entityIri, relatedIri, e.getMessage());
-        }
-        return results;
-    }
-
-    private Set<OWLAxiom> findSupportingAxioms(
-            OWLOntology ontology, OWLDataFactory df,
-            String entityIri, String relatedIri, String sec) {
-
-        Set<OWLAxiom> supporting = new LinkedHashSet<>();
-        if (entityIri == null) return supporting;
-
-        IRI eIri = IRI.create(entityIri);
-        try {
-            if (ontology.containsClassInSignature(eIri)) {
-                ontology.getAxioms(df.getOWLClass(eIri)).stream()
-                        .filter(ax -> !ax.isAnnotationAxiom())
-                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
-                        .forEach(supporting::add);
-            }
-            if (ontology.containsObjectPropertyInSignature(eIri)) {
-                ontology.getAxioms(df.getOWLObjectProperty(eIri)).stream()
-                        .filter(ax -> !ax.isAnnotationAxiom())
-                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
-                        .forEach(supporting::add);
-            }
-            if (ontology.containsDataPropertyInSignature(eIri)) {
-                ontology.getAxioms(df.getOWLDataProperty(eIri)).stream()
-                        .filter(ax -> !ax.isAnnotationAxiom())
-                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
-                        .forEach(supporting::add);
-            }
-            if (ontology.containsIndividualInSignature(eIri)) {
-                ontology.getAxioms(df.getOWLNamedIndividual(eIri)).stream()
-                        .filter(ax -> !ax.isAnnotationAxiom())
-                        .filter(ax -> relatedIri == null || axiomInvolves(ax, relatedIri))
-                        .forEach(supporting::add);
-            }
-        } catch (Exception e) {
-            log.warn("findSupportingAxioms error entity={}: {}", entityIri, e.getMessage());
-        }
-        return supporting;
-    }
-
-    private boolean isInferredRelationship(
-            OWLOntology ontology, OWLDataFactory df,
-            String entityIri, String relatedIri, String sec) {
-
-        if (entityIri == null || relatedIri == null) return false;
-        try {
-            OWLReasoner reasoner = reasonerService.getReasoner(ontology, ReasonerType.HERMIT);
-            IRI eIri = IRI.create(entityIri);
-            IRI rIri = IRI.create(relatedIri);
-
-            if ((sec.contains("subclass") || sec.contains("sub class"))
-                    && ontology.containsClassInSignature(eIri) && ontology.containsClassInSignature(rIri)) {
-                OWLClass sub = df.getOWLClass(eIri);
-                OWLClass sup = df.getOWLClass(rIri);
-                boolean entailed = reasoner.getSuperClasses(sub, true).getFlattened().contains(sup);
-                boolean asserted = ontology.containsAxiom(df.getOWLSubClassOfAxiom(sub, sup));
-                return entailed && !asserted;
-            }
-            if (sec.contains("equivalent") && ontology.containsClassInSignature(eIri)
-                    && ontology.containsClassInSignature(rIri)) {
-                OWLClass cls = df.getOWLClass(eIri);
-                OWLClass other = df.getOWLClass(rIri);
-                boolean entailed = reasoner.getEquivalentClasses(cls).getEntities().contains(other);
-                boolean asserted = ontology.getEquivalentClassesAxioms(cls).stream()
-                        .anyMatch(ax -> axiomInvolves(ax, relatedIri));
-                return entailed && !asserted;
-            }
-            if ((sec.contains("subproperty") || sec.contains("superprop"))
-                    && ontology.containsObjectPropertyInSignature(eIri)
-                    && ontology.containsObjectPropertyInSignature(rIri)) {
-                OWLObjectProperty sub = df.getOWLObjectProperty(eIri);
-                OWLObjectProperty sup = df.getOWLObjectProperty(rIri);
-                boolean entailed = reasoner.getSuperObjectProperties(sub, true).getFlattened().contains(sup);
-                boolean asserted = ontology.containsAxiom(df.getOWLSubObjectPropertyOfAxiom(sub, sup));
-                return entailed && !asserted;
-            }
-        } catch (Exception e) {
-            log.warn("isInferredRelationship check failed: {}", e.getMessage());
-        }
-        return false;
-    }
-
-    private boolean axiomInvolves(OWLAxiom axiom, String iri) {
-        return axiom.getSignature().stream().anyMatch(e -> e.getIRI().toString().equals(iri));
-    }
-
-    private String getLabel(OWLEntity entity, OWLOntology ontology) {
-        return entity.getIRI().getShortForm();
-    }
-
-    private Map<String, Object> axiomToMap(OWLOntology ontology, OWLAxiom axiom) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("type", axiom.getAxiomType().getName());
-        m.put("isAsserted", true);
-        m.put("manchester", renderAxiomLabel(ontology, axiom));
-        m.put("entities", axiom.getSignature().stream()
-                .map(e -> {
-                    Map<String, String> em = new LinkedHashMap<>();
-                    em.put("iri",   e.getIRI().toString());
-                    em.put("label", getLabel(e, ontology));
-                    em.put("type",  e.getEntityType().getName());
-                    return em;
-                })
-                .collect(Collectors.toList()));
-        return m;
-    }
-
-    private String renderAxiomLabel(OWLOntology ontology, OWLAxiom axiom) {
-        try {
-            String typeName = axiom.getAxiomType().getName();
-            String entities = axiom.getSignature().stream()
-                    .map(e -> "'" + getLabel(e, ontology) + "'")
-                    .collect(Collectors.joining(", "));
-            return typeName + ": " + entities;
-        } catch (Exception e) {
-            return axiom.getAxiomType().getName();
-        }
-    }
-
-    public static class ExplainAxiomRequest {
-        private String entityIri;
-        private String relatedIri;
-        private String sectionName;
-        private String justificationType = "regular";
-        private int maxJustifications = 3;
-
-        public String getEntityIri() { return entityIri; }
-        public void setEntityIri(String v) { this.entityIri = v; }
-        public String getRelatedIri() { return relatedIri; }
-        public void setRelatedIri(String v) { this.relatedIri = v; }
-        public String getSectionName() { return sectionName; }
-        public void setSectionName(String v) { this.sectionName = v; }
-        public String getJustificationType() { return justificationType; }
-        public void setJustificationType(String v) { this.justificationType = v; }
-        public int getMaxJustifications() { return maxJustifications; }
-        public void setMaxJustifications(int v) { this.maxJustifications = v; }
-    }
 }

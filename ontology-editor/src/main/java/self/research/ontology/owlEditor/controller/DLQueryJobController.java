@@ -22,6 +22,11 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class DLQueryJobController {
 
+    static final String WORKER_LOST_JOB_MESSAGE =
+            "Reasoning worker no longer has this job (it may have restarted). Please run it again.";
+
+    public static final String STOPPED_MESSAGE = "Stopped. This reasoning run was cancelled.";
+
     private final DLQueryQueueManager queueManager;
 
     @Autowired(required = false)
@@ -37,7 +42,9 @@ public class DLQueryJobController {
     public ResponseEntity<Map<String, Object>> getJob(@PathVariable String jobId) {
         if (reasonerWorkerEnabled && reasoningJobRelayService != null) {
             DLQueryJob relayed = reasoningJobRelayService.getJob(jobId);
-            if (relayed != null) {
+            boolean relayedIsTerminal = relayed != null
+                    && (relayed.getStatus() == DLQueryJob.Status.COMPLETED || relayed.getStatus() == DLQueryJob.Status.FAILED);
+            if (relayedIsTerminal) {
                 return ResponseEntity.ok(toResponse(relayed));
             }
             if (reasonerWorkerClient != null) {
@@ -45,6 +52,13 @@ public class DLQueryJobController {
                 if (remote != null && remote.get("jobId") != null) {
                     return ResponseEntity.ok(remote);
                 }
+                if (relayed != null && workerSaysNotFound(remote)) {
+                    DLQueryJob lost = reasoningJobRelayService.markLost(jobId, WORKER_LOST_JOB_MESSAGE);
+                    return ResponseEntity.ok(toResponse(lost != null ? lost : relayed));
+                }
+            }
+            if (relayed != null) {
+                return ResponseEntity.ok(toResponse(relayed));
             }
             return ResponseEntity.notFound().build();
         }
@@ -54,6 +68,26 @@ public class DLQueryJobController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(toResponse(job));
+    }
+
+    @DeleteMapping("/jobs/{jobId}")
+    public ResponseEntity<Map<String, Object>> cancelJob(@PathVariable String jobId) {
+        if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
+            return ResponseEntity.ok(Map.of("success", true, "cancelled", false));
+        }
+        Map<String, Object> result = reasonerWorkerClient.cancelJob(jobId);
+        if (Boolean.TRUE.equals(result.get("cancelled")) && reasoningJobRelayService != null) {
+            reasoningJobRelayService.markStopped(jobId, STOPPED_MESSAGE);
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    private static boolean workerSaysNotFound(Map<String, Object> remote) {
+        if (remote == null || !Boolean.FALSE.equals(remote.get("success"))) {
+            return false;
+        }
+        Object error = remote.get("error");
+        return error != null && error.toString().contains("404");
     }
 
     @GetMapping("/stats")

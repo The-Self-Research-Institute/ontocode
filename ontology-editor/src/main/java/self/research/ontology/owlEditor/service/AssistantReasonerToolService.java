@@ -36,7 +36,6 @@ public class AssistantReasonerToolService {
 
     private final AssistantSessionService sessionService;
     private final AssistantAdmissionLimiter admissionLimiter;
-    private final RestTemplate restTemplate;
 
     @Value("${ontology.plugin-service.url:http://localhost:8087}")
     private String pluginServiceUrl;
@@ -56,23 +55,24 @@ public class AssistantReasonerToolService {
     @Autowired(required = false)
     private ReasonerWorkerClient reasonerWorkerClient;
 
+    private java.util.function.IntFunction<RestTemplate> restTemplateFactory = AssistantReasonerToolService::buildRestTemplate;
+
     public AssistantReasonerToolService(AssistantSessionService sessionService,
                                          AssistantAdmissionLimiter admissionLimiter) {
         this.sessionService = sessionService;
         this.admissionLimiter = admissionLimiter;
-        this.restTemplate = buildRestTemplate();
     }
 
-    private static RestTemplate buildRestTemplate() {
+    private static RestTemplate buildRestTemplate(int readTimeoutMs) {
         SimpleClientHttpRequestFactory f = new SimpleClientHttpRequestFactory();
         f.setConnectTimeout(5_000);
-        f.setReadTimeout(30_000);
+        f.setReadTimeout(readTimeoutMs);
         return new RestTemplate(f);
     }
 
     public ReasonerToolResult checkConsistency(String sessionId, String userEmail, String authorizationHeader) {
         return runTool(sessionId, userEmail, session -> {
-            Map<String, String> body = Map.of("reasonerType", DEFAULT_REASONER_TYPE);
+            Map<String, String> body = draftAwareBody(session, Map.of("reasonerType", DEFAULT_REASONER_TYPE));
             Map<String, Object> response = postToPluginService(
                     "/api/reasoner/" + session.getProjectId() + "/consistency", body, authorizationHeader, 20_000);
             return truncateConsistency(response);
@@ -81,13 +81,22 @@ public class AssistantReasonerToolService {
 
     public ReasonerToolResult explainInconsistency(String sessionId, String userEmail, String authorizationHeader) {
         return runTool(sessionId, userEmail, session -> {
-            Map<String, String> body = Map.of(
+            Map<String, String> body = draftAwareBody(session, Map.of(
                     "reasonerType", DEFAULT_REASONER_TYPE,
-                    "maxJustifications", String.valueOf(MAX_JUSTIFICATIONS));
+                    "maxJustifications", String.valueOf(MAX_JUSTIFICATIONS)));
             Map<String, Object> response = postToPluginService(
                     "/api/reasoner/" + session.getProjectId() + "/explain-inconsistency", body, authorizationHeader, 30_000);
             return truncateExplanation(response);
         });
+    }
+
+    private Map<String, String> draftAwareBody(AssistantSessionDocument session, Map<String, String> base) {
+        if (!session.isDraft() || session.getDraftUserId() == null || session.getDraftUserId().isBlank()) {
+            return base;
+        }
+        Map<String, String> withDraft = new LinkedHashMap<>(base);
+        withDraft.put("userId", session.getDraftUserId());
+        return withDraft;
     }
 
     private interface ReasonerCall {
@@ -163,7 +172,7 @@ public class AssistantReasonerToolService {
 
         ResponseEntity<Map> response;
         try {
-            response = restTemplate.exchange(pluginServiceUrl + path, HttpMethod.POST, entity, Map.class);
+            response = restTemplateFactory.apply(readTimeoutMs).exchange(pluginServiceUrl + path, HttpMethod.POST, entity, Map.class);
         } catch (ResourceAccessException e) {
             throw new ReasonerCallException("REASONER_UNAVAILABLE",
                     "The reasoner didn't respond in time — it may be busy with a larger operation. "

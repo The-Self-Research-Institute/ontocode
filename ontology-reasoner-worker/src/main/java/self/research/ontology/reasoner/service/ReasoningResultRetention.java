@@ -59,10 +59,10 @@ public class ReasoningResultRetention {
             return 0;
         }
         int evicted = 0;
-        while (needsEviction()) {
-            if (!evictOldest()) {
-                break;
-            }
+        while (finishedByFinishOrder.size() > maxRetainedResults && evictOldest()) {
+            evicted++;
+        }
+        if (isHeapUnderPressure() && !finishedByFinishOrder.isEmpty() && evictOldest()) {
             evicted++;
         }
         if (evicted > 0) {

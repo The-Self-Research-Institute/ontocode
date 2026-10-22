@@ -50,7 +50,8 @@ class AssistantReasonerToolServiceTest {
         MockitoAnnotations.openMocks(this);
         limiter = new AssistantAdmissionLimiter(4, 2, 32, 30, 3, Clock.systemUTC());
         toolService = new AssistantReasonerToolService(sessionService, limiter);
-        ReflectionTestUtils.setField(toolService, "restTemplate", restTemplate);
+        ReflectionTestUtils.setField(toolService, "restTemplateFactory",
+                (java.util.function.IntFunction<RestTemplate>) timeoutMs -> restTemplate);
         ReflectionTestUtils.setField(toolService, "pluginServiceUrl", "http://localhost:8087");
         ReflectionTestUtils.setField(toolService, "maxUnsatisfiableClasses", 50);
         ReflectionTestUtils.setField(toolService, "maxExplanationBytes", 50_000);

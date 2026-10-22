@@ -54,6 +54,7 @@ export const DetailsPanel = ({
   onViewOnlyAction,
   isReasonerRunning = false,
   selectedReasoner = "HERMIT",
+  syncMode = "public",
   user,
 }: {
   selectedItem: SelectableItem | null;
@@ -97,6 +98,7 @@ export const DetailsPanel = ({
   onViewOnlyAction?: () => void;
   isReasonerRunning?: boolean;
   selectedReasoner?: string;
+  syncMode?: "private" | "public";
   user?: { email?: string; username?: string; userId?: string };
 }) => {
   const flattenIds = (nodes: TreeNode[]): string[] => {
@@ -157,6 +159,8 @@ export const DetailsPanel = ({
     isViewOnly,
     onViewOnlyAction,
     user,
+    selectedReasoner,
+    syncMode,
   };
 
   switch (entitiesTab) {

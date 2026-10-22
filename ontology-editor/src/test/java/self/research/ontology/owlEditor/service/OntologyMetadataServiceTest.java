@@ -199,8 +199,13 @@ class OntologyMetadataServiceTest {
 
     private void verifyHistory(String opType, String label, String oldValue, String newValue, String description,
                                boolean draft) {
+        verifyHistory(opType, label, oldValue, newValue, description, null, draft);
+    }
+
+    private void verifyHistory(String opType, String label, String oldValue, String newValue, String description,
+                               String oldPrefix, boolean draft) {
         verify(historyService).recordEdit(eq("proj-1"), eq("user-7"), eq("Uma"), eq(opType), org.mockito.ArgumentMatchers.isNull(),
-                eq(label), eq(oldValue), eq(newValue), eq(description), org.mockito.ArgumentMatchers.isNull(),
+                eq(label), eq(oldValue), eq(newValue), eq(description), eq(oldPrefix),
                 org.mockito.ArgumentMatchers.isNull(), eq(draft), org.mockito.ArgumentMatchers.any());
     }
 
@@ -230,7 +235,7 @@ class OntologyMetadataServiceTest {
         service.updatePrefix("proj-1", "fresh", "http://ex.org/", "old", false, null, "user-7", "Uma");
 
         verifyHistory("prefixModified", "fresh", "http://ex.org/", "http://ex.org/",
-                "renamed old to fresh: <http://ex.org/>", false);
+                "renamed old to fresh: <http://ex.org/>", "old", false);
     }
 
     @Test

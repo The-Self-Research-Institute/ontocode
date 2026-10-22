@@ -6,6 +6,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
+import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -51,6 +52,36 @@ class RollbackRequestSupportTest {
                 Map.of("userId", "desktop-user-local", "username", "Local"));
         assertEquals("desktop-user-local", actor.userId());
         assertEquals("Local", actor.username());
+    }
+
+    @Test
+    void withoutAnyLoginClaimARequestIsRefusedWhenSignaturesAreRequired() {
+        JwtIdentityExtractor.requireSignature(io.jsonwebtoken.security.Keys.hmacShaKeyFor(new byte[32]));
+        try {
+            assertEquals(401, support.denyIfNotAllowed(List.of(), "p", new MockHttpServletRequest()).getStatusCode().value());
+            assertEquals(401, support.denyIfNotAllowed(List.of(), "p", null).getStatusCode().value());
+        } finally {
+            JwtIdentityExtractor.requireSignature(null);
+        }
+    }
+
+    @Test
+    void withoutAnyLoginClaimARequestIsStillAllowedForUnsignedDevAndDesktop() {
+        assertNull(support.denyIfNotAllowed(List.of(), "p", new MockHttpServletRequest()));
+    }
+
+    @Test
+    void theTrustedDesktopLaunchKeyCountsAsAnIdentityEvenWhenSignaturesAreRequired() {
+        JwtIdentityExtractor.requireSignature(io.jsonwebtoken.security.Keys.hmacShaKeyFor(new byte[32]));
+        JwtIdentityExtractor.trustDesktopLaunchKey("launch-key");
+        try {
+            MockHttpServletRequest request = new MockHttpServletRequest();
+            request.addHeader(JwtIdentityExtractor.DESKTOP_LAUNCH_KEY_HEADER, "launch-key");
+            assertNull(support.denyIfNotAllowed(List.of(), "p", request));
+        } finally {
+            JwtIdentityExtractor.requireSignature(null);
+            JwtIdentityExtractor.trustDesktopLaunchKey(null);
+        }
     }
 
     @Test

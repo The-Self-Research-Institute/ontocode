@@ -1,8 +1,3 @@
-/**
- * OWL Reasoner Plugin
- * OWL reasoner UI for consistency checking, classification, and inference
- * Includes explanation tooltips, class hierarchy view, and full reasoning features
- */
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
@@ -43,8 +38,15 @@ import {
   ChevronDown,
   Zap
 } from 'lucide-react';
+import { JobCancelledError, isJobCancelled, pollJobUntilDone } from './reasoningJobPolling';
 
-/** fetch with JWT — uses window.authenticatedFetch when host app provides it. */
+interface JobSession {
+  controller: AbortController;
+  jobs: Map<string, string>;
+}
+
+const createJobSession = (): JobSession => ({ controller: new AbortController(), jobs: new Map() });
+
 async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const hostFetch = (window as any).authenticatedFetch;
   if (typeof hostFetch === 'function') {
@@ -57,6 +59,16 @@ async function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
     headers.set('Content-Type', 'application/json');
   }
   return fetch(input, { ...init, headers });
+}
+
+async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+  const body = await response.json().catch(() => null);
+  const message = body?.error || body?.message;
+  return typeof message === 'string' && message.trim() ? message : fallback;
+}
+
+function formatCount(value: unknown): string {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : '—';
 }
 
 const TOP_PANEL_HEIGHT_KEY = 'ontocode-reasoner-top-panel-height';
@@ -123,10 +135,7 @@ function renderLinkedAxiomText(
 interface ReasonerPluginProps {
   projectId: string;
   apiBaseUrl?: string;
-  /** Current user's id when Private (Draft) mode is active, so reasoning runs against
-   * their draft overlay instead of only the published ontology; undefined in Public mode. */
   draftUserId?: string;
-  // Dashboard integration props
   selectedReasoner?: string;
   isReasonerRunning?: boolean;
   isReasonerLoading?: boolean;
@@ -136,6 +145,7 @@ interface ReasonerPluginProps {
   inferredObjectPropertyHierarchy?: any[];
   inferredDataPropertyHierarchy?: any[];
   inferredAxioms?: any[];
+  inferredAxiomsTotal?: number;
   onStartReasoner?: () => Promise<void>;
   onStopReasoner?: () => void;
   onSelectReasoner?: (reasoner: string) => void;
@@ -174,7 +184,7 @@ interface HierarchyNodeProps {
   isDark: boolean;
   expandedSet: Set<string>;
   onToggle: (id: string) => void;
-  onNavigate: (id: string) => void;
+  onNavigate: (id: string, kind?: string) => void;
 }
 
 const HierarchyNode: React.FC<HierarchyNodeProps> = ({
@@ -189,7 +199,6 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
   const [showTooltip, setShowTooltip] = useState(false);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
-  // Defensive null checks
   if (!node) return null;
 
   const id = node.iri || node.id || (typeof node === 'string' ? node : null);
@@ -230,7 +239,7 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
         }`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        onClick={() => id && onNavigate(id)}
+        onClick={() => id && onNavigate(id, type)}
       >
         {hasChildren ? (
           <button
@@ -267,7 +276,6 @@ const HierarchyNode: React.FC<HierarchyNodeProps> = ({
         )}
       </div>
 
-      {/* Explanation Tooltip */}
       {showTooltip && (node.explanation || node.description) && (
         <div
           className={`fixed z-[9999] border-2 rounded-lg shadow-xl p-3 max-w-sm ${
@@ -313,6 +321,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   inferredObjectPropertyHierarchy: dashboardInferredObjectPropertyHierarchy,
   inferredDataPropertyHierarchy: dashboardInferredDataPropertyHierarchy,
   inferredAxioms: dashboardInferredAxioms,
+  inferredAxiomsTotal: dashboardInferredAxiomsTotal,
   onStartReasoner: dashboardStartReasoner,
   onStopReasoner: dashboardStopReasoner,
   onSelectReasoner: dashboardSelectReasoner,
@@ -327,14 +336,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       : undefined) ||
     'http://localhost:8082';
   
-  // Ensure the API base URL doesn't end with a slash
   const normalizedApiBaseUrl = resolvedApiBaseUrl.replace(/\/$/, '');
-  // console.log('[ReasonerPluginView] Using API base URL:', normalizedApiBaseUrl);
   
-  // Use Dashboard state if provided, otherwise use local state
   const usingDashboardState = !!dashboardStartReasoner;
   
-  // State
   const [showReasonerMenu, setShowReasonerMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [localSelectedReasoner, setLocalSelectedReasoner] = useState<string>('hermit');
@@ -357,6 +362,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   }>>([]);
   const [inferredAxiomsTotal, setInferredAxiomsTotal] = useState(0);
   const [inferredAxiomsFilter, setInferredAxiomsFilter] = useState('');
+  const INFERRED_AXIOMS_PAGE_SIZE = 200;
+  const [inferredAxiomsShowCount, setInferredAxiomsShowCount] = useState(INFERRED_AXIOMS_PAGE_SIZE);
   const [hoveredClass, setHoveredClass] = useState<string | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
   const [explanations, setExplanations] = useState<Map<string, ExplanationData>>(new Map());
@@ -371,8 +378,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     entailmentType: string; subjectIri: string; targetIri?: string; propertyIri?: string; literalValue?: string; label: string;
   } | null>(null);
   const [entailmentJustifications, setEntailmentJustifications] = useState<any[] | null>(null);
+  const [entailmentWarnings, setEntailmentWarnings] = useState<string[] | undefined>(undefined);
   const [entailmentLoading, setEntailmentLoading] = useState(false);
   const [entailmentError, setEntailmentError] = useState<string | null>(null);
+  const entailmentRequestIdRef = useRef(0);
+  const [isExplainingInconsistency, setIsExplainingInconsistency] = useState(false);
+  const inconsistencyRequestIdRef = useRef(0);
   const [autoSync, setAutoSync] = useState(true);
 
   const [topPanelHeight, setTopPanelHeight] = useState<number | null>(() => {
@@ -396,11 +407,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     const onMove = (ev: MouseEvent | TouchEvent) => {
       const delta = getY(ev) - startY;
       const sidebarHeight = sidebarEl?.getBoundingClientRect().height ?? 0;
-      // Leave room for the handle, a sliver of the list below it, and the Actions footer.
       const maxTop = Math.max(120, sidebarHeight - 160);
       const next = Math.min(maxTop, Math.max(100, startHeight + delta));
       setTopPanelHeight(next);
-      try { localStorage.setItem(TOP_PANEL_HEIGHT_KEY, String(next)); } catch { /* non-blocking */ }
+      try { localStorage.setItem(TOP_PANEL_HEIGHT_KEY, String(next)); } catch {  }
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -424,7 +434,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         if (prev == null) return prev;
         const clamped = Math.min(maxTop, Math.max(100, prev));
         if (clamped !== prev) {
-          try { localStorage.setItem(TOP_PANEL_HEIGHT_KEY, String(clamped)); } catch { /* non-blocking */ }
+          try { localStorage.setItem(TOP_PANEL_HEIGHT_KEY, String(clamped)); } catch {  }
         }
         return clamped;
       });
@@ -438,14 +448,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const [stats, setStats] = useState<any>(null);
   const [selectedClassIri, setSelectedClassIri] = useState<string | null>(null);
   
-  // New settings state
   const [timeoutSeconds, setTimeoutSeconds] = useState(60);
   const [incrementalReasoning, setIncrementalReasoning] = useState(false);
   const [cacheResults, setCacheResults] = useState(true);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [exportFormat, setExportFormat] = useState<'json' | 'csv'>('json');
   
-  // Use Dashboard values when available
   const selectedReasoner = dashboardSelectedReasoner || localSelectedReasoner;
   const isRunning = dashboardIsRunning ?? localIsRunning;
   const isLoading = dashboardIsLoading ?? localIsLoading;
@@ -465,7 +473,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const classRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  // Theme detection
   const [isDark, setIsDark] = useState(false);
 
   useEffect(() => {
@@ -485,7 +492,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // Load saved settings from localStorage
   useEffect(() => {
     const savedSettings = localStorage.getItem('reasonerSettings');
     if (savedSettings) {
@@ -501,7 +507,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     }
   }, []);
 
-  // Handle click outside to close menu
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -518,29 +523,57 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     };
   }, [showReasonerMenu]);
 
-  // Backend endpoints that can be offloaded to the reasoner-worker (consistency,
-  // realization, inferred-axioms — classification has its own dedicated status
-  // endpoint and is polled separately below) reply with 202 + {async, jobId, status}
-  // instead of the result body when the worker is enabled. /api/dl-query/jobs/{jobId}
-  // works as the poll target regardless of which service originally submitted the
-  // job — it falls back to asking the worker directly when it has no local record.
-  const pollWorkerJob = useCallback(async (jobId: string, timeoutMs = 10 * 60 * 1000) => {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const res = await authFetch(`${normalizedApiBaseUrl}/api/dl-query/jobs/${jobId}`);
-      if (!res.ok) {
-        throw new Error(`Poll failed: ${res.statusText}`);
-      }
-      const job = await res.json();
-      const status = String(job?.status || '').toUpperCase();
-      if (status === 'COMPLETED') return job;
-      if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
+  const jobSessionRef = useRef<JobSession>(createJobSession());
+
+  const cancelActiveJobs = useCallback(() => {
+    const session = jobSessionRef.current;
+    jobSessionRef.current = createJobSession();
+    session.controller.abort();
+    session.jobs.forEach((url) => {
+      authFetch(url, { method: 'DELETE' }).catch((error) => {
+        console.warn('[ReasonerPluginView] Cancel request failed:', error);
+      });
+    });
+    session.jobs.clear();
+  }, []);
+
+  const pollWorkerJob = useCallback(async (
+    jobId: string,
+    timeoutMs = 10 * 60 * 1000,
+    session: JobSession = jobSessionRef.current,
+  ) => {
+    const jobUrl = `${normalizedApiBaseUrl}/api/dl-query/jobs/${encodeURIComponent(jobId)}`;
+    if (session.controller.signal.aborted) throw new JobCancelledError();
+    session.jobs.set(jobId, jobUrl);
+    try {
+      return await pollJobUntilDone<any>(jobId, async () => {
+        const res = await authFetch(jobUrl);
+        if (!res.ok) {
+          throw new Error(await readErrorMessage(res, `Poll failed: ${res.status} ${res.statusText}`));
+        }
+        const job = await res.json();
+        const status = String(job?.status || '').toUpperCase();
+        if (status === 'COMPLETED') return job;
+        if (status === 'FAILED') throw new Error(job.error || job.message || 'Reasoning job failed');
+        return undefined;
+      }, { timeoutMs, timeoutMessage: 'Reasoning job timed out', signal: session.controller.signal });
+    } finally {
+      session.jobs.delete(jobId);
     }
-    throw new Error('Reasoning job timed out');
   }, [normalizedApiBaseUrl]);
 
-  const fetchInferredAxioms = useCallback(async (reasonerType: string) => {
+  useEffect(() => () => cancelActiveJobs(), [cancelActiveJobs]);
+
+  const jobScopeRef = useRef(`${projectId}|${draftUserId ?? ''}`);
+  useEffect(() => {
+    const scope = `${projectId}|${draftUserId ?? ''}`;
+    if (jobScopeRef.current !== scope) {
+      jobScopeRef.current = scope;
+      cancelActiveJobs();
+    }
+  }, [projectId, draftUserId, cancelActiveJobs]);
+
+  const fetchInferredAxioms = useCallback(async (reasonerType: string, session: JobSession = jobSessionRef.current) => {
     try {
       const encodedProjectId = encodeURIComponent(projectId);
       const userIdParam = draftUserId ? `&userId=${encodeURIComponent(draftUserId)}` : '';
@@ -553,11 +586,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       }
       let data = await response.json();
       if (data.async && (data.jobId || data.taskId)) {
-        data = await pollWorkerJob(data.jobId || data.taskId);
+        data = await pollWorkerJob(data.jobId || data.taskId, undefined, session);
       }
+      if (session.controller.signal.aborted) return;
       if (data.axioms && Array.isArray(data.axioms)) {
         setInferredAxioms(data.axioms);
         setInferredAxiomsTotal(data.totalInferredAxioms || data.axioms.length);
+        setInferredAxiomsShowCount(INFERRED_AXIOMS_PAGE_SIZE);
       } else {
         console.warn('[ReasonerPluginView] inferred-axioms response missing axioms array:', data);
       }
@@ -566,8 +601,11 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     }
   }, [projectId, normalizedApiBaseUrl, pollWorkerJob, draftUserId]);
 
-  // Start reasoning
   const startReasoner = useCallback(async (task: 'consistency' | 'classification' | 'realization') => {
+    const session = jobSessionRef.current;
+    const throwIfStopped = () => {
+      if (session.controller.signal.aborted) throw new JobCancelledError();
+    };
     setLocalIsRunning(true);
     setReasonerStatus(`Running ${task}...`);
 
@@ -586,7 +624,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           break;
       }
 
-      // Map UI reasoner names to backend enum values
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
         'pellet': 'PELLET',
@@ -621,37 +658,39 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       let result = await response.json();
       console.log('[ReasonerPluginView] Reasoning result:', result);
+      throwIfStopped();
 
-      // Consistency/realization have no dedicated status endpoint of their own — when
-      // the reasoner-worker is enabled, the initial POST above returns a queued job
-      // (202 + {async, jobId}) instead of the result, so it must be polled generically.
-      // Classification is handled separately below via its own /classify/status
-      // endpoint, which already understands both the worker and non-worker paths.
       if (result.async && (result.jobId || result.taskId) && task !== 'classification') {
         setReasonerStatus(`Running ${task}... (queued)`);
-        result = await pollWorkerJob(result.jobId || result.taskId);
+        result = await pollWorkerJob(result.jobId || result.taskId, undefined, session);
       }
 
-      // Handle async classify response (taskId-based polling)
       if (result.taskId && task === 'classification') {
-        const taskId = result.taskId;
-        const POLL_INTERVAL = 3000;
-        const MAX_POLL_TIME = 600_000;
-        const deadline = Date.now() + MAX_POLL_TIME;
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+        const taskId = String(result.taskId);
+        const MAX_POLL_TIME = 1_800_000;
+        const workerJob = result.async === true;
+        session.jobs.set(
+          taskId,
+          result.cancelUrl
+            ? `${normalizedApiBaseUrl}/plugin-service${result.cancelUrl}`
+            : `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/${taskId}`,
+        );
+        result = await pollJobUntilDone<any>(taskId, async () => {
           const statusRes = await authFetch(
             `${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/classify/status/${taskId}`,
           );
-          if (!statusRes.ok) throw new Error(`Poll failed: ${statusRes.statusText}`);
+          if (!statusRes.ok) throw new Error(await readErrorMessage(statusRes, `Poll failed: ${statusRes.status} ${statusRes.statusText}`));
           const statusData = await statusRes.json();
-          if (statusData.status === 'COMPLETED') { result = statusData; break; }
+          if (statusData.status === 'COMPLETED') return statusData;
           if (statusData.status === 'FAILED') throw new Error(statusData.error || 'Classification failed');
           setReasonerStatus('Classifying... (still running)');
-        }
-        if (result.taskId && result.status === 'RUNNING') {
-          throw new Error('Classification timed out after 10 minutes');
-        }
+          return undefined;
+        }, {
+          timeoutMs: MAX_POLL_TIME,
+          timeoutMessage: 'Classification timed out after 30 minutes',
+          push: workerJob,
+          signal: session.controller.signal,
+        }).finally(() => session.jobs.delete(taskId));
       }
 
       if (task === 'consistency') {
@@ -660,10 +699,9 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           setUnsatisfiableClasses(result.unsatisfiableClasses);
         }
         if (result.consistent) {
-          await fetchInferredAxioms(reasonerType);
+          await fetchInferredAxioms(reasonerType, session);
         }
       } else if (task === 'classification') {
-        // Set consistency from classification result
         if (result.isConsistent !== undefined) {
           setIsConsistent(result.isConsistent);
         }
@@ -674,51 +712,51 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         setEquivalentClasses(result.equivalentClasses || []);
         setUnsatisfiableClasses(result.unsatisfiableClasses || []);
         
-                // Report results up to the parent so the Entities tab's "Inferred"
-        // toggle reflects this run too, not just this plugin's own display.
         onInferredHierarchyChange?.({
           classHierarchy: result.classHierarchy || [],
           objectPropertyHierarchy: result.objectPropertyHierarchy || result.objectProperties || [],
           dataPropertyHierarchy: result.dataPropertyHierarchy || result.dataProperties || [],
         });
-        // Generate explanations for classes. Guarded: a throw here (e.g. an
-        // unexpected field shape from the async classify/status payload) must
-        // not prevent the inferred-axioms fetch below from running.
         try {
           generateExplanations(result);
         } catch (explainErr) {
           console.error('[ReasonerPluginView] generateExplanations failed:', explainErr);
         }
-        await fetchInferredAxioms(reasonerType);
+        await fetchInferredAxioms(reasonerType, session);
       } else if (task === 'realization') {
-        // Set consistency from realization result
         if (result.isConsistent !== undefined) {
           setIsConsistent(result.isConsistent);
         }
       }
 
-      // Get stats
-      const statsUserIdParam = draftUserId ? `&userId=${encodeURIComponent(draftUserId)}` : '';
-      const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}${statsUserIdParam}`);
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
+      throwIfStopped();
+      if (result?.stats && typeof result.stats === 'object') {
+        setStats(result.stats);
+      } else {
+        const statsRes = await authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodedProjectId}/stats?reasonerType=${reasonerType}`);
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          throwIfStopped();
+          setStats(statsData);
+        }
       }
 
       setReasonerStatus(`${task} completed successfully`);
     } catch (error) {
+      if (isJobCancelled(error)) {
+        setReasonerStatus('Stopped');
+        return;
+      }
       console.error('[ReasonerPluginView] Reasoning error:', error);
       setReasonerStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLocalIsRunning(false);
     }
-  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob]);
+  }, [projectId, apiBaseUrl, selectedReasoner, fetchInferredAxioms, pollWorkerJob, draftUserId, normalizedApiBaseUrl]);
 
-  // Generate explanations for reasoning results
   const generateExplanations = (classificationResult: any) => {
     const newExplanations = new Map<string, ExplanationData>();
 
-    // Explanations for unsatisfiable classes
     if (classificationResult.unsatisfiableClasses) {
       classificationResult.unsatisfiableClasses.forEach((cls: any) => {
         newExplanations.set(cls.iri, {
@@ -732,7 +770,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       });
     }
 
-    // Explanations for equivalent classes
     if (classificationResult.equivalentClasses) {
       classificationResult.equivalentClasses.forEach((group: any) => {
         if (group.classes && group.classes.length > 1) {
@@ -751,7 +788,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       });
     }
 
-    // Explanations for class hierarchy (subclass relationships)
     if (classificationResult.classHierarchy) {
       classificationResult.classHierarchy.forEach((node: ClassNode) => {
         if (!newExplanations.has(node.iri)) {
@@ -770,19 +806,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     setExplanations(newExplanations);
   };
 
-  // Fetch detailed inconsistency explanation
   const fetchInconsistencyExplanation = useCallback(async (
     modeOverride?: 'regular' | 'laconic',
     limitOverride?: { mode: 'all' | 'limit'; value: number | '' }
   ) => {
-    // Uses the same isOntologyInconsistent flag the Explain button's `disabled`
-    // prop checks (rather than the narrower `isConsistent` state, which some
-    // code paths — e.g. a classify response with isConsistent === undefined —
-    // never update) so this guard can't diverge from what the user can click.
     if (!isOntologyInconsistent) return;
 
+    const requestId = ++inconsistencyRequestIdRef.current;
+    const isLatestRequest = () => inconsistencyRequestIdRef.current === requestId;
     setInconsistencyExplanation(null);
-    setLocalIsRunning(true);
+    setIsExplainingInconsistency(true);
     try {
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
@@ -817,19 +850,36 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         if (explanation.async && (explanation.jobId || explanation.taskId)) {
           explanation = await pollWorkerJob(explanation.jobId || explanation.taskId);
         }
+        if (!isLatestRequest()) return;
         setInconsistencyExplanation(explanation);
       } else {
         console.error('Failed to fetch inconsistency explanation');
+        let serverMessage: string | undefined;
+        try {
+          const errorBody = await response.json();
+          serverMessage = errorBody?.error || errorBody?.message;
+        } catch (ignored) {
+        }
+        if (!isLatestRequest()) return;
+        setInconsistencyExplanation({
+          success: false,
+          causes: [],
+          error: serverMessage || `Failed to fetch inconsistency explanation (HTTP ${response.status})`,
+        });
       }
     } catch (error) {
+      if (isJobCancelled(error)) return;
       console.error('Error fetching inconsistency explanation:', error);
+      if (!isLatestRequest()) return;
       setInconsistencyExplanation({
         success: false,
         causes: [],
         error: error instanceof Error ? error.message : 'Failed to fetch inconsistency explanation',
       });
     } finally {
-      setLocalIsRunning(false);
+      if (isLatestRequest()) {
+        setIsExplainingInconsistency(false);
+      }
     }
   }, [projectId, selectedReasoner, isOntologyInconsistent, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, pollWorkerJob, draftUserId]);
 
@@ -838,7 +888,9 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     modeOverride?: 'regular' | 'laconic',
     limitOverride?: { mode: 'all' | 'limit'; value: number | '' }
   ) => {
+    const requestId = ++entailmentRequestIdRef.current;
     setEntailmentJustifications(null);
+    setEntailmentWarnings(undefined);
     setEntailmentError(null);
     setEntailmentLoading(true);
     try {
@@ -875,15 +927,19 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       if (response.ok) {
         const result = await response.json();
+        if (requestId !== entailmentRequestIdRef.current) return;
         setEntailmentJustifications(result?.justifications ?? []);
+        setEntailmentWarnings(result?.warnings);
       } else {
         const errBody = await response.json().catch(() => null);
+        if (requestId !== entailmentRequestIdRef.current) return;
         setEntailmentError(errBody?.error || 'Failed to load explanation');
       }
     } catch (error) {
+      if (requestId !== entailmentRequestIdRef.current) return;
       setEntailmentError(error instanceof Error ? error.message : 'Failed to load explanation');
     } finally {
-      setEntailmentLoading(false);
+      if (requestId === entailmentRequestIdRef.current) setEntailmentLoading(false);
     }
   }, [projectId, selectedReasoner, resolvedApiBaseUrl, justificationMode, justificationLimitMode, justificationLimitValue, draftUserId]);
 
@@ -897,7 +953,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     fetchEntailmentExplanation(full);
   };
 
-  // Handle class hover
   const handleClassHover = (classIri: string, event: React.MouseEvent) => {
     setHoveredClass(classIri);
     setTooltipPosition({ x: event.clientX, y: event.clientY });
@@ -908,11 +963,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     setTooltipPosition(null);
   };
 
-  // Navigate to entity in hierarchy
   const navigateToEntity = (iri: string, kind?: string) => {
+    entailmentRequestIdRef.current++;
     setShowExplainDialog(false);
     setExplainTarget(null);
     setEntailmentJustifications(null);
+    setEntailmentWarnings(undefined);
 
     setSelectedClassIri(iri);
 
@@ -924,7 +980,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       setActiveTab(targetTab);
     }
 
-    // Expand parent nodes to make it visible
     if (targetTab === 'classes') {
       setExpandedClasses(prev => {
         const newSet = new Set(prev);
@@ -957,12 +1012,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       });
     }
 
-    // Scroll to the element
     setTimeout(() => {
       const element = classRefs.current.get(iri);
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // Highlight briefly
         element.style.backgroundColor = isDark ? '#78350f' : '#fef3c7';
         setTimeout(() => {
           element.style.backgroundColor = '';
@@ -972,15 +1025,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   const navigateToEntityPanel = (iri: string, kind: string, label: string) => {
+    entailmentRequestIdRef.current++;
     setShowExplainDialog(false);
     setExplainTarget(null);
     setEntailmentJustifications(null);
+    setEntailmentWarnings(undefined);
     window.dispatchEvent(new CustomEvent('collaboration:navigate-to-entity', {
       detail: { projectId, entityIRI: iri, entityType: kind, entityLabel: label },
     }));
   };
 
-  // Helper function to render hierarchy
   const renderHierarchy = (nodes: any[], type: 'class' | 'objectProperty' | 'dataProperty'): React.ReactNode => {
     if (!Array.isArray(nodes) || nodes.length === 0) return null;
     
@@ -996,7 +1050,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       });
     };
 
-    // Filter out null/undefined nodes and ensure each node has valid structure
     const validNodes = nodes.filter(node => node && (node.iri || node.id));
 
     return validNodes.map((node: any, idx: number) => (
@@ -1015,7 +1068,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
   const styles = getStyles(isDark);
 
-  // Use inferred hierarchies if available, otherwise fall back to reasoner results
   const classHierarchyToRender = useMemo(() => {
     const source = dashboardInferredHierarchy && dashboardInferredHierarchy.length > 0
       ? dashboardInferredHierarchy
@@ -1031,12 +1083,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     return ensureTree(source);
   }, [dashboardInferredObjectPropertyHierarchy, reasonerResults, objectPropertyHierarchy]);
 
-  // Dashboard's own startReasoner() flow fetches inferred axioms itself (Start button
-  // always prefers dashboardStartReasoner when provided, so this plugin's own
-  // fetchInferredAxioms below never runs in that mode) — prefer that result when present.
   const inferredAxiomsToRender = dashboardInferredAxioms && dashboardInferredAxioms.length > 0
     ? dashboardInferredAxioms
     : inferredAxioms;
+  const effectiveInferredAxiomsTotal = dashboardInferredAxioms && dashboardInferredAxioms.length > 0
+    ? (dashboardInferredAxiomsTotal ?? dashboardInferredAxioms.length)
+    : inferredAxiomsTotal;
+
+  useEffect(() => {
+    setInferredAxiomsShowCount(INFERRED_AXIOMS_PAGE_SIZE);
+  }, [dashboardInferredAxioms]);
 
   const dataPropertyHierarchyToRender = useMemo(() => {
     const source = dashboardInferredDataPropertyHierarchy && dashboardInferredDataPropertyHierarchy.length > 0
@@ -1048,7 +1104,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     return tree;
   }, [dashboardInferredDataPropertyHierarchy, reasonerResults, dataPropertyHierarchy]);
 
-  // Automatically expand root nodes when hierarchy changes
   useEffect(() => {
     if (classHierarchyToRender.length > 0) {
       setExpandedClasses(prev => {
@@ -1103,7 +1158,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   function ensureTree(nodes: any[]): any[] {
     if (!Array.isArray(nodes) || nodes.length === 0) return [];
     
-    // Recursive function to ensure all nodes have children arrays
     const normalizeNode = (node: any): any => {
       if (!node) return null;
       const normalized = { 
@@ -1113,17 +1167,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       return normalized;
     };
     
-    // If any node has children already, it might be a tree, but flat lists with depth 
-    // are common from the backend. If we see depth and it's a flat list, we build the tree.
-    // A simple check: if it's a flat list (no children on first few nodes) but has depth > 0 later.
     const isFlat = nodes.length > 1 && !nodes[0].children?.length && nodes.some(n => (n.depth || 0) > 0);
     
     if (!isFlat && nodes[0].children?.length) {
-      // Already a tree, just normalize to ensure all children arrays exist
       return nodes.map(normalizeNode).filter(Boolean);
     }
 
-    // Sort by depth to ensure parents come before children if they are not already
     const sortedNodes = [...nodes].sort((a, b) => (a.depth || 0) - (b.depth || 0));
 
     const stack: any[] = [];
@@ -1149,8 +1198,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
       stack.push(copy);
     });
 
-    // If the only root is a top property (owl:topObjectProperty or owl:topDataProperty), 
-    // return its children instead to show properties directly at the top level.
     if (roots.length === 1 && Array.isArray(roots[0].children) && roots[0].children.length > 0) {
       const rootIri = roots[0].iri || roots[0].id || '';
       if (rootIri.endsWith('#topObjectProperty') || rootIri.endsWith('#topDataProperty')) {
@@ -1162,15 +1209,19 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     return roots.map(normalizeNode).filter(Boolean);
   }
 
-  const getAllIds = (nodes: any[]): string[] => {
-    let ids: string[] = [];
+  const collectIds = (nodes: any[], out: string[]): void => {
     nodes.forEach(node => {
       const id = node.iri || node.id;
-      if (id) ids.push(id);
+      if (id) out.push(id);
       if (node.children) {
-        ids = [...ids, ...getAllIds(node.children)];
+        collectIds(node.children, out);
       }
     });
+  };
+
+  const getAllIds = (nodes: any[]): string[] => {
+    const ids: string[] = [];
+    collectIds(nodes, ids);
     return ids;
   };
 
@@ -1194,8 +1245,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     }
   };
 
-  // Export functions
-  // Helper to count all nodes in a hierarchy tree recursively
   const countNodesInHierarchy = (nodes: any[]): number => {
     if (!Array.isArray(nodes) || nodes.length === 0) return 0;
     
@@ -1206,12 +1255,10 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     }, 0);
   };
 
-  // Compute counts from actual hierarchy data
-  const actualClassCount = countNodesInHierarchy(classHierarchyToRender);
-  const actualObjectPropertyCount = countNodesInHierarchy(objectPropertyHierarchyToRender);
-  const actualDataPropertyCount = countNodesInHierarchy(dataPropertyHierarchyToRender);
+  const actualClassCount = useMemo(() => countNodesInHierarchy(classHierarchyToRender), [classHierarchyToRender]);
+  const actualObjectPropertyCount = useMemo(() => countNodesInHierarchy(objectPropertyHierarchyToRender), [objectPropertyHierarchyToRender]);
+  const actualDataPropertyCount = useMemo(() => countNodesInHierarchy(dataPropertyHierarchyToRender), [dataPropertyHierarchyToRender]);
 
-  // Compute reasoningTime from stats or reasonerResults if available
   const reasoningTime =
     displayStats?.reasoningTime ||
     reasonerResults?.reasoningTime ||
@@ -1300,13 +1347,19 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   const clearCache = async () => {
+    if (!projectId) {
+      alert('Open an ontology first — there is no reasoner cache to clear yet.');
+      return;
+    }
     try {
       const response = await authFetch(
-        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/clear-cache`,
+        `${resolvedApiBaseUrl}/plugin-service/api/reasoner/clear-cache/${encodeURIComponent(projectId)}`,
         { method: 'POST' }
       );
       if (response.ok) {
         alert('Cache cleared successfully');
+      } else {
+        alert(await readErrorMessage(response, `Failed to clear the reasoner cache (HTTP ${response.status})`));
       }
     } catch (error) {
       console.error('Error clearing cache:', error);
@@ -1314,16 +1367,20 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   };
 
   function stopReasoner(): void {
-    throw new Error('Function not implemented.');
+    cancelActiveJobs();
+    setLocalIsRunning(false);
+    setReasonerStatus('Stopped');
+    if (projectId) {
+      authFetch(`${normalizedApiBaseUrl}/plugin-service/api/reasoner/${encodeURIComponent(projectId)}/stop`, { method: 'POST' })
+        .catch((error) => console.warn('[ReasonerPluginView] Stop request failed:', error));
+    }
   }
 
   return (
     <div className={`flex flex-col h-full ${isDark ? 'bg-gray-900 text-gray-100' : 'bg-white text-gray-900'}`}>
-      {/* Toolbar */}
       <div className={`flex items-center gap-2 px-3 py-2 border-b flex-shrink-0 ${
         isDark ? 'border-gray-700 bg-gray-800' : 'border-gray-300 bg-gray-50'
       }`}>
-        {/* Start Button */}
         <button
           onClick={() => dashboardStartReasoner ? dashboardStartReasoner() : startReasoner('classification')}
           disabled={isLoading || !projectId || isRunning}
@@ -1343,10 +1400,16 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           )}
         </button>
 
-        {/* Stop Button */}
         <button
-          onClick={() => dashboardStopReasoner ? dashboardStopReasoner() : stopReasoner()}
-          disabled={!isRunning || isLoading}
+          onClick={() => {
+            if (dashboardStopReasoner) {
+              cancelActiveJobs();
+              dashboardStopReasoner();
+            } else {
+              stopReasoner();
+            }
+          }}
+          disabled={!isRunning}
           className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
           title="Stop reasoner"
         >
@@ -1356,7 +1419,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
         <div className={`w-px h-6 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
 
-        {/* Reasoner Selector Dropdown */}
         <div className="relative group">
           <button 
             className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-2 min-w-[140px] ${
@@ -1410,7 +1472,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
         <div className={`w-px h-6 mx-1 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
 
-        {/* Synchronize Checkbox */}
         <label className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium cursor-pointer rounded ${
           isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
         }`}>
@@ -1423,7 +1484,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           <span>Synchronize reasoner</span>
         </label>
 
-        {/* Status Indicator */}
         <div className="ml-auto flex items-center gap-2 px-3 py-1.5 text-xs">
           <span className={`w-2 h-2 rounded-full ${isRunning ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
           <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
@@ -1431,7 +1491,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           </span>
         </div>
 
-        {/* Configure Button */}
         <button
           className={`px-3 py-1.5 text-xs font-medium border rounded ${
             isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600' : 'bg-white border-gray-300 hover:bg-gray-50'
@@ -1442,7 +1501,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           <Settings size={14} />
         </button>
 
-        {/* Export Button with Dropdown */}
         <div className="relative group">
           <button
             className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-1.5 ${
@@ -1494,7 +1552,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           )}
         </div>
 
-        {/* Advanced Settings Button */}
         <button
           className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-1.5 ${
             isDark ? 'bg-gray-700 border-gray-600 hover:bg-gray-600' : 'bg-white border-gray-300 hover:bg-gray-50'
@@ -1506,7 +1563,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           Advanced
         </button>
 
-        {/* Cache Control */}
         {cacheResults && (
           <button
             className={`px-3 py-1.5 text-xs font-medium border rounded flex items-center gap-1.5 ${
@@ -1521,10 +1577,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         )}
       </div>
 
-      {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
         {!reasonerResults && !isLoading ? (
-          /* Empty State - Before Starting Reasoner */
           <div className={`flex-1 flex flex-col items-center justify-center gap-4 text-center p-8 ${
             isDark ? 'bg-gray-900' : 'bg-gray-50'
           }`}>
@@ -1549,7 +1603,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             )}
           </div>
         ) : isLoading ? (
-          /* Loading State */
           <div className={`flex-1 flex flex-col items-center justify-center gap-4 ${
             isDark ? 'bg-gray-900' : 'bg-gray-50'
           }`}>
@@ -1560,14 +1613,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             </div>
           </div>
         ) : (
-          /* Results View Layout */
           <>
-            {/* Left Panel - Consistency & Stats. overflow-hidden on the panel itself — the
-                Unsatisfiable/Equivalent Classes section below gets its own dedicated scroll
-                region (flex-1 min-h-0 overflow-y-auto) instead of the whole panel scrolling,
-                so Reasoner Information/Entity Counts above and the Actions footer (Classify/
-                Explain Inconsistency buttons) below always stay fully visible and pinned,
-                never pushed off-screen by however much unsatisfiable/equivalent content there is. */}
             <div className={`w-80 border-r flex flex-col overflow-hidden ${
               isDark ? 'border-gray-700 bg-gray-900' : 'border-gray-300 bg-white'
             }`}>
@@ -1576,7 +1622,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 className="flex flex-col overflow-y-auto shrink-0"
                 style={topPanelHeight != null ? { height: `${topPanelHeight}px` } : undefined}
               >
-              {/* Consistency Status */}
               <div className={`px-4 py-3 border-b ${
                 isOntologyInconsistent 
                   ? (isDark ? 'bg-red-900/20 border-red-900/30' : 'bg-red-50 border-red-100') 
@@ -1593,13 +1638,12 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 </div>
                 {displayStats && (
                   <div className={`text-[11px] mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {(displayStats.satisfiableClasses ?? 'N/A')} satisfiable · {' '}
-                    {(displayStats.unsatisfiableClassesRaw === -1 ? 'N/A' : (displayStats.unsatisfiableClasses ?? 0))} unsatisfiable
+                    {formatCount(displayStats.satisfiableClasses)} satisfiable · {' '}
+                    {displayStats.unsatisfiableClassesRaw === -1 ? '—' : formatCount(displayStats.unsatisfiableClasses)} unsatisfiable
                   </div>
                 )}
               </div>
 
-              {/* Reasoner Info */}
               <div className={`px-4 py-3 border-b ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
                 <div className={`text-xs font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Reasoner Information</div>
                 <div className={`space-y-1 text-[11px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
@@ -1634,7 +1678,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 </div>
               </div>
 
-              {/* Entity Counts */}
               <div className={`px-4 py-3 border-b ${isDark ? 'border-gray-700' : 'border-gray-300'}`}>
                 <div className={`text-xs font-semibold mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Entity Counts</div>
                 <div className="space-y-1.5">
@@ -1660,10 +1703,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               </div>
               </div>
 
-              {/* Drag handle — lets the Entity Counts block above be shrunk so the
-                  Unsatisfiable/Equivalent Classes region below gets more of the panel's
-                  height instead of being stuck with whatever's left over. Height is
-                  persisted to localStorage so it survives reopening the panel. */}
               <div
                 className={`shrink-0 h-3.5 flex items-center justify-center cursor-row-resize group ${
                   isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
@@ -1677,15 +1716,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 }`} />
               </div>
 
-              {/* Scrollable middle region — the only part of the panel allowed to grow/scroll.
-                  min-h-0 is required alongside flex-1: without it, a flex child defaults to
-                  min-height:auto and never actually shrinks to enable its own overflow-y-auto,
-                  which is why Actions (Classify/Explain Inconsistency) kept getting pushed
-                  entirely off-screen instead of the content here scrolling internally. */}
               <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
-              {/* Unsatisfiable Classes. Bounded max-h + its own scroll (not flex-1) — flex-1
-                  made this greedily claim all remaining space in the panel, leaving nothing
-                  for the Equivalent Classes section below it to render into. */}
               {combinedUnsat.length > 0 && (
                 <div className={`px-4 py-3 border-b flex flex-col ${
                   isDark ? 'bg-red-900/10 border-gray-700' : 'bg-red-50 border-gray-300'
@@ -1734,7 +1765,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 </div>
               )}
 
-              {/* Equivalent Classes */}
               {equivalentGroups.length > 0 && (
                 <div className={`px-4 py-3 border-b ${isDark ? 'bg-blue-900/10 border-gray-700' : 'bg-blue-50 border-gray-300'}`}>
                   <div className={`text-xs font-semibold mb-2 flex items-center gap-1.5 ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
@@ -1761,7 +1791,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               )}
               </div>
 
-              {/* Actions */}
               <div className={`px-4 py-3 border-t mt-auto ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
                 <div className="space-y-2">
                   <button
@@ -1786,7 +1815,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               </div>
             </div>
 
-            {/* Right Panel - Inferred Hierarchies */}
             <div className={`flex-1 flex flex-col overflow-hidden ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
               <div className={`px-4 py-0 border-b ${isDark ? 'border-gray-700 bg-gray-800/50' : 'border-gray-300 bg-gray-50'}`}>
                 <div className="flex items-center justify-between">
@@ -1884,59 +1912,86 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         <input
                           type="text"
                           value={inferredAxiomsFilter}
-                          onChange={(e) => setInferredAxiomsFilter(e.target.value)}
+                          onChange={(e) => {
+                            setInferredAxiomsFilter(e.target.value);
+                            setInferredAxiomsShowCount(INFERRED_AXIOMS_PAGE_SIZE);
+                          }}
                           placeholder="Filter axioms..."
                           className={`flex-1 px-3 py-1.5 text-xs rounded border ${
                             isDark ? 'bg-gray-800 border-gray-600 text-gray-200' : 'bg-white border-gray-300 text-gray-800'
                           }`}
                         />
                         <span className={`text-xs whitespace-nowrap ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          {inferredAxiomsTotal > inferredAxiomsToRender.length
-                            ? `Showing ${inferredAxiomsToRender.length} of ${inferredAxiomsTotal}`
+                          {effectiveInferredAxiomsTotal > inferredAxiomsToRender.length
+                            ? `Showing ${inferredAxiomsToRender.length} of ${effectiveInferredAxiomsTotal}`
                             : `${inferredAxiomsToRender.length} axioms`}
                         </span>
                       </div>
-                      <div className="space-y-1">
-                        {inferredAxiomsToRender
-                          .filter((ax) => {
-                            const q = inferredAxiomsFilter.trim().toLowerCase();
-                            if (!q) return true;
-                            return (
-                              (ax.readable || '').toLowerCase().includes(q) ||
-                              (ax.axiom || '').toLowerCase().includes(q) ||
-                              (ax.axiomType || '').toLowerCase().includes(q)
-                            );
-                          })
-                          .map((ax, idx) => (
-                            <div
-                              key={idx}
-                              className={`px-3 py-2 rounded border text-xs font-mono flex items-start justify-between gap-2 ${
-                                isDark ? 'bg-gray-800/50 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'
-                              }`}
-                            >
-                              <span className="min-w-0">
-                                <span className={`inline-block px-1.5 py-0.5 mr-2 rounded text-[10px] font-sans font-medium ${
-                                  isDark ? 'bg-purple-900/40 text-purple-300' : 'bg-purple-100 text-purple-700'
-                                }`}>
-                                  {ax.axiomType}
-                                </span>
-                                {ax.readable || ax.axiom}
-                              </span>
-                              {ax.entailment && (
-                                <button
-                                  onClick={() => openExplainEntailment(ax.entailment!, ax.readable || ax.axiom)}
-                                  className={`shrink-0 p-1 rounded font-sans transition-colors ${
-                                    isDark ? 'text-purple-300 hover:bg-purple-900/40' : 'text-purple-600 hover:bg-purple-100'
+                      {(() => {
+                        const q = inferredAxiomsFilter.trim().toLowerCase();
+                        const filtered = q
+                          ? inferredAxiomsToRender.filter(
+                              (ax) =>
+                                (ax.readable || '').toLowerCase().includes(q) ||
+                                (ax.axiom || '').toLowerCase().includes(q) ||
+                                (ax.axiomType || '').toLowerCase().includes(q),
+                            )
+                          : inferredAxiomsToRender;
+                        const visible = filtered.slice(0, inferredAxiomsShowCount);
+                        const remaining = filtered.length - visible.length;
+                        return (
+                          <>
+                            {q && (
+                              <div className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                                {filtered.length} match{filtered.length === 1 ? '' : 'es'}
+                              </div>
+                            )}
+                            <div className="space-y-1">
+                              {visible.map((ax, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`px-3 py-2 rounded border text-xs font-mono flex items-start justify-between gap-2 ${
+                                    isDark ? 'bg-gray-800/50 border-gray-700 text-gray-200' : 'bg-gray-50 border-gray-200 text-gray-800'
                                   }`}
-                                  title={`Why is '${ax.readable || ax.axiom}' inferred?`}
-                                  aria-label="Explain this inferred axiom"
                                 >
-                                  <HelpCircle size={13} />
-                                </button>
-                              )}
+                                  <span className="min-w-0">
+                                    <span className={`inline-block px-1.5 py-0.5 mr-2 rounded text-[10px] font-sans font-medium ${
+                                      isDark ? 'bg-purple-900/40 text-purple-300' : 'bg-purple-100 text-purple-700'
+                                    }`}>
+                                      {ax.axiomType}
+                                    </span>
+                                    {ax.readable || ax.axiom}
+                                  </span>
+                                  {ax.entailment && (
+                                    <button
+                                      onClick={() => openExplainEntailment(ax.entailment!, ax.readable || ax.axiom)}
+                                      className={`shrink-0 p-1 rounded font-sans transition-colors ${
+                                        isDark ? 'text-purple-300 hover:bg-purple-900/40' : 'text-purple-600 hover:bg-purple-100'
+                                      }`}
+                                      title={`Why is '${ax.readable || ax.axiom}' inferred?`}
+                                      aria-label="Explain this inferred axiom"
+                                    >
+                                      <HelpCircle size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                      </div>
+                            {remaining > 0 && (
+                              <button
+                                onClick={() => setInferredAxiomsShowCount((c) => c + INFERRED_AXIOMS_PAGE_SIZE)}
+                                className={`w-full py-1.5 text-xs rounded border font-sans ${
+                                  isDark
+                                    ? 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
+                                    : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                                }`}
+                              >
+                                Show {Math.min(INFERRED_AXIOMS_PAGE_SIZE, remaining)} more ({remaining} remaining)
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <div className={`flex items-center justify-center h-full text-sm italic ${isDark ? 'text-gray-600' : 'text-gray-500'}`}>
@@ -1950,7 +2005,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         )}
       </div>
 
-      {/* Explanation Dialog */}
       {showExplainDialog && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4">
           <div className={`w-full max-w-2xl rounded-lg shadow-2xl flex flex-col max-h-[80vh] ${
@@ -1962,7 +2016,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 {explainTarget ? `Explanation for '${explainTarget.label}'` : 'Reasoner Explanation'}
               </h3>
               <button
-                onClick={() => { setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
+                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); setEntailmentWarnings(undefined); }}
                 className="text-gray-500 hover:text-gray-700"
               >
                 <XCircle size={24} />
@@ -2058,6 +2112,13 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     </div>
                   </div>
 
+                  {entailmentWarnings && entailmentWarnings.length > 0 && (
+                    <div className={`mb-3 px-3 py-2 rounded text-sm space-y-1 ${
+                      isDark ? 'bg-amber-900/30 border border-amber-700 text-amber-300' : 'bg-amber-50 border border-amber-200 text-amber-800'
+                    }`}>
+                      {entailmentWarnings.map((w, wi) => <div key={wi}>{w}</div>)}
+                    </div>
+                  )}
                   {entailmentLoading && entailmentJustifications === null ? (
                     <div className="text-sm opacity-80 flex items-center gap-2">
                       <RefreshCw size={14} className="animate-spin" />
@@ -2122,14 +2183,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <input
                         type="radio"
                         checked={justificationMode === 'regular'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationMode('regular');
                           fetchInconsistencyExplanation('regular');
                         }}
                       />
                       Show regular justifications
-                      {localIsRunning && justificationMode === 'regular' && (
+                      {isExplainingInconsistency && justificationMode === 'regular' && (
                         <RefreshCw size={12} className="animate-spin opacity-60" />
                       )}
                     </label>
@@ -2137,14 +2198,14 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <input
                         type="radio"
                         checked={justificationMode === 'laconic'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationMode('laconic');
                           fetchInconsistencyExplanation('laconic');
                         }}
                       />
                       Show laconic justifications
-                      {localIsRunning && justificationMode === 'laconic' && (
+                      {isExplainingInconsistency && justificationMode === 'laconic' && (
                         <RefreshCw size={12} className="animate-spin opacity-60" />
                       )}
                     </label>
@@ -2155,7 +2216,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                       <input
                         type="radio"
                         checked={justificationLimitMode === 'all'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationLimitMode('all');
                           fetchInconsistencyExplanation(undefined, { mode: 'all', value: justificationLimitValue });
@@ -2168,7 +2229,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         type="radio"
                         id="justification-limit-radio"
                         checked={justificationLimitMode === 'limit'}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onChange={() => {
                           setJustificationLimitMode('limit');
                           fetchInconsistencyExplanation(undefined, { mode: 'limit', value: justificationLimitValue });
@@ -2182,7 +2243,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         min={1}
                         max={50}
                         value={justificationLimitValue}
-                        disabled={localIsRunning}
+                        disabled={isExplainingInconsistency}
                         onFocus={() => {
                           if (justificationLimitMode !== 'limit') {
                             setJustificationLimitMode('limit');
@@ -2212,7 +2273,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     </div>
                   </div>
 
-                  {isRunning && !inconsistencyExplanation ? (
+                  {isExplainingInconsistency ? (
                     <div className="text-sm opacity-80 flex items-center gap-2">
                       <RefreshCw size={14} className="animate-spin" />
                       Computing explanation...
@@ -2367,6 +2428,8 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                         )}
                       </div>
                     ))
+                  ) : inconsistencyExplanation?.error ? (
+                    <div className={`text-sm ${isDark ? 'text-red-400' : 'text-red-600'}`}>{inconsistencyExplanation.error}</div>
                   ) : (
                     <div className="text-sm opacity-80">
                       No further detail available for this inconsistency.
@@ -2381,7 +2444,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             </div>
             <div className={`px-6 py-4 border-t flex justify-end ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
               <button
-                onClick={() => { setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); }}
+                onClick={() => { entailmentRequestIdRef.current++; setShowExplainDialog(false); setExplainTarget(null); setEntailmentJustifications(null); setEntailmentWarnings(undefined); }}
                 className={`px-4 py-2 text-sm font-medium rounded ${
                   isDark ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
                 }`}
@@ -2393,7 +2456,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         </div>
       )}
 
-      {/* Advanced Settings Dialog */}
       {showAdvancedSettings && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowAdvancedSettings(false)}>
           <div 
@@ -2407,7 +2469,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
             </div>
             
             <div className="px-6 py-4 space-y-4">
-              {/* Timeout Setting */}
               <div>
                 <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                   Reasoning Timeout (seconds): {timeoutSeconds}
@@ -2426,7 +2487,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 </div>
               </div>
 
-              {/* Incremental Reasoning Toggle */}
               <div className="flex items-center justify-between">
                 <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                   Incremental Reasoning
@@ -2448,7 +2508,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 Only recompute changed parts of the ontology
               </p>
 
-              {/* Cache Results Toggle */}
               <div className="flex items-center justify-between">
                 <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                   Cache Results
@@ -2470,7 +2529,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                 Cache reasoning results for faster subsequent queries
               </p>
 
-              {/* Export Format Preference */}
               <div>
                 <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                   Default Export Format
@@ -2499,7 +2557,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               </button>
               <button 
                 onClick={() => {
-                  // Save settings to localStorage
                   localStorage.setItem('reasonerSettings', JSON.stringify({
                     timeoutSeconds,
                     incrementalReasoning,
@@ -2531,7 +2588,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 };
 
 const getStyles = (isDark: boolean): { [key: string]: React.CSSProperties } => ({
-  // Keep some legacy styles for internal components if needed, but most are now Tailwind-like classes
   container: {
     width: '100%',
     height: '100%',

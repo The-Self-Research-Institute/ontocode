@@ -113,7 +113,6 @@ export function useDashboardInit(state: DashboardState) {
     showCollaborationPanel, setShowCollaborationPanel,
     isMergeWizardOpen, setMergeWizardOpen,
     isHistoryPanelOpen, setIsHistoryPanelOpen,
-    isReportIssueModalOpen, setIsReportIssueModalOpen,
     isUserGuideOpen, setIsUserGuideOpen,
     isReasonerSettingsOpen, setIsReasonerSettingsOpen,
     selectedReasoner: _selectedReasonerFromState,

@@ -25,6 +25,39 @@ final class RollbackRecorder {
         this.messaging = messaging;
     }
 
+    RollbackAudit findUndo(String projectId, String auditId) {
+        if (auditId == null) {
+            return null;
+        }
+        return audits.findById(auditId)
+                .filter(a -> projectId.equals(a.getProjectId()))
+                .filter(a -> a.getDirection() == null || ChangeRollbackService.UNDO.equals(a.getDirection()))
+                .orElse(null);
+    }
+
+    static List<String> undoChangeIds(RollbackAudit audit) {
+        if (audit.getChangeIds() != null && !audit.getChangeIds().isEmpty()) {
+            return audit.getChangeIds();
+        }
+        return audit.getHistoryChangeId() == null ? List.of() : List.of(audit.getHistoryChangeId());
+    }
+
+    String pendingUndoAudit(List<HistoryChange> entries, String changeSetId) {
+        List<RollbackAudit> undos = audits.findByChangeSetIdAndDirectionOrderByRevertedAtDesc(changeSetId, ChangeRollbackService.UNDO);
+        if (undos.isEmpty()) {
+            return null;
+        }
+        for (RollbackAudit undo : undos) {
+            boolean pending = entries.stream().anyMatch(entry ->
+                    (entry.isReverted() && undo.getId().equals(entry.getRevertedAuditId()))
+                            || !RollbackMutationPlanner.revertedBy(entry, undo.getId()).isEmpty());
+            if (pending) {
+                return undo.getId();
+            }
+        }
+        return undos.get(0).getId();
+    }
+
     RollbackAudit saveAudit(Request req, List<HistoryChange> entries, int skippedCount) {
         RollbackAudit audit = new RollbackAudit();
         audit.setProjectId(req.projectId());
@@ -49,7 +82,9 @@ final class RollbackRecorder {
         String reverts = req.changeSetId() != null ? req.changeSetId() : first.getChangeSetId();
         String label = entries.size() == 1 ? first.getEntityLabel() : null;
         String description = RollbackDescriptions.describe(req.direction(), req.level(), applied, entries);
-        history.recordEdit(req.projectId(), req.actor().userId(), req.actor().username(), opType,
+        boolean draftOwned = first.isDraft() && first.getUserId() != null && !first.getUserId().isBlank();
+        String userId = draftOwned ? first.getUserId() : req.actor().userId();
+        history.recordEdit(req.projectId(), userId, req.actor().username(), opType,
                 entries.size() == 1 ? first.getEntityIRI() : null, label, null, null, description,
                 null, null, first.isDraft(), ChangeOrigin.rollback(reverts, auditId));
         return description;

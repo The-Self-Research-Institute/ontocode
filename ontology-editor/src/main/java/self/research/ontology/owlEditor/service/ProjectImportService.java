@@ -274,6 +274,14 @@ public class ProjectImportService {
     }
 
     public void submitImport(String projectId, Path owlFile, String ownerEmail, ImportOptions options) {
+        trySubmitImport(projectId, owlFile, ownerEmail, options);
+    }
+
+    public boolean trySubmitImport(String projectId, Path owlFile) {
+        return trySubmitImport(projectId, owlFile, null, ImportOptions.defaults());
+    }
+
+    private boolean trySubmitImport(String projectId, Path owlFile, String ownerEmail, ImportOptions options) {
         String filename = owlFile.getFileName().toString();
 
         importLog.info("[SUBMIT] project={} file={} size={}", projectId, filename, owlFile.toFile().length());
@@ -281,7 +289,7 @@ public class ProjectImportService {
 
         if (!reserveImport(projectId)) {
             log.info("[Import] Import already active or queued for project {}, ignoring duplicate submit", projectId);
-            return;
+            return false;
         }
 
         boolean submitted = false;
@@ -320,7 +328,7 @@ public class ProjectImportService {
             queueManager.enqueue(projectId, filename, ownerEmail, owlFile, options);
             processNextInQueue();
             submitted = true;
-            return;
+            return true;
         }
 
         // Add to queue
@@ -335,6 +343,7 @@ public class ProjectImportService {
                 releaseImport(projectId);
             }
         }
+        return true;
     }
 
     public boolean isImportActiveOrQueued(String projectId) {
@@ -1066,6 +1075,11 @@ public class ProjectImportService {
     /**
      * Send WebSocket notification about import status
      */
+    public void notifyMetadataReady(String projectId) {
+        sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_PROGRESS,
+                "METADATA_READY", "Metadata updated", null, Map.of());
+    }
+
     private void sendImportNotification(String projectId, ImportStatusMessage.ImportStatusType type,
                                        String status, String message, String filename, Object metadata) {
         try {
@@ -1286,8 +1300,6 @@ public class ProjectImportService {
      * are preserved.  Import failures are logged as warnings and do not abort the import.
      */
     private Map<String, Object> resolveOwlImports(String projectId, String filename, Path baseDirectory) {
-        final int MAX_IMPORT_DEPTH = 3;
-        final int MAX_IMPORTS_TOTAL = 20;
         Set<String> loaded = new LinkedHashSet<>();
         Set<String> attempted = new LinkedHashSet<>();
         Set<String> declaredOnly = new LinkedHashSet<>();
@@ -1312,11 +1324,11 @@ public class ProjectImportService {
 
         log.info("[Import {}] Resolving {} owl:imports: {}", projectId, toProcess.size(), toProcess);
 
-        for (int depth = 0; depth < MAX_IMPORT_DEPTH && !toProcess.isEmpty(); depth++) {
+        for (int depth = 0; depth < Limit.IMPORT_MAX_DEPTH.value() && !toProcess.isEmpty(); depth++) {
             Set<String> nextRound = new LinkedHashSet<>();
             for (String importUri : toProcess) {
-                if (attempted.size() >= MAX_IMPORTS_TOTAL) {
-                    log.warn("[Import {}] Reached max import limit ({}), stopping", projectId, MAX_IMPORTS_TOTAL);
+                if (attempted.size() >= Limit.IMPORT_MAX_TOTAL.value()) {
+                    log.warn("[Import {}] Reached max import limit ({}), stopping", projectId, Limit.IMPORT_MAX_TOTAL.value());
                     break;
                 }
                 if (attempted.contains(importUri)) {
@@ -1376,8 +1388,6 @@ public class ProjectImportService {
                 "failed", failed);
     }
 
-    private static final long MAX_MANUAL_IMPORT_BYTES = 10L * 1024 * 1024; // 10 MB
-    private static final long MAX_MANUAL_IMPORT_TRIPLES = 50_000;
 
     public enum ImportFetchStatus { LOADED, DECLARED_ONLY, TOO_LARGE, FAILED }
 
@@ -1419,9 +1429,9 @@ public class ProjectImportService {
             }
 
             long sizeBytes = Files.size(tempFile);
-            if (sizeBytes > MAX_MANUAL_IMPORT_BYTES) {
+            if (sizeBytes > Limit.MANUAL_IMPORT_MAX_MB.mb()) {
                 log.info("[Import {}] Manual import {} is {} bytes, exceeds {} byte cap — leaving as declaration only",
-                        projectId, importIri, sizeBytes, MAX_MANUAL_IMPORT_BYTES);
+                        projectId, importIri, sizeBytes, Limit.MANUAL_IMPORT_MAX_MB.mb());
                 return ImportFetchResult.tooLarge(String.format(
                         "This import is %.1f MB — too large to merge automatically. It was declared, but use " +
                         "\"Import Ontology\" (file upload) to bring in its content.",
@@ -1434,9 +1444,9 @@ public class ProjectImportService {
                 model = Rio.parse(in, importIri, format);
             }
 
-            if (model.size() > MAX_MANUAL_IMPORT_TRIPLES) {
+            if (model.size() > Limit.MANUAL_IMPORT_MAX_TRIPLES.value()) {
                 log.info("[Import {}] Manual import {} has {} triples, exceeds {} triple cap — leaving as declaration only",
-                        projectId, importIri, model.size(), MAX_MANUAL_IMPORT_TRIPLES);
+                        projectId, importIri, model.size(), Limit.MANUAL_IMPORT_MAX_TRIPLES.value());
                 return ImportFetchResult.tooLarge(String.format(
                         "This import has %,d triples — too large to merge automatically. It was declared, but use " +
                         "\"Import Ontology\" (file upload) to bring in its content.",

@@ -39,10 +39,18 @@ public class CitationService {
     private SparqlDatasetService datasetService;
 
     @Autowired
-    private OntologyHistoryService historyService;
+    private CitationHistory citationHistory;
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private OntologyMutationService mutationService;
+
+    @Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private DraftTrackingService draftTracking;
 
     private final HttpClient doiResolverClient = HttpClient.newBuilder()
         .followRedirects(HttpClient.Redirect.NORMAL)
@@ -59,6 +67,11 @@ public class CitationService {
      * @param lineNumber - line number where citation should be inserted (0 = end of file)
      */
     public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata, int lineNumber) {
+        insertCitation(projectId, citationContent, format, metadata, lineNumber, new RequestActor("system", "Citation Manager"));
+    }
+
+    public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata, int lineNumber,
+                               RequestActor actor) {
         try {
             log.info("[CitationService] Inserting citation into project: {} at line: {}", projectId, lineNumber);
 
@@ -72,31 +85,27 @@ public class CitationService {
 
             log.info("[CitationService] Parsed {} RDF statements from citation", citationModel.size());
 
-            if (lineNumber > 0) {
-                // Insert at specific line by manipulating the source code
-                insertCitationAtLine(projectId, citationContent, format, citationModel, lineNumber);
-            } else {
-                // Insert at end (traditional method)
-                insertCitationAtEnd(projectId, citationModel, format);
-            }
-
-            // Record in history
             String title = metadata != null && metadata.containsKey("title") 
                 ? metadata.get("title").toString() 
                 : "Citation";
-            
-            historyService.recordEdit(
-                projectId,
-                "system",
-                "Citation Manager",
-                "INSERT_CITATION",
-                getCitationIRI(citationModel),
-                title,
-                null,
-                citationContent,
-                "Inserted citation at line " + lineNumber + ": " + title,
-                null
-            );
+            List<String> seeds = citationModel.subjects().stream()
+                .filter(subject -> subject instanceof org.eclipse.rdf4j.model.IRI)
+                .map(org.eclipse.rdf4j.model.Value::stringValue)
+                .toList();
+            citationHistory.around(projectId, actor,
+                new CitationHistory.Entry("INSERT_CITATION", getCitationIRI(citationModel), title, null, citationContent,
+                    "Inserted citation at line " + lineNumber + ": " + title),
+                seeds, List.of(), () -> {
+                    try {
+                        if (lineNumber > 0) {
+                            insertCitationAtLine(projectId, citationContent, format, citationModel, lineNumber);
+                        } else {
+                            insertCitationAtEnd(projectId, citationModel, format);
+                        }
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
+                });
 
             log.info("[CitationService] Successfully inserted citation into project: {}", projectId);
 
@@ -327,6 +336,14 @@ public class CitationService {
      * @param citationIRI - the IRI of the citation to delete
      */
     public void deleteCitation(String projectId, String citationIRI) {
+        deleteCitation(projectId, citationIRI, new RequestActor("system", "Citation Manager"));
+    }
+
+    public void deleteCitation(String projectId, String citationIRI, RequestActor actor) {
+        deleteCitation(projectId, citationIRI, actor, false);
+    }
+
+    public void deleteCitation(String projectId, String citationIRI, RequestActor actor, boolean draft) {
         try {
             log.info("[CitationService] Deleting citation {} from project: {}", citationIRI, projectId);
 
@@ -347,23 +364,24 @@ public class CitationService {
                 }
                 """, citationIRI, citationIRI, citationIRI, citationIRI);
 
-            datasetService.execUpdate(projectId, sparqlUpdate);
+            CitationHistory.Entry entry = new CitationHistory.Entry("DELETE_CITATION", citationIRI, "Citation", citationIRI, null,
+                    "Deleted citation: " + citationIRI);
+            if (draft) {
+                if (mutationService == null) {
+                    throw new IllegalStateException("Draft editing is not available");
+                }
+                String changeSetId = citationHistory.around(projectId, actor, entry, List.of(citationIRI), List.of(citationIRI),
+                        true, actor.userId(), () -> mutationService.applyRawUpdate(projectId, sparqlUpdate, true, actor.userId()));
+                if (changeSetId != null && draftTracking != null) {
+                    draftTracking.recordDescribed(projectId, actor.userId(), actor.username(), DraftRecords.DELETE_CITATION,
+                            DraftRecords.citation(citationIRI), List.of(changeSetId));
+                }
+            } else {
+                citationHistory.around(projectId, actor, entry, List.of(citationIRI), List.of(citationIRI),
+                        () -> datasetService.execUpdate(projectId, sparqlUpdate));
+            }
 
             log.info("[CitationService] Successfully deleted citation from project: {}", projectId);
-
-            // Record in history
-            historyService.recordEdit(
-                projectId,
-                "system",
-                "Citation Manager",
-                "DELETE_CITATION",
-                citationIRI,
-                "Citation",
-                citationIRI,
-                null,
-                "Deleted citation: " + citationIRI,
-                null
-            );
 
         } catch (Exception e) {
             log.error("[CitationService] Error deleting citation from project: {}", projectId, e);

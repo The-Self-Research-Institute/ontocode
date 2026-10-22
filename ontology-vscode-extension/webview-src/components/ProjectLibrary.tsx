@@ -29,7 +29,7 @@ import { FILE_UPLOAD_GUIDANCE, fileImportEtaHint, formatFileSize } from "../util
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop } from "../utils/desktop";
 import { isAppOnline } from "../utils/connectivity";
-import ReportIssueModal from "./ReportIssueModal";
+import { openFeedbackPage } from "../utils/feedback";
 import { PromptDialog } from "./dashboard-parts/DashboardDialogs";
 import InlineRenameInput from "./InlineRenameInput";
 
@@ -153,7 +153,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [uploading, setUploading] = useState(false);
-  const [reportIssueModalType, setReportIssueModalType] = useState<"Bug" | "Task" | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [processingFile, setProcessingFile] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -1034,7 +1033,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       showToast("Connect to the internet to report an issue.", "error");
                       return;
                     }
-                    setReportIssueModalType("Bug");
+                    openFeedbackPage("bug", { projectName, projectId });
                   }}
                   className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
                   title="Report Issue"
@@ -1048,7 +1047,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                       showToast("Connect to the internet to submit a feature request.", "error");
                       return;
                     }
-                    setReportIssueModalType("Task");
+                    openFeedbackPage("feature", { projectName, projectId });
                   }}
                   className="px-2.5 py-1.5 text-xs text-gray-600 border border-gray-300 bg-gray-50 rounded-md hover:bg-gray-100 transition-colors flex items-center gap-1.5 font-medium"
                   title="Request a Feature"
@@ -1630,15 +1629,6 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         </div>
       )}
 
-      {/* Report Issue Modal */}
-      {reportIssueModalType && (
-        <ReportIssueModal
-          projectName={projectName}
-          projectId={projectId}
-          initialIssueType={reportIssueModalType}
-          onClose={() => setReportIssueModalType(null)}
-        />
-      )}
 
       {/* Free Plan Member Open Restriction Dialog */}
       {showOwnerMustImportDialog && (

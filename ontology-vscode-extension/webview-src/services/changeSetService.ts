@@ -1,4 +1,5 @@
-import apiClient, { ApiError } from './apiClient';
+import apiClient from './apiClient';
+import { apiErrorDetails } from '../utils/apiErrorDetails';
 
 export type ChangeSetDirection = 'UNDO' | 'REDO';
 
@@ -44,8 +45,7 @@ function normalize(data: Partial<ChangeSetResult> | undefined, direction: Change
 }
 
 function failure(error: unknown, direction: ChangeSetDirection, dryRun: boolean): ChangeSetResult {
-  const status = error instanceof ApiError ? error.status : undefined;
-  const data = error instanceof ApiError && error.data && typeof error.data === 'object' ? error.data : undefined;
+  const { status, data } = apiErrorDetails(error);
   const result = normalize(data, direction, dryRun);
   return { ...result, success: false, status, error: result.error || 'Request failed' };
 }

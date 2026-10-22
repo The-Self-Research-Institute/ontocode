@@ -5,6 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.service.DraftRecords;
+import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ManchesterExpressionService;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditService;
@@ -20,6 +22,9 @@ public class ExpressionParseController {
 
     private final ManchesterExpressionService manchesterExpressionService;
     private final CollaborativeEditService collaborativeEditService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DraftTrackingService draftTracking;
 
     public ExpressionParseController(ManchesterExpressionService manchesterExpressionService,
                                      CollaborativeEditService collaborativeEditService) {
@@ -74,11 +79,19 @@ public class ExpressionParseController {
             boolean isDataProperty = Boolean.TRUE.equals(request.isDataProperty);
             String relation = request.relationType.trim();
             if ("Domain".equalsIgnoreCase(relation)) {
-                manchesterExpressionService.addPropertyDomainAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                DraftRecords.describe(draftTracking, draft, projectId, userId, username, "addPropertyDomain",
+                        DraftRecords.entityAxiom(request.propertyIri, "Domain", request.expression), () -> {
+                            manchesterExpressionService.addPropertyDomainAxiom(
+                                    projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                            return null;
+                        });
             } else if ("Range".equalsIgnoreCase(relation)) {
-                manchesterExpressionService.addPropertyRangeAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                DraftRecords.describe(draftTracking, draft, projectId, userId, username, "addPropertyRange",
+                        DraftRecords.entityAxiom(request.propertyIri, "Range", request.expression), () -> {
+                            manchesterExpressionService.addPropertyRangeAxiom(
+                                    projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                            return null;
+                        });
             } else {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -121,11 +134,19 @@ public class ExpressionParseController {
             boolean isDataProperty = Boolean.TRUE.equals(request.isDataProperty);
             String relation = request.relationType.trim();
             if ("Domain".equalsIgnoreCase(relation)) {
-                manchesterExpressionService.deletePropertyDomainAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                DraftRecords.describe(draftTracking, draft, projectId, userId, username, "deletePropertyDomain",
+                        DraftRecords.entityAxiom(request.propertyIri, "Domain", request.expression), () -> {
+                            manchesterExpressionService.deletePropertyDomainAxiom(
+                                    projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                            return null;
+                        });
             } else if ("Range".equalsIgnoreCase(relation)) {
-                manchesterExpressionService.deletePropertyRangeAxiom(
-                        projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                DraftRecords.describe(draftTracking, draft, projectId, userId, username, "deletePropertyRange",
+                        DraftRecords.entityAxiom(request.propertyIri, "Range", request.expression), () -> {
+                            manchesterExpressionService.deletePropertyRangeAxiom(
+                                    projectId, request.propertyIri, request.expression, isDataProperty, draft, userId, username);
+                            return null;
+                        });
             } else {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -164,8 +185,13 @@ public class ExpressionParseController {
                     "error", "subClassExpression and superClassExpression are required"));
         }
         try {
-            manchesterExpressionService.addGeneralClassAxiom(
-                    projectId, request.subClassExpression.trim(), request.superClassExpression.trim(), draft, userId, username);
+            DraftRecords.describe(draftTracking, draft, projectId, userId, username, DraftRecords.ADD_GCI,
+                    DraftRecords.gci(null, DraftRecords.gciText(request.subClassExpression, request.superClassExpression)),
+                    () -> {
+                        manchesterExpressionService.addGeneralClassAxiom(projectId, request.subClassExpression.trim(),
+                                request.superClassExpression.trim(), draft, userId, username);
+                        return null;
+                    });
 
             if (!draft) {
                 collaborativeEditService.broadcastMutation(projectId,
@@ -201,8 +227,12 @@ public class ExpressionParseController {
                     "error", "classIri, axiomType, and expression are required"));
         }
         try {
-            manchesterExpressionService.addClassExpressionAxiom(
-                    projectId, request.classIri, request.axiomType, request.expression, draft, userId, username);
+            DraftRecords.describe(draftTracking, draft, projectId, userId, username, "addClassExpression",
+                    DraftRecords.entityAxiom(request.classIri, request.axiomType, request.expression), () -> {
+                        manchesterExpressionService.addClassExpressionAxiom(
+                                projectId, request.classIri, request.axiomType, request.expression, draft, userId, username);
+                        return null;
+                    });
             if (!draft) {
                 collaborativeEditService.broadcastMutation(projectId,
                         new OntologyMutationService.MutationOp(

@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { withDraftAndUser } from '../utils/draftScope';
 
 export interface DatatypeDefinition {
   id: string;
@@ -27,7 +28,7 @@ const unwrap = <T,>(response: any): T => {
 export const datatypeDefinitionService = {
   async listDefinitions(projectId: string, datatypeIri: string): Promise<DatatypeDefinition[]> {
     const response = await apiClient.get<ApiEnvelope<DatatypeDefinition[]>>(
-      `/api/ontology/datatypes/definitions/${projectId}?datatypeIri=${encodeURIComponent(datatypeIri)}`
+      withDraftAndUser(`/api/ontology/datatypes/definitions/${projectId}?datatypeIri=${encodeURIComponent(datatypeIri)}`)
     );
     return unwrap<DatatypeDefinition[]>(response);
   },
@@ -39,7 +40,7 @@ export const datatypeDefinitionService = {
     definitionType: string
   ): Promise<DatatypeDefinition> {
     const response = await apiClient.post<ApiEnvelope<DatatypeDefinition>>(
-      `/api/ontology/datatypes/definitions/${projectId}`,
+      withDraftAndUser(`/api/ontology/datatypes/definitions/${projectId}`),
       { datatypeIri, expression, definitionType }
     );
     return unwrap<DatatypeDefinition>(response);
@@ -47,7 +48,7 @@ export const datatypeDefinitionService = {
 
   async deleteDefinition(projectId: string, definitionId: string): Promise<void> {
     const response = await apiClient.delete<ApiEnvelope<void>>(
-      `/api/ontology/datatypes/definitions/${projectId}/${definitionId}`
+      withDraftAndUser(`/api/ontology/datatypes/definitions/${projectId}/${definitionId}`)
     );
     unwrap<void>(response);
   }

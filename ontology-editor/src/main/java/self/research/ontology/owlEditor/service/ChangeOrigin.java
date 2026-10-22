@@ -5,7 +5,16 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import java.util.UUID;
 
 public record ChangeOrigin(String changeSetId, String source, HistoryChange.AiInfo ai, String revertsChangeSetId,
-                           String rollbackAuditId) {
+                           String rollbackAuditId, ExactCarrier exact) {
+
+    public ChangeOrigin(String changeSetId, String source, HistoryChange.AiInfo ai, String revertsChangeSetId,
+                        String rollbackAuditId) {
+        this(changeSetId, source, ai, revertsChangeSetId, rollbackAuditId, null);
+    }
+
+    public ChangeOrigin withExact(ExactCarrier carrier) {
+        return new ChangeOrigin(changeSetId, source, ai, revertsChangeSetId, rollbackAuditId, carrier);
+    }
 
     public static final String MANUAL = "MANUAL";
     public static final String AI = "AI";
