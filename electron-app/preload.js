@@ -718,7 +718,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
 
     onMenuOpenFile: (callback)       => ipcRenderer.on('menu:open-file', (_evt, data) => callback(data)),
-    onMenuUndoRedo: (callback)       => ipcRenderer.on('menu:undo-redo', (_evt, kind) => callback(kind)),
+    onMenuUndoRedo: (callback)       => {
+        const handler = (_evt, kind) => callback(kind);
+        ipcRenderer.on('menu:undo-redo', handler);
+        return () => ipcRenderer.removeListener('menu:undo-redo', handler);
+    },
     onFocusExistingFile: (callback) => ipcRenderer.on('desktop:focus-file', (_evt, data) => callback(data)),
 
     getActiveFilePath: ()            => ipcRenderer.invoke('file:getActivePath'),
