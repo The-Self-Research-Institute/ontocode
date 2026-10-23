@@ -197,7 +197,7 @@ public class EditorReasonerCacheService {
         ontOpt.ifPresent(ont -> {
             if (reasonerType != null && !reasonerType.isBlank()) {
                 try {
-                    reasonerService.disposeReasoner(ont, ReasonerType.valueOf(reasonerType.toUpperCase()));
+                    reasonerService.disposeReasoner(ont, ReasonerType.parse(reasonerType));
                 } catch (IllegalArgumentException e) {
                     log.warn("[EditorReasonerCache] Unknown reasoner type {} for stop", reasonerType);
                 }

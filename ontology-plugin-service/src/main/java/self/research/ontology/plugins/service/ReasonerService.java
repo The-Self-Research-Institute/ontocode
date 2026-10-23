@@ -4,7 +4,6 @@ import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
-import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
@@ -27,6 +26,7 @@ import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntai
 import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntailmentChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.common.SwrlBuiltIns;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.JustificationRendering;
@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
 
 /**
  * Service for ontology reasoning operations.
- * Supports multiple reasoners: HermiT, Pellet (Openllet), FaCT++, ELK, and Structural.
+ * Supports multiple reasoners: HermiT, FaCT++, ELK, and Structural.
  */
 @Service("pluginReasonerService")
 public class ReasonerService {
@@ -184,10 +184,11 @@ public class ReasonerService {
             type.getDisplayName(),
             ontology.getOntologyID().getOntologyIRI().orElse(null));
 
-        OWLReasonerConfiguration config = new SimpleConfiguration(reasonerOperationTimeoutMs);
+        OWLReasonerConfiguration config = configurationFor(type);
 
         try {
-            return getReasonerFactory(type).createReasoner(ontology, config);
+            OWLOntology target = type == ReasonerType.HERMIT ? SwrlBuiltIns.withoutBuiltInRules(ontology) : ontology;
+            return getReasonerFactory(type).createReasoner(target, config);
         } catch (Throwable e) {
             log.error("Failed to create {} reasoner", type, e);
             throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
@@ -195,16 +196,21 @@ public class ReasonerService {
     }
 
 
+    private OWLReasonerConfiguration configurationFor(ReasonerType type) {
+        if (type != ReasonerType.HERMIT) {
+            return new SimpleConfiguration(reasonerOperationTimeoutMs);
+        }
+        org.semanticweb.HermiT.Configuration hermit = new org.semanticweb.HermiT.Configuration();
+        hermit.ignoreUnsupportedDatatypes = true;
+        hermit.individualTaskTimeout = reasonerOperationTimeoutMs;
+        return hermit;
+    }
+
     private OWLReasonerFactory getReasonerFactory(ReasonerType type) {
         switch (type) {
             case HERMIT:
                 // HermiT - Hypertableau-based reasoner, best for complex ontologies
                 return new ReasonerFactory();
-
-            case PELLET:
-            case OPENLLET:
-                // Use Openllet (OWLAPI 5.x compatible reasoner)
-                return OpenlletReasonerFactory.getInstance();
 
             case FACTPLUSPLUS:
                 // FaCT++ (via JFact - Java port)
@@ -546,7 +552,7 @@ public class ReasonerService {
             // Add ELK profile warning if ELK reasoner is used
             if (type == ReasonerType.ELK) {
                 String elkWarning = "ELK reasoner uses EL profile - complex OWL 2 DL constructs may not be classified correctly. " +
-                                    "For full OWL 2 DL support, use HermiT or Pellet reasoner.";
+                                    "For full OWL 2 DL support, use the HermiT reasoner.";
                 results.put("reasonerCapabilities", Map.of(
                     "reasoner", "ELK",
                     "profile", "EL (subset of OWL 2 DL)",
@@ -1358,7 +1364,7 @@ public class ReasonerService {
             // Reasoner capabilities
             stats.put("supportsIncrementalReasoning", false);
             stats.put("supportsDatatypeReasoning", type != ReasonerType.STRUCTURAL);
-            stats.put("supportsOWL2DL", type == ReasonerType.HERMIT || type == ReasonerType.PELLET);
+            stats.put("supportsOWL2DL", type == ReasonerType.HERMIT);
             
             return stats;
             

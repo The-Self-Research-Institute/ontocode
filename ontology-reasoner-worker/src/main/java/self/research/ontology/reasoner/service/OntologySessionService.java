@@ -10,6 +10,7 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.ReasonerInterruptedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.common.SwrlBuiltIns;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -174,6 +175,13 @@ public class OntologySessionService {
     private ReasoningSession startSession(OWLOntologyManager manager, OWLOntology ontology, ReasonerType type,
                                           String downgradedWarning, boolean fromCache, OntologyCache cache,
                                           long revision, boolean snapshot, long tripleCount) {
+        if (type == ReasonerType.HERMIT) {
+            long omittedRules = SwrlBuiltIns.countBuiltInRules(ontology);
+            if (omittedRules > 0) {
+                String note = SwrlBuiltIns.omissionNote(omittedRules);
+                downgradedWarning = downgradedWarning == null ? note : downgradedWarning + " " + note;
+            }
+        }
         if (!snapshot) {
             OWLReasoner reasoner = createRegisteredReasoner(ontology, type);
             return new ReasoningSession(manager, ontology, reasoner, type, downgradedWarning, fromCache, cache, revision,
@@ -190,10 +198,10 @@ public class OntologySessionService {
                 throw e;
             }
             String reason = rootMessage(e);
-            log.warn("[Reasoner] HermiT could not be started ({}), using Openllet for this snapshot", reason);
-            classType = ReasonerType.OPENLLET;
+            log.warn("[Reasoner] HermiT could not be started ({}), using JFact for this snapshot", reason);
+            classType = ReasonerType.FACTPLUSPLUS;
             classReasoner = createRegisteredReasoner(ontology, classType);
-            String fallback = "HermiT could not be started for this ontology (" + reason + "), so Openllet was used instead.";
+            String fallback = "HermiT could not be started for this ontology (" + reason + "), so JFact was used instead.";
             downgradedWarning = downgradedWarning == null ? fallback : downgradedWarning + " " + fallback;
         }
 
@@ -201,13 +209,13 @@ public class OntologySessionService {
         OWLReasoner propertyReasoner = null;
         if (classType == ReasonerType.ELK && tripleCount <= hermitMaxTriples) {
             try {
-                propertyReasoner = createRegisteredReasoner(ontology, ReasonerType.OPENLLET);
-                propertyType = ReasonerType.OPENLLET;
+                propertyReasoner = createRegisteredReasoner(ontology, ReasonerType.HERMIT);
+                propertyType = ReasonerType.HERMIT;
             } catch (ReasonerInterruptedException e) {
                 closeReasoner(classReasoner);
                 throw e;
             } catch (RuntimeException e) {
-                log.warn("[Reasoner] Openllet could not be started for the property hierarchies, using ELK: {}",
+                log.warn("[Reasoner] HermiT could not be started for the property hierarchies, using ELK: {}",
                         e.getMessage());
             }
         }
@@ -259,8 +267,6 @@ public class OntologySessionService {
 
     private boolean isHeavyReasoner(ReasonerType type) {
         return type == ReasonerType.HERMIT
-                || type == ReasonerType.OPENLLET
-                || type == ReasonerType.PELLET
                 || type == ReasonerType.FACTPLUSPLUS;
     }
 

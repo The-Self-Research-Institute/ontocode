@@ -75,9 +75,9 @@ class ReasoningSnapshotServiceTest {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
 
-        snapshots.snapshot("P1", "OPENLLET", null);
+        snapshots.snapshot("P1", "HERMIT", null);
         editor.bumpRevision("P1");
-        Map<String, Object> next = snapshots.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> next = snapshots.snapshot("P1", "HERMIT", null);
 
         assertEquals(2, snapshots.buildCount());
         assertEquals(2L, next.get("ontologyRevision"));
@@ -93,8 +93,8 @@ class ReasoningSnapshotServiceTest {
         OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
 
-        Map<String, Object> first = snapshots.snapshot("P1", "OPENLLET", null);
-        Map<String, Object> second = snapshots.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> first = snapshots.snapshot("P1", "HERMIT", null);
+        Map<String, Object> second = snapshots.snapshot("P1", "HERMIT", null);
 
         assertEquals(2, snapshots.buildCount());
         assertEquals(2, editor.loads.get());
@@ -103,8 +103,8 @@ class ReasoningSnapshotServiceTest {
         assertEquals(true, second.get("consistent"));
         assertEquals(0L, second.get("ontologyRevision"));
         assertEquals(0, snapshots.size());
-        assertTrue(snapshots.cached("P1", "OPENLLET", editor.tripleCount("P1")).isEmpty());
-        assertTrue(snapshots.cachedOrInFlight("P1", "OPENLLET").isEmpty());
+        assertTrue(snapshots.cached("P1", "HERMIT", editor.tripleCount("P1")).isEmpty());
+        assertTrue(snapshots.cachedOrInFlight("P1", "HERMIT").isEmpty());
     }
 
     @Test
@@ -113,10 +113,10 @@ class ReasoningSnapshotServiceTest {
                 .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
 
-        Map<String, Object> before = snapshots.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> before = snapshots.snapshot("P1", "HERMIT", null);
         long triplesBefore = editor.tripleCount("P1");
         editor.project("P1", SnapshotTestSupport.CONSISTENT);
-        Map<String, Object> after = snapshots.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> after = snapshots.snapshot("P1", "HERMIT", null);
 
         assertTrue(editor.tripleCount("P1") != triplesBefore);
         assertEquals(2, snapshots.buildCount());
@@ -125,8 +125,8 @@ class ReasoningSnapshotServiceTest {
         assertEquals(1L, after.get("ontologyRevision"));
         assertTrue(!before.get("totalClasses").equals(after.get("totalClasses")));
         assertEquals(1, snapshots.size());
-        assertTrue(snapshots.cached("P1", "OPENLLET", triplesBefore).isEmpty());
-        assertEquals(true, snapshots.snapshot("P1", "OPENLLET", null).get("cached"));
+        assertTrue(snapshots.cached("P1", "HERMIT", triplesBefore).isEmpty());
+        assertEquals(true, snapshots.snapshot("P1", "HERMIT", null).get("cached"));
     }
 
     @Test
@@ -134,7 +134,7 @@ class ReasoningSnapshotServiceTest {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
 
-        snapshots.snapshot("P1", "OPENLLET", null);
+        snapshots.snapshot("P1", "HERMIT", null);
         Map<String, Object> elk = snapshots.snapshot("P1", "ELK", null);
 
         assertEquals(2, snapshots.buildCount());
@@ -142,7 +142,7 @@ class ReasoningSnapshotServiceTest {
         long triples = editor.tripleCount("P1");
         assertEquals(true, snapshots.cached("P1", "elk", triples).orElseThrow().get("cached"));
         assertEquals(true, snapshots.cached("P1", null, triples).orElseThrow().get("cached"));
-        assertTrue(snapshots.cached("P1", "HERMIT", triples).isEmpty());
+        assertTrue(snapshots.cached("P1", "FACTPLUSPLUS", triples).isEmpty());
         assertTrue(snapshots.cached("P1", "elk", triples + 1).isEmpty());
     }
 
@@ -153,9 +153,9 @@ class ReasoningSnapshotServiceTest {
                 .draft("alice@example.com", SnapshotTestSupport.INCONSISTENT);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
 
-        Map<String, Object> draft = snapshots.snapshot("P1", "OPENLLET", "alice@example.com");
-        Map<String, Object> again = snapshots.snapshot("P1", "OPENLLET", "alice@example.com");
-        Map<String, Object> published = snapshots.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> draft = snapshots.snapshot("P1", "HERMIT", "alice@example.com");
+        Map<String, Object> again = snapshots.snapshot("P1", "HERMIT", "alice@example.com");
+        Map<String, Object> published = snapshots.snapshot("P1", "HERMIT", null);
 
         assertEquals(3, snapshots.buildCount());
         assertEquals(false, draft.get("consistent"));
@@ -168,14 +168,14 @@ class ReasoningSnapshotServiceTest {
     }
 
     @Test
-    void elkOnASmallOntologyTakesThePropertyTreesFromOpenllet() throws Exception {
+    void elkOnASmallOntologyTakesThePropertyTreesFromHermit() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
 
         Map<String, Object> snapshot = snapshots.snapshot("P1", "ELK", null);
 
         assertEquals("ELK", snapshot.get("reasonerType"));
-        assertEquals("Openllet", snapshot.get("propertyReasonerType"));
+        assertEquals("HermiT", snapshot.get("propertyReasonerType"));
         Map<String, Object> objectRoot = root(snapshot, "objectPropertyTree");
         Map<String, Object> hasIngredient = child(objectRoot, PIZZA_NS + "hasIngredient");
         assertNotNull(hasIngredient, "hasIngredient should sit under owl:topObjectProperty");
@@ -197,7 +197,7 @@ class ReasoningSnapshotServiceTest {
     }
 
     @Test
-    void hermitThatCannotBeLoadedFallsBackToOpenllet() throws Exception {
+    void hermitThatCannotBeLoadedFallsBackToJFact() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
         doThrow(new RuntimeException("HermiT reasoner could not be started", new NoClassDefFoundError("org/semanticweb/HermiT/Reasoner")))
@@ -206,28 +206,28 @@ class ReasoningSnapshotServiceTest {
 
         Map<String, Object> snapshot = snapshots.snapshot("P1", "HERMIT", null);
 
-        assertEquals("Openllet", snapshot.get("reasonerType"));
-        assertEquals("Openllet", snapshot.get("propertyReasonerType"));
+        assertEquals("FaCT++", snapshot.get("reasonerType"));
+        assertEquals("FaCT++", snapshot.get("propertyReasonerType"));
         assertEquals("HERMIT", snapshot.get("requestedReasoner"));
         assertTrue(snapshot.get("downgradedWarning").toString().contains("org/semanticweb/HermiT/Reasoner"));
         assertEquals(true, snapshot.get("consistent"));
     }
 
     @Test
-    void hermitRefusingSwrlBuiltInsFallsBackToOpenllet() throws Exception {
+    void hermitLeavesOutSwrlBuiltInRulesInsteadOfFailing() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().project("P1", SnapshotTestSupport.PIZZA);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
 
         Map<String, Object> snapshot = snapshots.snapshot("P1", "HERMIT", null);
 
-        assertEquals("Openllet", snapshot.get("reasonerType"));
+        assertEquals("HermiT", snapshot.get("reasonerType"));
         assertTrue(snapshot.get("downgradedWarning").toString().contains("built-in"));
         assertEquals(true, snapshot.get("consistent"));
         assertEquals(true, snapshots.snapshot("P1", "HERMIT", null).get("cached"));
     }
 
     @Test
-    void stoppedHermitStartIsNotTurnedIntoAnOpenlletRun() throws Exception {
+    void stoppedHermitStartIsNotTurnedIntoAJFactRun() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
         doThrow(new ReasonerInterruptedException("Reasoning was stopped"))
@@ -235,7 +235,7 @@ class ReasoningSnapshotServiceTest {
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
 
         assertThrows(ReasonerInterruptedException.class, () -> snapshots.snapshot("P1", "HERMIT", null));
-        verify(sessions, never()).createReasoner(any(), eq(ReasonerType.OPENLLET));
+        verify(sessions, never()).createReasoner(any(), eq(ReasonerType.FACTPLUSPLUS));
         assertEquals(0, snapshots.size());
     }
 
@@ -272,12 +272,12 @@ class ReasoningSnapshotServiceTest {
         }).when(sessions).openSnapshotSession(any(), any(), any());
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
 
-        Future<Map<String, Object>> first = pool.submit(() -> snapshots.snapshot("P1", "OPENLLET", null));
+        Future<Map<String, Object>> first = pool.submit(() -> snapshots.snapshot("P1", "HERMIT", null));
         assertTrue(started.await(10, TimeUnit.SECONDS));
         AtomicReference<Thread> waiter = new AtomicReference<>();
         Future<Map<String, Object>> second = pool.submit(() -> {
             waiter.set(Thread.currentThread());
-            return snapshots.snapshot("P1", "OPENLLET", null);
+            return snapshots.snapshot("P1", "HERMIT", null);
         });
         assertTrue(ReasoningQueueProcessorTest.waitUntil(() -> waiter.get() != null
                 && waiter.get().getState() == Thread.State.WAITING, 10_000));
@@ -312,12 +312,12 @@ class ReasoningSnapshotServiceTest {
         }).when(sessions).openSnapshotSession(any(), any(), any());
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
 
-        Future<Map<String, Object>> first = pool.submit(() -> snapshots.snapshot("P1", "OPENLLET", null));
+        Future<Map<String, Object>> first = pool.submit(() -> snapshots.snapshot("P1", "HERMIT", null));
         assertTrue(started.await(10, TimeUnit.SECONDS));
         AtomicReference<Thread> waiter = new AtomicReference<>();
         Future<Map<String, Object>> second = pool.submit(() -> {
             waiter.set(Thread.currentThread());
-            return snapshots.snapshot("P1", "OPENLLET", null);
+            return snapshots.snapshot("P1", "HERMIT", null);
         });
         assertTrue(ReasoningQueueProcessorTest.waitUntil(() -> waiter.get() != null
                 && waiter.get().getState() == Thread.State.WAITING, 10_000));
@@ -343,12 +343,12 @@ class ReasoningSnapshotServiceTest {
         }).when(sessions).openSnapshotSession(any(), any(), any());
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
 
-        Future<Map<String, Object>> first = pool.submit(() -> snapshots.snapshot("P1", "OPENLLET", null));
+        Future<Map<String, Object>> first = pool.submit(() -> snapshots.snapshot("P1", "HERMIT", null));
         assertTrue(started.await(10, TimeUnit.SECONDS));
         AtomicReference<Thread> waiter = new AtomicReference<>();
         Future<Map<String, Object>> second = pool.submit(() -> {
             waiter.set(Thread.currentThread());
-            return snapshots.snapshot("P1", "OPENLLET", null);
+            return snapshots.snapshot("P1", "HERMIT", null);
         });
         assertTrue(ReasoningQueueProcessorTest.waitUntil(() -> waiter.get() != null
                 && waiter.get().getState() == Thread.State.WAITING, 10_000));

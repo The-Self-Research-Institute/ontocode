@@ -120,22 +120,22 @@ class ReasoningSnapshotStoreTest {
         ReasoningSnapshotRecordRepository repository = mock(ReasoningSnapshotRecordRepository.class);
         ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 1_000_000, 72);
         ReasoningSnapshotService first = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor), store);
-        Map<String, Object> built = first.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> built = first.snapshot("P1", "HERMIT", null);
         ArgumentCaptor<ReasoningSnapshotRecord> saved = ArgumentCaptor.forClass(ReasoningSnapshotRecord.class);
         verify(repository, timeout(5_000)).save(saved.capture());
-        String id = "P1|1|" + editor.tripleCount("P1") + "|OPENLLET";
+        String id = "P1|1|" + editor.tripleCount("P1") + "|HERMIT";
         assertEquals(id, saved.getValue().getId());
         when(repository.findById(id)).thenReturn(Optional.of(saved.getValue()));
 
         OntologySessionService restartedSessions = SnapshotTestSupport.sessions(editor);
         ReasoningSnapshotService restarted = SnapshotTestSupport.snapshots(restartedSessions, store);
-        Map<String, Object> served = restarted.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> served = restarted.snapshot("P1", "HERMIT", null);
         ReasoningJobExecutor executor = new ReasoningJobExecutor(restartedSessions, restarted);
         Map<String, Object> hierarchy = executor.execute(self.research.ontology.reasoner.model.ReasoningJob.builder()
                 .jobId("job-1")
                 .jobType(self.research.ontology.reasoner.model.ReasoningJob.JobType.REASONER_HIERARCHY)
                 .projectId("P1")
-                .reasonerType("OPENLLET")
+                .reasonerType("HERMIT")
                 .build());
 
         assertEquals(0, restarted.buildCount());
@@ -162,8 +162,8 @@ class ReasoningSnapshotStoreTest {
         ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 1_000_000, 72);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor), store);
 
-        Map<String, Object> built = snapshots.snapshot("P1", "OPENLLET", null);
-        Map<String, Object> again = snapshots.snapshot("P1", "OPENLLET", null);
+        Map<String, Object> built = snapshots.snapshot("P1", "HERMIT", null);
+        Map<String, Object> again = snapshots.snapshot("P1", "HERMIT", null);
 
         assertEquals(true, built.get("consistent"));
         assertEquals(true, again.get("cached"));

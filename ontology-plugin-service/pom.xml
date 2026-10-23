@@ -143,13 +143,6 @@
             </exclusions>
         </dependency>
 
-        <!-- Openllet Reasoner (Pellet - OWLAPI 5.x compatible) -->
-        <dependency>
-            <groupId>com.github.galigator.openllet</groupId>
-            <artifactId>openllet-owlapi</artifactId>
-            <version>2.6.5</version>
-        </dependency>
-
         <!-- FaCT++ Reasoner (via JFact - Java port) -->
         <dependency>
             <groupId>net.sourceforge.owlapi</groupId>

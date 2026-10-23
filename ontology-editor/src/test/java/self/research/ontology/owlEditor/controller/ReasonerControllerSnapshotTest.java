@@ -159,13 +159,13 @@ class ReasonerControllerSnapshotTest {
     void completedSnapshotNestedUnderResultIsAlsoReturnedInline() {
         when(workerClient.submitJob(anyString(), anyString(), isNull(), isNull(), anyString(), isNull()))
                 .thenReturn(Map.of("success", true, "jobId", "job-1", "status", "COMPLETED",
-                        "result", Map.of("success", true, "consistent", false, "reasonerType", "Openllet")));
+                        "result", Map.of("success", true, "consistent", false, "reasonerType", "HermiT")));
 
-        Map<String, Object> body = snapshot("OPENLLET", null, false);
+        Map<String, Object> body = snapshot("HERMIT", null, false);
 
         assertEquals(false, body.get("async"));
         assertEquals(false, body.get("consistent"));
-        assertEquals("Openllet", body.get("reasonerType"));
+        assertEquals("HermiT", body.get("reasonerType"));
     }
 
     @Test
@@ -256,11 +256,11 @@ class ReasonerControllerSnapshotTest {
         List<Map<String, Object>> unsatisfiable = (List<Map<String, Object>>) body.get("unsatisfiableClasses");
         assertEquals(NS + "RobotDog", unsatisfiable.get(0).get("iri"));
         assertTrue(body.containsKey("classChildren"));
-        verify(reasonerService, never()).getClassHierarchyReasoner(any(), eq(ReasonerType.OPENLLET));
+        verify(reasonerService, never()).getClassHierarchyReasoner(any(), eq(ReasonerType.FACTPLUSPLUS));
     }
 
     @Test
-    void hermitThatCannotHandleSwrlBuiltInsFallsBackToOpenllet() throws Exception {
+    void hermitLeavesOutSwrlBuiltInRulesInsteadOfFailing() throws Exception {
         OWLOntology draftOntology = smallOntology();
         OWLOntologyManager manager = draftOntology.getOWLOntologyManager();
         OWLDataFactory df = manager.getOWLDataFactory();
@@ -283,9 +283,9 @@ class ReasonerControllerSnapshotTest {
         Map<String, Object> body = snapshot("HERMIT", "user-1", true);
 
         assertEquals(true, body.get("success"));
-        assertEquals("Openllet", body.get("reasonerType"));
+        assertEquals("HermiT", body.get("reasonerType"));
         assertEquals("HERMIT", body.get("requestedReasoner"));
-        assertTrue(String.valueOf(body.get("downgradedWarning")).startsWith("HermiT could not be started"));
+        assertTrue(String.valueOf(body.get("downgradedWarning")).contains("built-in"));
         assertEquals(true, body.get("consistent"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> unsatisfiable = (List<Map<String, Object>>) body.get("unsatisfiableClasses");

@@ -51,8 +51,8 @@ class EditorReasonerCacheServiceTest {
 
     @Test
     void invalidatingDraftsWithoutAUserKeepsPublishedEntries() {
-        String published = "proj-1-OPENLLET";
-        String first = EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.OPENLLET, "user-1", "1.0");
+        String published = "proj-1-HERMIT";
+        String first = EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.HERMIT, "user-1", "1.0");
         String second = EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.ELK, "user-2", "4.2");
         put(published);
         put(first);

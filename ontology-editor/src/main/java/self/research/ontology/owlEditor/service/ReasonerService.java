@@ -4,7 +4,6 @@ import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
-import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
@@ -12,6 +11,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.common.SwrlBuiltIns;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 
 /**
  * Service for ontology reasoning operations.
- * Supports multiple reasoners: HermiT, Pellet (Openllet), FaCT++, ELK, and Structural.
+ * Supports multiple reasoners: HermiT, FaCT++, ELK, and Structural.
  */
 @Service("owlEditorReasonerService")
 public class ReasonerService {
@@ -226,24 +226,31 @@ public class ReasonerService {
             type.getDisplayName(),
             ontology.getOntologyID().getOntologyIRI().orElse(null));
 
-        OWLReasonerConfiguration config = new SimpleConfiguration(reasonerOperationTimeoutMs);
+        OWLReasonerConfiguration config = configurationFor(type);
 
         try {
-            return getReasonerFactory(type).createReasoner(ontology, config);
+            OWLOntology target = type == ReasonerType.HERMIT ? SwrlBuiltIns.withoutBuiltInRules(ontology) : ontology;
+            return getReasonerFactory(type).createReasoner(target, config);
         } catch (Throwable e) {
             log.error("Failed to create {} reasoner", type, e);
             throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }
     }
 
+    private OWLReasonerConfiguration configurationFor(ReasonerType type) {
+        if (type != ReasonerType.HERMIT) {
+            return new SimpleConfiguration(reasonerOperationTimeoutMs);
+        }
+        org.semanticweb.HermiT.Configuration hermit = new org.semanticweb.HermiT.Configuration();
+        hermit.ignoreUnsupportedDatatypes = true;
+        hermit.individualTaskTimeout = reasonerOperationTimeoutMs;
+        return hermit;
+    }
+
     private OWLReasonerFactory getReasonerFactory(ReasonerType type) {
         switch (type) {
             case HERMIT:
                 return new ReasonerFactory();
-
-            case PELLET:
-            case OPENLLET:
-                return OpenlletReasonerFactory.getInstance();
 
             case FACTPLUSPLUS:
                 return new JFactFactory();
@@ -635,7 +642,7 @@ public class ReasonerService {
             // Incremental reasoning support is not directly available via OWLReasoner API
             stats.put("supportsIncrementalReasoning", false);
             stats.put("supportsDatatypeReasoning", type != ReasonerType.STRUCTURAL);
-            stats.put("supportsOWL2DL", type == ReasonerType.HERMIT || type == ReasonerType.PELLET);
+            stats.put("supportsOWL2DL", type == ReasonerType.HERMIT);
             
             // Inferred axioms estimate — getInferredAxioms() runs a per-class superclass and
             // instance query against the reasoner, which is O(classCount) work. Fine for a

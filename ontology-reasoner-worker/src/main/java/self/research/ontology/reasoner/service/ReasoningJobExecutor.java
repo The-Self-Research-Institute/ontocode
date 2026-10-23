@@ -68,9 +68,9 @@ public class ReasoningJobExecutor {
         this.snapshotService = snapshotService;
         OWLReasonerFactory factory = null;
         try {
-            factory = openllet.owlapi.OpenlletReasonerFactory.getInstance();
+            factory = new org.semanticweb.HermiT.ReasonerFactory();
         } catch (Exception e) {
-            log.warn("Openllet not available for DL Query: {}", e.getMessage());
+            log.warn("HermiT not available for DL Query: {}", e.getMessage());
         }
         this.dlReasonerFactory = factory;
     }
@@ -100,7 +100,7 @@ public class ReasoningJobExecutor {
                 ? Arrays.asList("subclasses", "instances")
                 : job.getQueryTypes();
 
-        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), ReasonerType.OPENLLET, job.getOwnerEmail())) {
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), ReasonerType.HERMIT, job.getOwnerEmail())) {
             OWLOntology ontology = session.ontology();
             OWLReasoner reasoner = session.reasoner();
             OWLClassExpression expr = parseClassExpression(ontology, job.getExpression());

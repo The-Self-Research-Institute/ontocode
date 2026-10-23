@@ -1,9 +1,9 @@
 package self.research.ontology.owlEditor.service;
 
+import java.util.Locale;
+
 public enum ReasonerType {
     HERMIT("HermiT"),
-    PELLET("Pellet"),
-    OPENLLET("Openllet"),
     FACTPLUSPLUS("FaCT++"),
     ELK("ELK"),
     STRUCTURAL("Structural");
@@ -16,5 +16,13 @@ public enum ReasonerType {
 
     public String getDisplayName() {
         return displayName;
+    }
+
+    public static ReasonerType parse(String raw) {
+        String name = raw.trim().toUpperCase(Locale.ROOT);
+        if (name.equals("OPENLLET") || name.equals("PELLET")) {
+            return HERMIT;
+        }
+        return valueOf(name);
     }
 }

@@ -63,10 +63,10 @@ public class DLQueryService {
         this.importService = importService;
         OWLReasonerFactory factory = null;
         try {
-            factory = openllet.owlapi.OpenlletReasonerFactory.getInstance();
-            log.info("DLQueryService initialized with Openllet reasoner");
+            factory = new org.semanticweb.HermiT.ReasonerFactory();
+            log.info("DLQueryService initialized with HermiT reasoner");
         } catch (Exception e) {
-            log.warn("Openllet not available for DL Query: {}", e.getMessage());
+            log.warn("HermiT not available for DL Query: {}", e.getMessage());
         }
         this.reasonerFactory = factory;
     }
@@ -175,7 +175,9 @@ public class DLQueryService {
             throw new IllegalStateException("No DL reasoner available on this server");
         }
         LoadedOntology loaded = loadOntology(projectId, draftUserId);
-        OWLReasoner reasoner = reasonerFactory.createReasoner(loaded.ontology());
+        org.semanticweb.HermiT.Configuration hermitConfig = new org.semanticweb.HermiT.Configuration();
+        hermitConfig.ignoreUnsupportedDatatypes = true;
+        OWLReasoner reasoner = reasonerFactory.createReasoner(loaded.ontology(), hermitConfig);
 
         return new QuerySession(loaded.manager(), loaded.ontology(), reasoner);
     }
