@@ -91,6 +91,7 @@ jobs:
         run: |
           set -eo pipefail
           script=dist:mac
+          targets=dmg
           if [ "$TARGET" = "mas-dev" ]; then
             if [ -z "$MAS_CSC_LINK" ] || [ -z "$MAS_CSC_KEY_PASSWORD" ] || [ -z "$MAS_PROVISIONING_PROFILE" ]; then
               echo "Add the MAS_CSC_LINK, MAS_CSC_KEY_PASSWORD and MAS_PROVISIONING_PROFILE secrets before building the sandbox test app"
@@ -100,6 +101,7 @@ jobs:
             echo "$MAS_PROVISIONING_PROFILE" | base64 --decode > build-assets/embedded.provisionprofile
             export CSC_LINK="$MAS_CSC_LINK" CSC_KEY_PASSWORD="$MAS_CSC_KEY_PASSWORD"
             script=dist:mac:mas-dev
+            targets=""
             args=""
           elif [ -n "$CSC_LINK" ]; then
             echo "Signing with the Developer ID certificate"
@@ -116,7 +118,7 @@ jobs:
             args="-c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.gatekeeperAssess=false"
           fi
           for attempt in 1 2 3; do
-            if npm run $script -- --${{ matrix.arch }} --publish never $args 2>&1 | tee dist-build.log; then
+            if npm run $script -- $targets --${{ matrix.arch }} --publish never $args 2>&1 | tee dist-build.log; then
               break
             fi
             if [ "$attempt" = 3 ] || ! grep -q -E "Failed to staple|network connection was lost" dist-build.log; then
