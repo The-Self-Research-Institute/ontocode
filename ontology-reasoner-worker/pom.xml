@@ -81,6 +81,10 @@
             <artifactId>jfact</artifactId>
             <version>5.0.3</version>
         </dependency>
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+        </dependency>
         <!-- ELK: OWL EL reasoner. io.github.liveontologies:elk-owlapi:0.6.0 supports OWLAPI 5.x.
              The old org.semanticweb.elk:elk-owlapi:0.4.3 was OWLAPI 4-only (NoSuchMethodError on
              OWLAPI 5.5.0). Exclude transitive OWLAPI so our managed owlapi-distribution 5.5.0 wins. -->
