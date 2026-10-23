@@ -32,6 +32,18 @@ describe('urlGuard', () => {
     expect(isGatewayApiPath('/api/x\\..\\y')).toBe(false);
   });
 
+  it('accepts the plugin-service reasoner path the gateway routes', () => {
+    expect(isGatewayApiPath('/plugin-service/api/reasoner/p1/classify')).toBe(true);
+    expect(isGatewayApiPath('/plugin-service/api/reasoner/p1/classify/status/t1?x=1')).toBe(true);
+    expect(isGatewayApiPath('/plugin-service/api/../admin')).toBe(false);
+    expect(isGatewayApiPath('/plugin-service/api/%2e%2e/admin')).toBe(false);
+    expect(isGatewayApiPath('/plugin-service/other')).toBe(false);
+    expect(isGatewayApiPath('/plugin-service/api/x\\y')).toBe(false);
+    expect(resolveGatewayApiUrl('/plugin-service/api/reasoner/p1/stop', GATEWAY)).toBe(
+      'https://gw.example.org/plugin-service/api/reasoner/p1/stop',
+    );
+  });
+
   it('resolves api paths against the gateway only', () => {
     expect(resolveGatewayApiUrl('/api/a?b=1', GATEWAY)).toBe('https://gw.example.org/api/a?b=1');
     expect(resolveGatewayApiUrl('/api/a', 'https://gw.example.org/')).toBe('https://gw.example.org/api/a');

@@ -43,7 +43,10 @@ public record RequestActor(String userId, String username) {
         if (!draft) {
             return recordedId(request, given, false);
         }
-        return request == null ? given : JwtIdentityExtractor.extractUserId(request).orElse(given);
+        if (request == null) {
+            return given;
+        }
+        return JwtIdentityExtractor.extractUserId(request).or(() -> JwtIdentityExtractor.extractEmail(request)).orElse(given);
     }
 
     private static boolean blank(String value) {

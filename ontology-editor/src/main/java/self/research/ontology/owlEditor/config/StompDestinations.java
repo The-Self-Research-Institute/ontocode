@@ -35,6 +35,11 @@ public final class StompDestinations {
                 : Optional.empty();
     }
 
+    public static boolean isPattern(String destination) {
+        return destination != null && (destination.indexOf('*') >= 0 || destination.indexOf('?') >= 0
+                || destination.indexOf('{') >= 0 || destination.indexOf('}') >= 0);
+    }
+
     public static boolean isBrokerDestination(String destination) {
         return destination != null && (destination.startsWith("/topic/") || destination.startsWith("/queue/"));
     }

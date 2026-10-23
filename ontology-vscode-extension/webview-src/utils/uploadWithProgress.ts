@@ -1,3 +1,5 @@
+import { postToSelf } from "./selfMessage";
+
 
 
 export interface UploadProgressInfo {
@@ -30,18 +32,14 @@ export function postUploadProgress(
     (info.percent >= 100
       ? "Upload complete. Processing on server..."
       : `Uploading: ${info.percent}%`);
-  window.dispatchEvent(
-    new MessageEvent("message", {
-      data: {
-        type: "uploadProgress",
-        projectId,
-        percent: info.percent,
-        loaded: info.loaded,
-        total: info.total,
-        message: statusMsg,
-      },
-    }),
-  );
+  postToSelf({
+    type: "uploadProgress",
+    projectId,
+    percent: info.percent,
+    loaded: info.loaded,
+    total: info.total,
+    message: statusMsg,
+  });
 }
 
 export function uploadFormDataWithProgress(

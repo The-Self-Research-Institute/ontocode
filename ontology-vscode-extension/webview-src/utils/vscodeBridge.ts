@@ -31,13 +31,10 @@ import { getGatewayUrl } from '../config/deploymentConfig';
 import { exportOntologyAsBlob } from '../services/exportService';
 import { uploadFormDataWithProgress, uploadBlobInChunks } from './uploadWithProgress';
 import { withDraftAndUser } from './draftScope';
+import { postToSelf } from './selfMessage';
+import { isSafeUrl } from './safeUrl';
 
 let browserZoteroLibrarySessionCounter = 0;
-
-// ── Helper: dispatch a synthetic MessageEvent so listener code sees it ──────
-function postToSelf(data: Record<string, any>) {
-    window.dispatchEvent(new MessageEvent('message', { data, source: window, origin: window.location.origin }));
-}
 
 /** JWT workspaceId — must be duplicated on upload URL query for FREE-plan owner checks (see extension upload URL). */
 function getWorkspaceIdFromToken(): string | undefined {
@@ -273,15 +270,11 @@ function handleBrowserMessage(message: any) {
                         message.format, message.filename,
                         { draft: message.draft, userId: message.userId },
                     );
-                    window.dispatchEvent(new MessageEvent('message', {
-                        data: { type: 'downloadOntologyComplete', requestId: message.requestId },
-                    }));
+                    postToSelf({ type: 'downloadOntologyComplete', requestId: message.requestId });
                 } catch (err) {
                     console.error('[BrowserBridge] downloadOntology failed:', err);
                     const msg = err instanceof Error ? err.message : 'Could not download ontology file';
-                    window.dispatchEvent(new MessageEvent('message', {
-                        data: { type: 'downloadOntologyFailed', requestId: message.requestId, error: msg, cancelled: msg.includes('cancelled') },
-                    }));
+                    postToSelf({ type: 'downloadOntologyFailed', requestId: message.requestId, error: msg, cancelled: msg.includes('cancelled') });
                 }
             })();
             break;
@@ -1437,7 +1430,7 @@ function handleBrowserMessage(message: any) {
         // (vscode.env.openExternal) because sandboxed iframes block direct
         // navigation. A plain browser tab has no such sandbox — just navigate.
         case 'openExternalUrl': {
-            if (message.url) {
+            if (isSafeUrl(message.url)) {
                 window.location.href = message.url;
             }
             break;

@@ -219,7 +219,10 @@ public class ChangeTrackingController {
     }
     
     private static String reviewerId(CallerIdentity caller, Map<String, String> body) {
-        return caller.userIdOr(body == null ? "system" : body.getOrDefault("userId", "system"));
+        if (caller.signedIn()) {
+            return caller.userIdOr(caller.email());
+        }
+        return body == null ? "system" : body.getOrDefault("userId", "system");
     }
 
     private static String reviewerName(CallerIdentity caller, Map<String, String> body) {

@@ -33,7 +33,7 @@ class ProjectAccessFilterTest {
         RestTemplate restTemplate = new RestTemplate();
         restTemplate.setUriTemplateHandler(new org.springframework.web.util.DefaultUriBuilderFactory("http://editor:8083"));
         editor = MockRestServiceServer.createServer(restTemplate);
-        filter = new ProjectAccessFilter(restTemplate, true);
+        filter = new ProjectAccessFilter(restTemplate, true, "svc-token");
         chain = mock(FilterChain.class);
     }
 
@@ -108,6 +108,44 @@ class ProjectAccessFilterTest {
     }
 
     @Test
+    void anEncodedRouteIsCheckedLikeThePlainOne() throws Exception {
+        editor.expect(requestTo("http://editor:8083/api/ontology/proj-9/draft/settings"))
+                .andRespond(withStatus(HttpStatus.FORBIDDEN));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/%73wrl/proj-9/rules");
+        request.addHeader("Authorization", "Bearer abc");
+
+        filter.doFilter(request, response, chain);
+
+        assertEquals(403, response.getStatus());
+        verify(chain, never()).doFilter(any(), any());
+        editor.verify();
+    }
+
+    @Test
+    void anotherServiceWithTheInternalTokenIsPassedOnWithoutAUserToken() throws Exception {
+        MockHttpServletRequest request = rulesRequest("proj-1", null);
+        request.addHeader("X-Ontocode-Internal-Token", "svc-token");
+
+        filter.doFilter(request, new MockHttpServletResponse(), chain);
+
+        verify(chain).doFilter(any(), any());
+        editor.verify();
+    }
+
+    @Test
+    void aWrongInternalTokenIsNotTrusted() throws Exception {
+        MockHttpServletRequest request = rulesRequest("proj-1", null);
+        request.addHeader("X-Ontocode-Internal-Token", "guess");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, chain);
+
+        assertEquals(401, response.getStatus());
+        verify(chain, never()).doFilter(any(), any());
+    }
+
+    @Test
     void routesThatAreNotProjectScopedAreLeftAlone() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/actuator/health");
 
@@ -119,7 +157,7 @@ class ProjectAccessFilterTest {
 
     @Test
     void theCheckCanBeSwitchedOff() throws Exception {
-        ProjectAccessFilter off = new ProjectAccessFilter(new RestTemplate(), false);
+        ProjectAccessFilter off = new ProjectAccessFilter(new RestTemplate(), false, "svc-token");
 
         off.doFilter(rulesRequest("proj-1", null), new MockHttpServletResponse(), chain);
 

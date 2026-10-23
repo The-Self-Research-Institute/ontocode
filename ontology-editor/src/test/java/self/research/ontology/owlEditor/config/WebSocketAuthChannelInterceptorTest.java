@@ -111,6 +111,14 @@ class WebSocketAuthChannelInterceptorTest {
     }
 
     @Test
+    void aSubscriptionPatternThatCouldMatchOtherProjectsIsRefused() {
+        for (String topic : new String[]{"/topic/**", "/topic/*/p1", "/topic/ontology/*", "/topic/ontology/{id}", "/topic/?"}) {
+            assertThrows(MessageDeliveryException.class, () -> interceptor.preSend(message(StompCommand.SUBSCRIBE, topic,
+                    null, session("u-1", "owner@x.org")), channel), topic);
+        }
+    }
+
+    @Test
     void theSharedNotificationsOfAnotherUserCannotBeSubscribedTo() {
         assertThrows(MessageDeliveryException.class, () -> interceptor.preSend(message(StompCommand.SUBSCRIBE,
                 "/topic/shares/victim@x.org", null, session("u-9", "mallory@x.org")), channel));

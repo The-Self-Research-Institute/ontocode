@@ -1,5 +1,5 @@
 const EXTERNAL_PROTOCOLS = ['https:', 'http:', 'mailto:'];
-const API_PREFIX = '/api/';
+const API_PREFIXES = ['/api/', '/plugin-service/api/'];
 
 function parseUrl(raw: unknown, base?: string): URL | null {
     if (typeof raw !== 'string' || raw.length === 0) {
@@ -23,7 +23,7 @@ export function isValidBaseUrl(raw: unknown): boolean {
 }
 
 export function isGatewayApiPath(path: unknown): path is string {
-    if (typeof path !== 'string' || !path.startsWith(API_PREFIX)) {
+    if (typeof path !== 'string' || !API_PREFIXES.some((prefix) => path.startsWith(prefix))) {
         return false;
     }
     if (path.startsWith('//') || path.includes('\\') || /[\u0000-\u001f]/.test(path)) {

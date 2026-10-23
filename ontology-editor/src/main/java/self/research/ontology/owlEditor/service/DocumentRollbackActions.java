@@ -8,7 +8,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.web.client.RestTemplate;
+import self.research.ontology.common.security.InternalToken;
 
 @Slf4j
 @Component
@@ -16,12 +20,15 @@ public class DocumentRollbackActions implements RollbackActionRunner {
 
     private final MongoTemplate mongoTemplate;
     private final String swrlServiceUrl;
+    private final String internalToken;
     private final RestTemplate restTemplate;
 
     public DocumentRollbackActions(MongoTemplate mongoTemplate,
-                                   @Value("${ontocode.swrl.service.url:http://localhost:8084}") String swrlServiceUrl) {
+                                   @Value("${ontocode.swrl.service.url:http://localhost:8084}") String swrlServiceUrl,
+                                   @Value("${ontocode.internal.token:ontocode-internal}") String internalToken) {
         this.mongoTemplate = mongoTemplate;
         this.swrlServiceUrl = swrlServiceUrl;
+        this.internalToken = internalToken;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2_000);
         factory.setReadTimeout(4_000);
@@ -85,7 +92,10 @@ public class DocumentRollbackActions implements RollbackActionRunner {
 
     private void clearSwrlCache(String projectId) {
         try {
-            restTemplate.postForEntity(swrlServiceUrl + "/api/swrl/" + projectId + "/cache/clear", null, String.class);
+            HttpHeaders headers = new HttpHeaders();
+            headers.set(InternalToken.HEADER, internalToken);
+            restTemplate.exchange(swrlServiceUrl + "/api/swrl/" + projectId + "/cache/clear", HttpMethod.POST,
+                    new HttpEntity<>(headers), String.class);
         } catch (RuntimeException e) {
             log.warn("[UNDO] Could not clear the SWRL engine cache for {}: {}", projectId, e.getMessage());
         }

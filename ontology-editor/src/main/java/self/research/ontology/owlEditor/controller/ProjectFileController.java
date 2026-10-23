@@ -15,7 +15,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
@@ -38,21 +40,27 @@ public class ProjectFileController {
 
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
+    private final ProjectAuthorization authorization;
 
     public ProjectFileController(StorageManager storageManager,
-                                 ProjectMetadataService metadataService) {
+                                 ProjectMetadataService metadataService,
+                                 ProjectAuthorization authorization) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
+        this.authorization = authorization;
     }
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> listFiles(
             @RequestParam(value = "search", required = false) String search,
-            @RequestParam(value = "caseSensitive", defaultValue = "false") boolean caseSensitive) {
+            @RequestParam(value = "caseSensitive", defaultValue = "false") boolean caseSensitive,
+            CallerIdentity caller) {
 
         List<FileInfo> files = new ArrayList<>();
         for (String projectId : storageManager.listProjectIds()) {
-            buildFileInfo(projectId).ifPresent(files::add);
+            if (authorization.noAccessTo(caller, projectId).isEmpty()) {
+                buildFileInfo(projectId).ifPresent(files::add);
+            }
         }
 
         if (search != null && !search.isBlank()) {

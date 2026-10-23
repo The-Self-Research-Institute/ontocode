@@ -68,7 +68,7 @@
             <totalSizeCap>2GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>${MDC_PATTERN}%xException</pattern>
+            <pattern>${MDC_PATTERN}</pattern>
         </encoder>
     </appender>
 

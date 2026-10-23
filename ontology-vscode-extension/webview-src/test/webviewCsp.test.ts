@@ -17,9 +17,16 @@ describe('buildWebviewCsp', () => {
     expect(csp).not.toMatch(/connect-src[^;]*\s(https:|wss:|ws:)(\s|;|$)/);
   });
 
-  it('limits scripts to nonce, extension and stripe', () => {
+  it('limits scripts to nonce, extension, configured services and stripe', () => {
     const script = csp.split('; ').find((d) => d.startsWith('script-src'))!;
-    expect(script).toBe("script-src 'nonce-abc' vscode-resource: https://js.stripe.com");
+    expect(script).toBe("script-src 'nonce-abc' vscode-resource: https://js.stripe.com https://gw.example.org http://localhost:8083");
+  });
+
+  it('does not allow sockets or ai providers as script sources', () => {
+    const script = csp.split('; ').find((d) => d.startsWith('script-src'))!;
+    expect(script).not.toContain('wss:');
+    expect(script).not.toContain('ws:');
+    expect(script).not.toContain('api.openai.com');
   });
 
   it('connects only to configured origins and their sockets', () => {

@@ -4,6 +4,7 @@ import { getGatewayUrl, getStoredDeploymentType, type DeploymentType } from '../
 import { isDesktop } from '../utils/desktop';
 import { resolveMutationUserId } from '../utils/mutationActor';
 import { isTrustedMessage } from '../utils/trustedMessage';
+import { postToSelf } from '../utils/selfMessage';
 
 // Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
@@ -64,18 +65,14 @@ function dispatchUploadProgress(projectId: string, progressEvent: { loaded: numb
     percent >= 100
       ? 'Upload complete. Processing on server...'
       : `Uploading: ${percent}%`;
-  window.dispatchEvent(
-    new MessageEvent('message', {
-      data: {
-        type: 'uploadProgress',
-        projectId,
-        percent,
-        loaded: progressEvent.loaded,
-        total,
-        message,
-      },
-    }),
-  );
+  postToSelf({
+    type: 'uploadProgress',
+    projectId,
+    percent,
+    loaded: progressEvent.loaded,
+    total,
+    message,
+  });
 }
 
 // VS Code API detection

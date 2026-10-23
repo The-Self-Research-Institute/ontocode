@@ -83,6 +83,8 @@ services:
     ports:
       - "127.0.0.1:8086:8086"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       BASE_URL: ${BASE_URL:-http://localhost:3000}
@@ -144,6 +146,7 @@ services:
     ports:
       - "80:80"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
       SPRING_PROFILES_ACTIVE: docker
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       AUTH_SERVICE_URL: http://auth:8086
@@ -174,6 +177,7 @@ services:
     ports:
       - "127.0.0.1:8083:8083"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
       ONTOLOGY_SWRL_SERVICE_URL: http://swrl-service:8084
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
@@ -251,6 +255,7 @@ services:
     ports:
       - "127.0.0.1:8084:8084"
     environment:
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
@@ -285,6 +290,7 @@ services:
     ports:
       - "127.0.0.1:8088:8088"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
@@ -323,6 +329,7 @@ services:
     ports:
       - "8087:8087"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}

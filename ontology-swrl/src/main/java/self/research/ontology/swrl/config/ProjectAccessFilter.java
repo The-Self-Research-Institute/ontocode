@@ -17,6 +17,8 @@ import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
+import self.research.ontology.common.security.InternalToken;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -36,35 +38,46 @@ public class ProjectAccessFilter extends OncePerRequestFilter {
 
     private final RestTemplate editor;
     private final boolean enabled;
+    private final String internalToken;
     private final Map<String, Long> allowedUntil = new ConcurrentHashMap<>();
 
     @Autowired
     public ProjectAccessFilter(RestTemplateBuilder builder,
                                @Value("${ontology.editor.service.url}") String editorServiceUrl,
-                               @Value("${swrl.access-check.enabled:true}") boolean enabled) {
+                               @Value("${swrl.access-check.enabled:true}") boolean enabled,
+                               @Value("${ontocode.internal.token:ontocode-internal}") String internalToken) {
         this(builder.rootUri(editorServiceUrl).setConnectTimeout(Duration.ofSeconds(5))
-                .setReadTimeout(Duration.ofSeconds(15)).build(), enabled);
+                .setReadTimeout(Duration.ofSeconds(15)).build(), enabled, internalToken);
     }
 
-    public ProjectAccessFilter(RestTemplate editor, boolean enabled) {
+    public ProjectAccessFilter(RestTemplate editor, boolean enabled, String internalToken) {
         this.editor = editor;
         this.enabled = enabled;
+        this.internalToken = internalToken;
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !enabled || !PATH.match(SWRL_PROJECT_ROUTE, request.getRequestURI());
+        return !enabled || !PATH.match(SWRL_PROJECT_ROUTE, routeOf(request));
+    }
+
+    private static String routeOf(HttpServletRequest request) {
+        return UrlPathHelper.defaultInstance.getPathWithinApplication(request);
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
+        if (InternalToken.matches(internalToken, request.getHeader(InternalToken.HEADER))) {
+            chain.doFilter(request, response);
+            return;
+        }
         String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (authorization == null || authorization.isBlank()) {
             reject(response, HttpStatus.UNAUTHORIZED, "Authentication required");
             return;
         }
-        String projectId = PATH.extractUriTemplateVariables(SWRL_PROJECT_ROUTE, request.getRequestURI()).get("projectId");
+        String projectId = PATH.extractUriTemplateVariables(SWRL_PROJECT_ROUTE, routeOf(request)).get("projectId");
         String key = fingerprint(authorization) + ":" + projectId;
         Long until = allowedUntil.get(key);
         if (until != null && until > System.currentTimeMillis()) {

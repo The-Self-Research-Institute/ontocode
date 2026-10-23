@@ -29,11 +29,11 @@ export function buildConnectSources(serviceUrls: string[]): string[] {
 export function buildWebviewCsp(options: { cspSource: string; nonce: string; serviceUrls: string[] }): string {
     const { cspSource, nonce, serviceUrls } = options;
     const connect = ["'self'", ...buildConnectSources(serviceUrls)];
-    const imageOrigins = serviceUrls.map(originOf).filter((origin): origin is string => origin !== null);
+    const serviceOrigins = serviceUrls.map(originOf).filter((origin): origin is string => origin !== null);
     return [
         "default-src 'none'",
-        `img-src ${[cspSource, 'data:', 'blob:', ...imageOrigins].join(' ')}`,
-        `script-src 'nonce-${nonce}' ${cspSource} ${STRIPE_SCRIPT_ORIGIN}`,
+        `img-src ${[cspSource, 'data:', 'blob:', ...serviceOrigins].join(' ')}`,
+        `script-src 'nonce-${nonce}' ${[cspSource, STRIPE_SCRIPT_ORIGIN, ...serviceOrigins].join(' ')}`,
         `style-src ${cspSource} 'unsafe-inline'`,
         `font-src ${cspSource} data:`,
         `connect-src ${connect.join(' ')}`,

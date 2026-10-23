@@ -80,6 +80,9 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         if (!StompDestinations.isBrokerDestination(destination)) {
             return Optional.empty();
         }
+        if (StompDestinations.isPattern(destination)) {
+            return Optional.of(AccessDenial.forbidden("Subscribing to a pattern is not allowed"));
+        }
         Optional<AccessDenial> unauthenticated = requireJwt ? authorization.unauthenticated(caller) : Optional.empty();
         if (unauthenticated.isPresent()) {
             return unauthenticated;

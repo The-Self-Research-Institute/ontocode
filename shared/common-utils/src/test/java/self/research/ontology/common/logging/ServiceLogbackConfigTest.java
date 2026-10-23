@@ -35,7 +35,8 @@ class ServiceLogbackConfigTest {
             assertTrue(xml.contains("EmailMaskingMessageConverter") && xml.contains("EmailMaskingThrowableConverter"), service);
             assertTrue(xml.contains("%maskedMsg") && xml.contains("%maskedEx"), service);
             assertFalse(xml.replace("%maskedMsg", "").contains("%msg"), service + " still prints an unmasked message");
-            assertFalse(xml.contains("%ex") || xml.contains("%wEx") || xml.contains("%throwable"),
+            assertFalse(xml.contains("%ex") || xml.contains("%wEx") || xml.contains("%xEx") || xml.contains("%rEx")
+                    || xml.contains("%throwable") || xml.contains("%xThrowable"),
                     service + " prints an unmasked stack trace");
         }
     }
