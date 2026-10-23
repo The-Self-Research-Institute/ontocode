@@ -3,6 +3,7 @@ import { getBaseUrl } from "../../../services/apiClient";
 import { notificationService } from "../../../services/notificationService";
 import { isDraftScopeActive, withDraftAndUser } from "../../../utils/draftScope";
 import { resolveMutationActor } from "../../../utils/mutationActor";
+import { isTrustedMessage } from '../../../utils/trustedMessage';
 
 const EXTENSION_BY_FORMAT: Record<string, string> = {
   rdfxml: "owl",
@@ -38,6 +39,7 @@ export function useCodeViewDownload(projectId: string | null | undefined, format
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
       const pending = pendingRef.current;

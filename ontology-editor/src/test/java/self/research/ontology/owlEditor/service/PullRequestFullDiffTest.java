@@ -116,7 +116,7 @@ class PullRequestFullDiffTest {
 
     private ResponseEntity<Map<String, Object>> approve(Map<String, String> resolutions) {
         return controller.approvePullRequest("p1", "pr1",
-                new DraftController.ReviewPRRequest("reviewer1", "ok", resolutions));
+                new DraftController.ReviewPRRequest("reviewer1", "ok", resolutions), "reviewer1");
     }
 
     @SuppressWarnings("unchecked")
@@ -139,7 +139,7 @@ class PullRequestFullDiffTest {
                 mock(CollaborativeEditService.class), mock(DraftPublishService.class), revisionService, mergeService,
                 draftCopyService);
         controller = new DraftController(tracking, draftCopyService, metadataService, prRepository, ownershipService,
-                mergeService);
+                mergeService, new ProjectAuthorization(mock(ProjectAccessService.class), true));
 
         when(storageManager.projectDir("p1")).thenReturn(projectDir);
         when(datasetService.getGraphUri("p1")).thenReturn(MAIN_GRAPH);

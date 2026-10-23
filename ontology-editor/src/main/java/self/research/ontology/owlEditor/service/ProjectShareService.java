@@ -27,15 +27,22 @@ public class ProjectShareService {
     
     @Value("${auth.service.url:http://localhost:8086}")
     private String authServiceUrl;
+
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
     
     /**
      * Get user email from auth service by username
      */
     private String getEmailFromUsername(String username) {
         try {
-            String url = authServiceUrl + "/api/auth/user/email?username=" + username;
+            java.net.URI url = org.springframework.web.util.UriComponentsBuilder.fromUriString(authServiceUrl)
+                    .path("/api/internal/users/email").queryParam("username", username).build().encode().toUri();
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.set("X-Ontocode-Internal-Token", internalToken);
             @SuppressWarnings("unchecked")
-            Map<String, String> response = restTemplate.getForObject(url, Map.class);
+            Map<String, String> response = restTemplate.exchange(url, org.springframework.http.HttpMethod.GET,
+                    new org.springframework.http.HttpEntity<>(headers), Map.class).getBody();
             if (response != null && response.containsKey("email")) {
                 return response.get("email");
             }

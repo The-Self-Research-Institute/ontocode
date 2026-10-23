@@ -43,8 +43,10 @@ public record RequestActor(String userId, String username) {
         if (!draft) {
             return recordedId(request, given, false);
         }
-        boolean placeholder = blank(given) || "anonymous".equalsIgnoreCase(given);
-        return placeholder && request != null ? JwtIdentityExtractor.extractUserId(request).orElse(given) : given;
+        if (request == null) {
+            return given;
+        }
+        return JwtIdentityExtractor.extractUserId(request).or(() -> JwtIdentityExtractor.extractEmail(request)).orElse(given);
     }
 
     private static boolean blank(String value) {

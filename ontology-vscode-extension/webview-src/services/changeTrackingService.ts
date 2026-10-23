@@ -1,5 +1,6 @@
 import apiClient from './apiClient';
 import { requestChangeSet, type ChangeSetResult } from './changeSetService';
+import { resolveMutationActor } from '../utils/mutationActor';
 
 export type { ChangeSetResult, ChangeSetItem, ChangeSetDirection } from './changeSetService';
 
@@ -47,21 +48,7 @@ export interface OntologyChange {
 }
 
 function resolveActor(): { userId: string; username: string } {
-  try {
-    const token = localStorage.getItem('authToken');
-    if (token) {
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-        const userId = payload.userId || payload.id || payload.email || payload.sub || 'anonymous';
-        const username = payload.sub || payload.email || 'Anonymous';
-        return { userId, username };
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return { userId: 'anonymous', username: 'Anonymous' };
+  return resolveMutationActor();
 }
 
 export const changeTrackingService = {

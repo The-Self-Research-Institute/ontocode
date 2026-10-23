@@ -18,6 +18,7 @@ import {
   findParentNode,
   showNotification,
 } from "../dashboardUtils";
+import { isTrustedMessage } from '../../../utils/trustedMessage';
 
 /**
  * Decode email from a JWT token.
@@ -331,12 +332,6 @@ export function useDashboardInit(state: DashboardState) {
       console.log(`Loading ontology "${currentProjectId}"...`);
       console.log("[Dashboard] ðŸ”„ Fetching data for project:", currentProjectId);
       console.log("[Dashboard]  Admin flow:", isAdminFlow, "Parent project:", parentProjectId);
-      console.log("[Dashboard] ðŸ‘¤ User context:", {
-        email: user?.email,
-        username: user?.username,
-        isAdmin: user?.isAdmin,
-        workspaceId: user?.workspaceId,
-      });
 
       // Request collaboration status when loading a new file
       if (window.vscode) {
@@ -1539,7 +1534,7 @@ export function useDashboardInit(state: DashboardState) {
     if (!projectId) return;
 
     const activeUsersInProject = Array.from(collaboration.state.activeUsers.values()).filter(
-      (u) => u.projectId === projectId && u.userId !== user?.id,
+      (u) => u.projectId === projectId && u.userId !== user?.userId,
     );
 
     if (activeUsersInProject.length > 0) {
@@ -1595,9 +1590,10 @@ export function useDashboardInit(state: DashboardState) {
     if (!projectId) return;
 
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
 
-      if (message.type === "cursorUpdate" && message.userId !== user?.id) {
+      if (message.type === "cursorUpdate" && message.userId !== user?.userId) {
         // Generate consistent color for each user
         const color = getUserColor(message.userId);
 
@@ -1761,19 +1757,12 @@ export function useDashboardInit(state: DashboardState) {
 
   const fetchProjects = useCallback(async (): Promise<{ myFiles: any[]; sharedFiles: any[] } | null> => {
     try {
-      const resolvedEmail = resolveUserEmail();
       const isWorkspaceMode = !!user?.workspaceId;
       const primaryEndpoint = isWorkspaceMode ? "/api/projects" : "/api/ontology/projects";
       const fallbackEndpoint = isWorkspaceMode ? "/api/ontology/projects" : "/api/projects";
-      const params = new URLSearchParams();
-      if (resolvedEmail) {
-        params.set("userEmail", resolvedEmail);
-      }
-      const projectsUrl = params.toString() ? `${primaryEndpoint}?${params.toString()}` : primaryEndpoint;
+      const projectsUrl = primaryEndpoint;
       console.log("[Dashboard] ðŸ“‚ fetchProjects called");
-      console.log("[Dashboard] ðŸ“‚ User:", { email: user?.email, workspaceId: user?.workspaceId, isWorkspaceMode });
       console.log("[Dashboard] ðŸ“‚ Fetching from:", projectsUrl);
-      console.log("[Dashboard] ðŸ“‚ resolvedEmail:", resolvedEmail);
 
       let response;
       try {
@@ -1784,9 +1773,7 @@ export function useDashboardInit(state: DashboardState) {
         const status = error?.status || error?.response?.status;
         const allowFallback = primaryEndpoint === "/api/projects";
         if (status === 404 && fallbackEndpoint !== primaryEndpoint && allowFallback) {
-          const fallbackUrl = resolvedEmail
-            ? `${fallbackEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
-            : fallbackEndpoint;
+          const fallbackUrl = fallbackEndpoint;
           console.warn("[Dashboard] âš ï¸ Projects endpoint missing, falling back to:", fallbackUrl);
           response = await apiClient.get<any>(fallbackUrl);
           console.log("[Dashboard] ðŸ“¥ Fallback endpoint response:", response);
@@ -1954,10 +1941,8 @@ export function useDashboardInit(state: DashboardState) {
 
     try {
       const isWorkspaceMode = !!user?.workspaceId;
-      const resolvedEmail = resolveUserEmail();
-      const ownerEmail = !isWorkspaceMode && resolvedEmail ? `?ownerEmail=${encodeURIComponent(resolvedEmail)}` : "";
       const deleteEndpoint = isWorkspaceMode ? "/api/projects" : "/api/ontology/projects";
-      await apiClient.delete(`${deleteEndpoint}/${encodeURIComponent(targetProjectId)}${ownerEmail}`);
+      await apiClient.delete(`${deleteEndpoint}/${encodeURIComponent(targetProjectId)}`);
       notificationService.success("File Deleted", `"${targetFileName}" deleted successfully.`);
       await fetchProjects();
 
@@ -2024,13 +2009,6 @@ export function useDashboardInit(state: DashboardState) {
 
     // Only run once on mount - use a ref to track if we've already fetched
     console.log("[Dashboard] Initial mount - fetching projects list");
-    const resolvedEmail = resolveUserEmail();
-    console.log("[Dashboard] User details:", {
-      email: resolvedEmail || user.email,
-      username: user.username,
-      isAdmin: user.isAdmin,
-      workspaceId: user.workspaceId,
-    });
     console.log("[Dashboard] Component props:", {
       initialProjectId,
       projectId,
@@ -2039,13 +2017,6 @@ export function useDashboardInit(state: DashboardState) {
 
     // Always fetch user's files for the OpenFileDialog
     // This populates myFiles and sharedFiles based on user email
-    console.log(
-      "[Dashboard] ðŸ” useEffect triggered - user.email:",
-      user?.email,
-      "user.workspaceId:",
-      user?.workspaceId,
-    );
-    console.log("[Dashboard] âœ… Fetching all projects for user email:", resolvedEmail || "(none)");
     fetchProjects();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2257,6 +2228,7 @@ export function useDashboardInit(state: DashboardState) {
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       console.log(message, "message");
       // CRITICAL: Always handle showLoading even before mount - this is time-sensitive
@@ -3082,7 +3054,7 @@ export function useDashboardInit(state: DashboardState) {
 
       // Check if this is an edit made by the current user - skip refresh since we already updated local state
       const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
-      const currentUserId = user?.email || user?.id;
+      const currentUserId = user?.userId;
       if (editUserId && currentUserId && editUserId === currentUserId) {
         console.log("[Dashboard] â­ï¸ Skipping refresh - edit was made by current user");
         return;

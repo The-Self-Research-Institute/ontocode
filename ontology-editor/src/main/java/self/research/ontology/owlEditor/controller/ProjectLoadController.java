@@ -1,5 +1,8 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.config.CallerEmail;
+import self.research.ontology.owlEditor.service.AccessDenial;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -200,6 +203,7 @@ public class ProjectLoadController {
     private final MongoTemplate mongoTemplate;
     private final CodeViewReimportPipeline codeViewReimportPipeline;
     private final ProjectWriteLockRegistry lockRegistry;
+    private final ProjectAuthorization authorization;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -218,7 +222,8 @@ public class ProjectLoadController {
                                  MongoTemplate mongoTemplate,
                                  self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService,
                                  CodeViewReimportPipeline codeViewReimportPipeline,
-                                 ProjectWriteLockRegistry lockRegistry) {
+                                 ProjectWriteLockRegistry lockRegistry,
+                                 ProjectAuthorization authorization) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -237,12 +242,13 @@ public class ProjectLoadController {
         this.exportJobService = exportJobService;
         this.codeViewReimportPipeline = codeViewReimportPipeline;
         this.lockRegistry = lockRegistry;
+        this.authorization = authorization;
     }
 
     @PostMapping("/upload/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
-                                                      @RequestParam(required = false) String ownerEmail,
+                                                      @CallerEmail String ownerEmail,
                                                       @RequestParam(required = false) String action,
                                                       @RequestParam(required = false) String importMode,
                                                       @RequestParam(required = false) String partition,
@@ -499,7 +505,7 @@ public class ProjectLoadController {
             @RequestParam int totalChunks,
             @RequestParam String chunkHash,
             @RequestParam String fileName,
-            @RequestParam(required = false) String ownerEmail,
+            @CallerEmail String ownerEmail,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String importMode,
             @RequestParam(required = false) String partition,
@@ -625,7 +631,7 @@ public class ProjectLoadController {
             @PathVariable String projectId,
             @RequestParam String fileId,
             @RequestParam String parentProjectId,
-            @RequestParam(required = false) String ownerEmail,
+            @CallerEmail String ownerEmail,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String importMode,
             @RequestParam(required = false) String partition,
@@ -685,7 +691,7 @@ public class ProjectLoadController {
                 if (shouldSkip) {
                     log.info("[ProjectLoadController] Desktop shortcut — skipping re-import for {}", projectId);
                     if (!owlapiReady && storageManager.findCurrentOntology(projectId).isEmpty()) {
-                        materializeOntologyFromFileRef(projectId, fileId);
+                        materializeOntologyFromFileRef(projectId, fileId, parentProjectId);
                     }
                     Map<String, Object> body = new java.util.LinkedHashMap<>();
                     body.put("success", true);
@@ -705,11 +711,7 @@ public class ProjectLoadController {
                 }
             }
 
-            Document fileMeta = mongoTemplate.getDb()
-                    .getCollection("file_metadata")
-                    .find(new Document("fileId", fileId)
-                            .append("isDeleted", new Document("$ne", true)))
-                    .first();
+            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
 
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] file_metadata not found for fileId: {}", fileId);
@@ -786,6 +788,16 @@ public class ProjectLoadController {
         } finally {
             importInFlight.remove(projectId);
         }
+    }
+
+    private Optional<Document> findFileMetadata(String fileId, String projectId, String parentProjectId) {
+        Document fileMeta = mongoTemplate.getDb()
+                .getCollection("file_metadata")
+                .find(new Document("fileId", fileId).append("isDeleted", new Document("$ne", true)))
+                .first();
+        return Optional.ofNullable(fileMeta)
+                .filter(meta -> projectId.startsWith(parentProjectId + "--")
+                        && parentProjectId.equals(meta.getString("projectId")));
     }
 
     private String generateCopyFilename(String originalFilename, String ownerEmail) {
@@ -1238,13 +1250,9 @@ public class ProjectLoadController {
     @GetMapping("/check-duplicate")
     public ResponseEntity<Map<String, Object>> checkDuplicate(
             @RequestParam String filename,
-            @RequestParam(required = false) String ownerEmail,
-            HttpServletRequest request) {
+            @CallerEmail String ownerEmail) {
         try {
             String email = ownerEmail;
-            if (email == null || email.isBlank()) {
-                email = JwtClaimUtils.extractEmail(request.getHeader("Authorization"));
-            }
             if (email == null || email.isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -2000,14 +2008,17 @@ public class ProjectLoadController {
     @DeleteMapping("/project/{projectId:.+}")
     public ResponseEntity<?> deleteProject(
             @PathVariable String projectId,
-            @RequestParam(required = false) String ownerEmail) {
+            HttpServletRequest request) {
         try {
-            log.info("[ProjectLoadController] DELETE project - projectId: {}, ownerEmail: {}", projectId, ownerEmail);
             
             var statusOpt = metadataService.readStatus(projectId);
             if (statusOpt.isEmpty()) {
                 log.warn("[ProjectLoadController] Project not found for deletion: {}", projectId);
                 return ResponseEntity.status(404).body(Map.of("success", false, "error", "Project not found"));
+            }
+            Optional<AccessDenial> denial = authorization.notOwnerOf(request, projectId);
+            if (denial.isPresent()) {
+                return denial.get().toResponse();
             }
             
             try {
@@ -2076,13 +2087,9 @@ public class ProjectLoadController {
         }
     }
 
-    private void materializeOntologyFromFileRef(String projectId, String fileId) {
+    private void materializeOntologyFromFileRef(String projectId, String fileId, String parentProjectId) {
         try {
-            Document fileMeta = mongoTemplate.getDb()
-                    .getCollection("file_metadata")
-                    .find(new Document("fileId", fileId)
-                            .append("isDeleted", new Document("$ne", true)))
-                    .first();
+            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] Cannot materialize {} — file_metadata missing for fileId {}", projectId, fileId);
                 return;

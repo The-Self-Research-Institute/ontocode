@@ -83,11 +83,19 @@ describe('useVsCodeUndoRouting', () => {
   it('runs undo and redo when the extension asks for them', async () => {
     await act(async () => root.render(<Probe />));
     await act(async () => {
-      window.dispatchEvent(new MessageEvent('message', { data: { type: 'ontologyUndo' } }));
-      window.dispatchEvent(new MessageEvent('message', { data: { type: 'ontologyRedo' } }));
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'ontologyUndo' }, source: window, origin: window.location.origin }));
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'ontologyRedo' }, source: window, origin: window.location.origin }));
     });
     expect(onUndo).toHaveBeenCalledTimes(1);
     expect(onRedo).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores undo and redo messages from another window', async () => {
+    await act(async () => root.render(<Probe />));
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'ontologyUndo' }, origin: 'https://evil.example' }));
+    });
+    expect(onUndo).not.toHaveBeenCalled();
   });
 
   it('clears ontology focus when it unmounts', async () => {

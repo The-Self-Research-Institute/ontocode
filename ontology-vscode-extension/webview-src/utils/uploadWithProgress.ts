@@ -1,3 +1,5 @@
+import { postToSelf } from "./selfMessage";
+
 
 
 export interface UploadProgressInfo {
@@ -30,18 +32,14 @@ export function postUploadProgress(
     (info.percent >= 100
       ? "Upload complete. Processing on server..."
       : `Uploading: ${info.percent}%`);
-  window.dispatchEvent(
-    new MessageEvent("message", {
-      data: {
-        type: "uploadProgress",
-        projectId,
-        percent: info.percent,
-        loaded: info.loaded,
-        total: info.total,
-        message: statusMsg,
-      },
-    }),
-  );
+  postToSelf({
+    type: "uploadProgress",
+    projectId,
+    percent: info.percent,
+    loaded: info.loaded,
+    total: info.total,
+    message: statusMsg,
+  });
 }
 
 export function uploadFormDataWithProgress(
@@ -121,7 +119,6 @@ export async function uploadBlobInChunks(
   baseUrl: string,
   opts: {
     headers?: Record<string, string | undefined>;
-    ownerEmail?: string;
     workspaceId?: string;
     importMode?: string;
     partition?: string;
@@ -163,7 +160,6 @@ export async function uploadBlobInChunks(
         form.append("totalChunks", String(totalChunks));
         form.append("chunkHash", chunkHash);
         form.append("fileName", fileName);
-        if (opts.ownerEmail) form.append("ownerEmail", opts.ownerEmail);
         if (opts.action) form.append("action", opts.action);
         if (opts.importMode) form.append("importMode", opts.importMode);
         if (opts.partition) form.append("partition", opts.partition);

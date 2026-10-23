@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -36,20 +38,65 @@ public class ProjectAccessService {
     }
 
     public boolean hasProjectAccess(String projectId, String email) {
-        if (projectId == null || projectId.isBlank() || email == null || email.isBlank()) {
+        return hasProjectAccess(projectId, null, email);
+    }
+
+    public boolean hasProjectAccess(String projectId, String userId, String email) {
+        boolean noUserId = userId == null || userId.isBlank();
+        if (projectId == null || projectId.isBlank() || ((email == null || email.isBlank()) && noUserId)) {
             return false;
         }
         Optional<ProjectDocument> direct = projectRepository.findById(projectId);
-        if (direct.isPresent() && direct.get().isAccessibleBy(email)) {
+        if (direct.isPresent() && direct.get().isAccessibleBy(userId, email)) {
             return true;
         }
         int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
         String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
-        java.util.regex.Pattern sameEmail = java.util.regex.Pattern.compile(
-                "^" + java.util.regex.Pattern.quote(email.trim()) + "$", java.util.regex.Pattern.CASE_INSENSITIVE);
-        Query query = new Query(Criteria.where("projectId").is(parentProjectId).orOperator(
-                Criteria.where("ownerEmail").regex(sameEmail),
-                Criteria.where("members").elemMatch(Criteria.where("email").regex(sameEmail))));
+        List<Criteria> anyOf = new ArrayList<>();
+        if (!noUserId) {
+            anyOf.add(Criteria.where("ownerId").is(userId));
+            anyOf.add(Criteria.where("members").elemMatch(Criteria.where("userId").is(userId)));
+        }
+        if (email != null && !email.isBlank()) {
+            java.util.regex.Pattern sameEmail = java.util.regex.Pattern.compile(
+                    "^" + java.util.regex.Pattern.quote(email.trim()) + "$", java.util.regex.Pattern.CASE_INSENSITIVE);
+            anyOf.add(Criteria.where("ownerEmail").regex(sameEmail));
+            anyOf.add(Criteria.where("members").elemMatch(Criteria.where("email").regex(sameEmail)));
+        }
+        Query query = new Query(Criteria.where("projectId").is(parentProjectId)
+                .orOperator(anyOf.toArray(new Criteria[0])));
         return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+    }
+
+    public boolean isOwner(String projectId, String userId, String email) {
+        boolean noUserId = userId == null || userId.isBlank();
+        boolean noEmail = email == null || email.isBlank();
+        if (projectId == null || projectId.isBlank() || (noUserId && noEmail)) {
+            return false;
+        }
+        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
+        if (direct.isPresent() && ownedBy(direct.get(), userId, email)) {
+            return true;
+        }
+        int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
+        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
+        List<Criteria> anyOf = new ArrayList<>();
+        if (!noUserId) {
+            anyOf.add(Criteria.where("ownerId").is(userId));
+        }
+        if (!noEmail) {
+            anyOf.add(Criteria.where("ownerEmail").regex(java.util.regex.Pattern.compile(
+                    "^" + java.util.regex.Pattern.quote(email.trim()) + "$", java.util.regex.Pattern.CASE_INSENSITIVE)));
+        }
+        Query query = new Query(Criteria.where("projectId").is(parentProjectId)
+                .orOperator(anyOf.toArray(new Criteria[0])));
+        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+    }
+
+    private static boolean ownedBy(ProjectDocument doc, String userId, String email) {
+        if (userId != null && !userId.isBlank() && userId.equals(doc.getOwnerId())) {
+            return true;
+        }
+        return email != null && !email.isBlank() && email.equalsIgnoreCase(doc.getOwnerEmail());
     }
 }

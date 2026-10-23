@@ -136,10 +136,51 @@ class IssueReportControllerTest {
         when(issueReportService.getUserIssueReports("a@b.com"))
                 .thenReturn(List.of(IssueReport.builder().id("issue-1").build()));
 
-        ResponseEntity<List<IssueReport>> response = controller.getUserIssueReports("a@b.com");
+        ResponseEntity<List<IssueReport>> response = controller.getUserIssueReports("a@b.com", "A@b.com");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals(1, response.getBody().size());
+    }
+
+    @Test
+    void getUserIssueReportsRefusesAnotherUsersReports() {
+        ResponseEntity<List<IssueReport>> response = controller.getUserIssueReports("victim@b.com", "mallory@b.com");
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verify(issueReportService, never()).getUserIssueReports(any());
+    }
+
+    @Test
+    void reportIssueCutsVeryLongTextBeforeStoringIt() {
+        when(issueReportService.submitIssueReport(any(), any())).thenReturn(
+                IssueReportService.IssueReportResult.builder().success(true).message("ok").build());
+
+        controller.reportIssue(new MockHttpServletRequest(), "title", "d".repeat(500_000), "s".repeat(500_000),
+                "person@example.com", null, null, null, "e".repeat(900_000), null, null, null, null, "Bug", null, null);
+
+        org.mockito.ArgumentCaptor<IssueReport> stored = org.mockito.ArgumentCaptor.forClass(IssueReport.class);
+        verify(issueReportService).submitIssueReport(stored.capture(), any());
+        assertEquals(20_000, stored.getValue().getDescription().length());
+        assertEquals(20_000, stored.getValue().getStepsToReproduce().length());
+        assertEquals(200_000, stored.getValue().getErrorLogs().length());
+    }
+
+    @Test
+    void theReporterIsRecordedByUserIdNotByEmailName() {
+        when(issueReportService.submitIssueReport(any(), any())).thenReturn(
+                IssueReportService.IssueReportResult.builder().success(true).message("ok").build());
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                "{\"sub\":\"alice@example.com\",\"email\":\"alice@example.com\",\"userId\":\"u-1\"}".getBytes(StandardCharsets.UTF_8));
+        request.addHeader("Authorization", "Bearer header." + payload + ".signature");
+
+        controller.reportIssue(request, "title", "description", null, null, null, null, null, null, null, null, null,
+                null, "Bug", null, null);
+
+        org.mockito.ArgumentCaptor<IssueReport> stored = org.mockito.ArgumentCaptor.forClass(IssueReport.class);
+        verify(issueReportService).submitIssueReport(stored.capture(), any());
+        assertEquals("u-1", stored.getValue().getReporterUsername());
+        assertEquals("alice@example.com", stored.getValue().getReporterEmail());
     }
 
     @Test

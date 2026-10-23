@@ -28,7 +28,6 @@ export class CollaborationManager implements ICollaborationManager {
     private stopped = false;
     private usedToken: string | null = null;
     private targetProjectId: string | null = null;
-    private shareEmail: string | null = null;
     private isNewShare = createShareDeduper();
     private forbiddenWarned = new Set<string>();
 
@@ -117,9 +116,6 @@ export class CollaborationManager implements ICollaborationManager {
                     this.state.connected = true;
                     this.subscriptions.clear();
                     this.subscribeToUserQueues();
-                    if (this.shareEmail) {
-                        this.subscribeToShareNotifications(this.shareEmail);
-                    }
                     this.onConnectionChange?.(true);
                     const target = this.targetProjectId;
                     if (target) {
@@ -636,13 +632,11 @@ export class CollaborationManager implements ICollaborationManager {
         }
     }
 
-    subscribeToShareNotifications(userEmail: string): void {
-        this.shareEmail = userEmail;
-        if (!this.client || !this.state.connected) {
+    subscribeToShareNotifications(): void {
+        if (!this.client || !this.state.connected || this.subscriptions.has('userShares')) {
             return;
         }
-        this.subscriptions.get('shares')?.unsubscribe();
-        this.subscriptions.set('shares', this.client.subscribe(`/topic/shares/${userEmail}`, message => this.handleShare(message.body)));
+        this.subscriptions.set('userShares', this.client.subscribe('/user/queue/shares', message => this.handleShare(message.body)));
     }
 
     private processPendingEdits(): void {

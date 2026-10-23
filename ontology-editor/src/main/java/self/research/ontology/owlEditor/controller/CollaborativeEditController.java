@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import lombok.RequiredArgsConstructor;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -52,6 +53,8 @@ public class CollaborativeEditController {
         String sessionId = headerAccessor.getSessionId();
         operation.setSessionId(sessionId);
         operation.setProjectId(projectId);
+        operation.setUserId(CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                .userIdOr(operation.getUserId()));
 
         // Enforce FREE plan restriction via session attributes populated by WebSocketAuthChannelInterceptor
         Map<String, Object> attrs = headerAccessor.getSessionAttributes();
@@ -88,6 +91,8 @@ public class CollaborativeEditController {
         String sessionId = headerAccessor.getSessionId();
         message.setSessionId(sessionId);
         message.setProjectId(projectId);
+        message.setUserId(CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                .userIdOr(message.getUserId()));
         
         log.debug("Presence update for project {} from session {}: {}", 
                 projectId, sessionId, message.getType());
@@ -107,6 +112,8 @@ public class CollaborativeEditController {
         String sessionId = headerAccessor.getSessionId();
         message.setSessionId(sessionId);
         message.setProjectId(projectId);
+        message.setUserId(CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                .userIdOr(message.getUserId()));
 
         // Same FREE-plan/ownership gate as handleEdit — locking was previously
         // ungated, so a FREE non-owner could lock nodes on a project they don't own.

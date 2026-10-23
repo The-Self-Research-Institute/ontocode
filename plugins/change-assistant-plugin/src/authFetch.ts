@@ -41,7 +41,7 @@ export function currentActor(): { userId: string; username: string } {
   }
   const user = (window as any).vscodeUser || stored;
   return {
-    userId: user?.email || user?.id || anonymousFallbackId(),
+    userId: user?.id || user?.userId || anonymousFallbackId(),
     username: user?.username || 'Anonymous',
   };
 }

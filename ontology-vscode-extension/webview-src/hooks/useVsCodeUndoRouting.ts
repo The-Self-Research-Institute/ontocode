@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { isRealVSCode } from '../utils/desktop';
+import { isTrustedMessage } from '../utils/trustedMessage';
 
 const TEXT_SELECTOR = 'input, textarea, select, [contenteditable="true"], [contenteditable=""], .monaco-editor, .cm-editor';
 const MODAL_SELECTOR = '[role="dialog"], [aria-modal="true"]';
@@ -36,6 +37,7 @@ export function useVsCodeUndoRouting({ onUndo, onRedo }: Handlers): void {
     };
     const reportSoon = () => window.setTimeout(report, 0);
     const onMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const type = (event.data as { type?: string } | null)?.type;
       if (type === 'ontologyUndo') {
         onUndo();

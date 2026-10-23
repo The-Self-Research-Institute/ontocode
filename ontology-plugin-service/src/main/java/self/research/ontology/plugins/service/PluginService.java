@@ -23,6 +23,7 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
+import self.research.ontology.common.logging.EmailMasker;
 
 @Slf4j
 @Service
@@ -82,8 +83,20 @@ public class PluginService {
         return storageService.downloadPlugin(pluginVersion.getVsixFileId());
     }
 
+    public PluginDTO publishPlugin(PublishPluginRequest request, MultipartFile vsixFile,
+                                   org.springframework.security.core.Authentication authentication) {
+        return publishPlugin(request, vsixFile, PluginPermissions.authorEmail(authentication),
+                PluginPermissions.isAdmin(authentication));
+    }
+
     @Transactional
-    public PluginDTO publishPlugin(PublishPluginRequest request, MultipartFile vsixFile, String authorEmail) {
+    public PluginDTO publishPlugin(PublishPluginRequest request, MultipartFile vsixFile, String authorEmail, boolean admin) {
+        pluginRepository.findByPluginId(request.getPluginId())
+                .filter(existing -> !admin && existing.getAuthorEmail() != null
+                        && !existing.getAuthorEmail().equalsIgnoreCase(authorEmail))
+                .ifPresent(existing -> {
+                    throw new PluginOwnershipException(request.getPluginId());
+                });
         try {
             log.info("Publishing plugin: {} version: {}", request.getPluginId(), request.getVersion());
 
@@ -167,7 +180,7 @@ public class PluginService {
             .pluginId(plugin.getPluginId())
             .name(plugin.getName())
             .description(plugin.getDescription())
-            .author(plugin.getAuthor())
+            .author(EmailMasker.mask(plugin.getAuthor()))
             .latestVersion(plugin.getLatestVersion())
             .category(plugin.getCategory())
             .keywords(plugin.getKeywords())

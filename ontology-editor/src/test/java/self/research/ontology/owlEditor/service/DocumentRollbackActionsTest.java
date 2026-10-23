@@ -9,6 +9,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.mongodb.core.MongoTemplate;
 
+import com.sun.net.httpserver.HttpServer;
+
+import java.net.InetSocketAddress;
+import java.util.concurrent.atomic.AtomicReference;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -34,7 +39,7 @@ class DocumentRollbackActionsTest {
         found = mock(FindIterable.class);
         when(template.getCollection("fuzzy_rules")).thenReturn(collection);
         when(collection.find(any(Bson.class))).thenReturn(found);
-        actions = new DocumentRollbackActions(template, "http://localhost:1");
+        actions = new DocumentRollbackActions(template, "http://localhost:1", "svc-token");
     }
 
     private static RollbackAction restore(String target, String expected) {
@@ -78,11 +83,35 @@ class DocumentRollbackActionsTest {
         when(found.first()).thenReturn(Document.parse(ran));
         MongoTemplate template = mock(MongoTemplate.class);
         when(template.getCollection("swrl_rules")).thenReturn(collection);
-        DocumentRollbackActions swrl = new DocumentRollbackActions(template, "http://localhost:1");
+        DocumentRollbackActions swrl = new DocumentRollbackActions(template, "http://localhost:1", "svc-token");
 
         assertTrue(swrl.holds("p", RollbackAction.restoreDocument("swrlRule", "6acf64ae94e5320b04bb880a", OLD, NEW), false, null));
         when(found.first()).thenReturn(Document.parse(ran));
         assertFalse(actions.holds("p", restore(OLD, NEW), false, null));
+    }
+
+    @Test
+    void restoringASwrlRuleClearsTheSwrlCacheAsTheEditorService() throws Exception {
+        AtomicReference<String> sentToken = new AtomicReference<>();
+        HttpServer swrlService = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        swrlService.createContext("/", exchange -> {
+            sentToken.set(exchange.getRequestHeaders().getFirst("X-Ontocode-Internal-Token"));
+            exchange.sendResponseHeaders(200, -1);
+            exchange.close();
+        });
+        swrlService.start();
+        try {
+            MongoTemplate template = mock(MongoTemplate.class);
+            when(template.getCollection("swrl_rules")).thenReturn(collection);
+            DocumentRollbackActions swrl = new DocumentRollbackActions(template,
+                    "http://127.0.0.1:" + swrlService.getAddress().getPort(), "svc-token");
+
+            swrl.run("p", RollbackAction.restoreDocument("swrlRule", "6acf64ae94e5320b04bb880a", OLD, NEW), false, null);
+
+            org.junit.jupiter.api.Assertions.assertEquals("svc-token", sentToken.get());
+        } finally {
+            swrlService.stop(0);
+        }
     }
 
     @Test

@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.model.*;
@@ -64,9 +65,11 @@ public class DLQueryController {
     @PostMapping("/{projectId}/dl-query")
     public ResponseEntity<Map<String, Object>> executeDLQuery(
             @PathVariable String projectId,
-            @RequestBody DLQueryRequest request
+            @RequestBody DLQueryRequest request,
+            CallerIdentity caller
     ) {
         try {
+            String ownerEmail = desktopMode ? request.getUserEmail() : caller.email();
             if (request.getExpression() == null || request.getExpression().isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -87,7 +90,7 @@ public class DLQueryController {
                         request.getExpression().trim(),
                         request.getQueryTypes(),
                         null,
-                        draftUserId != null ? draftUserId : request.getUserEmail());
+                        draftUserId != null ? draftUserId : ownerEmail);
                 if (Boolean.FALSE.equals(worker.get("success"))) {
                     return ResponseEntity.status(500).body(Map.of(
                             "success", false,
@@ -120,7 +123,7 @@ public class DLQueryController {
                     projectId,
                     request.getExpression().trim(),
                     request.getQueryTypes(),
-                    request.getUserEmail(),
+                    ownerEmail,
                     draftUserId);
             if (dlQueryQueueProcessor != null) {
                 dlQueryQueueProcessor.processNext();
@@ -154,7 +157,8 @@ public class DLQueryController {
     public ResponseEntity<Map<String, Object>> addDLQueryToOntology(
             @PathVariable String projectId,
             @RequestBody DLAddRequest request,
-            @RequestParam(required = false, defaultValue = "true") boolean draft
+            @RequestParam(required = false, defaultValue = "true") boolean draft,
+            CallerIdentity caller
     ) {
         try {
             if (request.getExpression() == null || request.getExpression().isBlank()) {
@@ -196,8 +200,9 @@ public class DLQueryController {
                 axioms.add(df.getOWLEquivalentClassesAxiom(newClass, classExpression));
 
                 String sparql = buildInsertDataFromAxioms(axioms);
-                String userId = resolveDraftUserId(request);
-                String username = request.getUsername() != null ? request.getUsername() : "Anonymous";
+                String userId = desktopMode ? DESKTOP_USER_ID : caller.userIdOr(caller.email());
+                String username = !desktopMode && caller.email() != null ? caller.email()
+                        : request.getUsername() != null ? request.getUsername() : "Anonymous";
                 if (draft) {
                     OntologyMutationService.MutationOp dlOp = new OntologyMutationService.MutationOp(
                             "addDlQueryClass", classIri, request.getClassName().trim(), null, null, null, null,
@@ -230,19 +235,6 @@ public class DLQueryController {
                     "error", e.getMessage() != null ? e.getMessage() : "Failed to add DL query expression"
             ));
         }
-    }
-
-    private String resolveDraftUserId(DLAddRequest request) {
-        if (desktopMode) {
-            return DESKTOP_USER_ID;
-        }
-        if (request.getUserId() != null && !request.getUserId().isBlank()) {
-            return request.getUserId();
-        }
-        if (request.getUserEmail() != null && !request.getUserEmail().isBlank()) {
-            return request.getUserEmail();
-        }
-        return "anonymous";
     }
 
     private String resolveNewClassIri(OWLOntology ontology, String className) {

@@ -522,4 +522,17 @@ class FreeViewOnlyInterceptorTest {
         assertFalse(interceptor.preHandle(request, response, new Object()));
         assertEquals(403, response.getStatus());
     }
+
+    @Test
+    void aViewerIsStillBlockedWhenTheQueryNamesAnotherProject() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(org.mockito.ArgumentMatchers.startsWith("/api/ontology/proj-9")))
+                .thenReturn(Optional.of("proj-9"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-9")).thenReturn(true);
+        MockHttpServletRequest request = postRequest("/api/ontology/proj-9/mutations", "PRO");
+        request.setParameter("projectId", "proj-own");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(request, response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
 }

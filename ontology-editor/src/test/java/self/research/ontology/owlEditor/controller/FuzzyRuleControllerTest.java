@@ -97,6 +97,27 @@ class FuzzyRuleControllerTest {
     }
 
     @Test
+    void aRuleOfAnotherProjectCannotBeUpdatedThroughThisProject() {
+        when(ruleRepository.findById("rule-1")).thenReturn(Optional.of(existing()));
+        FuzzyRuleController.FuzzyRuleRequest request = new FuzzyRuleController.FuzzyRuleRequest(null, "C", null, null);
+
+        ResponseEntity<FuzzyRuleEntity> response = controller.updateRule("proj-2", "rule-1", request, "u1", "User One", null);
+
+        assertEquals(404, response.getStatusCode().value());
+        verify(ruleRepository, never()).save(any());
+    }
+
+    @Test
+    void aRuleOfAnotherProjectCannotBeDeletedThroughThisProject() {
+        when(ruleRepository.findById("rule-1")).thenReturn(Optional.of(existing()));
+
+        ResponseEntity<?> response = controller.deleteRule("proj-2", "rule-1", "u1", "User One", null);
+
+        assertEquals(404, response.getStatusCode().value());
+        verify(ruleRepository, never()).deleteById(anyString());
+    }
+
+    @Test
     void deleteRuleReturnsNotFoundWhenRuleIsAbsent() {
         when(ruleRepository.findById("missing")).thenReturn(Optional.empty());
 

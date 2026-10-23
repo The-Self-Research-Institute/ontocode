@@ -3,6 +3,8 @@ import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import { getGatewayUrl, getStoredDeploymentType, type DeploymentType } from '../config/deploymentConfig';
 import { isDesktop } from '../utils/desktop';
 import { resolveMutationUserId } from '../utils/mutationActor';
+import { isTrustedMessage } from '../utils/trustedMessage';
+import { postToSelf } from '../utils/selfMessage';
 
 // Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
@@ -63,18 +65,14 @@ function dispatchUploadProgress(projectId: string, progressEvent: { loaded: numb
     percent >= 100
       ? 'Upload complete. Processing on server...'
       : `Uploading: ${percent}%`;
-  window.dispatchEvent(
-    new MessageEvent('message', {
-      data: {
-        type: 'uploadProgress',
-        projectId,
-        percent,
-        loaded: progressEvent.loaded,
-        total,
-        message,
-      },
-    }),
-  );
+  postToSelf({
+    type: 'uploadProgress',
+    projectId,
+    percent,
+    loaded: progressEvent.loaded,
+    total,
+    message,
+  });
 }
 
 // VS Code API detection
@@ -186,6 +184,7 @@ class ApiClient {
   private attachVSCodeListener() {
     if (this.listenerAttached) return;
     window.addEventListener('message', (event) => {
+      if (!isTrustedMessage(event)) return;
       const msg = event.data;
       if (msg?.type !== 'apiResponse') return; //
 
@@ -435,13 +434,11 @@ class ApiClient {
   async put<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
     let data: T;
     if (this.isVSCode) {
-      console.log(url, 'put via vs');
       data = await this.postViaVSCode<T>({ type: 'apiPut', url, body, params: config?.params, headers: config?.headers });
     } else {
       const resp = await this.axiosClient!.put(url, body, config);
       data = resp.data as T;
     }
-    console.log(data, url);
     return data;
   }
 

@@ -250,7 +250,7 @@ export const DetailsPanel = ({
           item={selectedItem as Individual}
           onUpdate={onUpdate}
           {...sharedProps}
-          userId={user?.email}
+          userId={user?.userId}
           username={user?.username}
           isReasonerRunning={isReasonerRunning}
           selectedReasoner={selectedReasoner}
@@ -292,7 +292,7 @@ export const DetailsPanel = ({
           item={selectedItem as Datatype}
           onUpdate={onUpdate}
           {...sharedProps}
-          userId={user?.email}
+          userId={user?.userId}
           username={user?.username}
           existingIris={datatypeExistingIris}
         />

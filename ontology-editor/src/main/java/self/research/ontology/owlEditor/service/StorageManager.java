@@ -43,18 +43,38 @@ public class StorageManager {
     }
 
     public Path projectDir(String projectId) {
-        return projectsRoot.resolve(projectId);
+        return singleSegmentUnder(projectsRoot, projectId, "project id");
     }
 
     public Path resolveProjectFile(String projectId, String filename) {
-        return projectDir(projectId).resolve(filename);
+        Path dir = projectDir(projectId);
+        if (filename == null || filename.isBlank() || filename.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Invalid file name");
+        }
+        Path file = dir.resolve(filename).normalize();
+        if (!file.startsWith(dir) || file.equals(dir)) {
+            throw new IllegalArgumentException("Invalid file name");
+        }
+        return file;
     }
 
     /** Scratch directory for in-progress chunked uploads, keyed by client-generated upload session id. */
     public Path chunkUploadDir(String uploadId) throws IOException {
-        Path dir = projectsRoot.getParent().resolve("chunk-uploads").resolve(uploadId);
+        Path dir = singleSegmentUnder(projectsRoot.getParent().resolve("chunk-uploads"), uploadId, "upload id");
         Files.createDirectories(dir);
         return dir;
+    }
+
+    private static Path singleSegmentUnder(Path base, String name, String what) {
+        if (name == null || name.isBlank() || name.equals(".") || name.equals("..")
+                || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Invalid " + what);
+        }
+        Path resolved = base.resolve(name).normalize();
+        if (!resolved.startsWith(base) || resolved.equals(base)) {
+            throw new IllegalArgumentException("Invalid " + what);
+        }
+        return resolved;
     }
 
     /** Root of all in-progress chunked uploads — used by the cleanup sweep to find abandoned sessions. */

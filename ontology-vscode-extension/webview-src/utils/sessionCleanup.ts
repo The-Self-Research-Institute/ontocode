@@ -1,3 +1,5 @@
+import { clearUserScopedStorage } from "./userScopedKey";
+
 export const SUPPRESS_WORKSPACE_AUTO_OPEN_KEY = "ontocode_suppress_workspace_auto_open";
 
 const LAST_OPENED_KEYS = [
@@ -43,10 +45,14 @@ export function clearSessionCache(): void {
 
     SESSION_CACHE_KEYS.forEach((key) => localStorage.removeItem(key));
 
+    clearUserScopedStorage(localStorage);
+
     Object.keys(localStorage).forEach((key) => {
       if (
         key.startsWith("ontocode_lastWorkspace") ||
         key.startsWith("ontocode_sync_mode_") ||
+        key.startsWith("ontocode.askAi.chat.") ||
+        key.startsWith("draft_") ||
         key.startsWith("pendingUpgrade") ||
         key === "ontocode_route_history"
       ) {

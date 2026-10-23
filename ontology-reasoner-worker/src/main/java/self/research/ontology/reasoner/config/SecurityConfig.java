@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import self.research.ontology.common.security.InternalToken;
 
 import java.io.IOException;
 
@@ -25,12 +26,7 @@ public class SecurityConfig {
         bean.addUrlPatterns("/api/*");
         bean.setFilter((request, response, chain) -> {
             HttpServletRequest req = (HttpServletRequest) request;
-            if (req.getRequestURI().contains("/actuator/health")) {
-                chain.doFilter(request, response);
-                return;
-            }
-            String token = req.getHeader("X-Ontocode-Internal-Token");
-            if (expectedToken != null && expectedToken.equals(token)) {
+            if (InternalToken.matches(expectedToken, req.getHeader(InternalToken.HEADER))) {
                 chain.doFilter(request, response);
                 return;
             }

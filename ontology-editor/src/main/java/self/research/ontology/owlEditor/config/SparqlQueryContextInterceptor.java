@@ -17,25 +17,20 @@ public class SparqlQueryContextInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        SparqlQueryContext.setUserId(desktopMode ? desktopUserId(request) : tokenUserId(request));
+        CallerIdentity caller = CallerIdentity.of(request);
+        String tokenUserId = caller.userIdOr(caller.email());
+        SparqlQueryContext.setUserId(desktopMode ? desktopUserId(request, tokenUserId) : tokenUserId);
         SparqlQueryContext.setWantsDraft("true".equalsIgnoreCase(request.getParameter("draft")));
         return true;
     }
 
-    private static String tokenUserId(HttpServletRequest request) {
-        String auth = request.getHeader("Authorization");
-        String[] planUser = JwtClaimUtils.extractPlanAndUserId(auth);
-        String userId = planUser != null && planUser.length > 1 ? planUser[1] : null;
-        return userId != null && !userId.isBlank() ? userId : JwtClaimUtils.extractEmail(auth);
-    }
-
-    private static String desktopUserId(HttpServletRequest request) {
+    private static String desktopUserId(HttpServletRequest request, String tokenUserId) {
         String userId = request.getParameter("userId");
         if (userId == null || userId.isBlank()) {
             userId = request.getHeader("X-Ontocode-User-Id");
         }
         if (userId == null || userId.isBlank()) {
-            userId = tokenUserId(request);
+            userId = tokenUserId;
         }
         return userId == null || userId.isBlank() ? DESKTOP_USER_ID : userId;
     }

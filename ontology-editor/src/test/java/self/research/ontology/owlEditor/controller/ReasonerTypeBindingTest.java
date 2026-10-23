@@ -26,7 +26,7 @@ class ReasonerTypeBindingTest {
 
     private static FormattingConversionService mvcConversionService() {
         FormattingConversionService conversion = new DefaultFormattingConversionService();
-        new WebMvcConfig(null, null, null, null, null).addFormatters(conversion);
+        new WebMvcConfig(null, null, null, null, null, null).addFormatters(conversion);
         return conversion;
     }
 

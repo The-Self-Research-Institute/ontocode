@@ -7,6 +7,10 @@ try { _cfg = ipcRenderer.sendSync('config:get-sync'); } catch (_) {}
 const PROXY_API = (_cfg && _cfg.apiBaseUrl) || 'http://127.0.0.1:18085';
 const DESKTOP_API = PROXY_API; // use proxy so /api/swrl/** routes work too
 
+function pageMessageEvent(init) {
+    return new MessageEvent('message', { ...init, source: window, origin: window.location.origin });
+}
+
 window.__ONTOCODE_CONFIG__ = {
     IS_WEB_EXTENSION: true,
     IS_DESKTOP: true,
@@ -305,7 +309,7 @@ contextBridge.exposeInMainWorld('vscode', {
 
                 try {
                     const token = await ipcRenderer.invoke('auth:get');
-                    window.dispatchEvent(new MessageEvent('message', {
+                    window.dispatchEvent(pageMessageEvent({
                         data: { type: 'storedAuthToken', token: token || null }
                     }));
                 } catch (err) {
@@ -316,7 +320,7 @@ contextBridge.exposeInMainWorld('vscode', {
             case 'requestAuthToken':
                 try {
                     const token = await ipcRenderer.invoke('auth:get');
-                    window.dispatchEvent(new MessageEvent('message', {
+                    window.dispatchEvent(pageMessageEvent({
                         data: { type: 'storedAuthToken', token: token || null }
                     }));
                 } catch (err) {
@@ -330,7 +334,7 @@ contextBridge.exposeInMainWorld('vscode', {
 
             case 'logout':
                 ipcRenderer.invoke('auth:clear').catch(console.error);
-                window.dispatchEvent(new MessageEvent('message', { data: { type: 'loggedOut' } }));
+                window.dispatchEvent(pageMessageEvent({ data: { type: 'loggedOut' } }));
                 break;
 
             case 'showNotification':
@@ -354,7 +358,7 @@ contextBridge.exposeInMainWorld('vscode', {
                 break;
 
             case 'requestCollaborationStatus':
-                window.dispatchEvent(new MessageEvent('message', {
+                window.dispatchEvent(pageMessageEvent({
                     data: { type: 'collaborationStatus', connected: false }
                 }));
                 break;
@@ -399,7 +403,7 @@ contextBridge.exposeInMainWorld('vscode', {
                                     const existingFileName = existing.fileName || existing.name || result.fileName;
 
                                     if (existingFileId) {
-                                        window.dispatchEvent(new MessageEvent('message', {
+                                        window.dispatchEvent(pageMessageEvent({
                                             data: {
                                                 type: 'fileReady',
                                                 projectId: message.projectId,
@@ -427,7 +431,7 @@ contextBridge.exposeInMainWorld('vscode', {
                                 const data = await resp.json().catch(() => ({}));
                                 if (!resp.ok) throw new Error(data?.error || `Upload failed (${resp.status})`);
 
-                                window.dispatchEvent(new MessageEvent('message', {
+                                window.dispatchEvent(pageMessageEvent({
                                     data: {
                                         type: 'fileReady',
                                         projectId: message.projectId,
@@ -443,7 +447,7 @@ contextBridge.exposeInMainWorld('vscode', {
 
                         // No project context — user opened this from Project Dashboard
                         // with nothing currently active. Fall back to pendingFileUpload.
-                        window.dispatchEvent(new MessageEvent('message', {
+                        window.dispatchEvent(pageMessageEvent({
                             data: {
                                 type: 'pendingFileUpload',
                                 fileName: result.fileName,
@@ -479,13 +483,13 @@ contextBridge.exposeInMainWorld('vscode', {
                     const requestId = message.requestId;
                     try {
                         await exportOntologyViaJob(message.projectId, message.format, message.filename);
-                        window.dispatchEvent(new MessageEvent('message', {
+                        window.dispatchEvent(pageMessageEvent({
                             data: { type: 'downloadOntologyComplete', requestId },
                         }));
                     } catch (err) {
                         console.error('[Preload] downloadOntology failed:', err);
                         const msg = (err && err.message) || 'Could not download ontology file';
-                        window.dispatchEvent(new MessageEvent('message', {
+                        window.dispatchEvent(pageMessageEvent({
                             data: { type: 'downloadOntologyFailed', requestId, error: msg, cancelled: msg.includes('cancelled') },
                         }));
                     }
@@ -510,7 +514,7 @@ contextBridge.exposeInMainWorld('vscode', {
                 const existingFileName = existing.fileName || existing.name || message.fileName;
 
                 if (existingFileId) {
-                    window.dispatchEvent(new MessageEvent('message', {
+                    window.dispatchEvent(pageMessageEvent({
                         data: {
                             type: 'fileReady',
                             projectId: message.projectId,
@@ -538,7 +542,7 @@ contextBridge.exposeInMainWorld('vscode', {
             const data = await resp.json().catch(() => ({}));
             if (!resp.ok) throw new Error(data?.error || `Upload failed (${resp.status})`);
 
-            window.dispatchEvent(new MessageEvent('message', {
+            window.dispatchEvent(pageMessageEvent({
                 data: {
                     type: 'fileReady',
                     projectId: message.projectId,
@@ -576,7 +580,7 @@ case 'uploadOntologyContent':
                         _zoteroPaging.loading = false;
                         _zoteroPaging.done = items.length === 0 || _zoteroPaging.start >= totalResults;
                         const knownTotal = Number.isFinite(totalResults) && totalResults >= 0 ? Math.floor(totalResults) : undefined;
-                        window.dispatchEvent(new MessageEvent('message', { data: {
+                        window.dispatchEvent(pageMessageEvent({ data: {
                             type: 'zoteroLibraryData',
                             items,
                             hasMore: !_zoteroPaging.done,
@@ -584,11 +588,11 @@ case 'uploadOntologyContent':
                             ...(knownTotal !== undefined ? { totalResults: knownTotal, loadedSoFar: _zoteroPaging.start } : {}),
                         }}));
                         if (_zoteroPaging.done) {
-                            window.dispatchEvent(new MessageEvent('message', { data: { type: 'zoteroLibraryDataComplete', librarySessionId: sid } }));
+                            window.dispatchEvent(pageMessageEvent({ data: { type: 'zoteroLibraryDataComplete', librarySessionId: sid } }));
                         }
                     } catch (err) {
                         console.error('[Preload] requestZoteroLibrary failed:', err);
-                        window.dispatchEvent(new MessageEvent('message', { data: {
+                        window.dispatchEvent(pageMessageEvent({ data: {
                             type: 'zoteroLibraryError',
                             error: err.message || 'Failed to load Zotero library',
                             librarySessionId: sid,
@@ -614,7 +618,7 @@ case 'uploadOntologyContent':
                         _zoteroPaging.done = done;
                         if (got > 0) {
                             const knownTotal = Number.isFinite(_zoteroPaging.totalResults) && _zoteroPaging.totalResults < Number.MAX_SAFE_INTEGER ? Math.floor(_zoteroPaging.totalResults) : undefined;
-                            window.dispatchEvent(new MessageEvent('message', { data: {
+                            window.dispatchEvent(pageMessageEvent({ data: {
                                 type: 'zoteroLibraryDataAppend',
                                 items,
                                 hasMore: !done,
@@ -623,12 +627,12 @@ case 'uploadOntologyContent':
                             }}));
                         }
                         if (done) {
-                            window.dispatchEvent(new MessageEvent('message', { data: { type: 'zoteroLibraryDataComplete', librarySessionId: moreSid } }));
+                            window.dispatchEvent(pageMessageEvent({ data: { type: 'zoteroLibraryDataComplete', librarySessionId: moreSid } }));
                         }
                     } catch (err) {
                         if (_zoteroPaging) _zoteroPaging.loading = false;
                         console.error('[Preload] requestZoteroLibraryMore failed:', err);
-                        window.dispatchEvent(new MessageEvent('message', { data: {
+                        window.dispatchEvent(pageMessageEvent({ data: {
                             type: 'zoteroLibraryError',
                             error: err.message || 'Failed to load more Zotero items',
                             librarySessionId: moreSid,
@@ -647,7 +651,7 @@ case 'uploadOntologyContent':
                 break;
 
             case 'showSubscriptionPlans':
-                window.dispatchEvent(new MessageEvent('message', { data: { type: 'showSubscriptionPlans' } }));
+                window.dispatchEvent(pageMessageEvent({ data: { type: 'showSubscriptionPlans' } }));
                 break;
 
             case 'toggleDevTools':
@@ -660,7 +664,7 @@ case 'uploadOntologyContent':
             case 'getQueueStatus':
 
                 if (message.projectId) startImportPoller(message.projectId);
-                window.dispatchEvent(new MessageEvent('message', {
+                window.dispatchEvent(pageMessageEvent({
                     data: {
                         type: 'queueStatusUpdate',
                         status: { projectId: message.projectId, status: 'IN_PROGRESS', position: 1 },
