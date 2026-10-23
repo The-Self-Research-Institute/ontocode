@@ -26,9 +26,14 @@ const OWL_DATA_DIR    = path.join(DATA_DIR, 'ontologies');
 const LOGS_DIR        = path.join(app.getPath('userData'), 'logs');
 const FUSEKI_BASE_DIR = path.join(app.getPath('userData'), 'fuseki-base');
 
-const WINDOWS_JVM_FLAGS = process.platform === 'win32'
-    ? [`-Djdk.net.unixdomain.tmpdir=${path.join(DATA_DIR, 'unix-sockets-disabled')}`]
-    : [];
+const PLATFORM_JVM_FLAGS = [
+    ...(process.platform === 'win32'
+        ? [`-Djdk.net.unixdomain.tmpdir=${path.join(DATA_DIR, 'unix-sockets-disabled')}`]
+        : []),
+    ...(process.mas ? ['-XX:-UsePerfData'] : []),
+];
+
+const MONGO_PLATFORM_ARGS = process.mas ? ['--nounixsocket'] : [];
 
 const helperProcesses = new Set();
 let startupCancelled = false;
@@ -292,6 +297,7 @@ async function attemptStartMongo(dataDir) {
         '--logpath', logFile,
         '--logappend',
         '--bind_ip', '127.0.0.1',
+        ...MONGO_PLATFORM_ARGS,
     ], {});
 
     let onEarlyExit, onSpawnError, exitCode = null;
@@ -419,7 +425,7 @@ async function startFuseki() {
     const args = [
         `-Xmx${fusekiHeaps.fusekiXmx}`,
         '-Xms256m',
-        ...WINDOWS_JVM_FLAGS,
+        ...PLATFORM_JVM_FLAGS,
         '-jar', jar,
         '--port', String(FUSEKI_PORT),
         '--localhost',
@@ -589,6 +595,7 @@ async function startScratchMongo(scratchDir) {
     const proc = spawn(mongoBin(), [
         '--dbpath', dbPath, '--port', String(port), '--bind_ip', '127.0.0.1',
         '--logpath', path.join(scratchDir, 'mongo.log'),
+        ...MONGO_PLATFORM_ARGS,
     ], { stdio: 'ignore', windowsHide: true });
     helperProcesses.add(proc);
     proc.once('exit', () => helperProcesses.delete(proc));
@@ -654,7 +661,7 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
             `-Djava.io.tmpdir=${path.join(scratchDir, 'tmp')}`,
             `-XX:ArchiveClassesAtExit=${tempArchive}`,
             '-Dspring.context.exit=onRefresh',
-            ...WINDOWS_JVM_FLAGS,
+            ...PLATFORM_JVM_FLAGS,
             '-jar', extractedJar,
             ...isolatedArgs,
         ], env, path.join(cdsDir, 'training.log'), { timeoutMs: CDS_TRAINING_TIMEOUT_MS, lowPriority: true });
@@ -811,7 +818,7 @@ async function startDesktop() {
     const args = [
         `-Xmx${heaps.desktopXmx}`,
         '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
-        ...WINDOWS_JVM_FLAGS,
+        ...PLATFORM_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', launchJar,
@@ -881,7 +888,7 @@ async function startSwrl() {
     assertNotCancelled();
     swrlProcess = spawnService('SWRL', swrlJava, [
         '-Xmx512m',
-        ...WINDOWS_JVM_FLAGS,
+        ...PLATFORM_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
         '-jar', launchJar,
