@@ -22,7 +22,7 @@ const claudeModels = {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 let ui: ReturnType<typeof mount>;
-let onChange: ReturnType<typeof vi.fn>;
+let onChange: ReturnType<typeof vi.fn<() => void>>;
 
 function respondWith(body: unknown, ok = true) {
   fetchMock.mockImplementation(async () => ({ ok, status: ok ? 200 : 500, json: async () => body }));
@@ -59,7 +59,7 @@ beforeEach(() => {
   fetchMock = vi.fn();
   respondWith({}, false);
   vi.stubGlobal("fetch", fetchMock);
-  onChange = vi.fn();
+  onChange = vi.fn<() => void>();
   ui = mount();
 });
 
