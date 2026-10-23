@@ -95,7 +95,7 @@ const friendlyDlQueryError = (raw?: string): string => {
   if (lower.includes('too large') || lower.includes('out of memory') || lower.includes('triples')) {
     return 'This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.';
   }
-  if (lower.includes('openllet') || lower.includes('pellet') || lower.includes('reasoner')) {
+  if (lower.includes('hermit') || lower.includes('reasoner')) {
     return 'Could not run this query on the current ontology. Check for inconsistent class or individual types, then try again.';
   }
   return raw;

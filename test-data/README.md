@@ -97,7 +97,7 @@ Professor(?p) ∧ teaches(?p, ?c) ∧ enrolledIn(?s, ?c) → advisedBy(?s, ?p)
 - Patient001 (Alice) & Patient003 (Carol): High risk — high membership in multiple classes
 
 ### 5. Reasoner Plugin
-- **Consistent:** `consistent-ontology.owl` — Fruit taxonomy with disjoint classes but NO contradictions. All 4 reasoner engines (HermiT, Pellet, ELK, FaCT++) should report **consistent**
+- **Consistent:** `consistent-ontology.owl` — Fruit taxonomy with disjoint classes but NO contradictions. All 3 reasoner engines (HermiT, ELK, FaCT++) should report **consistent**
 - **Inconsistent:** `inconsistent-ontology.owl` — 3 deliberate contradictions:
   1. `Creature1` typed as both `Animal` AND `Plant` (disjoint classes)
   2. `DogCatHybrid` is subclass of both `Dog` and `Cat` (disjoint → unsatisfiable)
