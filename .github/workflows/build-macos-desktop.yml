@@ -11,6 +11,11 @@ on:
         description: Send the app to Apple for notarization (slower, run after signing works)
         type: boolean
         default: false
+      target:
+        description: What to build (mas-dev is a sandboxed test app for the Mac App Store feasibility check)
+        type: choice
+        options: [dmg, mas-dev]
+        default: dmg
 concurrency:
   group: macos-desktop-${{ github.ref }}
   cancel-in-progress: true
@@ -21,7 +26,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.arch == 'arm64' && '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"}]' || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]' || '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"},{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       NODE_OPTIONS: --max-old-space-size=4096
       ONTOCODE_UPDATE_HOST: ontocodeapi.selfresearch.org
@@ -79,11 +84,28 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NOTARIZE: ${{ inputs.notarize }}
+          TARGET: ${{ inputs.target }}
+          MAS_CSC_LINK: ${{ secrets.MAS_CSC_LINK }}
+          MAS_CSC_KEY_PASSWORD: ${{ secrets.MAS_CSC_KEY_PASSWORD }}
+          MAS_PROVISIONING_PROFILE: ${{ secrets.MAS_PROVISIONING_PROFILE }}
         run: |
-          set -e
-          if [ -n "$CSC_LINK" ]; then
+          set -eo pipefail
+          script=dist:mac
+          targets=dmg
+          if [ "$TARGET" = "mas-dev" ]; then
+            if [ -z "$MAS_CSC_LINK" ] || [ -z "$MAS_CSC_KEY_PASSWORD" ] || [ -z "$MAS_PROVISIONING_PROFILE" ]; then
+              echo "Add the MAS_CSC_LINK, MAS_CSC_KEY_PASSWORD and MAS_PROVISIONING_PROFILE secrets before building the sandbox test app"
+              exit 1
+            fi
+            echo "Building the sandboxed Mac App Store test app"
+            echo "$MAS_PROVISIONING_PROFILE" | base64 --decode > build-assets/embedded.provisionprofile
+            export CSC_LINK="$MAS_CSC_LINK" CSC_KEY_PASSWORD="$MAS_CSC_KEY_PASSWORD"
+            script=dist:mac:mas-dev
+            targets=""
+            args=""
+          elif [ -n "$CSC_LINK" ]; then
             echo "Signing with the Developer ID certificate"
-            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false -c.mac.signIgnore=\.jsa\$"
+            args="-c.mac.hardenedRuntime=true -c.mac.entitlements=build-assets/entitlements.mac.plist -c.mac.entitlementsInherit=build-assets/entitlements.mac.plist -c.mac.gatekeeperAssess=false"
             if [ "$NOTARIZE" = "true" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
               echo "Notarizing"
               args="$args -c.mac.notarize=true"
@@ -95,8 +117,17 @@ jobs:
             unset CSC_LINK CSC_KEY_PASSWORD
             args="-c.mac.identity=- -c.mac.hardenedRuntime=false -c.mac.gatekeeperAssess=false"
           fi
-          npm run dist:mac -- --${{ matrix.arch }} --publish never $args
+          for attempt in 1 2 3; do
+            if npm run $script -- $targets --${{ matrix.arch }} --publish never $args 2>&1 | tee dist-build.log; then
+              break
+            fi
+            if [ "$attempt" = 3 ] || ! grep -q -E "Failed to staple|network connection was lost" dist-build.log; then
+              exit 1
+            fi
+            echo "Apple could not be reached while stapling, trying again (attempt $((attempt + 1)) of 3)"
+          done
       - name: Check the app is signed
+        if: inputs.target != 'mas-dev'
         working-directory: electron-app
         run: |
           set -e
@@ -108,7 +139,24 @@ jobs:
           codesign -dv "$app" 2>&1 | grep -E "Signature|Authority|TeamIdentifier|Identifier"
           xcrun stapler validate "$app" || echo "Not notarized"
           hdiutil detach "$mnt"
+      - name: Pack the sandboxed test app
+        if: inputs.target == 'mas-dev'
+        working-directory: electron-app
+        run: |
+          set -eo pipefail
+          app=$(ls -d dist-electron/mas-dev*/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --entitlements - "$app" 2>&1 | head -30
+          ditto -c -k --keepParent "$app" "dist-electron/OntoCode-Studio-mas-dev-${{ matrix.arch }}.zip"
       - uses: actions/upload-artifact@v4
+        if: inputs.target == 'mas-dev'
+        with:
+          name: ontocode-macos-sandbox-test-${{ matrix.arch }}
+          path: electron-app/dist-electron/OntoCode-Studio-mas-dev-*.zip
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: inputs.target != 'mas-dev'
         with:
           name: ontocode-macos-${{ matrix.arch }}
           path: electron-app/dist-electron/*.dmg

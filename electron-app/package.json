@@ -24,6 +24,8 @@
 
     "dist:mac": "npm run prepare-resources && npm run build-web && electron-builder --mac",
     "dist:mac:dev": "npm run dist:mac",
+    "dist:mac:mas-dev": "npm run prepare-resources && npm run build-web && electron-builder --mac mas-dev",
+    "dist:mac:mas": "npm run prepare-resources && npm run build-web && electron-builder --mac mas",
 
     "dist:linux:x64": "npm run prepare-resources:linux-x64 && npm run build-web && electron-builder --linux --x64",
     "dist:linux:arm64": "npm run prepare-resources:linux-arm64 && npm run build-web && electron-builder --linux --arm64",

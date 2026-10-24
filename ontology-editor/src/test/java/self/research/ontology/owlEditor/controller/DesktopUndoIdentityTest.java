@@ -12,6 +12,7 @@ import java.util.Base64;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
@@ -48,6 +49,22 @@ class DesktopUndoIdentityTest {
     void aSignedInUserStillWinsOnDesktop() {
         Identity who = UndoIdentityResolver.resolve(support(true), signedIn("real@x.org"), null);
         assertEquals("real@x.org", who.primary());
+    }
+
+    @Test
+    void aSignedInDesktopUserStillSeesTheEditsRecordedForTheLocalUser() {
+        Identity who = UndoIdentityResolver.resolve(support(true), signedIn("real@x.org"), null);
+
+        assertEquals("real@x.org", who.primary());
+        assertTrue(who.aliases().contains("desktop-user-local"));
+        assertTrue(who.aliases().contains("real@x.org"));
+    }
+
+    @Test
+    void outsideDesktopASignedInUserDoesNotSeeTheLocalUsersEdits() {
+        Identity who = UndoIdentityResolver.resolve(support(false), signedIn("real@x.org"), null);
+
+        assertFalse(who.aliases().contains("desktop-user-local"));
     }
 
     @Test

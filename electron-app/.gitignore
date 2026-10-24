@@ -14,3 +14,6 @@ resources/backend/mongodb/linux/mongod
 # local test-signing certs — never commit private keys
 *.pfx
 *.p12
+
+# Apple provisioning profiles for Mac App Store builds
+build-assets/*.provisionprofile

@@ -27,6 +27,10 @@ public class RollbackRequestSupport {
         this.workspaceOwnershipService = workspaceOwnershipService;
     }
 
+    public boolean isDesktop() {
+        return desktopMode;
+    }
+
     public ChangeRollbackService.Actor actor(HttpServletRequest request, Map<String, Object> body) {
         String authHeader = request != null ? request.getHeader("Authorization") : null;
         String opId = request != null ? request.getHeader("X-Op-Id") : null;

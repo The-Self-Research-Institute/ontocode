@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
+import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.Arrays;
@@ -45,6 +46,7 @@ public class EditorIdentityConfig {
                         + "requests in this run.");
             }
             JwtIdentityExtractor.trustDesktopLaunchKey(desktopLaunchKey);
+            RequestActor.useDesktopIdentity(true);
             return;
         }
         boolean deployed = Arrays.stream(environment.getActiveProfiles()).anyMatch(DEPLOYED_PROFILES::contains);
