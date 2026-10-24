@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
+import self.research.ontology.owlEditor.service.PrEntries;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
@@ -52,23 +53,38 @@ public class RollbackRequestSupport {
         return new ChangeRollbackService.Actor(userId, username, opId);
     }
 
+    public static ResponseEntity<Map<String, Object>> denyIfMergedPr(List<HistoryChange> changes) {
+        for (HistoryChange change : changes) {
+            if (change.getPublishedPrId() != null) {
+                Map<String, Object> body = new HashMap<>();
+                body.put("success", false);
+                body.put("error", PrEntries.MERGED_PR_PART);
+                body.put("revertPr", Map.of("prId", change.getPublishedPrId()));
+                return ResponseEntity.status(409).body(body);
+            }
+        }
+        return null;
+    }
+
     public ResponseEntity<Map<String, Object>> denyIfNotAllowed(List<HistoryChange> changes, String projectId,
                                                                 HttpServletRequest request) {
-        String authHeader = request != null ? request.getHeader("Authorization") : null;
-        String[] claims = JwtClaimUtils.extractPlanAndUserId(authHeader);
-        String requesterId = claims != null ? claims[1] : null;
+        String requesterId = request == null ? null : JwtIdentityExtractor.extractUserId(request).orElse(null);
         if (requesterId == null) {
-            boolean unverified = request == null || JwtIdentityExtractor.extractEmail(request).isEmpty();
-            return JwtIdentityExtractor.signatureRequired() && unverified
-                    ? ResponseEntity.status(401).body(Map.of("success", false, "error", "Sign in to undo or redo"))
-                    : null;
+            if (!JwtIdentityExtractor.signatureRequired()) {
+                return null;
+            }
+            boolean signedIn = request != null && JwtIdentityExtractor.extractEmail(request).isPresent();
+            return signedIn
+                    ? ResponseEntity.status(403).body(Map.of("success", false,
+                            "error", "We could not confirm your role in this project. Sign in again to undo or redo."))
+                    : ResponseEntity.status(401).body(Map.of("success", false, "error", "Sign in to undo or redo"));
         }
         if (workspaceOwnershipService.isViewerInProject(requesterId, projectId)
                 && !workspaceOwnershipService.isUserOwnerOfProject(requesterId, projectId)) {
             return ResponseEntity.status(403).body(Map.of("success", false,
                     "error", "You do not have permission to roll back changes in this project."));
         }
-        String requesterEmail = JwtClaimUtils.extractEmail(authHeader);
+        String requesterEmail = JwtIdentityExtractor.extractEmail(request).orElse(null);
         boolean touchesSomeoneElsesDraft = changes.stream().anyMatch(change -> change.isDraft()
                 && !isAuthor(change, requesterId, requesterEmail));
         if (touchesSomeoneElsesDraft) {

@@ -39,6 +39,37 @@ public class OntologyHistoryService {
     @Lazy
     private ExactCoverService exactCoverService;
 
+    public java.util.List<String> draftChangeSetIds(String projectId, String userId) {
+        return historySyncService == null ? java.util.List.of() : historySyncService.draftChangeSetIds(projectId, userId);
+    }
+
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId,
+                                   String authorId, java.time.LocalDateTime since) {
+        if (historySyncService != null) {
+            historySyncService.tagRowsOfPr(projectId, changeSetIds, prId);
+            historySyncService.tagUnlinkedRows(projectId, authorId, since,
+                    java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusSeconds(5), prId);
+        }
+    }
+
+    public void markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
+        if (historySyncService != null) {
+            historySyncService.markChangeSetsPublished(projectId, changeSetIds);
+        }
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId, java.util.Collection<String> keepChangeSetIds) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsDiscarded(projectId, userId, keepChangeSetIds);
+        }
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsDiscarded(projectId, userId);
+        }
+    }
+
     public Set<String> markDraftHistoryPublished(String projectId, String userId) {
         if (historySyncService == null) {
             return Set.of();

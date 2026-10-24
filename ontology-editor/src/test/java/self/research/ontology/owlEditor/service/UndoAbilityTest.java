@@ -23,6 +23,25 @@ class UndoAbilityTest {
     }
 
     @Test
+    void aRowPublishedByAMergedPrIsNotUndoableOnItsOwn() {
+        HistoryChange change = change("createClass", "http://ex/A");
+        change.setPublishedPrId("7");
+        UndoAbility.Result result = UndoAbility.of(change);
+        assertFalse(result.undoable());
+        assertEquals("Part of a merged pull request. Revert the pull request instead", result.reason());
+    }
+
+    @Test
+    void aChangeOfADiscardedDraftIsNotUndoable() {
+        HistoryChange change = change("createClass", "http://ex/A");
+        change.setDraft(true);
+        change.setDraftDiscarded(true);
+        UndoAbility.Result result = UndoAbility.of(change);
+        assertFalse(result.undoable());
+        assertEquals(RedoGuard.DISCARDED, result.reason());
+    }
+
+    @Test
     void anUndoneChangeIsNotUndoable() {
         HistoryChange change = change("createClass", "http://ex/A");
         change.setReverted(true);

@@ -68,7 +68,7 @@ class UserUndoRetryTest {
         when(undoService.nextUndo(eq(P), anyBoolean(), any())).thenAnswer(inv -> mergeUndone.get()
                 ? next("c0", "Created class Pizza") : next("m1", "Ontology merge"));
         when(historySync.getHistoryChange(anyString())).thenAnswer(inv -> copyOf(inv.getArgument(0)));
-        when(preconditions.violation(eq(P), anyList())).thenAnswer(inv -> {
+        when(preconditions.violation(eq(P), anyList(), any())).thenAnswer(inv -> {
             HistoryChange entry = ((List<HistoryChange>) inv.getArgument(1)).get(0);
             if (!"m1".equals(entry.getId())) {
                 return Optional.empty();
@@ -126,7 +126,7 @@ class UserUndoRetryTest {
         assertEquals(200, response.getStatusCode().value());
         assertEquals(true, response.getBody().get("success"));
         assertEquals("audit-1", response.getBody().get("auditId"));
-        verify(preconditions, never()).violation(anyString(), anyList());
+        verify(preconditions, never()).violation(anyString(), anyList(), any());
         verify(rollback, never()).undoEntry(anyString(), anyString(), any(), anyBoolean());
         verify(rollback, never()).undoChangeSet(anyString(), anyString(), any(), anyBoolean());
     }

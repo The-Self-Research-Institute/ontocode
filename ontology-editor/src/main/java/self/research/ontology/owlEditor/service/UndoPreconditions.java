@@ -28,9 +28,13 @@ public class UndoPreconditions {
     }
 
     public Optional<String> violation(String projectId, List<HistoryChange> entries) {
+        return violation(projectId, entries, null);
+    }
+
+    public Optional<String> violation(String projectId, List<HistoryChange> entries, UserUndoService.Identity who) {
         org.eclipse.rdf4j.model.Model own = RollbackWorkSupport.insertedTriples(entries);
         for (HistoryChange entry : entries) {
-            Optional<String> problem = check(projectId, entry, own);
+            Optional<String> problem = check(projectId, entry, own, who);
             if (problem.isPresent()) {
                 return problem;
             }
@@ -38,7 +42,8 @@ public class UndoPreconditions {
         return Optional.empty();
     }
 
-    private Optional<String> check(String projectId, HistoryChange entry, org.eclipse.rdf4j.model.Model own) {
+    private Optional<String> check(String projectId, HistoryChange entry, org.eclipse.rdf4j.model.Model own,
+                                   UserUndoService.Identity who) {
         String label = labelOf(entry);
         if (entry.isReverted()) {
             return Optional.of(label + " was already undone");
@@ -78,20 +83,20 @@ public class UndoPreconditions {
             return Optional.of(UndoBlockers.STILL_LOADING);
         }
         if (kind == Kind.MERGE && blockers != null) {
-            List<String> later = blockers.laterChanges(projectId, entry);
+            List<String> later = blockers.laterChanges(projectId, entry, who);
             if (!later.isEmpty()) {
-                return Optional.of(blockers.changedSince(projectId, entry, label + " was changed since this edit"));
+                return Optional.of(blockers.changedSince(projectId, entry, label + " was changed since this edit", who));
             }
         }
         if (entry.carriesExactDelta() && !facts.deltaHolds(projectId, entry, true)) {
-            return Optional.of(changedSince(projectId, entry, label));
+            return Optional.of(changedSince(projectId, entry, label, who));
         }
         if (facts.laterUsesNewName(projectId, entry)) {
             return Optional.of("Others have added items that use the new name of " + label);
         }
         for (HistoryChange.SubChange sub : active) {
             if (kind != Kind.EXACT && plan.handledSubChangeIds().contains(sub.getId()) && changedSince(projectId, entry, sub)) {
-                return Optional.of(changedSince(projectId, entry, label));
+                return Optional.of(changedSince(projectId, entry, label, who));
             }
         }
         if (RollbackWorkSupport.isCreation(entry, kind)
@@ -101,9 +106,9 @@ public class UndoPreconditions {
         return Optional.empty();
     }
 
-    private String changedSince(String projectId, HistoryChange entry, String label) {
+    private String changedSince(String projectId, HistoryChange entry, String label, UserUndoService.Identity who) {
         String plain = label + " was changed since this edit";
-        return blockers == null ? plain : blockers.changedSince(projectId, entry, plain);
+        return blockers == null ? plain : blockers.changedSince(projectId, entry, plain, who);
     }
 
     private boolean changedSince(String projectId, HistoryChange entry, HistoryChange.SubChange sub) {

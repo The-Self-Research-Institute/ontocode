@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { isTextElement } from '../utils/textEditTarget';
+import { isModalOpen } from '../utils/modalOpen';
 
 interface DesktopApi {
   onMenuUndoRedo?: (callback: (kind: string) => void) => void | (() => void);
@@ -31,6 +32,8 @@ export function useDesktopUndoRouting({ onUndo, onRedo }: Handlers): void {
       }
       if (isTextElement(document.activeElement)) {
         document.execCommand(kind);
+      } else if (isModalOpen()) {
+        return;
       } else if (kind === 'undo') {
         handlers.current.onUndo();
       } else {

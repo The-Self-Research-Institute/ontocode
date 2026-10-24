@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { currentActor } from '../../authFetch';
 import { fetchDraftList, fetchDraftSessionActive, fetchRecentChanges } from '../assistantApi';
 import { computeStats, parseChange, parseDraft } from '../changeParsing';
+import { nextFeedOffset } from '../feedPaging';
 import { ChangeStats, EMPTY_STATS, OntologyChange } from '../types';
 
 export function useChangeFeed(projectId: string, query = '') {
@@ -18,7 +19,7 @@ export function useChangeFeed(projectId: string, query = '') {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const draftSeqRef = useRef(0);
   const changesSeqRef = useRef(0);
-  const firstPageSizeRef = useRef(0);
+  const nextOffsetRef = useRef(0);
   const queryRef = useRef(query);
   queryRef.current = query;
 
@@ -45,9 +46,10 @@ export function useChangeFeed(projectId: string, query = '') {
     if (isLoadingOlder || !hasMore) return;
     setIsLoadingOlder(true);
     try {
-      const offset = firstPageSizeRef.current + olderRef.current.length;
+      const offset = nextOffsetRef.current;
       const data = await fetchRecentChanges(projectId, offset, currentActor().userId, queryRef.current);
       if (!data.success) return;
+      nextOffsetRef.current = nextFeedOffset(data, offset);
       const seen = new Set([...changes, ...olderRef.current].map(change => change.id));
       const fresh = data.changes.map((change: any) => parseChange(change)).filter((change: OntologyChange) => !seen.has(change.id));
       setOlderChanges(previous => [...previous, ...fresh]);
@@ -70,7 +72,7 @@ export function useChangeFeed(projectId: string, query = '') {
         return;
       }
       const parsedChanges = data.changes.map((change: any) => parseChange(change));
-      firstPageSizeRef.current = parsedChanges.length;
+      if (olderRef.current.length === 0) nextOffsetRef.current = nextFeedOffset(data, 0);
       setChanges(parsedChanges);
       setHasMore(olderRef.current.length === 0 ? !!data.hasMore : true);
       setLastRefresh(new Date());
@@ -84,6 +86,8 @@ export function useChangeFeed(projectId: string, query = '') {
 
   useEffect(() => {
     setOlderChanges([]);
+    olderRef.current = [];
+    nextOffsetRef.current = 0;
     setHasMore(false);
     loadChanges();
     loadDraftChanges();

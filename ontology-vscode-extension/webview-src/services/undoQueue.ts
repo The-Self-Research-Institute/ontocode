@@ -2,7 +2,7 @@ import { CHECK_DELAY_MS, FINISHED_VISIBLE_MS, INFLIGHT_WAIT_MS, MAX_CHECKS, MAX_
 import { TIMED_OUT, blockedText, defaultQueueApi, detailOf, pause, revalidate, stepFromHint, summaryOf, withTimeout } from './undoQueueSupport';
 import { newOpId } from '../utils/opId';
 import type { Entry, FinishedItem, PauseReason, PressResult, QueueApi, UndoKind, UndoRunPhase, UndoRunSnapshot } from './undoQueueSupport';
-import type { QueueResponse, QueueStep, StepOutcome, UndoState, UndoStep } from './undoRedoService';
+import type { ForeignTarget, OtherChange, RevertPrHint, QueueResponse, QueueStep, StepOutcome, UndoState, UndoStep } from './undoRedoService';
 
 export type { UndoRunSnapshot } from './undoQueueSupport';
 
@@ -30,6 +30,9 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
   let item: string | undefined;
   let summary: string | undefined;
   let lastState: UndoState | undefined;
+  let others: OtherChange[] = [];
+  let revertPr: RevertPrHint | undefined;
+  let foreignTarget: ForeignTarget | undefined;
   let finishTimer: ReturnType<typeof setTimeout> | undefined;
   const listeners = new Set<() => void>();
 
@@ -50,6 +53,9 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
     summary,
     finishedItems,
     lastState,
+    othersOnTop: others.length ? others : undefined,
+    revertPr,
+    foreignTarget,
   });
   let snapshot = build();
 
@@ -105,14 +111,14 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
   }
 
   async function attempt(entry: Entry): Promise<StepOutcome | { kind: 'unresolved' }> {
-    const first = await withTimeout(api.send(projectId, kind, entry.step, entry.opId), REQUEST_TIMEOUT_MS);
+    const first = await withTimeout(api.send(projectId, kind, entry.step, entry.opId, entry.confirmOther), REQUEST_TIMEOUT_MS);
     if (first !== TIMED_OUT && (first.kind === 'done' || first.kind === 'refused')) return first;
     entry.unknown = true;
     phase = 'checking';
     publish();
     for (let check = 0; check < MAX_CHECKS; check += 1) {
       await pause(CHECK_DELAY_MS);
-      const again = await withTimeout(api.send(projectId, kind, entry.step, entry.opId), REQUEST_TIMEOUT_MS);
+      const again = await withTimeout(api.send(projectId, kind, entry.step, entry.opId, entry.confirmOther), REQUEST_TIMEOUT_MS);
       if (again !== TIMED_OUT && again.kind !== 'unknown' && again.kind !== 'running') {
         phase = 'running';
         entry.unknown = false;
@@ -154,6 +160,9 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
           phase = 'running';
         } else if (outcome.kind === 'refused') {
           if (outcome.state) lastState = outcome.state;
+          others = outcome.othersOnTop ?? [];
+          revertPr = outcome.revertPr;
+          foreignTarget = outcome.foreignTarget;
           haltWith('Conflict', outcome.message, entry);
         } else {
           haltWith('Result unknown', 'The server did not confirm whether this change was undone.', entry);
@@ -287,6 +296,24 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
       void drain();
     },
 
+    async confirmOthers(): Promise<void> {
+      if (phase !== 'paused' || reason !== 'Conflict' || !others.length) return;
+      const head = entries[0];
+      if (head) {
+        head.opId = newOpId();
+        head.confirmOther = foreignTarget ? 'target' : true;
+      }
+      others = [];
+      revertPr = undefined;
+      foreignTarget = undefined;
+      reason = undefined;
+      message = undefined;
+      item = undefined;
+      phase = 'running';
+      publish();
+      void drain();
+    },
+
     reset(): void {
       epoch += 1;
       bindEpoch += 1;
@@ -304,6 +331,9 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
       item = undefined;
       summary = undefined;
       lastState = undefined;
+      others = [];
+      revertPr = undefined;
+      foreignTarget = undefined;
       publish();
     },
   };

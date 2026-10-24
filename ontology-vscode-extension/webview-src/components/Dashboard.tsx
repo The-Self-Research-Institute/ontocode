@@ -180,6 +180,7 @@ import {
 } from "./dialogs";
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
 import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
+import { usePullPending } from "../hooks/usePullPending";
 import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
@@ -258,6 +259,7 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
 import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
+import RevertPrDialog from "./RevertPrDialog";
 import PullPreviewDialog from "./PullPreviewDialog";
 
 const DRAFT_SAVE_DISABLED_HINT =
@@ -1524,6 +1526,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [syncMode, setSyncMode] = useState<"private" | "public">("public");
+  const pluginDraftMode = !isDesktop() && syncMode === "private";
   const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
   const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
   const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
@@ -1561,7 +1564,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [revertPr, setRevertPr] = useState<{ prId: string; title?: string } | null>(null);
+  const [reapplyPr, setReapplyPr] = useState<{ prId: string; title?: string } | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setReapplyPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:reapply-pr", open);
+    return () => window.removeEventListener("ontology:reapply-pr", open);
+  }, [projectId]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setRevertPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:revert-pr", open);
+    return () => window.removeEventListener("ontology:revert-pr", open);
+  }, [projectId]);
   const [showPullPreview, setShowPullPreview] = useState(false);
+  const pullPending = usePullPending(
+    projectId || undefined,
+    resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+    syncMode === "private" && !!projectId,
+  );
   const [openPRCount, setOpenPRCount] = useState(0);
 
   const startDraftCopySession = useCallback((
@@ -1679,8 +1709,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     notificationService.success("Pull Complete", "Public changes were merged into your draft.");
     fetchData(projectId, false);
     announceMutationApplied(projectId, [{ type: "draftPull" }], undefined, true);
+    pullPending.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
-  }, [projectId]);
+  }, [projectId, pullPending.refresh]);
 
   const refreshOpenPRCount = useCallback(async () => {
     if (!projectId) return;
@@ -14621,7 +14652,7 @@ const updateItemInState = useCallback(
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
-                  draftMode={!isDesktop() && syncMode === "private"}
+                  draftMode={pluginDraftMode}
                   prefixes={(metadata as any)?.prefixes || []}
                   context={{
                     apiClient,
@@ -14672,7 +14703,7 @@ const updateItemInState = useCallback(
               context={{
                 projectId,
                 apiBaseUrl: getBaseUrl(),
-                draftMode: !isDesktop() && syncMode === "private",
+                draftMode: pluginDraftMode,
                 userId: graphActor.userId,
                 username: graphActor.username,
                 permissions: {
@@ -14749,7 +14780,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} draftMode={!isDesktop() && syncMode === "private"} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14788,7 +14819,7 @@ const updateItemInState = useCallback(
               context={{ apiClient }}
               userId={actor.userId}
               username={actor.username}
-              draftMode={!isDesktop() && syncMode === "private"}
+              draftMode={pluginDraftMode}
               onViewOnlyAction={isViewOnlyMember ? handleViewOnlyAction : undefined}
               onDraftRequired={!isDesktop() && isProjectDraftEditorRole && syncMode !== 'private'
                 ? () => setShowProPromptType('draftRequired')
@@ -14833,7 +14864,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -17712,10 +17743,18 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   onClick={() => setShowPullPreview(true)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
                   style={{ borderColor: "var(--color-border)" }}
-                  title="Preview and pull latest public version into your draft"
+                  title={pullPending.pending
+                    ? "Public has new changes since your draft started. Pull them into your draft."
+                    : "Preview and pull latest public version into your draft"}
                 >
                   <Download size={12} />
                   <span className="hidden sm:inline">Pull</span>
+                  {pullPending.pending && (
+                    <span
+                      aria-label="Pull pending"
+                      className="inline-block w-2 h-2 rounded-full bg-amber-500"
+                    />
+                  )}
                 </button>
               )}
               {syncMode === 'private' && projectId && (
@@ -18541,6 +18580,27 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           }
         }}
       />
+
+      {projectId && reapplyPr && (
+        <RevertPrDialog
+          mode="reapply"
+          projectId={projectId}
+          prId={reapplyPr.prId}
+          title={reapplyPr.title}
+          onClose={() => setReapplyPr(null)}
+          onDone={() => setReapplyPr(null)}
+        />
+      )}
+
+      {projectId && revertPr && (
+        <RevertPrDialog
+          projectId={projectId}
+          prId={revertPr.prId}
+          title={revertPr.title}
+          onClose={() => setRevertPr(null)}
+          onDone={() => setRevertPr(null)}
+        />
+      )}
 
       {projectId && (
         <DraftPRPanel

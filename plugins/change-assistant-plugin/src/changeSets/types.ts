@@ -39,6 +39,8 @@ export interface ChangeEntry {
   newValue?: string;
   undoable?: boolean;
   undoReason?: string | null;
+  setOnly?: boolean;
+  mergedPrReverted?: boolean;
   subChanges?: SubChange[];
   reverted?: boolean;
   revertedBy?: string;
