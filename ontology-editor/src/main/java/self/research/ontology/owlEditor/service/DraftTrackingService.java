@@ -270,6 +270,10 @@ public class DraftTrackingService {
         return draftPublishService.analyze(projectId, userId, userDrafts, enrichAxiomDetail);
     }
 
+    public DraftPublishAnalysis analyzePublish(String projectId, String graphOwnerId, List<DraftChange> drafts, boolean enrichAxiomDetail) {
+        return draftPublishService.analyze(projectId, graphOwnerId, drafts, enrichAxiomDetail);
+    }
+
     /**
      * Get all drafts (applied and unapplied) for a project
      */
@@ -726,6 +730,10 @@ public class DraftTrackingService {
 
     public void recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
         draftChangeHistory.recordPrPublication(projectId, prId, title, authorName, mergedBy, changes);
+    }
+
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId) {
+        draftChangeHistory.tagPrPublishedRows(projectId, changeSetIds, prId);
     }
 
     public void recordPrReversal(String projectId, String prId, String title, String revertedBy, int changeSets, String reason) {

@@ -40,7 +40,7 @@ public class UndoQueueService {
                 projectId, draft, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
         Map<String, List<HistoryChange>> groups = new LinkedHashMap<>();
         for (HistoryChange entry : own) {
-            if (entry.isReverted() || UserUndoService.isRollbackEntry(entry)
+            if (entry.isReverted() || entry.getPublishedPrId() != null || UserUndoService.isRollbackEntry(entry)
                     || (RollbackWorkSupport.isPublicationEntry(entry) && !RollbackWorkSupport.isUndoablePublication(entry))) {
                 continue;
             }

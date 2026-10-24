@@ -43,6 +43,12 @@ public class OntologyHistoryService {
         return historySyncService == null ? java.util.List.of() : historySyncService.draftChangeSetIds(projectId, userId);
     }
 
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId) {
+        if (historySyncService != null) {
+            historySyncService.tagRowsOfPr(projectId, changeSetIds, prId);
+        }
+    }
+
     public void markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
         if (historySyncService != null) {
             historySyncService.markChangeSetsPublished(projectId, userId, changeSetIds);

@@ -64,6 +64,14 @@ public class DraftChangeHistoryRecorder {
         }
     }
 
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId) {
+        try {
+            historyService.tagPrPublishedRows(projectId, changeSetIds, prId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not tag the rows published by PR {} in project {}: {}", prId, projectId, e.getMessage());
+        }
+    }
+
     public void markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
         try {
             historyService.markChangeSetsPublished(projectId, userId, changeSetIds);

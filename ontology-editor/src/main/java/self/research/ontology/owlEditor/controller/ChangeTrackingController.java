@@ -199,6 +199,13 @@ public class ChangeTrackingController {
 
             List<Map<String, Object>> changes = new ArrayList<>();
             for (HistoryChange change : historyChanges) {
+                if (self.research.ontology.owlEditor.service.PrFeedExpander.isMergedPrEntry(change)) {
+                    changes.addAll(self.research.ontology.owlEditor.service.PrFeedExpander.expand(
+                            change, historyChangeToMap(change, conflicts),
+                            prId -> historySyncService.publishedRows(projectId, prId),
+                            row -> historyChangeToMap(row, conflicts)));
+                    continue;
+                }
                 changes.addAll(self.research.ontology.owlEditor.service.MergeFeedExpander
                         .expand(change, historyChangeToMap(change, conflicts)));
             }
@@ -539,6 +546,10 @@ public class ChangeTrackingController {
         if (denied != null) {
             return denied;
         }
+        ResponseEntity<Map<String, Object>> mergedPr = RollbackRequestSupport.denyIfMergedPr(List.of(change));
+        if (mergedPr != null) {
+            return mergedPr;
+        }
         ChangeRollbackService.Result result = rollbackService.undoSubChange(projectId, change.getId(), subChangeId,
                 rollbackSupport.actor(httpRequest, request), dryRun);
         return RollbackRequestSupport.toBody(result, changeId, subChangeId);
@@ -556,6 +567,10 @@ public class ChangeTrackingController {
         ResponseEntity<Map<String, Object>> denied = rollbackSupport.denyIfNotAllowed(List.of(change), projectId, httpRequest);
         if (denied != null) {
             return denied;
+        }
+        ResponseEntity<Map<String, Object>> mergedPr = RollbackRequestSupport.denyIfMergedPr(List.of(change));
+        if (mergedPr != null) {
+            return mergedPr;
         }
         ChangeRollbackService.Result result = rollbackService.undoEntry(projectId, change.getId(),
                 rollbackSupport.actor(httpRequest, request), dryRun);

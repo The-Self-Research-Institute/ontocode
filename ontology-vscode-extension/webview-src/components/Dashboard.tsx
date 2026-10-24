@@ -1562,18 +1562,6 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
-  const [focusPrId, setFocusPrId] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent).detail || {};
-      if (detail.prId) {
-        setFocusPrId(detail.prId);
-        setShowDraftPRPanel(true);
-      }
-    };
-    window.addEventListener("ontology:open-pr", open);
-    return () => window.removeEventListener("ontology:open-pr", open);
-  }, []);
   const [showPullPreview, setShowPullPreview] = useState(false);
   const pullPending = usePullPending(
     projectId || undefined,
@@ -18572,8 +18560,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
       {projectId && (
         <DraftPRPanel
           isOpen={showDraftPRPanel}
-          focusPrId={focusPrId}
-          onClose={() => { setShowDraftPRPanel(false); setFocusPrId(undefined); }}
+          onClose={() => setShowDraftPRPanel(false)}
           projectId={projectId}
           userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
           username={user?.username || user?.email || ""}

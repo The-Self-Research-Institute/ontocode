@@ -101,6 +101,27 @@ class UserUndoConfirmOtherTest {
     }
 
     @Test
+    void theChainStopsWhenAnOtherChangeBelongsToAMergedPullRequest() {
+        HistoryChange other = row("o1", "csO", "mongo-2", "sam");
+        other.setPublishedPrId("pr9");
+        HistorySyncService historySync = mock(HistorySyncService.class);
+        HistoryChange target = row("t1", null, "mongo-1", "owner");
+        when(historySync.getHistoryChange("t1")).thenReturn(target);
+        when(historySync.getChangeSet(P, "csO")).thenReturn(List.of(other));
+        UndoPreconditions preconditions = mock(UndoPreconditions.class);
+        when(preconditions.violation(eq(P), anyList(), any())).thenReturn(Optional.of("Other people's changes are on top"));
+        controller = new UserUndoController(undoService, rollback, historySync, support, preconditions, new ProjectWriteLockRegistry());
+        controller.setBlockers(blockers);
+
+        ResponseEntity<Map<String, Object>> response = controller.undo(P, false, "t1", "op1", null, signedIn(true));
+
+        assertEquals(409, response.getStatusCode().value());
+        assertEquals(RollbackRequestSupport.MERGED_PR_PART, response.getBody().get("error"));
+        verify(rollback, never()).undoChangeSet(eq(P), eq("csO"), any(), anyBoolean());
+        verify(rollback, never()).undoEntry(eq(P), eq("t1"), any(), anyBoolean());
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void withoutConfirmationTheRefusalListsWhoIsOnTopAndNothingIsUndone() {
         ResponseEntity<Map<String, Object>> response = controller.undo(P, false, "t1", "op1", null, signedIn(false));

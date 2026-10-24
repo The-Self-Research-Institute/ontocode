@@ -1,6 +1,7 @@
 import React from 'react';
 import { Search } from 'lucide-react';
 import { SourceFilter } from '../changeSets/types';
+import type { ViewScope } from './hooks/useChangeFilters';
 import { ChangeStatus, ChangeType } from './types';
 
 interface FilterBarProps {
@@ -12,6 +13,9 @@ interface FilterBarProps {
   setFilterStatus: (value: ChangeStatus | 'all') => void;
   sourceFilter: SourceFilter;
   setSourceFilter: (value: SourceFilter) => void;
+  viewScope: ViewScope;
+  setViewScope: (value: ViewScope) => void;
+  isDraftActive: boolean;
 }
 
 const FilterBar: React.FC<FilterBarProps> = (props) => (
@@ -26,7 +30,16 @@ const FilterBar: React.FC<FilterBarProps> = (props) => (
         className="w-full pl-9 pr-3 py-2 border rounded text-sm"
       />
     </div>
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
+      <select
+        value={props.viewScope}
+        onChange={(e) => props.setViewScope(e.target.value as ViewScope)}
+        className="flex-1 px-2 py-1 border rounded text-sm"
+        aria-label="Scope"
+      >
+        <option value="mode">{props.isDraftActive ? 'Draft changes' : 'Public changes'}</option>
+        <option value="all">All changes</option>
+      </select>
       <select
         value={props.filterType}
         onChange={(e) => props.setFilterType(e.target.value as ChangeType | 'all')}

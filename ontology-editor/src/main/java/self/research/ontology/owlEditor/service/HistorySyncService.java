@@ -75,6 +75,29 @@ public class HistorySyncService {
         return result.getModifiedCount();
     }
 
+    public long countRowsToTag(String projectId, java.util.List<String> changeSetIds) {
+        if (projectId == null || changeSetIds == null || changeSetIds.isEmpty()) {
+            return 0;
+        }
+        return mongoTemplate.count(Query.query(Criteria.where("projectId").is(projectId).and("draft").is(false)
+                .and("changeSetId").in(changeSetIds).and("publishedPrId").is(null)), HistoryChange.class);
+    }
+
+    public long tagRowsOfPr(String projectId, java.util.List<String> changeSetIds, String prId) {
+        if (projectId == null || prId == null || changeSetIds == null || changeSetIds.isEmpty()) {
+            return 0;
+        }
+        var result = mongoTemplate.updateMulti(
+                Query.query(Criteria.where("projectId").is(projectId).and("draft").is(false)
+                        .and("changeSetId").in(changeSetIds).and("publishedPrId").is(null)),
+                new Update().set("publishedPrId", prId), HistoryChange.class);
+        return result.getModifiedCount();
+    }
+
+    public java.util.List<HistoryChange> publishedRows(String projectId, String prId) {
+        return historyChangeRepository.findByProjectIdAndPublishedPrId(projectId, prId);
+    }
+
     public long markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
         if (projectId == null || userId == null || changeSetIds == null || changeSetIds.isEmpty()) {
             return 0;

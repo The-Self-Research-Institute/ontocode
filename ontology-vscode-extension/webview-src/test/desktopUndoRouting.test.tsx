@@ -57,6 +57,18 @@ describe('useDesktopUndoRouting', () => {
     expect(onUndo).not.toHaveBeenCalled();
   });
 
+  it('does not undo behind an open dialog', async () => {
+    await act(async () => root.render(<Probe />));
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.appendChild(dialog);
+    menuCallback?.('undo');
+    menuCallback?.('redo');
+    dialog.remove();
+    expect(onUndo).not.toHaveBeenCalled();
+    expect(onRedo).not.toHaveBeenCalled();
+  });
+
   it('ignores unknown menu actions', async () => {
     await act(async () => root.render(<Probe />));
     menuCallback?.('cut');

@@ -144,7 +144,8 @@ export function activeChanges<T extends { source?: string | null; operationType?
   return countableChanges(changes).filter(change => !isUndone(change));
 }
 
-export function computeStats(parsedChanges: any[], draftChanges: OntologyChange[]): ChangeStats {
+export function computeStats(allChanges: any[], draftChanges: OntologyChange[]): ChangeStats {
+  const parsedChanges = allChanges.filter((change: any) => !change.draft);
   const countable = countableChanges(parsedChanges);
   const totalWarnings = [...countable, ...draftChanges]
     .reduce((sum, c) => sum + (c.warnings?.length || 0), 0);

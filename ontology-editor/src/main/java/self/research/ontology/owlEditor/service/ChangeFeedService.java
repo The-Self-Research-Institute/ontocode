@@ -55,6 +55,9 @@ public class ChangeFeedService {
     }
 
     static boolean visible(HistoryChange change, Query query) {
+        if (change.getPublishedPrId() != null) {
+            return false;
+        }
         if (change.isDraft() && !ownedBy(change, query.viewerIds())) {
             return false;
         }

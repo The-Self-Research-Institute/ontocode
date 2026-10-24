@@ -184,6 +184,23 @@ class UserUndoServiceTest {
     }
 
     @Test
+    void offersNoRedoForAnUndoThatTheRedoGuardRefuses() {
+        RollbackAudit audit = new RollbackAudit();
+        audit.setId("au1");
+        audit.setRevertedAt(T0.plusMinutes(10));
+        when(audits.findByProjectIdAndDirectionAndRevertedByUserIdInOrderByRevertedAtDesc(anyString(), anyString(), any(), any()))
+                .thenReturn(List.of(audit));
+        HistoryChange undone = change("a", "Me@x.com", "e:A", T0);
+        undone.setReverted(true);
+        undone.setRevertedAuditId("au1");
+        when(rollback.entriesForUndo(P, "au1")).thenReturn(List.of(undone));
+        RedoGuard guard = mock(RedoGuard.class);
+        when(guard.refusal(anyString(), any())).thenReturn(java.util.Optional.of(RedoGuard.PR_REVERTED));
+        service.setRedoGuard(guard);
+        assertFalse(service.nextRedo(P, false, me).available());
+    }
+
+    @Test
     void offersNoRedoOnceTheUndoWasRedone() {
         RollbackAudit audit = new RollbackAudit();
         audit.setId("au1");

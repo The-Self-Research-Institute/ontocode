@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { X, GitPullRequest, Check, XCircle, RefreshCw, ChevronDown, ChevronUp, ChevronRight, AlertTriangle } from "lucide-react";
 import apiClient from "../services/apiClient";
+import { confirmRevert, failureOf, previewRevert } from "../services/prRevertService";
 import {
   DraftChange,
   CATEGORY_ORDER,
@@ -46,7 +47,6 @@ interface DraftPRPanelProps {
   canRaisePR: boolean;
   /** current draft change count for the user */
   draftCount: number;
-  focusPrId?: string;
   onPRApproved?: () => void;
 }
 
@@ -59,7 +59,6 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   canReview,
   canRaisePR,
   draftCount,
-  focusPrId,
   onPRApproved,
 }) => {
   const [prs, setPRs] = useState<DraftPR[]>([]);
@@ -140,12 +139,11 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
       });
     try {
       const [changesRes, previewRes] = await Promise.all([
-        apiClient.get<any>(`/api/ontology/${projectId}/drafts`, { userId: pr.authorId }),
+        apiClient.get<any>(`/api/ontology/${projectId}/draft-prs/${pr.id}/changes`),
         apiClient.get<any>(`/api/ontology/${projectId}/drafts/publish-preview`, { userId: pr.snapshotKey || pr.authorId }),
       ]);
       const changesData = changesRes?.data || changesRes;
-      const submitted = pr.submittedChangeIds && pr.submittedChangeIds.length > 0 ? new Set(pr.submittedChangeIds) : null;
-      const raised = (changesData.drafts || []).filter((draft: DraftChange) => !submitted || submitted.has(draft.id));
+      const raised: DraftChange[] = changesData.drafts || [];
       setPrChangesMap((prev) => ({ ...prev, [pr.id]: raised }));
       const preview = previewRes?.data || previewRes;
       if (preview) {
@@ -270,36 +268,25 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const [revertNotice, setRevertNotice] = useState<Record<string, string>>({});
   const [revertReason, setRevertReason] = useState<Record<string, string>>({});
 
-  const readOutcome = (e: any) => {
-    const data = e?.data || e?.response?.data;
-    return { ok: false, message: data?.error || data?.message || e?.message || "Request failed", changeSets: data?.changeSets || [] };
-  };
-
   const handleRevertPreview = async (pr: DraftPR) => {
     setReviewing(true);
-    try {
-      const res = await apiClient.post<any>(`/api/ontology/${projectId}/draft-prs/${pr.id}/revert?dryRun=true`, { userId, username: userId });
-      setRevertPreview((prev) => ({ ...prev, [pr.id]: { ok: true, message: res?.message || "Preview ready", changeSets: res?.changeSets || [] } }));
-    } catch (e: any) {
-      setRevertPreview((prev) => ({ ...prev, [pr.id]: readOutcome(e) }));
-    } finally {
-      setReviewing(false);
-    }
+    const outcome = await previewRevert(projectId, pr.id, { userId, username: userId });
+    setRevertPreview((prev) => ({ ...prev, [pr.id]: outcome }));
+    setReviewing(false);
   };
 
   const handleRevertConfirm = async (pr: DraftPR) => {
     setReviewing(true);
-    try {
-      const res = await apiClient.post<any>(`/api/ontology/${projectId}/draft-prs/${pr.id}/revert`, { userId, username: userId, reason: (revertReason[pr.id] || "").trim() });
+    const outcome = await confirmRevert(projectId, pr.id, revertReason[pr.id] || "", { userId, username: userId });
+    if (outcome.ok) {
       setRevertPreview((prev) => ({ ...prev, [pr.id]: null }));
-      setRevertNotice((prev) => ({ ...prev, [pr.id]: res?.message || "Reverted" }));
+      setRevertNotice((prev) => ({ ...prev, [pr.id]: outcome.message }));
       await fetchPRs();
       window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["draftPrReverted"] } }));
-    } catch (e: any) {
-      setRevertPreview((prev) => ({ ...prev, [pr.id]: readOutcome(e) }));
-    } finally {
-      setReviewing(false);
+    } else {
+      setRevertPreview((prev) => ({ ...prev, [pr.id]: outcome }));
     }
+    setReviewing(false);
   };
 
   const handleRestore = async (pr: DraftPR) => {
@@ -310,7 +297,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
       refreshDraftCount();
       window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["draftPrRestored"] } }));
     } catch (e: any) {
-      setRevertNotice((prev) => ({ ...prev, [pr.id]: readOutcome(e).message }));
+      setRevertNotice((prev) => ({ ...prev, [pr.id]: failureOf(e).message }));
     } finally {
       setReviewing(false);
     }
@@ -337,14 +324,6 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const openPRs = prs.filter((p) => p.status === "OPEN");
   const closedPRs = prs.filter((p) => p.status !== "OPEN");
   const displayedPRs = activeTab === "open" ? openPRs : closedPRs;
-
-  useEffect(() => {
-    if (!isOpen || !focusPrId) return;
-    const target = prs.find((candidate) => candidate.id === focusPrId);
-    if (!target) return;
-    setActiveTab(target.status === "OPEN" ? "open" : "closed");
-    setExpandedPrId(focusPrId);
-  }, [isOpen, focusPrId, prs]);
 
   const myOpenPR = prs.find((p) => p.status === "OPEN" && p.authorId === userId);
 
@@ -409,7 +388,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
             {myOpenPR ? (
               <div className="text-xs rounded px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700">
                 You have an open pull request: <strong>{myOpenPR.title}</strong>. Wait for it to be reviewed before raising another.
-                {(myOpenPR.draftChanged || !myOpenPR.snapshotKey) && (
+                {myOpenPR.draftChanged && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <span>
                       {myOpenPR.snapshotKey
@@ -658,7 +637,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                         : `This PR was raised with ${pr.changeCount} change${pr.changeCount === 1 ? "" : "s"}, and the draft now has ${pr.currentChangeCount ?? "more"}. The list below shows the whole current draft, and approving publishes all of it.`}
                     </div>
                   )}
-                  {pr.status === "OPEN" && pr.authorId === userId && (pr.draftChanged || !pr.snapshotKey) && (
+                  {pr.status === "OPEN" && pr.authorId === userId && pr.draftChanged && (
                     <div className="mt-2">
                       <button
                         onClick={() => handleUpdatePR(pr)}

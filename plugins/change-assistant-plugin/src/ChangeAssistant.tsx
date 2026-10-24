@@ -14,13 +14,15 @@ import { useConflictResolution } from './assistant/hooks/useConflictResolution';
 import { useLiveActivity } from './assistant/hooks/useLiveActivity';
 import { useNotification } from './assistant/hooks/useNotification';
 import { useRequestedTab } from './assistant/hooks/useRequestedTab';
+import { inScope } from './assistant/hooks/useChangeFilters';
 import { AssistantTab, OntologyChange } from './assistant/types';
 
 interface ChangeAssistantProps {
   projectId: string;
+  draftMode?: boolean;
 }
 
-const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
+const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId, draftMode }) => {
   const [activeTab, setActiveTab] = useState<AssistantTab>('live');
   useRequestedTab(setActiveTab);
   const [selectedChange, setSelectedChange] = useState<OntologyChange | null>(null);
@@ -28,7 +30,12 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const [serverQuery, setServerQuery] = useState('');
   const feed = useChangeFeed(projectId, serverQuery);
   const liveActivity = useLiveActivity(projectId, feed.loadChanges);
-  const filters = useChangeFilters(feed.changes, feed.draftChanges);
+  const draftActive = draftMode ?? feed.isDraftActive;
+  const filters = useChangeFilters(feed.changes, feed.draftChanges, draftActive);
+  const scopedChanges = React.useMemo(
+    () => feed.changes.filter(change => inScope(change, filters.viewScope, draftActive)),
+    [feed.changes, filters.viewScope, draftActive]
+  );
   React.useEffect(() => {
     const timer = setTimeout(() => setServerQuery(filters.searchQuery.trim()), 350);
     return () => clearTimeout(timer);
@@ -38,10 +45,10 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
   const comments = useCommentDialog(projectId, selectedChange, feed.loadChanges, showNotification);
 
   React.useEffect(() => {
-    if (!feed.isDraftActive && feed.stats.draftChanges === 0 && activeTab === 'drafts') {
+    if (!draftActive && feed.stats.draftChanges === 0 && activeTab === 'drafts') {
       setActiveTab('live');
     }
-  }, [feed.isDraftActive, feed.stats.draftChanges, activeTab]);
+  }, [draftActive, feed.stats.draftChanges, activeTab]);
 
   const openChangeDetails = (changeId: string) => {
     const change = feed.changes.find(c => c.id === changeId);
@@ -59,11 +66,11 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId }) => {
 
   return (
     <div className="h-full flex flex-col bg-white">
-      <AssistantHeader isLoading={feed.isLoading} lastRefresh={feed.lastRefresh} stats={feed.stats} onRefresh={feed.refreshAll} filters={filters} isDraftActive={feed.isDraftActive} />
-      <TabBar activeTab={activeTab} onSelect={setActiveTab} liveCount={liveActivity.length} stats={feed.stats} isDraftActive={feed.isDraftActive} />
+      <AssistantHeader isLoading={feed.isLoading} lastRefresh={feed.lastRefresh} stats={feed.stats} onRefresh={feed.refreshAll} filters={filters} isDraftActive={draftActive} />
+      <TabBar activeTab={activeTab} onSelect={setActiveTab} liveCount={liveActivity.length} stats={feed.stats} isDraftActive={draftActive} />
       <TabContent
         projectId={projectId} activeTab={activeTab} liveActivity={liveActivity}
-        changes={feed.changes} draftChanges={feed.draftChanges} filteredDrafts={filters.filteredDrafts} stats={feed.stats}
+        changes={scopedChanges} draftChanges={feed.draftChanges} filteredDrafts={filters.filteredDrafts} stats={feed.stats}
         filteredChanges={filters.filteredChanges} typeFilteredChanges={filters.typeFilteredChanges}
         searchQuery={filters.searchQuery} sourceFilter={filters.sourceFilter}
         onRollback={feed.refreshAfterRollback} onOpenDetails={openChangeDetails}

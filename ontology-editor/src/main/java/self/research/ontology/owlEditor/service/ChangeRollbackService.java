@@ -89,6 +89,9 @@ public class ChangeRollbackService {
     @Autowired(required = false)
     private UndoBlockers blockers;
 
+    @Autowired(required = false)
+    private RedoGuard redoGuard;
+
     @Autowired
     public ChangeRollbackService(HistorySyncService historySync, RollbackMutationPlanner planner,
                                  RollbackGraphFacts facts, OntologyMutationService mutations,
@@ -168,6 +171,13 @@ public class ChangeRollbackService {
         if (entries.isEmpty()) {
             return new Result(404, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,
                     "Change not found");
+        }
+        if (REDO.equals(req.direction()) && redoGuard != null) {
+            java.util.Optional<String> refusal = redoGuard.refusal(req.projectId(), entries);
+            if (refusal.isPresent()) {
+                return new Result(409, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,
+                        refusal.get());
+            }
         }
         UndoOperationContext.entries(entries, req.undoAuditId());
         return req.dryRun() ? preview(req, entries) : applyInOrder(req, entries);

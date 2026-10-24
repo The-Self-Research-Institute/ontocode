@@ -80,6 +80,7 @@ public class HistoryChange {
     private boolean draft = false;
     private boolean draftDiscarded = false;
     private String draftSessionId;
+    private String publishedPrId;
 
     // Rollback tracking (whole-entry rollback)
     private boolean reverted = false;
@@ -638,6 +639,14 @@ public class HistoryChange {
 
     public void setDraft(boolean draft) {
         this.draft = draft;
+    }
+
+    public String getPublishedPrId() {
+        return publishedPrId;
+    }
+
+    public void setPublishedPrId(String publishedPrId) {
+        this.publishedPrId = publishedPrId;
     }
 
     public String getDraftSessionId() {

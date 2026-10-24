@@ -20,6 +20,7 @@ function setContext(set: ChangeSet): EventContext {
 }
 
 export function setTarget(set: ChangeSet, direction: 'UNDO' | 'REDO'): OperationTarget | null {
+  if (set.changeSetId?.startsWith('pr:')) return null;
   if (set.changeSetId) {
     return { kind: 'set', direction, changeSetId: set.changeSetId, label: set.title, context: setContext(set) };
   }

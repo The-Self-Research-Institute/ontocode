@@ -12,7 +12,9 @@ import {
 } from '../src/assistant/changeKinds';
 import { computeStats, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
 import { buildEntityRow, canUndoEntry, manualHeading, propertyRows } from '../src/changeSets/entityRows';
-import { entityTarget, propertyTarget } from '../src/changeSets/targets';
+import { entityTarget, propertyTarget, setTarget } from '../src/changeSets/targets';
+import { groupChangeSets } from '../src/changeSets/groupChangeSets';
+import { inScope } from '../src/assistant/hooks/useChangeFilters';
 import { parseServerTime } from '../src/changeSets/timeFormat';
 import type { ChangeEntry } from '../src/changeSets/types';
 
@@ -287,5 +289,75 @@ describe('one item of a merge shown like an AI edit', () => {
     const row = buildEntityRow(item);
     expect(entityTarget(row)).toBeNull();
     expect(propertyTarget(row, row.properties[0])).toBeNull();
+  });
+});
+
+describe('a merged pull request shown as one card', () => {
+  const entries = ['r1', 'r2'].map(
+    (id, i) =>
+      parseChange({
+        ...base,
+        id: `pr1#${i}`,
+        operationType: 'createClass',
+        entityIRI: `http://x#${id}`,
+        entityLabel: id,
+        setOnly: true,
+        changeSetId: 'pr:7',
+        description: 'Merged PR: Pizza toppings'
+      }) as unknown as ChangeEntry
+  );
+
+  it('groups the items into one set titled with the pull request and offers no undo', () => {
+    const items = groupChangeSets(entries);
+    expect(items).toHaveLength(1);
+    const set = (items[0] as any).set;
+    expect(set.title).toBe('Merged PR: Pizza toppings');
+    expect(setTarget(set, 'UNDO')).toBeNull();
+    expect(setTarget(set, 'REDO')).toBeNull();
+  });
+});
+
+describe('merged pull request items', () => {
+  it('show what was done and no undo-refusal badge', () => {
+    const entry = parseChange({
+      ...base,
+      id: 'pr1#0',
+      operationType: 'createClass',
+      entityIRI: 'http://x#ok',
+      entityLabel: 'ok',
+      setOnly: true,
+      undoable: false,
+      undoReason: 'Part of a merged pull request. Revert the pull request instead',
+      changeSetId: 'pr:7'
+    }) as unknown as ChangeEntry;
+    expect(buildEntityRow(entry).badge).not.toMatch(/Can't undo/);
+  });
+});
+
+describe('which changes the Change Assistant shows by default', () => {
+  const draft = parseChange({ ...base, id: 'd1', draft: true }) as any;
+  const publicChange = parseChange({ ...base, id: 'p1', draft: false }) as any;
+
+  it('shows only draft changes while in draft mode and only public changes otherwise', () => {
+    expect(inScope(draft, 'mode', true)).toBe(true);
+    expect(inScope(publicChange, 'mode', true)).toBe(false);
+    expect(inScope(draft, 'mode', false)).toBe(false);
+    expect(inScope(publicChange, 'mode', false)).toBe(true);
+  });
+
+  it('shows everything when all changes are chosen', () => {
+    for (const mode of [true, false]) {
+      expect(inScope(draft, 'all', mode)).toBe(true);
+      expect(inScope(publicChange, 'all', mode)).toBe(true);
+    }
+  });
+});
+
+describe('the saved count while drafting', () => {
+  it('does not count draft changes as saved', () => {
+    const published = parseChange({ ...base, id: 'p1', draft: false, operationType: 'createClass' }) as any;
+    const drafted = parseChange({ ...base, id: 'd1', draft: true, operationType: 'createClass' }) as any;
+    expect(computeStats([published, drafted], []).totalChanges).toBe(1);
+    expect(computeStats([drafted], []).totalChanges).toBe(0);
   });
 });

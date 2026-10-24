@@ -67,6 +67,16 @@ class ChangeFeedServiceTest {
     }
 
     @Test
+    void rowsPublishedByAMergedPrAreNotListedSeparately() {
+        HistoryChange merged = change("1", "me@x.com", "createClass", "Merged");
+        merged.setPublishedPrId("7");
+        pages(List.of(merged, change("2", "me@x.com", "createClass", "Plain")));
+
+        assertEquals(List.of("2"), service.page("p", query(10, 0, null, null, null, true, "me@x.com")).changes()
+                .stream().map(HistoryChange::getId).toList());
+    }
+
+    @Test
     void withoutAnIdentityNoDraftEntriesAreShown() {
         HistoryChange draft = change("1", "me@x.com", "createClass", "Mine");
         draft.setDraft(true);

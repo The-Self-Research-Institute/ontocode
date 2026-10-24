@@ -269,6 +269,10 @@ public class UserUndoController {
             if (denied != null) {
                 return denied;
             }
+            ResponseEntity<Map<String, Object>> mergedPr = RollbackRequestSupport.denyIfMergedPr(scope);
+            if (mergedPr != null) {
+                return mergedPr;
+            }
             ChangeRollbackService.Actor step = new ChangeRollbackService.Actor(actor.userId(), actor.username(),
                     actor.opId() == null ? null : actor.opId() + ":" + key);
             ChangeRollbackService.Result result = other.getChangeSetId() == null

@@ -115,6 +115,68 @@ class DraftControllerTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void theChangeListOfAFrozenPrComesFromItsOwnCopyEvenAfterTheAuthorUndoesOne() {
+        DraftPullRequest pr = frozenPr();
+        var stored = mock(self.research.ontology.owlEditor.repository.DraftPrChangeRepository.class);
+        controller.setPrChanges(stored);
+        when(stored.findByPrId("pr1")).thenReturn(java.util.List.of(
+                new self.research.ontology.owlEditor.model.DraftPrChange("p1", "pr1", draftChange("c1")),
+                new self.research.ontology.owlEditor.model.DraftPrChange("p1", "pr1", draftChange("c2"))));
+        when(prRepository.findById("pr1")).thenReturn(Optional.of(pr));
+        when(draftTrackingService.getUnappliedDraftsForUser("p1", "author1"))
+                .thenReturn(java.util.List.of(draftChange("c1")));
+
+        var response = controller.pullRequestChanges("p1", "pr1");
+
+        assertEquals(200, response.getStatusCode().value());
+        java.util.List<self.research.ontology.owlEditor.model.DraftChange> drafts =
+                (java.util.List<self.research.ontology.owlEditor.model.DraftChange>) response.getBody().get("drafts");
+        assertEquals(java.util.List.of("c1", "c2"),
+                drafts.stream().map(self.research.ontology.owlEditor.model.DraftChange::getId).toList());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theChangeListOfAPrWithoutACopyFallsBackToItsRaisedIdsInTheLiveDraft() {
+        DraftPullRequest pr = openPr();
+        pr.setSubmittedChangeIds(java.util.List.of("c1", "c2"));
+        when(prRepository.findById("pr1")).thenReturn(Optional.of(pr));
+        when(draftTrackingService.getUnappliedDraftsForUser("p1", "author1"))
+                .thenReturn(java.util.List.of(draftChange("c1"), draftChange("c2"), draftChange("c3")));
+
+        var response = controller.pullRequestChanges("p1", "pr1");
+
+        java.util.List<self.research.ontology.owlEditor.model.DraftChange> drafts =
+                (java.util.List<self.research.ontology.owlEditor.model.DraftChange>) response.getBody().get("drafts");
+        assertEquals(java.util.List.of("c1", "c2"),
+                drafts.stream().map(self.research.ontology.owlEditor.model.DraftChange::getId).toList());
+    }
+
+    @Test
+    void thePreviewOfAFrozenPrAnalysesOnlyTheChangesItWasRaisedWith() {
+        DraftPullRequest pr = frozenPr();
+        when(prRepository.findById("pr1")).thenReturn(Optional.of(pr));
+        when(draftTrackingService.getUnappliedDraftsForUser("p1", "author1"))
+                .thenReturn(java.util.List.of(draftChange("c1"), draftChange("c2"), draftChange("c3")));
+        self.research.ontology.owlEditor.service.DraftPublishAnalysis analysis =
+                org.mockito.Mockito.mock(self.research.ontology.owlEditor.service.DraftPublishAnalysis.class);
+        when(analysis.toResponseMap()).thenReturn(Map.of());
+        when(draftTrackingService.analyzePublish(eq("p1"), eq("pr-snapshot-pr1"), any(java.util.List.class),
+                org.mockito.ArgumentMatchers.anyBoolean())).thenReturn(analysis);
+
+        var response = controller.publishPreview("p1", "pr-snapshot-pr1", true);
+
+        assertEquals(200, response.getStatusCode().value());
+        org.mockito.ArgumentCaptor<java.util.List<self.research.ontology.owlEditor.model.DraftChange>> drafts =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        org.mockito.Mockito.verify(draftTrackingService).analyzePublish(eq("p1"), eq("pr-snapshot-pr1"),
+                drafts.capture(), org.mockito.ArgumentMatchers.anyBoolean());
+        assertEquals(java.util.List.of("c1", "c2"),
+                drafts.getValue().stream().map(self.research.ontology.owlEditor.model.DraftChange::getId).toList());
+    }
+
+    @Test
     void aLegacyPrWhoseDraftGrewStillPublishesTheLiveDraftInsteadOfBeingRefused() {
         DraftPullRequest pr = openPr();
         pr.setSubmittedChangeIds(java.util.List.of("c1", "c2"));
@@ -179,6 +241,8 @@ class DraftControllerTest {
     void raisingAPrFreezesTheDraftAndStoresWhatWasFrozen() {
         var snapshots = mock(self.research.ontology.owlEditor.service.PrSnapshotService.class);
         controller.setSnapshots(snapshots);
+        var storedChanges = mock(self.research.ontology.owlEditor.repository.DraftPrChangeRepository.class);
+        controller.setPrChanges(storedChanges);
         when(draftTrackingService.getUnappliedDraftsForUser("p1", "author1"))
                 .thenReturn(java.util.List.of(draftChange("c1"), draftChange("c2")));
         when(prRepository.findByProjectIdAndAuthorIdAndStatus("p1", "author1", DraftPullRequest.Status.OPEN))
@@ -189,7 +253,7 @@ class DraftControllerTest {
             return saved;
         });
         when(snapshots.freeze("p1", "author1", "pr9")).thenReturn(new self.research.ontology.owlEditor.service.PrSnapshotService.Frozen(
-                "pr-snapshot-pr9", java.util.List.of("c1"), java.util.List.of("cs1")));
+                "pr-snapshot-pr9", java.util.List.of("c1"), java.util.List.of("cs1"), java.util.List.of(draftChange("c1"))));
 
         var response = controller.raisePullRequest("p1", new DraftController.RaisePRRequest("author1", "Author", "T", "D"));
 
@@ -199,8 +263,38 @@ class DraftControllerTest {
         DraftPullRequest last = saved.getAllValues().get(saved.getAllValues().size() - 1);
         assertEquals("pr-snapshot-pr9", last.getSnapshotKey());
         assertEquals(java.util.List.of("c1"), last.getSubmittedChangeIds());
+        org.mockito.Mockito.verify(storedChanges).deleteByPrId("pr9");
+        org.mockito.ArgumentCaptor<java.util.List<self.research.ontology.owlEditor.model.DraftPrChange>> rows =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        org.mockito.Mockito.verify(storedChanges).saveAll(rows.capture());
+        assertEquals(java.util.List.of("c1"), rows.getValue().stream().map(r -> r.getChange().getId()).toList());
         assertEquals(java.util.List.of("cs1"), last.getPublishedChangeSetIds());
         assertEquals(1, last.getChangeCount());
+    }
+
+    @Test
+    void ifTheChangeListCannotBeSavedThePrIsNotRaisedAndTheCopyIsDropped() {
+        var snapshots = mock(self.research.ontology.owlEditor.service.PrSnapshotService.class);
+        controller.setSnapshots(snapshots);
+        var storedChanges = mock(self.research.ontology.owlEditor.repository.DraftPrChangeRepository.class);
+        controller.setPrChanges(storedChanges);
+        when(draftTrackingService.getUnappliedDraftsForUser("p1", "author1")).thenReturn(java.util.List.of(draftChange("c1")));
+        when(prRepository.findByProjectIdAndAuthorIdAndStatus("p1", "author1", DraftPullRequest.Status.OPEN))
+                .thenReturn(Optional.empty());
+        when(prRepository.save(any(DraftPullRequest.class))).thenAnswer(inv -> {
+            DraftPullRequest saved = inv.getArgument(0);
+            saved.setId("pr9");
+            return saved;
+        });
+        when(snapshots.freeze("p1", "author1", "pr9")).thenReturn(new self.research.ontology.owlEditor.service.PrSnapshotService.Frozen(
+                "pr-snapshot-pr9", java.util.List.of("c1"), java.util.List.of("cs1"), java.util.List.of(draftChange("c1"))));
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("document too large")).when(storedChanges).saveAll(any());
+
+        var response = controller.raisePullRequest("p1", new DraftController.RaisePRRequest("author1", "Author", "T", "D"));
+
+        assertEquals(500, response.getStatusCode().value());
+        org.mockito.Mockito.verify(snapshots).drop("p1", "pr9");
+        org.mockito.Mockito.verify(prRepository).deleteById("pr9");
     }
 
     @Test
@@ -298,6 +392,8 @@ class DraftControllerTest {
         assertEquals(java.util.List.of("cs1", "cs2"), pr.getPublishedChangeSetIds());
         org.mockito.Mockito.verify(draftTrackingService)
                 .recordPrPublication("p1", "pr1", "Add toppings", "pranesh", "reviewer1", 3);
+        org.mockito.Mockito.verify(draftTrackingService)
+                .tagPrPublishedRows(eq("p1"), eq(java.util.List.of("cs1", "cs2")), eq("pr1"));
     }
 
     @Test

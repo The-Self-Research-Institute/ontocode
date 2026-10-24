@@ -52,6 +52,21 @@ public class RollbackRequestSupport {
         return new ChangeRollbackService.Actor(userId, username, opId);
     }
 
+    public static final String MERGED_PR_PART = "Part of a merged pull request. Revert the pull request instead";
+
+    public static ResponseEntity<Map<String, Object>> denyIfMergedPr(List<HistoryChange> changes) {
+        for (HistoryChange change : changes) {
+            if (change.getPublishedPrId() != null) {
+                Map<String, Object> body = new HashMap<>();
+                body.put("success", false);
+                body.put("error", MERGED_PR_PART);
+                body.put("revertPr", Map.of("prId", change.getPublishedPrId()));
+                return ResponseEntity.status(409).body(body);
+            }
+        }
+        return null;
+    }
+
     public ResponseEntity<Map<String, Object>> denyIfNotAllowed(List<HistoryChange> changes, String projectId,
                                                                 HttpServletRequest request) {
         String authHeader = request != null ? request.getHeader("Authorization") : null;

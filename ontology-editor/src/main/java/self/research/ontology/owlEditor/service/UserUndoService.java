@@ -107,9 +107,14 @@ public class UserUndoService {
         List<RollbackAudit> undos = audits.findByProjectIdAndDirectionAndRevertedByUserIdInOrderByRevertedAtDesc(
                 projectId, ChangeRollbackService.UNDO, who.queryValues(), PageRequest.of(0, Limit.REDO_AUDIT_LOOKBACK.value()));
         HistoryChange latest = latestOwn(projectId, draft, who);
+        String currentDraft = draft ? currentDraftSessionId(projectId, who) : null;
         for (RollbackAudit undo : undos) {
             List<HistoryChange> entries = rollback.entriesForUndo(projectId, undo.getId());
             if (entries.isEmpty() || entries.get(0).isDraft() != draft) {
+                continue;
+            }
+            if (redoGuard != null && redoGuard.refusal(projectId, entries).isPresent()
+                    || fromAnotherDraft(entries.get(0), draft, currentDraft)) {
                 continue;
             }
             if (!stillUndone(entries, undo.getId())) {
@@ -131,7 +136,7 @@ public class UserUndoService {
                 projectId, draft, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
         String currentDraft = draft ? currentDraftSessionId(projectId, who) : null;
         for (HistoryChange entry : own) {
-            if (!entry.isReverted() && !entry.isDraftDiscarded() && !isRollbackEntry(entry)
+            if (!entry.isReverted() && !entry.isDraftDiscarded() && entry.getPublishedPrId() == null && !isRollbackEntry(entry)
                     && (!RollbackWorkSupport.isPublicationEntry(entry) || RollbackWorkSupport.isUndoablePublication(entry))
                     && !fromAnotherDraft(entry, draft, currentDraft)) {
                 return entry;
@@ -158,6 +163,12 @@ public class UserUndoService {
     }
 
     private DraftSessionRepository draftSessions;
+    private RedoGuard redoGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setRedoGuard(RedoGuard redoGuard) {
+        this.redoGuard = redoGuard;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setDraftSessions(DraftSessionRepository draftSessions) {

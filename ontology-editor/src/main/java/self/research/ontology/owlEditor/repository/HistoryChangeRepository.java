@@ -36,4 +36,6 @@ public interface HistoryChangeRepository extends MongoRepository<HistoryChange, 
     List<HistoryChange> findByProjectIdAndEntityIRIOrderByTimestampDesc(String projectId, String entityIRI, Pageable pageable);
 
     List<HistoryChange> findByProjectId(String projectId, Pageable pageable);
+
+    List<HistoryChange> findByProjectIdAndPublishedPrId(String projectId, String publishedPrId);
 }

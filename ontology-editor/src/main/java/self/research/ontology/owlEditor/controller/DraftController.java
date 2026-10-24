@@ -155,7 +155,7 @@ public class DraftController {
             @RequestParam String userId,
             @RequestParam(required = false, defaultValue = "true") boolean axiomDetail) {
         try {
-            DraftPublishAnalysis analysis = draftTrackingService.analyzePublish(projectId, userId, axiomDetail);
+            DraftPublishAnalysis analysis = analyzeForPreview(projectId, userId, axiomDetail);
             Map<String, Object> response = new HashMap<>(analysis.toResponseMap());
             response.put("success", true);
             response.put("projectId", projectId);
@@ -542,6 +542,7 @@ public class DraftController {
                     }
                     saved.setSnapshotKey(frozen.key());
                     saved.setSubmittedChangeIds(frozen.changeIds());
+                    storePrChanges(projectId, saved.getId(), frozen.changes());
                     saved.setPublishedChangeSetIds(frozen.changeSetIds());
                     saved.setChangeCount(frozen.changeIds().size());
                     changeCount = frozen.changeIds().size();
@@ -549,6 +550,15 @@ public class DraftController {
                 } catch (IllegalStateException e) {
                     prRepository.deleteById(saved.getId());
                     return ResponseEntity.status(409).body(Map.of("success", false, "error", e.getMessage()));
+                } catch (RuntimeException e) {
+                    snapshots.drop(projectId, saved.getId());
+                    if (prChanges != null) {
+                        prChanges.deleteByPrId(saved.getId());
+                    }
+                    prRepository.deleteById(saved.getId());
+                    log.error("[DRAFT PR] Could not save the change list of PR {}", saved.getId(), e);
+                    return ResponseEntity.status(500).body(Map.of("success", false,
+                            "error", "Could not save the pull request's changes: " + e.getMessage()));
                 }
             }
             log.info("[DRAFT PR] PR raised prId={} project={} author={} changes={}", saved.getId(), projectId, userId, changeCount);
@@ -662,6 +672,7 @@ public class DraftController {
             prRepository.save(pr);
             draftTrackingService.recordPrPublication(projectId, prId, pr.getTitle(), pr.getAuthorUsername(),
                     reviewerId, result.getAppliedCount());
+            draftTrackingService.tagPrPublishedRows(projectId, pr.getPublishedChangeSetIds(), prId);
             if (frozen) {
                 catchUpAuthorsDraft(projectId, pr.getAuthorId());
             }
@@ -790,12 +801,62 @@ public class DraftController {
     @org.springframework.beans.factory.annotation.Value("${ontocode.pr.frozen-copy:true}")
     private boolean frozenCopy = true;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.repository.DraftPrChangeRepository prChanges;
+
+    void setPrChanges(self.research.ontology.owlEditor.repository.DraftPrChangeRepository prChanges) {
+        this.prChanges = prChanges;
+    }
+
+    private void storePrChanges(String projectId, String prId, List<self.research.ontology.owlEditor.model.DraftChange> changes) {
+        if (prChanges == null) {
+            return;
+        }
+        prChanges.deleteByPrId(prId);
+        prChanges.saveAll(changes.stream()
+                .map(change -> new self.research.ontology.owlEditor.model.DraftPrChange(projectId, prId, change)).toList());
+    }
+
     void setSnapshots(PrSnapshotService snapshots) {
         this.snapshots = snapshots;
     }
 
     void setFrozenCopy(boolean frozenCopy) {
         this.frozenCopy = frozenCopy;
+    }
+
+    @GetMapping("/{projectId}/draft-prs/{prId}/changes")
+    public ResponseEntity<Map<String, Object>> pullRequestChanges(@PathVariable String projectId, @PathVariable String prId) {
+        DraftPullRequest pr = prRepository.findById(prId).orElse(null);
+        if (pr == null || !projectId.equals(pr.getProjectId())) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Pull request not found"));
+        }
+        List<self.research.ontology.owlEditor.model.DraftChange> changes = prChanges == null ? List.of()
+                : prChanges.findByPrId(prId).stream()
+                        .map(self.research.ontology.owlEditor.model.DraftPrChange::getChange).toList();
+        if (changes.isEmpty()) {
+            java.util.Set<String> raised = pr.getSubmittedChangeIds() == null || pr.getSubmittedChangeIds().isEmpty()
+                    ? null : new java.util.HashSet<>(pr.getSubmittedChangeIds());
+            changes = draftTrackingService.getUnappliedDraftsForUser(projectId, pr.getAuthorId()).stream()
+                    .filter(d -> raised == null || raised.contains(d.getId())).toList();
+        }
+        return ResponseEntity.ok(Map.of("success", true, "drafts", changes));
+    }
+
+    private DraftPublishAnalysis analyzeForPreview(String projectId, String userId, boolean axiomDetail) {
+        if (userId.startsWith(PrSnapshotService.KEY_PREFIX)) {
+            String prId = userId.substring(PrSnapshotService.KEY_PREFIX.length());
+            DraftPullRequest pr = prRepository.findById(prId).orElse(null);
+            if (pr != null && projectId.equals(pr.getProjectId())) {
+                java.util.Set<String> raised = new java.util.HashSet<>(
+                        pr.getSubmittedChangeIds() == null ? List.of() : pr.getSubmittedChangeIds());
+                List<self.research.ontology.owlEditor.model.DraftChange> drafts = draftTrackingService
+                        .getUnappliedDraftsForUser(projectId, pr.getAuthorId()).stream()
+                        .filter(d -> raised.contains(d.getId())).toList();
+                return draftTrackingService.analyzePublish(projectId, userId, drafts, axiomDetail);
+            }
+        }
+        return draftTrackingService.analyzePublish(projectId, userId, axiomDetail);
     }
 
     private void markIfDraftChanged(DraftPullRequest pr) {
@@ -839,6 +900,7 @@ public class DraftController {
                 try {
                     PrSnapshotService.Frozen frozen = snapshots.freeze(projectId, pr.getAuthorId(), prId);
                     ids = frozen.changeIds();
+                    storePrChanges(projectId, prId, frozen.changes());
                     pr.setSnapshotKey(frozen.key());
                     pr.setPublishedChangeSetIds(frozen.changeSetIds());
                 } catch (IllegalStateException e) {

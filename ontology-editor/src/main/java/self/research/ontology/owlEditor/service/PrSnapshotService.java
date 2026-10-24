@@ -18,7 +18,7 @@ import java.util.Optional;
 public class PrSnapshotService {
 
     private static final Logger log = LoggerFactory.getLogger(PrSnapshotService.class);
-    static final String KEY_PREFIX = "pr-snapshot-";
+    public static final String KEY_PREFIX = "pr-snapshot-";
 
     private final DraftSessionRepository sessions;
     private final SparqlDatasetService datasetService;
@@ -28,7 +28,11 @@ public class PrSnapshotService {
     private final DraftTrackingService draftTracking;
     private final DraftPullRequestRepository pullRequests;
 
-    public record Frozen(String key, List<String> changeIds, List<String> changeSetIds) {}
+    public record Frozen(String key, List<String> changeIds, List<String> changeSetIds, List<DraftChange> changes) {
+        public Frozen(String key, List<String> changeIds, List<String> changeSetIds) {
+            this(key, changeIds, changeSetIds, List.of());
+        }
+    }
 
     public PrSnapshotService(DraftSessionRepository sessions, SparqlDatasetService datasetService,
                              DraftPublishMergeService mergeService, DraftPublishService publishService,
@@ -67,12 +71,12 @@ public class PrSnapshotService {
                 snapshot.setCopyStatus(DraftCopyStatus.READY);
                 snapshot.setPrefixes(author.getPrefixes() == null ? null : new HashMap<>(author.getPrefixes()));
                 sessions.save(snapshot);
-                List<String> changeIds = draftTracking.getUnappliedDraftsForUser(projectId, authorId).stream()
-                        .map(DraftChange::getId).toList();
+                List<DraftChange> changes = draftTracking.getUnappliedDraftsForUser(projectId, authorId);
+                List<String> changeIds = changes.stream().map(DraftChange::getId).toList();
                 List<String> changeSetIds = draftTracking.draftChangeSetIds(projectId, authorId);
                 log.info("[PR-SNAPSHOT] Froze the draft of {} for PR {} in project {} ({} changes)",
                         authorId, prId, projectId, changeIds.size());
-                return new Frozen(key, changeIds, changeSetIds == null ? List.of() : changeSetIds);
+                return new Frozen(key, changeIds, changeSetIds == null ? List.of() : changeSetIds, List.copyOf(changes));
             } catch (Exception e) {
                 drop(projectId, prId);
                 throw new IllegalStateException("Could not freeze your draft for the pull request: " + e.getMessage(), e);
