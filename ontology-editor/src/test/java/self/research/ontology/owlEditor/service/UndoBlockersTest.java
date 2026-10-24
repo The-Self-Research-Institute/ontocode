@@ -59,7 +59,7 @@ class UndoBlockersTest {
                 change("e1", "createClass", "Pizza", "sam"),
                 merge,
                 change("old", "createClass", "Older", "sam")));
-        assertEquals(List.of("Margherita (kim)", "Pizza (sam)"), blockers.laterChanges(P, merge));
+        assertEquals(List.of("Margherita (kim)", "Pizza (sam)"), blockers.laterChanges(P, merge, null));
     }
 
     @Test
@@ -75,7 +75,7 @@ class UndoBlockersTest {
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(
                 change("a", "createClass", "A", "x"), change("b", "createClass", "B", "x"),
                 change("c", "createClass", "C", "x"), change("d", "createClass", "D", "x"), merge));
-        assertEquals(3, blockers.laterChanges(P, merge).size());
+        assertEquals(3, blockers.laterChanges(P, merge, null).size());
         assertTrue(blockers.changedSince(P, merge, "plain").startsWith("Other people's changes are on top of this one:"));
     }
 
@@ -103,7 +103,7 @@ class UndoBlockersTest {
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(
                 draftRow("p2", "ontologyMerge", "Ontology merge", "sam", false),
                 draftRow("p1", "ontologyMerge", "Ontology merge", "sam", false), mine));
-        assertEquals(List.of(), blockers.laterChanges(P, mine));
+        assertEquals(List.of(), blockers.laterChanges(P, mine, null));
         assertEquals("plain", blockers.changedSince(P, mine, "plain"));
     }
 
@@ -121,7 +121,7 @@ class UndoBlockersTest {
         HistoryChange mine = draftRow("m", "ontologyMerge", "Ontology merge", "owner-id", true);
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(
                 draftRow("d", "createClass", "Theirs", "sam", true), mine));
-        assertEquals(List.of(), blockers.laterChanges(P, mine));
+        assertEquals(List.of(), blockers.laterChanges(P, mine, null));
     }
 
     @Test
@@ -129,7 +129,7 @@ class UndoBlockersTest {
         HistoryChange mine = draftRow("m", "ontologyMerge", "Ontology merge", "owner-id", false);
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(
                 draftRow("d", "createClass", "Private", "sam", true), mine));
-        assertEquals(List.of(), blockers.laterChanges(P, mine));
+        assertEquals(List.of(), blockers.laterChanges(P, mine, null));
     }
 
     @Test
@@ -139,7 +139,7 @@ class UndoBlockersTest {
         HistoryChange older = draftRow("d", "createClass", "FromOldDraft", "owner-id", true);
         older.setDraftSessionId("s1");
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(older, mine));
-        assertEquals(List.of(), blockers.laterChanges(P, mine));
+        assertEquals(List.of(), blockers.laterChanges(P, mine, null));
     }
 
     @Test
@@ -148,7 +148,7 @@ class UndoBlockersTest {
         mine.setDraftSessionId("s2");
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(
                 draftRow("d", "createClass", "Legacy", "owner-id", true), mine));
-        assertEquals(List.of("Legacy (owner-id)"), blockers.laterChanges(P, mine));
+        assertEquals(List.of("Legacy (owner-id)"), blockers.laterChanges(P, mine, null));
     }
 
     @Test
@@ -157,7 +157,7 @@ class UndoBlockersTest {
         HistoryChange discarded = draftRow("d", "createClass", "Old", "owner-id", true);
         discarded.setDraftDiscarded(true);
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(discarded, mine));
-        assertEquals(List.of(), blockers.laterChanges(P, mine));
+        assertEquals(List.of(), blockers.laterChanges(P, mine, null));
     }
 
     @Test

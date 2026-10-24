@@ -44,20 +44,22 @@ public class DraftChangeHistoryRecorder {
         }
     }
 
-    public void recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
+    public boolean recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
         try {
             historyService.recordEdit(projectId, mergedBy, mergedBy, RollbackWorkSupport.PR_PUBLISHED,
-                    "urn:ontocode:pr:" + prId, "Merged PR: " + title, null, null,
+                    PrEntries.iriOf(prId), "Merged PR: " + title, null, null,
                     "Authored by " + authorName + ", merged by " + mergedBy + ": " + changes + " changes");
+            return true;
         } catch (Exception e) {
             log.warn("[DRAFT] Could not record the merged PR {} for project {}: {}", prId, projectId, e.getMessage());
+            return false;
         }
     }
 
     public void recordPrReversal(String projectId, String prId, String title, String revertedBy, int changeSets, String reason) {
         try {
             historyService.recordEdit(projectId, revertedBy, revertedBy, RollbackWorkSupport.PR_REVERTED,
-                    "urn:ontocode:pr:" + prId, "Reverted PR: " + title, null, null,
+                    PrEntries.iriOf(prId), "Reverted PR: " + title, null, null,
                     "Reverted by " + revertedBy + ": " + changeSets + " change sets undone. Reason: " + reason);
         } catch (Exception e) {
             log.warn("[DRAFT] Could not record the reverted PR {} for project {}: {}", prId, projectId, e.getMessage());
@@ -72,12 +74,11 @@ public class DraftChangeHistoryRecorder {
         }
     }
 
-    public void markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
+    public void markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
         try {
-            historyService.markChangeSetsPublished(projectId, userId, changeSetIds);
+            historyService.markChangeSetsPublished(projectId, changeSetIds);
         } catch (Exception e) {
-            log.warn("[DRAFT] Could not mark the published change sets for project {} user {}: {}",
-                    projectId, userId, e.getMessage());
+            log.warn("[DRAFT] Could not mark the published change sets for project {}: {}", projectId, e.getMessage());
         }
     }
 

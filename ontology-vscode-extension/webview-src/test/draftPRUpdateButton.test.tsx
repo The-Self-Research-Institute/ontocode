@@ -52,6 +52,7 @@ describe("Update this PR to my current draft", () => {
     ["has no saved copy and the draft is unchanged", { draftChanged: false }, false],
     ["has a saved copy and the draft has newer changes", { snapshotKey: "pr-snapshot-pr1", draftChanged: true, currentChangeCount: 3 }, true],
     ["has no saved copy and the draft has newer changes", { draftChanged: true, currentChangeCount: 3 }, true],
+    ["is an old one that still needs its first saved copy", { needsCopy: true, draftChanged: false }, true],
   ];
 
   it.each(cases)("PR that %s", async (_name, pr, shown) => {

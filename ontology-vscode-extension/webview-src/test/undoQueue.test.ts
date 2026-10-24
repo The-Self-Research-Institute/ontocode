@@ -81,6 +81,27 @@ describe('undoQueue', () => {
     expect(queue.getSnapshot().revertPr).toBeUndefined();
   });
 
+  it('pauses on someone else\'s change and undoes it after the person confirms', async () => {
+    const { queue, outcomes, api } = setup([step('a')]);
+    outcomes.push({
+      kind: 'refused', message: 'Confirm to undo it',
+      othersOnTop: [{ changeId: 'a', username: 'Sam', label: 'Created class Pizza' }],
+      foreignTarget: { username: 'Sam', label: 'Created class Pizza' },
+    });
+    await queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().phase).toBe('paused');
+    expect(queue.getSnapshot().foreignTarget).toEqual({ username: 'Sam', label: 'Created class Pizza' });
+
+    await queue.confirmOthers();
+    await vi.advanceTimersByTimeAsync(50);
+
+    const calls = (api.send as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls[1][4]).toBe(true);
+    expect(queue.getSnapshot().foreignTarget).toBeUndefined();
+    expect(queue.getSnapshot().phase).toBe('finished');
+  });
+
   it('ignores a confirmation when nobody else is on top', async () => {
     const { queue, outcomes, api } = setup([step('a')]);
     outcomes.push({ kind: 'refused', message: 'Something else' });

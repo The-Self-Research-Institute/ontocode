@@ -11,28 +11,18 @@ import java.util.function.Function;
 
 public final class PrFeedExpander {
 
-    static final String IRI_PREFIX = "urn:ontocode:pr:";
     static final int MAX_ITEMS = 200;
 
     private PrFeedExpander() {
     }
 
-    public static boolean isMergedPrEntry(HistoryChange change) {
-        return RollbackWorkSupport.PR_PUBLISHED.equals(change.getOperationType())
-                && change.getEntityIRI() != null && change.getEntityIRI().startsWith(IRI_PREFIX);
-    }
-
-    public static String prIdOf(HistoryChange change) {
-        return change.getEntityIRI().substring(IRI_PREFIX.length());
-    }
-
     public static List<Map<String, Object>> expand(HistoryChange entry, Map<String, Object> base,
                                                    Function<String, List<HistoryChange>> rowsOfPr,
                                                    Function<HistoryChange, Map<String, Object>> toMap) {
-        if (!isMergedPrEntry(entry)) {
+        if (!PrEntries.isMergedPrEntry(entry)) {
             return List.of(base);
         }
-        String prId = prIdOf(entry);
+        String prId = PrEntries.prIdOf(entry.getEntityIRI());
         List<HistoryChange> rows = new ArrayList<>(rowsOfPr.apply(prId));
         if (rows.isEmpty()) {
             return List.of(base);
@@ -42,6 +32,7 @@ public final class PrFeedExpander {
         int index = 0;
         for (HistoryChange row : rows) {
             if (index >= MAX_ITEMS) {
+                out.add(moreMarker(entry, base, rows.size() - MAX_ITEMS, prId));
                 break;
             }
             Map<String, Object> map = new HashMap<>(toMap.apply(row));
@@ -51,11 +42,26 @@ public final class PrFeedExpander {
             map.put("description", entry.getEntityLabel());
             map.put("setOnly", true);
             map.put("undoable", false);
-            map.put("undoReason", "Part of a merged pull request. Revert the pull request instead");
+            map.put("undoReason", PrEntries.MERGED_PR_PART);
             map.put("mergedPrId", prId);
             map.put("mergedBy", entry.getUsername());
             out.add(map);
         }
         return out;
+    }
+
+    private static Map<String, Object> moreMarker(HistoryChange entry, Map<String, Object> base, int hidden, String prId) {
+        Map<String, Object> more = new HashMap<>(base);
+        more.put("id", entry.getId() + "#more");
+        more.put("entityIRI", null);
+        more.put("entityLabel", hidden + " more items not shown");
+        more.put("operationType", "mergeChangeStatements");
+        more.put("subChanges", List.of());
+        more.put("changeSetId", "pr:" + prId);
+        more.put("description", entry.getEntityLabel());
+        more.put("setOnly", true);
+        more.put("undoable", false);
+        more.put("undoReason", PrEntries.MERGED_PR_PART);
+        return more;
     }
 }

@@ -2,7 +2,7 @@ import { CHECK_DELAY_MS, FINISHED_VISIBLE_MS, INFLIGHT_WAIT_MS, MAX_CHECKS, MAX_
 import { TIMED_OUT, blockedText, defaultQueueApi, detailOf, pause, revalidate, stepFromHint, summaryOf, withTimeout } from './undoQueueSupport';
 import { newOpId } from '../utils/opId';
 import type { Entry, FinishedItem, PauseReason, PressResult, QueueApi, UndoKind, UndoRunPhase, UndoRunSnapshot } from './undoQueueSupport';
-import type { OtherChange, RevertPrHint, QueueResponse, QueueStep, StepOutcome, UndoState, UndoStep } from './undoRedoService';
+import type { ForeignTarget, OtherChange, RevertPrHint, QueueResponse, QueueStep, StepOutcome, UndoState, UndoStep } from './undoRedoService';
 
 export type { UndoRunSnapshot } from './undoQueueSupport';
 
@@ -32,6 +32,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
   let lastState: UndoState | undefined;
   let others: OtherChange[] = [];
   let revertPr: RevertPrHint | undefined;
+  let foreignTarget: ForeignTarget | undefined;
   let finishTimer: ReturnType<typeof setTimeout> | undefined;
   const listeners = new Set<() => void>();
 
@@ -54,6 +55,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
     lastState,
     othersOnTop: others.length ? others : undefined,
     revertPr,
+    foreignTarget,
   });
   let snapshot = build();
 
@@ -160,6 +162,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
           if (outcome.state) lastState = outcome.state;
           others = outcome.othersOnTop ?? [];
           revertPr = outcome.revertPr;
+          foreignTarget = outcome.foreignTarget;
           haltWith('Conflict', outcome.message, entry);
         } else {
           haltWith('Result unknown', 'The server did not confirm whether this change was undone.', entry);
@@ -302,6 +305,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
       }
       others = [];
       revertPr = undefined;
+      foreignTarget = undefined;
       reason = undefined;
       message = undefined;
       item = undefined;
@@ -329,6 +333,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
       lastState = undefined;
       others = [];
       revertPr = undefined;
+      foreignTarget = undefined;
       publish();
     },
   };

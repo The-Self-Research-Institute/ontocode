@@ -33,10 +33,6 @@ public class UndoBlockers {
         return imports.isImportActiveOrQueued(projectId);
     }
 
-    public List<String> laterChanges(String projectId, HistoryChange entry) {
-        return laterChanges(projectId, entry, null);
-    }
-
     public List<String> laterChanges(String projectId, HistoryChange entry, UserUndoService.Identity who) {
         List<String> names = new ArrayList<>();
         for (HistoryChange other : laterEntries(projectId, entry, who)) {

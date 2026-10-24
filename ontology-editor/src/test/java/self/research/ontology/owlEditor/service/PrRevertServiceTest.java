@@ -189,6 +189,49 @@ class PrRevertServiceTest {
     }
 
     @Test
+    void theMergeRecordIsMarkedRevertedBeforeThePrItselfIsSaved() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+
+        service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(historySync, prs);
+        order.verify(historySync).markPrPublicationReverted(P, "pr1");
+        order.verify(prs).save(pr);
+    }
+
+    @Test
+    void aRevertThatStopsHalfWayRemembersThatItStartedSoRedoStaysBlocked() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-new"), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(false))).thenReturn(blocked("changed meanwhile"));
+
+        service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);
+
+        assertEquals(DraftPullRequest.Status.APPROVED, pr.getStatus());
+        assertTrue(pr.getRevertStartedAt() != null);
+    }
+
+    @Test
+    void aPreviewNeverMarksTheRevertAsStarted() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+
+        service.revert(P, "pr1", "owner", "Owner", null, true);
+
+        assertEquals(null, pr.getRevertStartedAt());
+    }
+
+    @Test
+    void restoringTwiceOnlyAppliesTheChangesOnce() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+
+        assertTrue(service.restore(P, "pr1", "author", "Author").ok());
+        PrRevertService.Outcome second = service.restore(P, "pr1", "author", "Author");
+
+        assertTrue(second.alreadyDone());
+        verify(merges, org.mockito.Mockito.times(1)).apply(anyString(), anyString(), anyString(), any(ExactDelta.class), anyString());
+    }
+
+    @Test
     void anAlreadyRevertedPrReportsDoneWithoutTouchingAnything() {
         pr.setStatus(DraftPullRequest.Status.REVERTED);
         PrRevertService.Outcome outcome = service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);

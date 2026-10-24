@@ -42,7 +42,7 @@ public class UserUndoService {
             return values;
         }
 
-        boolean owns(String userId) {
+        public boolean owns(String userId) {
             if (userId == null) {
                 return false;
             }
@@ -76,9 +76,9 @@ public class UserUndoService {
     }
 
     public Next nextUndo(String projectId, boolean draft, Identity who) {
-        HistoryChange target = latestOwn(projectId, draft, who);
+        HistoryChange target = latestToUndo(projectId, draft, who);
         if (target == null) {
-            return Next.none(ChangeRollbackService.UNDO, "You have no changes to undo");
+            return Next.none(ChangeRollbackService.UNDO, draft ? "You have no changes to undo" : "There is nothing to undo");
         }
         Next blocked = blockage(projectId, draft, who, target);
         if (blocked != null) {
@@ -134,8 +134,20 @@ public class UserUndoService {
     private HistoryChange latestOwn(String projectId, boolean draft, Identity who) {
         List<HistoryChange> own = history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(
                 projectId, draft, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
-        String currentDraft = draft ? currentDraftSessionId(projectId, who) : null;
-        for (HistoryChange entry : own) {
+        return firstUndoable(own, draft, draft ? currentDraftSessionId(projectId, who) : null);
+    }
+
+    private HistoryChange latestToUndo(String projectId, boolean draft, Identity who) {
+        if (draft) {
+            return latestOwn(projectId, true, who);
+        }
+        List<HistoryChange> newest = history.findByProjectIdAndDraftOrderByTimestampDesc(
+                projectId, false, PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
+        return firstUndoable(newest, false, null);
+    }
+
+    private static HistoryChange firstUndoable(List<HistoryChange> rows, boolean draft, String currentDraft) {
+        for (HistoryChange entry : rows) {
             if (!entry.isReverted() && !entry.isDraftDiscarded() && entry.getPublishedPrId() == null && !isRollbackEntry(entry)
                     && (!RollbackWorkSupport.isPublicationEntry(entry) || RollbackWorkSupport.isUndoablePublication(entry))
                     && !fromAnotherDraft(entry, draft, currentDraft)) {
@@ -224,7 +236,7 @@ public class UserUndoService {
         return value == null || value.isBlank();
     }
 
-    static String labelOf(HistoryChange entry) {
+    public static String labelOf(HistoryChange entry) {
         if (!isBlank(entry.getEntityLabel())) {
             return entry.getEntityLabel();
         }

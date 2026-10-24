@@ -92,12 +92,35 @@ class UserUndoConfirmOtherTest {
     private static MockHttpServletRequest signedIn(boolean confirmOther) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("{\"email\":\"" + EMAIL + "\"}").getBytes(StandardCharsets.UTF_8));
+                ("{\"email\":\"" + EMAIL + "\",\"userId\":\"mongo-1\"}").getBytes(StandardCharsets.UTF_8));
         request.addHeader("Authorization", "Bearer h." + payload + ".s");
         if (confirmOther) {
             request.setParameter("confirmOther", "true");
         }
         return request;
+    }
+
+    @Test
+    void nothingIsUndoneWhenALaterItemOfTheChainWouldBeRefused() {
+        HistoryChange first = row("o1", "csO1", "mongo-2", "sam");
+        HistoryChange second = row("o2", "csO2", "mongo-3", "kim");
+        second.setPublishedPrId("pr9");
+        HistorySyncService historySync = mock(HistorySyncService.class);
+        when(historySync.getHistoryChange("t1")).thenReturn(row("t1", null, "mongo-1", "owner"));
+        when(historySync.getChangeSet(P, "csO1")).thenReturn(List.of(first));
+        when(historySync.getChangeSet(P, "csO2")).thenReturn(List.of(second));
+        when(blockers.othersOnTop(eq(P), any(), any())).thenReturn(List.of(first, second));
+        UndoPreconditions preconditions = mock(UndoPreconditions.class);
+        when(preconditions.violation(eq(P), anyList(), any())).thenReturn(Optional.of("Other people's changes are on top"));
+        controller = new UserUndoController(undoService, rollback, historySync, support, preconditions, new ProjectWriteLockRegistry());
+        controller.setBlockers(blockers);
+
+        ResponseEntity<Map<String, Object>> response = controller.undo(P, false, "t1", "op1", null, signedIn(true));
+
+        assertEquals(409, response.getStatusCode().value());
+        verify(rollback, never()).undoChangeSet(eq(P), eq("csO1"), any(), anyBoolean());
+        verify(rollback, never()).undoChangeSet(eq(P), eq("csO2"), any(), anyBoolean());
+        verify(rollback, never()).undoEntry(eq(P), eq("t1"), any(), anyBoolean());
     }
 
     @Test
@@ -116,7 +139,7 @@ class UserUndoConfirmOtherTest {
         ResponseEntity<Map<String, Object>> response = controller.undo(P, false, "t1", "op1", null, signedIn(true));
 
         assertEquals(409, response.getStatusCode().value());
-        assertEquals(RollbackRequestSupport.MERGED_PR_PART, response.getBody().get("error"));
+        assertEquals(self.research.ontology.owlEditor.service.PrEntries.MERGED_PR_PART, response.getBody().get("error"));
         verify(rollback, never()).undoChangeSet(eq(P), eq("csO"), any(), anyBoolean());
         verify(rollback, never()).undoEntry(eq(P), eq("t1"), any(), anyBoolean());
     }

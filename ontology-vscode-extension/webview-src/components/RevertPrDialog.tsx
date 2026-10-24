@@ -42,10 +42,19 @@ export default function RevertPrDialog({ projectId, prId, title, onClose, onDone
             {preview.changeSets.length > 0 && (
               <ul className="list-disc pl-4">
                 {preview.changeSets.map((cs: any, i: number) => (
-                  <li key={cs.changeSetId || i}>{cs.label || cs.summary || cs.changeSetId}{cs.reason ? `: ${cs.reason}` : ""}</li>
+                  <li key={cs.changeSetId || i}>
+                    {cs.alreadyUndone
+                      ? "Already undone"
+                      : cs.canRevert
+                        ? `Can be reverted (${cs.willRemove} change${cs.willRemove === 1 ? "" : "s"})`
+                        : `Blocked: ${(cs.reasons || []).join("; ") || "unknown reason"}`}
+                  </li>
                 ))}
               </ul>
             )}
+            <div className="text-[11px] opacity-60">
+              Checked: the statements this pull request added and removed, and whether later changes use them. Not checked: logical consistency. Run the reasoner after reverting.
+            </div>
           </div>
         )}
         <label className="block">

@@ -72,6 +72,11 @@ function HeaderActions({ projectId, set, expanded, onUndo, onDetails }:
         </button>
       )}
       {redo && <button type="button" className="cs-btn" onClick={() => onUndo(redo)}>Redo</button>}
+      {set.changeSetId?.startsWith('pr:') && set.entries.some(entry => !entry.reverted) && (
+        <button type="button" className="cs-btn" onClick={() => window.dispatchEvent(new CustomEvent('ontology:revert-pr', {
+          detail: { projectId, prId: (set.changeSetId as string).slice(3), title: set.title.replace(/^Merged PR: /, '') }
+        }))}>Revert pull request</button>
+      )}
     </div>
   );
 }

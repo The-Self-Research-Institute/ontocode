@@ -49,9 +49,9 @@ public class OntologyHistoryService {
         }
     }
 
-    public void markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
+    public void markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
         if (historySyncService != null) {
-            historySyncService.markChangeSetsPublished(projectId, userId, changeSetIds);
+            historySyncService.markChangeSetsPublished(projectId, changeSetIds);
         }
     }
 

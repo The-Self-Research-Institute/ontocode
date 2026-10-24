@@ -34,6 +34,7 @@ public class UndoMongoIndexInitializer {
                 new Spec("history_changes", "project_entity_ts", List.of("projectId", "entityIRI", "timestamp"),
                         new int[] {1, 1, -1}, false, false),
                 new Spec("history_changes", "project_changeset", List.of("projectId", "changeSetId"), new int[] {1, 1}, false, false),
+                new Spec("history_changes", "project_draft_ts", List.of("projectId", "draft", "timestamp"), new int[] {1, 1, -1}, false, false),
                 new Spec("history_changes", "project_published_pr", List.of("projectId", "publishedPrId"), new int[] {1, 1}, false, true),
                 new Spec("draft_pr_changes", "pr", List.of("prId"), new int[] {1}, false, false));
     }

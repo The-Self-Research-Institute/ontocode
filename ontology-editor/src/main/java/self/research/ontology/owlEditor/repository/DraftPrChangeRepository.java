@@ -11,5 +11,9 @@ public interface DraftPrChangeRepository extends MongoRepository<DraftPrChange, 
 
     List<DraftPrChange> findByPrId(String prId);
 
+    List<DraftPrChange> findByPrIdAndSnapshotKey(String prId, String snapshotKey);
+
+    void deleteByPrIdAndSnapshotKey(String prId, String snapshotKey);
+
     void deleteByPrId(String prId);
 }

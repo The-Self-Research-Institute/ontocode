@@ -22,11 +22,23 @@ public class RedoGuard {
         this.pullRequests = pullRequests;
     }
 
-    public Optional<String> refusal(String projectId, List<HistoryChange> entries) {
+    static boolean revertedOrBeingReverted(DraftPullRequest pr) {
+        return pr.getStatus() == DraftPullRequest.Status.REVERTED || pr.getRevertStartedAt() != null;
+    }
+
+    public Optional<String> discardedRefusal(List<HistoryChange> entries) {
         for (HistoryChange entry : entries) {
             if (entry.isDraftDiscarded()) {
                 return Optional.of(DISCARDED);
             }
+        }
+        return Optional.empty();
+    }
+
+    public Optional<String> refusal(String projectId, List<HistoryChange> entries) {
+        Optional<String> discarded = discardedRefusal(entries);
+        if (discarded.isPresent()) {
+            return discarded;
         }
         List<DraftPullRequest> reverted = null;
         for (HistoryChange entry : entries) {
@@ -35,12 +47,13 @@ public class RedoGuard {
             }
             if (entry.getPublishedPrId() != null) {
                 Optional<DraftPullRequest> pr = pullRequests.findById(entry.getPublishedPrId());
-                if (pr.isPresent() && pr.get().getStatus() == DraftPullRequest.Status.REVERTED) {
+                if (pr.isPresent() && revertedOrBeingReverted(pr.get())) {
                     return Optional.of(PR_REVERTED);
                 }
             } else if (entry.getChangeSetId() != null) {
                 if (reverted == null) {
-                    reverted = pullRequests.findByProjectIdAndStatusOrderByCreatedAtDesc(projectId, DraftPullRequest.Status.REVERTED);
+                    reverted = pullRequests.findByProjectIdOrderByCreatedAtDesc(projectId).stream()
+                            .filter(RedoGuard::revertedOrBeingReverted).toList();
                 }
                 for (DraftPullRequest pr : reverted) {
                     if (pr.getPublishedChangeSetIds() != null && pr.getPublishedChangeSetIds().contains(entry.getChangeSetId())) {

@@ -41,6 +41,7 @@ class UserUndoServiceTest {
         service = new UserUndoService(history, audits, rollback);
         when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), anyBoolean(), any(), any()))
                 .thenReturn(List.of());
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any())).thenReturn(List.of());
         when(history.findByProjectIdAndEntityIRIOrderByTimestampDesc(anyString(), anyString(), any()))
                 .thenReturn(List.of());
         when(audits.findByProjectIdAndDirectionAndRevertedByUserIdInOrderByRevertedAtDesc(anyString(), anyString(), any(), any()))
@@ -63,6 +64,40 @@ class UserUndoServiceTest {
     private void ownChanges(HistoryChange... changes) {
         when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), anyBoolean(), any(), any()))
                 .thenReturn(List.of(changes));
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenReturn(List.of(changes));
+    }
+
+    @Test
+    void inPublicModeTheNewestChangeOfAnyoneIsTheNextUndo() {
+        HistoryChange others = change("s", "Sam@x.com", "e:S", T0.plusMinutes(5));
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenReturn(List.of(others, change("a", "Me@x.com", "e:A", T0)));
+
+        Next next = service.nextUndo(P, false, me);
+
+        assertTrue(next.available());
+        assertEquals("s", next.changeId());
+    }
+
+    @Test
+    void inDraftModeOnlyTheUsersOwnDraftChangesAreOffered() {
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenReturn(List.of(change("s", "Sam@x.com", "e:S", T0.plusMinutes(5))));
+        when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), anyBoolean(), any(), any()))
+                .thenReturn(List.of(change("a", "Me@x.com", "e:A", T0)));
+
+        Next next = service.nextUndo(P, true, me);
+
+        assertEquals("a", next.changeId());
+        org.mockito.Mockito.verify(history, org.mockito.Mockito.never()).findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any());
+    }
+
+    @Test
+    void anEmptyPublicHistorySaysThereIsNothingToUndo() {
+        Next next = service.nextUndo(P, false, me);
+        assertFalse(next.available());
+        assertEquals("There is nothing to undo", next.reason());
     }
 
     @Test
@@ -118,7 +153,7 @@ class UserUndoServiceTest {
     void reportsNothingToUndoWithoutOwnChanges() {
         Next next = service.nextUndo(P, false, me);
         assertFalse(next.available());
-        assertEquals("You have no changes to undo", next.reason());
+        assertEquals("There is nothing to undo", next.reason());
     }
 
     @Test

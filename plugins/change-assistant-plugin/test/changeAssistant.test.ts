@@ -10,11 +10,12 @@ import {
   resolveChangeType,
   TYPE_LABELS
 } from '../src/assistant/changeKinds';
-import { computeStats, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
+import { computeStats, countEntries, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
 import { buildEntityRow, canUndoEntry, manualHeading, propertyRows } from '../src/changeSets/entityRows';
 import { entityTarget, propertyTarget, setTarget } from '../src/changeSets/targets';
 import { groupChangeSets } from '../src/changeSets/groupChangeSets';
 import { inScope } from '../src/assistant/hooks/useChangeFilters';
+import { nextFeedOffset } from '../src/assistant/feedPaging';
 import { parseServerTime } from '../src/changeSets/timeFormat';
 import type { ChangeEntry } from '../src/changeSets/types';
 
@@ -359,5 +360,29 @@ describe('the saved count while drafting', () => {
     const drafted = parseChange({ ...base, id: 'd1', draft: true, operationType: 'createClass' }) as any;
     expect(computeStats([published, drafted], []).totalChanges).toBe(1);
     expect(computeStats([drafted], []).totalChanges).toBe(0);
+  });
+});
+
+describe('loading older changes after a merged pull request', () => {
+  it('continues from the position the server reports, not from the number of rows shown', () => {
+    const expandedRows = Array.from({ length: 139 }, (_, i) => ({ id: `r${i}` }));
+    expect(nextFeedOffset({ nextOffset: 100, changes: expandedRows }, 0)).toBe(100);
+    expect(nextFeedOffset({ nextOffset: 200, changes: expandedRows }, 100)).toBe(200);
+  });
+
+  it('falls back to counting the rows when the server sends no position', () => {
+    expect(nextFeedOffset({ changes: [{}, {}, {}] }, 100)).toBe(103);
+    expect(nextFeedOffset({}, 5)).toBe(5);
+  });
+});
+
+describe('the saved count follows what the history shows', () => {
+  it('counts a merged pull request once however many items it holds', () => {
+    const items = ['a', 'b', 'c'].map((name, i) => parseChange({
+      ...base, id: `pr1#${i}`, operationType: 'createClass', entityIRI: `http://x#${name}`, changeSetId: 'pr:7', draft: false
+    }) as any);
+    const single = parseChange({ ...base, id: 's1', operationType: 'createClass', draft: false }) as any;
+    expect(computeStats([...items, single], []).totalChanges).toBe(2);
+    expect(countEntries(items)).toBe(1);
   });
 });

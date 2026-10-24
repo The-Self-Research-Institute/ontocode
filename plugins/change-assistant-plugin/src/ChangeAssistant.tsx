@@ -15,6 +15,7 @@ import { useLiveActivity } from './assistant/hooks/useLiveActivity';
 import { useNotification } from './assistant/hooks/useNotification';
 import { useRequestedTab } from './assistant/hooks/useRequestedTab';
 import { inScope } from './assistant/hooks/useChangeFilters';
+import { countEntries, countableChanges, activeChanges } from './assistant/changeParsing';
 import { AssistantTab, OntologyChange } from './assistant/types';
 
 interface ChangeAssistantProps {
@@ -40,6 +41,8 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId, draftMode 
     const timer = setTimeout(() => setServerQuery(filters.searchQuery.trim()), 350);
     return () => clearTimeout(timer);
   }, [filters.searchQuery]);
+  const changesLabel = filters.viewScope === 'all' ? 'All changes' : draftActive ? 'Draft changes' : 'Saved';
+  const changesCount = React.useMemo(() => countEntries(activeChanges(scopedChanges)), [scopedChanges]);
   const details = useChangeDetails(projectId, feed.changes, showNotification, feed.loadChanges);
   const conflicts = useConflictResolution(projectId, feed.loadChanges, showNotification);
   const comments = useCommentDialog(projectId, selectedChange, feed.loadChanges, showNotification);
@@ -67,10 +70,11 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId, draftMode 
   return (
     <div className="h-full flex flex-col bg-white">
       <AssistantHeader isLoading={feed.isLoading} lastRefresh={feed.lastRefresh} stats={feed.stats} onRefresh={feed.refreshAll} filters={filters} isDraftActive={draftActive} />
-      <TabBar activeTab={activeTab} onSelect={setActiveTab} liveCount={liveActivity.length} stats={feed.stats} isDraftActive={draftActive} />
+      <TabBar activeTab={activeTab} onSelect={setActiveTab} liveCount={liveActivity.length} stats={feed.stats} isDraftActive={draftActive}
+        changesLabel={changesLabel} changesCount={changesCount} />
       <TabContent
         projectId={projectId} activeTab={activeTab} liveActivity={liveActivity}
-        changes={scopedChanges} draftChanges={feed.draftChanges} filteredDrafts={filters.filteredDrafts} stats={feed.stats}
+        changes={feed.changes} timelineChanges={scopedChanges} draftChanges={feed.draftChanges} filteredDrafts={filters.filteredDrafts} stats={feed.stats}
         filteredChanges={filters.filteredChanges} typeFilteredChanges={filters.typeFilteredChanges}
         searchQuery={filters.searchQuery} sourceFilter={filters.sourceFilter}
         onRollback={feed.refreshAfterRollback} onOpenDetails={openChangeDetails}

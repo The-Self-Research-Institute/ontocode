@@ -33,10 +33,13 @@ public class DraftPullRequest {
     private Boolean draftChanged;
     @org.springframework.data.annotation.Transient
     private Integer currentChangeCount;
+    @org.springframework.data.annotation.Transient
+    private Boolean needsCopy;
     private Instant revertedAt;
     private String revertedBy;
     private String revertReason;
     private Instant restoredAt;
+    private Instant revertStartedAt;
 
     private Instant createdAt;
     private Instant reviewedAt;
@@ -75,6 +78,8 @@ public class DraftPullRequest {
     public Boolean getDraftChanged() { return draftChanged; }
     public void setDraftChanged(Boolean draftChanged) { this.draftChanged = draftChanged; }
 
+    public Boolean getNeedsCopy() { return needsCopy; }
+    public void setNeedsCopy(Boolean needsCopy) { this.needsCopy = needsCopy; }
     public Integer getCurrentChangeCount() { return currentChangeCount; }
     public void setCurrentChangeCount(Integer currentChangeCount) { this.currentChangeCount = currentChangeCount; }
 
@@ -87,6 +92,8 @@ public class DraftPullRequest {
     public String getRevertedBy() { return revertedBy; }
     public void setRevertedBy(String revertedBy) { this.revertedBy = revertedBy; }
 
+    public Instant getRevertStartedAt() { return revertStartedAt; }
+    public void setRevertStartedAt(Instant revertStartedAt) { this.revertStartedAt = revertStartedAt; }
     public Instant getRestoredAt() { return restoredAt; }
     public void setRestoredAt(Instant restoredAt) { this.restoredAt = restoredAt; }
 

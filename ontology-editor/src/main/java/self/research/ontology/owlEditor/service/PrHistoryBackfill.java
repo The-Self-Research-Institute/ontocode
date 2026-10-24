@@ -51,7 +51,8 @@ public class PrHistoryBackfill {
             boolean merged = pr.getStatus() == DraftPullRequest.Status.APPROVED
                     || pr.getStatus() == DraftPullRequest.Status.REVERTED;
             List<String> sets = pr.getPublishedChangeSetIds();
-            if (!merged || sets == null || sets.isEmpty() || pr.getProjectId() == null) {
+            if (!merged || sets == null || sets.isEmpty() || pr.getProjectId() == null
+                    || !historySync.hasPrPublication(pr.getProjectId(), pr.getId())) {
                 continue;
             }
             long count = dryRun

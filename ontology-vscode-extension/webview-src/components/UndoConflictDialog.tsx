@@ -22,6 +22,28 @@ export default function UndoConflictDialog({ status, menu, onClose }: { status: 
       />
     );
   }
+  if (!unknown && status.foreignTarget) {
+    const { username, label } = status.foreignTarget;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Undo someone else's change"
+          className="w-[min(380px,calc(100vw-2rem))] rounded-lg border border-amber-500 bg-theme-surface p-4 text-xs shadow-2xl space-y-2"
+        >
+          <b className="block text-sm">Undo someone else's change?</b>
+          <p>
+            {label || "This change"} was made by {username || "someone else"}. Undoing it removes their change from the shared ontology.
+          </p>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <UndoActionButton tone="danger" onClick={menu.confirmOthers ?? (() => undefined)}>Undo it anyway</UndoActionButton>
+            <UndoActionButton tone="neutral" onClick={() => { menu.stopPending(); onClose(); }}>Cancel</UndoActionButton>
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35">
       <div

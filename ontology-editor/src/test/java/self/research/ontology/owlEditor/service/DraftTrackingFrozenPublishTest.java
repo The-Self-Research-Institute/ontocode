@@ -95,7 +95,7 @@ class DraftTrackingFrozenPublishTest {
         assertEquals(2, result.getAppliedCount());
         verify(datasetService).moveDraftToMain("p1", KEY);
         verify(datasetService, never()).moveDraftToMain("p1", "author");
-        verify(draftChangeHistory).markChangeSetsPublished("p1", "author", List.of("cs1"));
+        verify(draftChangeHistory).markChangeSetsPublished("p1", List.of("cs1"));
         verify(draftChangeHistory, never()).markPublished("p1", "author");
         verify(draftPublishService).clearBaseline("p1", KEY);
         verify(draftPublishService, never()).clearBaseline("p1", "author");
@@ -103,6 +103,18 @@ class DraftTrackingFrozenPublishTest {
         verify(draftRepository).saveAll(saved.capture());
         assertEquals(List.of("c1", "c2"), saved.getValue().stream().map(DraftChange::getId).toList());
         assertTrue(saved.getValue().stream().allMatch(DraftChange::isApplied));
+    }
+
+    @Test
+    void theAppliedCountIsTheNumberOfChangesTheFrozenCopyCarriesEvenIfTheAuthorUndoneSome() throws Exception {
+        DraftPublishDiff prepared = diff(true, false, Set.of());
+        when(draftPublishMergeService.comparePublish("p1", KEY)).thenReturn(prepared);
+
+        var result = service.applyFrozenPr("p1", "author", KEY, List.of("c1", "c2", "undone"), List.of("cs1"), Map.of());
+
+        assertTrue(result.isSuccess());
+        assertEquals(3, result.getAppliedCount());
+        verify(datasetService).moveDraftToMain("p1", KEY);
     }
 
     @Test
@@ -115,7 +127,7 @@ class DraftTrackingFrozenPublishTest {
         assertTrue(result.isSuccess());
         verify(draftPublishMergeService).publishReviewed("p1", KEY, Map.of());
         verify(datasetService, never()).moveDraftToMain(any(), any());
-        verify(draftChangeHistory).markChangeSetsPublished("p1", "author", List.of("cs1"));
+        verify(draftChangeHistory).markChangeSetsPublished("p1", List.of("cs1"));
     }
 
     @Test
@@ -128,7 +140,7 @@ class DraftTrackingFrozenPublishTest {
         assertFalse(result.isSuccess());
         assertTrue(result.isConflictBlocked());
         verify(draftPublishMergeService, never()).publishReviewed(any(), any(), anyMap());
-        verify(draftChangeHistory, never()).markChangeSetsPublished(any(), any(), anyList());
+        verify(draftChangeHistory, never()).markChangeSetsPublished(any(), anyList());
     }
 
     @Test
@@ -164,7 +176,7 @@ class DraftTrackingFrozenPublishTest {
         var result = service.applyFrozenPr("p1", "author", KEY, List.of("c1"), List.of("cs1"), Map.of());
 
         assertFalse(result.isSuccess());
-        verify(draftChangeHistory, never()).markChangeSetsPublished(any(), any(), anyList());
+        verify(draftChangeHistory, never()).markChangeSetsPublished(any(), anyList());
         verify(draftRepository, never()).saveAll(anyList());
     }
 }

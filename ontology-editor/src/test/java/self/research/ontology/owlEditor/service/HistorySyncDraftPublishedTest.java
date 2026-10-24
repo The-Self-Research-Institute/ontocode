@@ -39,7 +39,23 @@ class HistorySyncDraftPublishedTest {
         assertEquals("p1", criteria.get("projectId"));
         assertEquals("u1", criteria.get("userId"));
         assertEquals(true, criteria.get("draft"));
+        assertEquals(new Document("$ne", true), criteria.get("draftDiscarded"));
         assertEquals(false, ((Document) update.getValue().getUpdateObject().get("$set")).get("draft"));
+    }
+
+    @Test
+    void publishingAPrsChangeSetsDoesNotDependOnWhichNameTheRowsWereSavedUnderAndSkipsDiscardedOnes() {
+        when(mongo.updateMulti(any(Query.class), any(Update.class), eq(HistoryChange.class)))
+                .thenReturn(UpdateResult.acknowledged(2, 2L, null));
+
+        assertEquals(2, sync.markChangeSetsPublished("p1", java.util.List.of("cs1", "cs2")));
+
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        verify(mongo).updateMulti(query.capture(), any(Update.class), eq(HistoryChange.class));
+        Document criteria = query.getValue().getQueryObject();
+        assertEquals(false, criteria.containsKey("userId"));
+        assertEquals(new Document("$ne", true), criteria.get("draftDiscarded"));
+        assertEquals(true, criteria.get("draft"));
     }
 
     @Test

@@ -27,14 +27,24 @@ public class DraftPrRevertController {
     @PostMapping("/{projectId}/draft-prs/{prId}/revert")
     public ResponseEntity<Map<String, Object>> revert(@PathVariable String projectId, @PathVariable String prId,
                                                       @RequestParam(defaultValue = "false") boolean dryRun,
-                                                      @RequestBody RevertPRRequest request) {
-        return body(service.revert(projectId, prId, request.userId(), request.username(), request.reason(), dryRun));
+                                                      @RequestBody RevertPRRequest request,
+                                                      jakarta.servlet.http.HttpServletRequest httpRequest) {
+        VerifiedUser.Result caller = VerifiedUser.resolve(httpRequest, request.userId());
+        if (caller.denial() != null) {
+            return caller.denial();
+        }
+        return body(service.revert(projectId, prId, caller.userId(), request.username(), request.reason(), dryRun));
     }
 
     @PostMapping("/{projectId}/draft-prs/{prId}/restore")
     public ResponseEntity<Map<String, Object>> restore(@PathVariable String projectId, @PathVariable String prId,
-                                                       @RequestBody RevertPRRequest request) {
-        return body(service.restore(projectId, prId, request.userId(), request.username()));
+                                                       @RequestBody RevertPRRequest request,
+                                                       jakarta.servlet.http.HttpServletRequest httpRequest) {
+        VerifiedUser.Result caller = VerifiedUser.resolve(httpRequest, request.userId());
+        if (caller.denial() != null) {
+            return caller.denial();
+        }
+        return body(service.restore(projectId, prId, caller.userId(), request.username()));
     }
 
     private static ResponseEntity<Map<String, Object>> body(PrRevertService.Outcome outcome) {

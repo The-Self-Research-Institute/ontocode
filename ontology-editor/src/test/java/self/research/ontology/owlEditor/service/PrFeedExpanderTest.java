@@ -56,6 +56,22 @@ class PrFeedExpanderTest {
     }
 
     @Test
+    void aVeryLargePrShowsAMarkerForTheItemsLeftOut() {
+        List<HistoryChange> many = new java.util.ArrayList<>();
+        for (int i = 0; i < PrFeedExpander.MAX_ITEMS + 5; i++) {
+            many.add(row("r" + i, "Item" + i));
+        }
+
+        List<Map<String, Object>> out = PrFeedExpander.expand(entry(), toMap(entry()), prId -> many, PrFeedExpanderTest::toMap);
+
+        assertEquals(PrFeedExpander.MAX_ITEMS + 1, out.size());
+        Map<String, Object> marker = out.get(out.size() - 1);
+        assertEquals("pr-entry#more", marker.get("id"));
+        assertEquals("5 more items not shown", marker.get("entityLabel"));
+        assertEquals("pr:7", marker.get("changeSetId"));
+    }
+
+    @Test
     void aMergedPrWithNoTaggedRowsStaysAsTheSingleEntry() {
         Map<String, Object> base = toMap(entry());
 
@@ -66,8 +82,8 @@ class PrFeedExpanderTest {
 
     @Test
     void otherEntriesAreNotMergedPrEntries() {
-        assertFalse(PrFeedExpander.isMergedPrEntry(row("r1", "A")));
-        assertTrue(PrFeedExpander.isMergedPrEntry(entry()));
-        assertEquals("7", PrFeedExpander.prIdOf(entry()));
+        assertFalse(PrEntries.isMergedPrEntry(row("r1", "A")));
+        assertTrue(PrEntries.isMergedPrEntry(entry()));
+        assertEquals("7", PrEntries.prIdOf(entry().getEntityIRI()));
     }
 }

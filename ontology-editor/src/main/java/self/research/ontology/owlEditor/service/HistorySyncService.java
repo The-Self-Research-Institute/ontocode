@@ -65,7 +65,7 @@ public class HistorySyncService {
         var result = mongoTemplate.updateMulti(
                 org.springframework.data.mongodb.core.query.Query.query(
                         org.springframework.data.mongodb.core.query.Criteria.where("projectId").is(projectId)
-                                .and("userId").is(userId).and("draft").is(true)),
+                                .and("userId").is(userId).and("draft").is(true).and("draftDiscarded").ne(true)),
                 new org.springframework.data.mongodb.core.query.Update().set("draft", false),
                 self.research.ontology.owlEditor.model.HistoryChange.class);
         if (result.getModifiedCount() > 0) {
@@ -94,17 +94,22 @@ public class HistorySyncService {
         return result.getModifiedCount();
     }
 
+    public boolean hasPrPublication(String projectId, String prId) {
+        return mongoTemplate.exists(Query.query(Criteria.where("projectId").is(projectId)
+                .and("entityIRI").is(PrEntries.iriOf(prId)).and("operationType").is(RollbackWorkSupport.PR_PUBLISHED)), HistoryChange.class);
+    }
+
     public java.util.List<HistoryChange> publishedRows(String projectId, String prId) {
         return historyChangeRepository.findByProjectIdAndPublishedPrId(projectId, prId);
     }
 
-    public long markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
-        if (projectId == null || userId == null || changeSetIds == null || changeSetIds.isEmpty()) {
+    public long markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
+        if (projectId == null || changeSetIds == null || changeSetIds.isEmpty()) {
             return 0;
         }
         var result = mongoTemplate.updateMulti(
-                Query.query(Criteria.where("projectId").is(projectId).and("userId").is(userId).and("draft").is(true)
-                        .and("changeSetId").in(changeSetIds)),
+                Query.query(Criteria.where("projectId").is(projectId).and("draft").is(true)
+                        .and("draftDiscarded").ne(true).and("changeSetId").in(changeSetIds)),
                 new Update().set("draft", false), HistoryChange.class);
         return result.getModifiedCount();
     }
@@ -114,7 +119,7 @@ public class HistorySyncService {
             return 0;
         }
         var result = mongoTemplate.updateMulti(
-                Query.query(Criteria.where("projectId").is(projectId).and("entityIRI").is("urn:ontocode:pr:" + prId)
+                Query.query(Criteria.where("projectId").is(projectId).and("entityIRI").is(PrEntries.iriOf(prId))
                         .and("operationType").is("prPublished").and("reverted").ne(true)),
                 new Update().set("reverted", true), HistoryChange.class);
         return result.getModifiedCount();

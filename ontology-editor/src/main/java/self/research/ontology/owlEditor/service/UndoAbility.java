@@ -14,10 +14,6 @@ public final class UndoAbility {
     private UndoAbility() {
     }
 
-    public static boolean isMergedPrEntry(HistoryChange change) {
-        return RollbackWorkSupport.isUndoablePublication(change);
-    }
-
     public static Result of(HistoryChange change) {
         if (change.isReverted()) {
             return new Result(false, "Already undone");
@@ -25,11 +21,14 @@ public final class UndoAbility {
         if (RollbackWorkSupport.isRollbackEntry(change)) {
             return new Result(false, "This is an undo or redo, so it can't be undone itself");
         }
+        if (change.isDraftDiscarded()) {
+            return new Result(false, RedoGuard.DISCARDED);
+        }
         if (change.getPublishedPrId() != null) {
-            return new Result(false, "Part of a merged pull request. Revert the pull request instead");
+            return new Result(false, PrEntries.MERGED_PR_PART);
         }
         if (RollbackWorkSupport.isPublicationEntry(change)) {
-            return new Result(false, "This records a pull request being merged. Revert the pull request instead");
+            return new Result(false, PrEntries.PUBLICATION_RECORD);
         }
         if (change.getUndoBlockedReason() != null) {
             return new Result(false, change.getUndoBlockedReason());

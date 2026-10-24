@@ -38,4 +38,6 @@ public interface HistoryChangeRepository extends MongoRepository<HistoryChange, 
     List<HistoryChange> findByProjectId(String projectId, Pageable pageable);
 
     List<HistoryChange> findByProjectIdAndPublishedPrId(String projectId, String publishedPrId);
+
+    List<HistoryChange> findByProjectIdAndDraftOrderByTimestampDesc(String projectId, boolean draft, Pageable pageable);
 }

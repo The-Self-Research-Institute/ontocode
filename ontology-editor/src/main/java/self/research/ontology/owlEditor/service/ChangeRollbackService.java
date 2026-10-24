@@ -172,8 +172,9 @@ public class ChangeRollbackService {
             return new Result(404, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,
                     "Change not found");
         }
-        if (REDO.equals(req.direction()) && redoGuard != null) {
-            java.util.Optional<String> refusal = redoGuard.refusal(req.projectId(), entries);
+        if (redoGuard != null) {
+            java.util.Optional<String> refusal = REDO.equals(req.direction())
+                    ? redoGuard.refusal(req.projectId(), entries) : redoGuard.discardedRefusal(entries);
             if (refusal.isPresent()) {
                 return new Result(409, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,
                         refusal.get());
@@ -276,6 +277,7 @@ public class ChangeRollbackService {
     }
 
     private Work evaluate(Request req, HistoryChange entry) {
+        if (RollbackWorkSupport.isPublicationEntry(entry)) { return skip(entry, PrEntries.PUBLICATION_RECORD); }
         if (isRollbackEntry(entry)) { return skip(entry, "This is itself an undo or redo; use Undo or Redo on the original change"); }
         if (isSpreadsheetImport(entry)) { return evaluateImport(req, entry); }
         if (UndoOperationContext.blocked(entry.getId())) { return skip(entry, "An earlier undo or redo of this change was interrupted and needs repair"); }

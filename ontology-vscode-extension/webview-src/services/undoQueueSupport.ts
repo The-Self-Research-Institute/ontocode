@@ -1,4 +1,4 @@
-import undoRedoService, { type OtherChange, type RevertPrHint, type QueueResponse, type QueueStep, type StepOutcome, type UndoState, type UndoStep } from './undoRedoService';
+import undoRedoService, { type ForeignTarget, type OtherChange, type RevertPrHint, type QueueResponse, type QueueStep, type StepOutcome, type UndoState, type UndoStep } from './undoRedoService';
 
 export const MAX_WAITING = 25;
 export const REQUEST_TIMEOUT_MS = 30000;
@@ -36,6 +36,7 @@ export interface UndoRunSnapshot {
   lastState?: UndoState;
   othersOnTop?: OtherChange[];
   revertPr?: RevertPrHint;
+  foreignTarget?: ForeignTarget;
 }
 
 export interface StepDetail {

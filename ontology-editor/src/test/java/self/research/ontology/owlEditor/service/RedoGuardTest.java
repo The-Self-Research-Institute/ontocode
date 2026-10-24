@@ -25,7 +25,7 @@ class RedoGuardTest {
     void setUp() {
         prs = mock(DraftPullRequestRepository.class);
         guard = new RedoGuard(prs);
-        when(prs.findByProjectIdAndStatusOrderByCreatedAtDesc(any(), any())).thenReturn(List.of());
+        when(prs.findByProjectIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
     }
 
     private static HistoryChange row(boolean draft, String changeSetId) {
@@ -56,11 +56,34 @@ class RedoGuardTest {
     }
 
     @Test
+    void theDiscardedCheckAloneDoesNotLookAtPullRequests() {
+        HistoryChange discarded = row(true, "cs1");
+        discarded.setDraftDiscarded(true);
+        assertEquals(RedoGuard.DISCARDED, guard.discardedRefusal(List.of(discarded)).orElseThrow());
+        HistoryChange tagged = row(false, "cs1");
+        tagged.setPublishedPrId("pr1");
+        assertTrue(guard.discardedRefusal(List.of(tagged)).isEmpty());
+    }
+
+    @Test
     void aTaggedRowOfARevertedPrCannotBeRedone() {
         HistoryChange tagged = row(false, "cs1");
         tagged.setPublishedPrId("pr1");
         when(prs.findById("pr1")).thenReturn(Optional.of(pr("pr1", DraftPullRequest.Status.REVERTED, List.of("cs1"))));
         assertEquals(RedoGuard.PR_REVERTED, guard.refusal("p", List.of(tagged)).orElseThrow());
+    }
+
+    @Test
+    void aPrThatIsHalfWayThroughBeingRevertedBlocksRedoToo() {
+        HistoryChange tagged = row(false, "cs1");
+        tagged.setPublishedPrId("pr1");
+        DraftPullRequest partial = pr("pr1", DraftPullRequest.Status.APPROVED, List.of("cs1"));
+        partial.setRevertStartedAt(java.time.Instant.now());
+        when(prs.findById("pr1")).thenReturn(Optional.of(partial));
+        assertEquals(RedoGuard.PR_REVERTED, guard.refusal("p", List.of(tagged)).orElseThrow());
+
+        when(prs.findByProjectIdOrderByCreatedAtDesc(eq("p"))).thenReturn(List.of(partial));
+        assertEquals(RedoGuard.PR_REVERTED, guard.refusal("p", List.of(row(false, "cs1"))).orElseThrow());
     }
 
     @Test
@@ -73,7 +96,7 @@ class RedoGuardTest {
 
     @Test
     void anUntaggedRowWhoseChangeSetBelongsToARevertedPrCannotBeRedone() {
-        when(prs.findByProjectIdAndStatusOrderByCreatedAtDesc(eq("p"), eq(DraftPullRequest.Status.REVERTED)))
+        when(prs.findByProjectIdOrderByCreatedAtDesc(eq("p")))
                 .thenReturn(List.of(pr("pr1", DraftPullRequest.Status.REVERTED, List.of("cs1", "cs2"))));
         assertEquals(RedoGuard.PR_REVERTED, guard.refusal("p", List.of(row(false, "cs2"))).orElseThrow());
         assertTrue(guard.refusal("p", List.of(row(false, "cs9"))).isEmpty());
@@ -81,7 +104,7 @@ class RedoGuardTest {
 
     @Test
     void draftRowsAreNotCheckedAgainstPullRequests() {
-        when(prs.findByProjectIdAndStatusOrderByCreatedAtDesc(any(), any()))
+        when(prs.findByProjectIdOrderByCreatedAtDesc(any()))
                 .thenReturn(List.of(pr("pr1", DraftPullRequest.Status.REVERTED, List.of("cs1"))));
         assertTrue(guard.refusal("p", List.of(row(true, "cs1"))).isEmpty());
     }

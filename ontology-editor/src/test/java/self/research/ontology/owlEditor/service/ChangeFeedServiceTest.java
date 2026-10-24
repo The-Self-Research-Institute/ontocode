@@ -67,6 +67,27 @@ class ChangeFeedServiceTest {
     }
 
     @Test
+    void whenSearchingTheItemsOfAMergedPrAreFoundOnTheirOwn() {
+        HistoryChange merged = change("1", "me@x.com", "createClass", "Pizzanew");
+        merged.setPublishedPrId("7");
+        pages(List.of(merged, change("2", "me@x.com", "createClass", "Other")));
+
+        assertEquals(List.of("1"), service.page("p", query(10, 0, null, null, "Pizzanew", true, "me@x.com")).changes()
+                .stream().map(HistoryChange::getId).toList());
+    }
+
+    @Test
+    void rowsOfADiscardedDraftAreNeverListed() {
+        HistoryChange discarded = change("1", "me@x.com", "createClass", "Gone");
+        discarded.setDraft(true);
+        discarded.setDraftDiscarded(true);
+        pages(List.of(discarded, change("2", "me@x.com", "createClass", "Kept")));
+
+        assertEquals(List.of("2"), service.page("p", query(10, 0, null, null, null, true, "me@x.com")).changes()
+                .stream().map(HistoryChange::getId).toList());
+    }
+
+    @Test
     void rowsPublishedByAMergedPrAreNotListedSeparately() {
         HistoryChange merged = change("1", "me@x.com", "createClass", "Merged");
         merged.setPublishedPrId("7");

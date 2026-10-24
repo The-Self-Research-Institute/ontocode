@@ -485,7 +485,7 @@ public class DraftTrackingService {
                 log.error("[DRAFT] Frozen merge publish failed for project {} copy {}", projectId, graphKey, e);
                 return new ApplyDraftsResult(false, 0, "Failed to publish the pull request: " + e.getMessage(), false, null);
             }
-            return finishFrozenPublish(projectId, authorId, graphKey, drafts, changeSetIds, committed, "Published pull request with merge");
+            return finishFrozenPublish(projectId, authorId, graphKey, drafts, ids.size(), changeSetIds, committed, "Published pull request with merge");
         }
         long mainRevisionAtCopy = draftCopyService.getMainRevisionAtCopy(projectId, graphKey);
         long currentRevision = mainGraphRevisionService.getRevision(projectId);
@@ -500,14 +500,14 @@ public class DraftTrackingService {
             log.error("[DRAFT] Frozen MOVE GRAPH publish failed for project {} copy {}", projectId, graphKey, e);
             return new ApplyDraftsResult(false, 0, "Failed to publish the pull request: " + e.getMessage(), false, null);
         }
-        return finishFrozenPublish(projectId, authorId, graphKey, drafts, changeSetIds, committed, "Published pull request");
+        return finishFrozenPublish(projectId, authorId, graphKey, drafts, ids.size(), changeSetIds, committed, "Published pull request");
     }
 
     private ApplyDraftsResult finishFrozenPublish(String projectId, String authorId, String graphKey,
-                                                  List<DraftChange> drafts, List<String> changeSetIds,
+                                                  List<DraftChange> drafts, int publishedCount, List<String> changeSetIds,
                                                   Optional<DeltaCapture> committed, String message) {
         reconcileCommit(projectId, authorId, committed);
-        draftChangeHistory.markChangeSetsPublished(projectId, authorId, changeSetIds);
+        draftChangeHistory.markChangeSetsPublished(projectId, changeSetIds);
         try {
             mainGraphRevisionService.incrementRevision(projectId);
             draftPublishService.clearBaseline(projectId, graphKey);
@@ -516,7 +516,7 @@ public class DraftTrackingService {
             }
             invalidateHierarchyCaches(projectId);
             int recordingFailures = finalizeAppliedDrafts(projectId, authorId, drafts);
-            return new ApplyDraftsResult(true, drafts.size(), message + recordingFailureSuffix(recordingFailures), false, null);
+            return new ApplyDraftsResult(true, publishedCount, message + recordingFailureSuffix(recordingFailures), false, null);
         } catch (Exception e) {
             log.error("[DRAFT] Frozen publish succeeded but follow-up bookkeeping failed for project {} copy {}, "
                     + "data is already live, do not retry", projectId, graphKey, e);
@@ -728,8 +728,8 @@ public class DraftTrackingService {
         return draftChangeHistory.draftChangeSetIds(projectId, userId);
     }
 
-    public void recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
-        draftChangeHistory.recordPrPublication(projectId, prId, title, authorName, mergedBy, changes);
+    public boolean recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
+        return draftChangeHistory.recordPrPublication(projectId, prId, title, authorName, mergedBy, changes);
     }
 
     public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId) {

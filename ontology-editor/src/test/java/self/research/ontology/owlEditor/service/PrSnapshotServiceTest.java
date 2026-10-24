@@ -55,6 +55,75 @@ class PrSnapshotServiceTest {
     }
 
     @Test
+    void anUpdateBuildsTheNewCopyUnderTheOtherKeyAndLeavesTheOldOneAlone() throws IOException {
+        when(merge.writeBaselineFor(P, "pr-snapshot-pr1-b", "<rdf/>")).thenReturn("baselines/b.owl");
+
+        PrSnapshotService.Frozen frozen = service.freeze(P, "author", "pr1", "pr-snapshot-pr1");
+
+        assertEquals("pr-snapshot-pr1-b", frozen.key());
+        verify(dataset).copyDraftGraph(P, "author", "pr-snapshot-pr1-b");
+        verify(dataset, never()).clearDraftGraph(P, "pr-snapshot-pr1");
+        verify(publish, never()).clearBaseline(P, "pr-snapshot-pr1");
+    }
+
+    @Test
+    void theChangeSetIdsComeFromThePrsOwnRecordsAsWellAsTheHistory() {
+        DraftChange withSet = new DraftChange();
+        withSet.setId("c9");
+        withSet.setOperationData(new java.util.HashMap<>(Map.of("changeSetIds", java.util.List.of("cs7"))));
+        when(tracking.getUnappliedDraftsForUser(P, "author")).thenReturn(java.util.List.of(withSet));
+
+        PrSnapshotService.Frozen frozen = service.freeze(P, "author", "pr1");
+
+        assertEquals(java.util.List.of("cs7", "cs1"), frozen.changeSetIds());
+    }
+
+    @Test
+    void leftoverCopiesOfPrsThatAreNotOpenAnymoreAreRemovedAtStartup() {
+        DraftSession live = new DraftSession(P, "pr-snapshot-pr1", 1, 1);
+        DraftSession done = new DraftSession(P, "pr-snapshot-pr2", 1, 1);
+        DraftSession stale = new DraftSession(P, "pr-snapshot-pr3-b", 1, 1);
+        when(sessions.findByUserIdStartingWith("pr-snapshot-")).thenReturn(java.util.List.of(live, done, stale));
+        self.research.ontology.owlEditor.model.DraftPullRequest open = new self.research.ontology.owlEditor.model.DraftPullRequest();
+        open.setStatus(self.research.ontology.owlEditor.model.DraftPullRequest.Status.OPEN);
+        open.setSnapshotKey("pr-snapshot-pr1");
+        self.research.ontology.owlEditor.model.DraftPullRequest merged = new self.research.ontology.owlEditor.model.DraftPullRequest();
+        merged.setStatus(self.research.ontology.owlEditor.model.DraftPullRequest.Status.APPROVED);
+        merged.setSnapshotKey("pr-snapshot-pr2");
+        self.research.ontology.owlEditor.model.DraftPullRequest movedOn = new self.research.ontology.owlEditor.model.DraftPullRequest();
+        movedOn.setStatus(self.research.ontology.owlEditor.model.DraftPullRequest.Status.OPEN);
+        movedOn.setSnapshotKey("pr-snapshot-pr3");
+        when(pullRequests.findById("pr1")).thenReturn(Optional.of(open));
+        when(pullRequests.findById("pr2")).thenReturn(Optional.of(merged));
+        when(pullRequests.findById("pr3")).thenReturn(Optional.of(movedOn));
+
+        assertEquals(2, service.sweepOrphans());
+
+        verify(dataset, never()).clearDraftGraph(P, "pr-snapshot-pr1");
+        verify(dataset).clearDraftGraph(P, "pr-snapshot-pr2");
+        verify(dataset).clearDraftGraph(P, "pr-snapshot-pr3-b");
+    }
+
+    @Test
+    void theNextUpdateGoesBackToTheFirstKey() {
+        assertEquals("pr-snapshot-pr1", PrSnapshotService.alternateKey("pr1", "pr-snapshot-pr1-b"));
+        assertEquals("pr-snapshot-pr1-b", PrSnapshotService.alternateKey("pr1", "pr-snapshot-pr1"));
+        assertEquals("pr-snapshot-pr1", PrSnapshotService.alternateKey("pr1", null));
+        assertEquals("pr1", PrSnapshotService.prIdOfKey("pr-snapshot-pr1-b"));
+        assertEquals("pr1", PrSnapshotService.prIdOfKey("pr-snapshot-pr1"));
+    }
+
+    @Test
+    void aFailedUpdateDropsOnlyTheNewCopy() throws IOException {
+        doThrow(new IOException("disk full")).when(merge).writeBaselineFor(P, "pr-snapshot-pr1-b", "<rdf/>");
+
+        assertThrows(IllegalStateException.class, () -> service.freeze(P, "author", "pr1", "pr-snapshot-pr1"));
+
+        verify(dataset, org.mockito.Mockito.atLeastOnce()).clearDraftGraph(P, "pr-snapshot-pr1-b");
+        verify(dataset, never()).clearDraftGraph(P, "pr-snapshot-pr1");
+    }
+
+    @Test
     void freezingCopiesTheDraftGraphAndCreatesAReadySessionForTheSnapshot() {
         PrSnapshotService.Frozen frozen = service.freeze(P, "author", "pr1");
 

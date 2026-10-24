@@ -259,6 +259,7 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
 import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
+import RevertPrDialog from "./RevertPrDialog";
 import PullPreviewDialog from "./PullPreviewDialog";
 
 const DRAFT_SAVE_DISABLED_HINT =
@@ -1525,6 +1526,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [syncMode, setSyncMode] = useState<"private" | "public">("public");
+  const pluginDraftMode = !isDesktop() && syncMode === "private";
   const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
   const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
   const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
@@ -1562,6 +1564,17 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [revertPr, setRevertPr] = useState<{ prId: string; title?: string } | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setRevertPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:revert-pr", open);
+    return () => window.removeEventListener("ontology:revert-pr", open);
+  }, [projectId]);
   const [showPullPreview, setShowPullPreview] = useState(false);
   const pullPending = usePullPending(
     projectId || undefined,
@@ -14628,7 +14641,7 @@ const updateItemInState = useCallback(
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
-                  draftMode={!isDesktop() && syncMode === "private"}
+                  draftMode={pluginDraftMode}
                   prefixes={(metadata as any)?.prefixes || []}
                   context={{
                     apiClient,
@@ -14679,7 +14692,7 @@ const updateItemInState = useCallback(
               context={{
                 projectId,
                 apiBaseUrl: getBaseUrl(),
-                draftMode: !isDesktop() && syncMode === "private",
+                draftMode: pluginDraftMode,
                 userId: graphActor.userId,
                 username: graphActor.username,
                 permissions: {
@@ -14756,7 +14769,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} draftMode={!isDesktop() && syncMode === "private"} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14795,7 +14808,7 @@ const updateItemInState = useCallback(
               context={{ apiClient }}
               userId={actor.userId}
               username={actor.username}
-              draftMode={!isDesktop() && syncMode === "private"}
+              draftMode={pluginDraftMode}
               onViewOnlyAction={isViewOnlyMember ? handleViewOnlyAction : undefined}
               onDraftRequired={!isDesktop() && isProjectDraftEditorRole && syncMode !== 'private'
                 ? () => setShowProPromptType('draftRequired')
@@ -14840,7 +14853,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -18556,6 +18569,16 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           }
         }}
       />
+
+      {projectId && revertPr && (
+        <RevertPrDialog
+          projectId={projectId}
+          prId={revertPr.prId}
+          title={revertPr.title}
+          onClose={() => setRevertPr(null)}
+          onDone={() => setRevertPr(null)}
+        />
+      )}
 
       {projectId && (
         <DraftPRPanel

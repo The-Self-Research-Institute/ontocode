@@ -43,7 +43,22 @@ public class PrRevertService {
         this.ownership = ownership;
     }
 
+    private final java.util.concurrent.ConcurrentHashMap<String, Object> monitors = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private Object monitorOf(String prId) {
+        return monitors.computeIfAbsent(prId, id -> new Object());
+    }
+
     public Outcome revert(String projectId, String prId, String userId, String username, String reason, boolean dryRun) {
+        if (dryRun) {
+            return revertNow(projectId, prId, userId, username, reason, true);
+        }
+        synchronized (monitorOf(prId)) {
+            return revertNow(projectId, prId, userId, username, reason, false);
+        }
+    }
+
+    private Outcome revertNow(String projectId, String prId, String userId, String username, String reason, boolean dryRun) {
         DraftPullRequest pr = prs.findById(prId).orElse(null);
         if (pr == null || !projectId.equals(pr.getProjectId())) {
             return fail(404, dryRun, "Pull request not found");
@@ -84,6 +99,10 @@ public class PrRevertService {
         if (dryRun) {
             return new Outcome(200, true, true, "Preview ready: " + ordered.size() + " change sets can be reverted", report, false);
         }
+        if (pr.getRevertStartedAt() == null) {
+            pr.setRevertStartedAt(Instant.now());
+            prs.save(pr);
+        }
         int done = 0;
         for (int i = 0; i < ordered.size(); i++) {
             String changeSetId = ordered.get(i);
@@ -102,17 +121,23 @@ public class PrRevertService {
             report.get(i).put("reverted", true);
             done++;
         }
+        historySync.markPrPublicationReverted(projectId, prId);
         pr.setStatus(DraftPullRequest.Status.REVERTED);
         pr.setRevertedAt(Instant.now());
         pr.setRevertedBy(userId);
         pr.setRevertReason(cleanReason);
         prs.save(pr);
-        historySync.markPrPublicationReverted(projectId, prId);
         drafts.recordPrReversal(projectId, prId, pr.getTitle(), username == null ? userId : username, ordered.size(), cleanReason);
         return new Outcome(200, true, false, "Reverted " + ordered.size() + " change sets", report, false);
     }
 
     public Outcome restore(String projectId, String prId, String userId, String username) {
+        synchronized (monitorOf(prId)) {
+            return restoreNow(projectId, prId, userId, username);
+        }
+    }
+
+    private Outcome restoreNow(String projectId, String prId, String userId, String username) {
         DraftPullRequest pr = prs.findById(prId).orElse(null);
         if (pr == null || !projectId.equals(pr.getProjectId())) {
             return fail(404, false, "Pull request not found");
@@ -122,6 +147,9 @@ public class PrRevertService {
         }
         if (pr.getStatus() != DraftPullRequest.Status.REVERTED) {
             return fail(409, false, "Only a reverted pull request can be restored");
+        }
+        if (pr.getRestoredAt() != null) {
+            return new Outcome(200, true, false, "Already restored into your draft", List.of(), true);
         }
         List<String> ids = pr.getPublishedChangeSetIds();
         if (ids == null || ids.isEmpty()) {

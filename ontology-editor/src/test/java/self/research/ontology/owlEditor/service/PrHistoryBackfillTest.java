@@ -25,6 +25,7 @@ class PrHistoryBackfillTest {
         prs = mock(DraftPullRequestRepository.class);
         history = mock(HistorySyncService.class);
         backfill = new PrHistoryBackfill(prs, history);
+        when(history.hasPrPublication(any(), any())).thenReturn(true);
     }
 
     private static DraftPullRequest pr(String id, DraftPullRequest.Status status, List<String> sets) {
@@ -62,6 +63,17 @@ class PrHistoryBackfillTest {
         assertEquals(3L, result.get("rows"));
         assertEquals(2, result.get("prs"));
         verify(history, never()).tagRowsOfPr(any(), org.mockito.ArgumentMatchers.eq(List.of("cs3")), any());
+    }
+
+    @Test
+    void aPrWithoutItsMergeEntryIsLeftAloneSoItsRowsStayVisible() {
+        when(prs.findAll()).thenReturn(List.of(pr("pr1", DraftPullRequest.Status.APPROVED, List.of("cs1"))));
+        when(history.hasPrPublication("p1", "pr1")).thenReturn(false);
+
+        var result = backfill.run(false);
+
+        assertEquals(0L, result.get("rows"));
+        verify(history, never()).tagRowsOfPr(any(), any(), any());
     }
 
     @Test

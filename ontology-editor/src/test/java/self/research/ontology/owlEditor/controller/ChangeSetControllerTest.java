@@ -79,7 +79,7 @@ class ChangeSetControllerTest {
         ResponseEntity<Map<String, Object>> response = controller.undo("p", "set-1", false, null, request);
 
         assertEquals(409, response.getStatusCode().value());
-        assertEquals(RollbackRequestSupport.MERGED_PR_PART, response.getBody().get("error"));
+        assertEquals(self.research.ontology.owlEditor.service.PrEntries.MERGED_PR_PART, response.getBody().get("error"));
         assertEquals("pr1", ((Map<String, Object>) response.getBody().get("revertPr")).get("prId"));
         verify(rollback, never()).undoChangeSet(any(), any(), any(), anyBoolean());
     }

@@ -105,6 +105,18 @@ class ChangeRollbackServiceTest {
     }
 
     @Test
+    void theRecordOfAMergedPullRequestCannotBeUndoneDirectly() {
+        HistoryChange record = entry("pr-entry", "prPublished");
+        when(historySync.getHistoryChange("pr-entry")).thenReturn(record);
+
+        Result result = service.undoEntry(P, "pr-entry", ACTOR, false);
+
+        assertTrue(result.skipped().stream().anyMatch(item -> PrEntries.PUBLICATION_RECORD.equals(item.reason())));
+        verify(mutations, never()).applyForRollback(eq(P), any());
+        verify(historySync, never()).setEntryReverted(eq("pr-entry"), eq(true), anyString());
+    }
+
+    @Test
     void aDeletionWithoutAnExactRecordIsNotRestoredFromPartialData() {
         HistoryChange deleted = entry("c9", "deleteClass");
         when(historySync.getHistoryChange("c9")).thenReturn(deleted);

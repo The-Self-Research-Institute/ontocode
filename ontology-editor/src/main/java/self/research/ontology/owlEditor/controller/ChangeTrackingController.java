@@ -199,7 +199,7 @@ public class ChangeTrackingController {
 
             List<Map<String, Object>> changes = new ArrayList<>();
             for (HistoryChange change : historyChanges) {
-                if (self.research.ontology.owlEditor.service.PrFeedExpander.isMergedPrEntry(change)) {
+                if (self.research.ontology.owlEditor.service.PrEntries.isMergedPrEntry(change)) {
                     changes.addAll(self.research.ontology.owlEditor.service.PrFeedExpander.expand(
                             change, historyChangeToMap(change, conflicts),
                             prId -> historySyncService.publishedRows(projectId, prId),

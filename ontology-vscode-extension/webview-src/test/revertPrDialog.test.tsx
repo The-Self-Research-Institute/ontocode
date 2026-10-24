@@ -23,13 +23,16 @@ describe('revert pull request dialog', () => {
   beforeEach(() => postMock.mockReset());
 
   it('previews on open, keeps Confirm off until a reason is typed, then sends the reason', async () => {
-    postMock.mockResolvedValueOnce({ message: 'Reverting removes 2 changes', changeSets: [{ changeSetId: 'a', label: 'Add Pizzanew' }] });
+    postMock.mockResolvedValueOnce({ message: 'Reverting removes 2 changes', changeSets: [{ changeSetId: 'a', canRevert: true, willRemove: 2 }, { changeSetId: 'b', canRevert: false, reasons: ['Pizzanew is still used by Pizzakid'] }, { changeSetId: 'c', alreadyUndone: true }] });
     postMock.mockResolvedValueOnce({ message: 'Reverted' });
     const onDone = vi.fn();
     const host = mount(<RevertPrDialog projectId="p1" prId="7" title="Pizza" onClose={() => undefined} onDone={onDone} />);
     await flush();
     expect(postMock.mock.calls[0][0]).toBe('/api/ontology/p1/draft-prs/7/revert?dryRun=true');
     expect(host.textContent).toContain('Reverting removes 2 changes');
+    expect(host.textContent).toContain('Can be reverted (2 changes)');
+    expect(host.textContent).toContain('Blocked: Pizzanew is still used by Pizzakid');
+    expect(host.textContent).toContain('Already undone');
     const confirm = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Confirm revert') as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     const box = host.querySelector('textarea') as HTMLTextAreaElement;

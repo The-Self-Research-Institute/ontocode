@@ -32,6 +32,16 @@ class UndoAbilityTest {
     }
 
     @Test
+    void aChangeOfADiscardedDraftIsNotUndoable() {
+        HistoryChange change = change("createClass", "http://ex/A");
+        change.setDraft(true);
+        change.setDraftDiscarded(true);
+        UndoAbility.Result result = UndoAbility.of(change);
+        assertFalse(result.undoable());
+        assertEquals(RedoGuard.DISCARDED, result.reason());
+    }
+
+    @Test
     void anUndoneChangeIsNotUndoable() {
         HistoryChange change = change("createClass", "http://ex/A");
         change.setReverted(true);

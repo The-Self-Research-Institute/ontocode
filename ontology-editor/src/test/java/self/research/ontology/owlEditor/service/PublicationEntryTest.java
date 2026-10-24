@@ -41,7 +41,7 @@ class PublicationEntryTest {
         HistoryChange mine = row("m", "createClass", "owner");
         when(history.findByProjectId(anyString(), any(Pageable.class))).thenReturn(List.of(
                 row("p", "prPublished", "owner"), row("r", "prReverted", "owner"), mine));
-        assertEquals(List.of(), blockers.laterChanges("proj", mine));
+        assertEquals(List.of(), blockers.laterChanges("proj", mine, null));
     }
 
     @Test

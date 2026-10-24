@@ -36,8 +36,11 @@ public class UndoQueueService {
 
     public Queue queue(String projectId, boolean draft, Identity who, int count) {
         int wanted = Math.max(1, Math.min(count, MAX_COUNT));
-        List<HistoryChange> own = history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(
-                projectId, draft, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
+        List<HistoryChange> own = draft
+                ? history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(
+                        projectId, true, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()))
+                : history.findByProjectIdAndDraftOrderByTimestampDesc(
+                        projectId, false, PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
         Map<String, List<HistoryChange>> groups = new LinkedHashMap<>();
         for (HistoryChange entry : own) {
             if (entry.isReverted() || entry.getPublishedPrId() != null || UserUndoService.isRollbackEntry(entry)
