@@ -50,6 +50,7 @@ export interface OntologyChange {
   undoable?: boolean;
   undoReason?: string | null;
   setOnly?: boolean;
+  mergedPrReverted?: boolean;
   draft?: boolean;
 }
 

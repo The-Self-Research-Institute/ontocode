@@ -16,6 +16,8 @@ import { entityTarget, propertyTarget, setTarget } from '../src/changeSets/targe
 import { groupChangeSets } from '../src/changeSets/groupChangeSets';
 import { inScope } from '../src/assistant/hooks/useChangeFilters';
 import { nextFeedOffset } from '../src/assistant/feedPaging';
+import { STATUS_FILTERS } from '../src/assistant/statusFilters';
+import { mergedPrOf, prReversalOf } from '../src/changeSets/prReversal';
 import { parseServerTime } from '../src/changeSets/timeFormat';
 import type { ChangeEntry } from '../src/changeSets/types';
 
@@ -384,5 +386,45 @@ describe('the saved count follows what the history shows', () => {
     const single = parseChange({ ...base, id: 's1', operationType: 'createClass', draft: false }) as any;
     expect(computeStats([...items, single], []).totalChanges).toBe(2);
     expect(countEntries(items)).toBe(1);
+  });
+});
+
+describe('the status filter', () => {
+  it('only offers states the scope choice cannot express', () => {
+    expect(STATUS_FILTERS.map(option => option.value)).toEqual(['all', 'reverted', 'conflicted']);
+  });
+});
+
+describe('a reverted pull request entry', () => {
+  const entryOf = (overrides: Record<string, unknown>) => parseChange({
+    ...base, id: 'rev1', operationType: 'prReverted', entityIRI: 'urn:ontocode:pr:7', entityLabel: 'Reverted PR: Pizza toppings', ...overrides
+  }) as unknown as ChangeEntry;
+
+  it('offers one redo that names the pull request', () => {
+    const set = (groupChangeSets([entryOf({})])[0] as any).set;
+    expect(prReversalOf(set)).toEqual({ prId: '7', title: 'Pizza toppings' });
+  });
+
+  it('offers nothing once it was applied again or for other entries', () => {
+    expect(prReversalOf((groupChangeSets([entryOf({ reverted: true })])[0] as any).set)).toBeNull();
+    expect(prReversalOf((groupChangeSets([entryOf({ operationType: 'createClass' })])[0] as any).set)).toBeNull();
+  });
+});
+
+describe('a merged pull request card', () => {
+  const item = (overrides: Record<string, unknown>) => parseChange({
+    ...base, id: 'pr1#0', operationType: 'createClass', entityIRI: 'http://x#ok', setOnly: true, changeSetId: 'pr:7',
+    description: 'Merged PR: Pizza toppings', ...overrides
+  }) as unknown as ChangeEntry;
+
+  it('offers Revert while the pull request is live and Redo once it is reverted', () => {
+    const live = (groupChangeSets([item({})])[0] as any).set;
+    expect(mergedPrOf(live)).toEqual({ prId: '7', title: 'Pizza toppings', reverted: false });
+    const reverted = (groupChangeSets([item({ mergedPrReverted: true })])[0] as any).set;
+    expect(mergedPrOf(reverted)?.reverted).toBe(true);
+  });
+
+  it('is not a merged pull request card for ordinary change sets', () => {
+    expect(mergedPrOf((groupChangeSets([item({ changeSetId: 'set-1' })])[0] as any).set)).toBeNull();
   });
 });

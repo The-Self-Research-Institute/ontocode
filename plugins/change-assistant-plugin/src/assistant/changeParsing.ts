@@ -127,6 +127,7 @@ export function parseChange(change: any) {
     undoable: typeof change.undoable === 'boolean' ? change.undoable : undefined,
     undoReason: change.undoReason ?? null,
     setOnly: change.setOnly === true,
+    mergedPrReverted: change.mergedPrReverted === true,
     draft: !!change.draft
   };
 }

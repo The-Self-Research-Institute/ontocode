@@ -11,6 +11,10 @@ public final class PrEntries {
     private PrEntries() {
     }
 
+    public static boolean isPublicationRecord(HistoryChange change) {
+        return RollbackWorkSupport.isPublicationEntry(change);
+    }
+
     public static String iriOf(String prId) {
         return IRI_PREFIX + prId;
     }

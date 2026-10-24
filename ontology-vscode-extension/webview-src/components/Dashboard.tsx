@@ -1565,6 +1565,17 @@ const Dashboard: React.FC<DashboardProps> = ({
   }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
   const [revertPr, setRevertPr] = useState<{ prId: string; title?: string } | null>(null);
+  const [reapplyPr, setReapplyPr] = useState<{ prId: string; title?: string } | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setReapplyPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:reapply-pr", open);
+    return () => window.removeEventListener("ontology:reapply-pr", open);
+  }, [projectId]);
   useEffect(() => {
     const open = (event: Event) => {
       const detail = (event as CustomEvent).detail || {};
@@ -18569,6 +18580,17 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           }
         }}
       />
+
+      {projectId && reapplyPr && (
+        <RevertPrDialog
+          mode="reapply"
+          projectId={projectId}
+          prId={reapplyPr.prId}
+          title={reapplyPr.title}
+          onClose={() => setReapplyPr(null)}
+          onDone={() => setReapplyPr(null)}
+        />
+      )}
 
       {projectId && revertPr && (
         <RevertPrDialog

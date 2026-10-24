@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import { SourceFilter } from '../changeSets/types';
 import type { ViewScope } from './hooks/useChangeFilters';
 import { ChangeStatus, ChangeType } from './types';
+import { STATUS_FILTERS } from './statusFilters';
 
 interface FilterBarProps {
   searchQuery: string;
@@ -63,11 +64,7 @@ const FilterBar: React.FC<FilterBarProps> = (props) => (
         onChange={(e) => props.setFilterStatus(e.target.value as ChangeStatus | 'all')}
         className="flex-1 px-2 py-1 border rounded text-sm"
       >
-        <option value="all">All Status</option>
-        <option value="draft">Drafts</option>
-        <option value="saved">Saved</option>
-        <option value="reverted">Reverted</option>
-        <option value="conflicted">Conflicted</option>
+        {STATUS_FILTERS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
       <select
         value={props.sourceFilter}

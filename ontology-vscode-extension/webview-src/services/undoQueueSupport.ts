@@ -58,7 +58,7 @@ export interface PressResult {
 
 export interface QueueApi {
   fetchQueue(projectId: string, count: number): Promise<QueueResponse>;
-  send(projectId: string, kind: UndoKind, step: QueueStep, opId: string, confirmOther?: boolean): Promise<StepOutcome>;
+  send(projectId: string, kind: UndoKind, step: QueueStep, opId: string, confirmOther?: boolean | 'target'): Promise<StepOutcome>;
   announce(projectId: string, step: QueueStep, kind: UndoKind, auditId?: string): void;
   refused(projectId: string): void;
 }
@@ -68,7 +68,7 @@ export interface Entry {
   label: string;
   opId: string;
   unknown: boolean;
-  confirmOther?: boolean;
+  confirmOther?: boolean | 'target';
 }
 
 export const TIMED_OUT = Symbol('timed-out');
@@ -107,7 +107,7 @@ export const defaultQueueApi: QueueApi = {
 };
 
 export function stepFromHint(hint: UndoStep | undefined, kind: UndoKind): QueueStep | undefined {
-  const id = kind === 'undo' ? hint?.changeId : hint?.auditId;
+  const id = kind === 'undo' ? hint?.changeId : hint?.auditId || hint?.changeId;
   if (!hint?.available || !id) return undefined;
   return {
     changeId: hint.changeId || id,

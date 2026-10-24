@@ -4,6 +4,7 @@ import { runOperation } from './changeSetApi';
 import { ChangeSet, OperationTarget, RollbackEvent } from './types';
 import { cardDomId, ENTITY_CAP, flattensEntity, setSubtitle, undoneNote } from './groupChangeSets';
 import { setTarget } from './targets';
+import { mergedPrOf, prReversalOf } from './prReversal';
 import { formatTime } from './timeFormat';
 import ChangeSetEntityRow from './ChangeSetEntityRow';
 import ChangeSetPropertyRow from './ChangeSetPropertyRow';
@@ -72,10 +73,19 @@ function HeaderActions({ projectId, set, expanded, onUndo, onDetails }:
         </button>
       )}
       {redo && <button type="button" className="cs-btn" onClick={() => onUndo(redo)}>Redo</button>}
-      {set.changeSetId?.startsWith('pr:') && set.entries.some(entry => !entry.reverted) && (
-        <button type="button" className="cs-btn" onClick={() => window.dispatchEvent(new CustomEvent('ontology:revert-pr', {
-          detail: { projectId, prId: (set.changeSetId as string).slice(3), title: set.title.replace(/^Merged PR: /, '') }
-        }))}>Revert pull request</button>
+      {prReversalOf(set) && (
+        <button type="button" className="cs-btn" onClick={() => window.dispatchEvent(new CustomEvent('ontology:reapply-pr', {
+          detail: { projectId, ...prReversalOf(set) }
+        }))}>Redo</button>
+      )}
+      {mergedPrOf(set) && (
+        <button type="button" className="cs-btn" onClick={() => {
+          const merged = mergedPrOf(set);
+          if (!merged) return;
+          window.dispatchEvent(new CustomEvent(merged.reverted ? 'ontology:reapply-pr' : 'ontology:revert-pr', {
+            detail: { projectId, prId: merged.prId, title: merged.title }
+          }));
+        }}>{mergedPrOf(set)?.reverted ? 'Redo' : 'Revert pull request'}</button>
       )}
     </div>
   );

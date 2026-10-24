@@ -43,15 +43,24 @@ public class OntologyHistoryService {
         return historySyncService == null ? java.util.List.of() : historySyncService.draftChangeSetIds(projectId, userId);
     }
 
-    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId) {
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId,
+                                   String authorId, java.time.LocalDateTime since) {
         if (historySyncService != null) {
             historySyncService.tagRowsOfPr(projectId, changeSetIds, prId);
+            historySyncService.tagUnlinkedRows(projectId, authorId, since,
+                    java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusSeconds(5), prId);
         }
     }
 
     public void markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
         if (historySyncService != null) {
             historySyncService.markChangeSetsPublished(projectId, changeSetIds);
+        }
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId, java.util.Collection<String> keepChangeSetIds) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsDiscarded(projectId, userId, keepChangeSetIds);
         }
     }
 

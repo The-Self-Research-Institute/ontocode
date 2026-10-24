@@ -15,7 +15,7 @@ interface Options {
   onOpenHistory?: () => void;
 }
 
-const PUBLISH_OPS = ['draftPublish', 'draftPrApproved', 'draftPrReverted'];
+const PUBLISH_OPS = ['draftPublish', 'draftPrApproved', 'draftPrReverted', 'draftPrReapplied'];
 
 export interface UndoMenu {
   projectId?: string;

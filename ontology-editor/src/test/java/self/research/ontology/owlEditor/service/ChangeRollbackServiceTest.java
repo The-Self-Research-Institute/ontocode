@@ -105,6 +105,19 @@ class ChangeRollbackServiceTest {
     }
 
     @Test
+    void aPlainRedoOfAChangeSetOfARevertedPrIsRefusedButTheOneForApplyingThePrAgainIsNot() {
+        RedoGuard guard = mock(RedoGuard.class);
+        when(guard.refusal(anyString(), any())).thenReturn(java.util.Optional.of(RedoGuard.PR_REVERTED));
+        when(guard.discardedRefusal(any())).thenReturn(java.util.Optional.empty());
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "redoGuard", guard);
+        HistoryChange created = entry("c1", "createClass", sub("s1", LABEL, "Pizzanew", true));
+        when(historySync.getChangeSet(P, "set-1")).thenReturn(List.of(created));
+
+        assertEquals(409, service.redoChangeSet(P, "set-1", ACTOR, true).status());
+        assertEquals(200, service.redoChangeSetForPr(P, "set-1", ACTOR, true).status());
+    }
+
+    @Test
     void theRecordOfAMergedPullRequestCannotBeUndoneDirectly() {
         HistoryChange record = entry("pr-entry", "prPublished");
         when(historySync.getHistoryChange("pr-entry")).thenReturn(record);

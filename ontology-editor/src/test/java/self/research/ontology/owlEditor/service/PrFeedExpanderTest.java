@@ -52,7 +52,19 @@ class PrFeedExpanderTest {
         assertEquals(true, out.get(0).get("setOnly"));
         assertEquals(false, out.get(0).get("undoable"));
         assertEquals("pr-entry#0", out.get(0).get("id"));
+        assertEquals(false, out.get(0).get("mergedPrReverted"));
         assertEquals("pr-entry#1", out.get(1).get("id"));
+    }
+
+    @Test
+    void theItemsTellTheClientWhenThePrWasReverted() {
+        HistoryChange reverted = entry();
+        reverted.setReverted(true);
+
+        List<Map<String, Object>> out = PrFeedExpander.expand(reverted, toMap(reverted),
+                prId -> List.of(row("r1", "Pizzanew")), PrFeedExpanderTest::toMap);
+
+        assertEquals(true, out.get(0).get("mergedPrReverted"));
     }
 
     @Test

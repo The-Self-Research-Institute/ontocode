@@ -66,9 +66,10 @@ public class DraftChangeHistoryRecorder {
         }
     }
 
-    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId) {
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId,
+                                   String authorId, java.time.LocalDateTime since) {
         try {
-            historyService.tagPrPublishedRows(projectId, changeSetIds, prId);
+            historyService.tagPrPublishedRows(projectId, changeSetIds, prId, authorId, since);
         } catch (Exception e) {
             log.warn("[DRAFT] Could not tag the rows published by PR {} in project {}: {}", prId, projectId, e.getMessage());
         }
@@ -79,6 +80,15 @@ public class DraftChangeHistoryRecorder {
             historyService.markChangeSetsPublished(projectId, changeSetIds);
         } catch (Exception e) {
             log.warn("[DRAFT] Could not mark the published change sets for project {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    public void markDiscarded(String projectId, String userId, java.util.Collection<String> keepChangeSetIds) {
+        try {
+            historyService.markDraftHistoryDiscarded(projectId, userId, keepChangeSetIds);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark discarded draft history entries for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
         }
     }
 

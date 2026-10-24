@@ -442,7 +442,7 @@ class DraftControllerTest {
 
         assertEquals(200, controller.approvePullRequest("p1", "pr1", reviewRequest()).getStatusCode().value());
 
-        org.mockito.Mockito.verify(draftTrackingService, org.mockito.Mockito.never()).tagPrPublishedRows(any(), any(), any());
+        org.mockito.Mockito.verify(draftTrackingService, org.mockito.Mockito.never()).tagPrPublishedRows(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -533,7 +533,7 @@ class DraftControllerTest {
         org.mockito.Mockito.verify(draftTrackingService)
                 .recordPrPublication("p1", "pr1", "Add toppings", "pranesh", "reviewer1", 3);
         org.mockito.Mockito.verify(draftTrackingService)
-                .tagPrPublishedRows(eq("p1"), eq(java.util.List.of("cs1", "cs2")), eq("pr1"));
+                .tagPrPublishedRows(eq("p1"), eq(java.util.List.of("cs1", "cs2")), eq("pr1"), eq("author1"), any());
     }
 
     @Test

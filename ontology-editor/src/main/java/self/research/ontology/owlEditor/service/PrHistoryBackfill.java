@@ -58,6 +58,18 @@ public class PrHistoryBackfill {
             long count = dryRun
                     ? historySync.countRowsToTag(pr.getProjectId(), sets)
                     : historySync.tagRowsOfPr(pr.getProjectId(), sets, pr.getId());
+            java.time.LocalDateTime mergedAt = historySync.prPublicationTime(pr.getProjectId(), pr.getId());
+            if (mergedAt != null && pr.getAuthorId() != null) {
+                java.time.LocalDateTime from = mergedAt.minusMinutes(2);
+                java.time.LocalDateTime to = mergedAt.plusSeconds(10);
+                count += dryRun
+                        ? historySync.countUnlinkedRows(pr.getProjectId(), pr.getAuthorId(), from, to)
+                        : historySync.tagUnlinkedRows(pr.getProjectId(), pr.getAuthorId(), from, to, pr.getId());
+            }
+            if (!dryRun && pr.getStatus() == DraftPullRequest.Status.REVERTED) {
+                historySync.markPrRowsReverted(pr.getProjectId(), pr.getId());
+                historySync.tagRollbackRowsOfPr(pr.getProjectId(), sets, pr.getId());
+            }
             if (count > 0) {
                 rows += count;
                 touched.add(Map.of("projectId", pr.getProjectId(), "prId", pr.getId(), "rows", count));

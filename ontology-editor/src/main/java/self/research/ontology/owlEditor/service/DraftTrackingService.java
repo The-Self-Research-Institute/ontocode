@@ -732,12 +732,17 @@ public class DraftTrackingService {
         return draftChangeHistory.recordPrPublication(projectId, prId, title, authorName, mergedBy, changes);
     }
 
-    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId) {
-        draftChangeHistory.tagPrPublishedRows(projectId, changeSetIds, prId);
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId,
+                                   String authorId, java.time.LocalDateTime since) {
+        draftChangeHistory.tagPrPublishedRows(projectId, changeSetIds, prId, authorId, since);
     }
 
     public void recordPrReversal(String projectId, String prId, String title, String revertedBy, int changeSets, String reason) {
         draftChangeHistory.recordPrReversal(projectId, prId, title, revertedBy, changeSets, reason);
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId, java.util.Collection<String> keepChangeSetIds) {
+        draftChangeHistory.markDiscarded(projectId, userId != null && !userId.isBlank() ? userId : null, keepChangeSetIds);
     }
 
     public void markDraftHistoryDiscarded(String projectId, String userId) {

@@ -93,6 +93,48 @@ class UserUndoServiceTest {
         org.mockito.Mockito.verify(history, org.mockito.Mockito.never()).findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any());
     }
 
+    private HistoryChange reversal(String id, boolean reverted, int minute) {
+        HistoryChange change = change(id, "Me@x.com", "urn:ontocode:pr:pr1", T0.plusMinutes(minute));
+        change.setOperationType("prReverted");
+        change.setEntityLabel("Reverted PR: Pizza toppings");
+        change.setReverted(reverted);
+        return change;
+    }
+
+    @Test
+    void redoAfterRevertingAPrOffersToApplyThePrAgain() {
+        ownChanges(reversal("rv", false, 10), change("a", "Me@x.com", "e:A", T0));
+
+        Next next = service.nextRedo(P, false, me);
+
+        assertTrue(next.available());
+        assertEquals("rv", next.changeId());
+        assertEquals("Apply again: Pizza toppings", next.label());
+        assertEquals(null, next.auditId());
+    }
+
+    @Test
+    void redoOffersNothingForAPrReversalThatWasAppliedAgain() {
+        ownChanges(reversal("rv", true, 10), change("a", "Me@x.com", "e:A", T0));
+        assertFalse(service.nextRedo(P, false, me).available());
+    }
+
+    @Test
+    void redoStillOffersToApplyAPrAgainAfterALaterChange() {
+        ownChanges(change("n", "Me@x.com", "e:N", T0.plusMinutes(20)), reversal("rv", false, 10));
+
+        Next next = service.nextRedo(P, false, me);
+
+        assertTrue(next.available());
+        assertEquals("rv", next.changeId());
+    }
+
+    @Test
+    void inDraftModeRedoNeverOffersAPrReversal() {
+        ownChanges(reversal("rv", false, 10));
+        assertFalse(service.nextRedo(P, true, me).available());
+    }
+
     @Test
     void anEmptyPublicHistorySaysThereIsNothingToUndo() {
         Next next = service.nextUndo(P, false, me);

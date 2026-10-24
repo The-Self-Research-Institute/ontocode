@@ -66,6 +66,32 @@ class PrHistoryBackfillTest {
     }
 
     @Test
+    void rowsThePublishWroteWithoutAChangeSetAreTaggedAroundTheMergeTime() {
+        java.time.LocalDateTime mergedAt = java.time.LocalDateTime.of(2026, 10, 24, 15, 10, 0);
+        DraftPullRequest pr = pr("pr1", DraftPullRequest.Status.APPROVED, List.of("cs1"));
+        pr.setAuthorId("author");
+        when(prs.findAll()).thenReturn(List.of(pr));
+        when(history.prPublicationTime("p1", "pr1")).thenReturn(mergedAt);
+        when(history.tagUnlinkedRows("p1", "author", mergedAt.minusMinutes(2), mergedAt.plusSeconds(10), "pr1")).thenReturn(4L);
+
+        var result = backfill.run(false);
+
+        assertEquals(4L, result.get("rows"));
+    }
+
+    @Test
+    void aRevertedPrAlsoGetsItsUnlinkedRowsMarkedReverted() {
+        DraftPullRequest pr = pr("pr1", DraftPullRequest.Status.REVERTED, List.of("cs1"));
+        pr.setAuthorId("author");
+        when(prs.findAll()).thenReturn(List.of(pr));
+        when(history.tagRowsOfPr("p1", List.of("cs1"), "pr1")).thenReturn(1L);
+
+        backfill.run(false);
+
+        verify(history).markPrRowsReverted("p1", "pr1");
+    }
+
+    @Test
     void aPrWithoutItsMergeEntryIsLeftAloneSoItsRowsStayVisible() {
         when(prs.findAll()).thenReturn(List.of(pr("pr1", DraftPullRequest.Status.APPROVED, List.of("cs1"))));
         when(history.hasPrPublication("p1", "pr1")).thenReturn(false);

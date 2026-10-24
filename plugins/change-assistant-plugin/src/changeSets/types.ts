@@ -40,6 +40,7 @@ export interface ChangeEntry {
   undoable?: boolean;
   undoReason?: string | null;
   setOnly?: boolean;
+  mergedPrReverted?: boolean;
   subChanges?: SubChange[];
   reverted?: boolean;
   revertedBy?: string;

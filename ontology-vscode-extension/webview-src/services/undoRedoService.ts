@@ -64,11 +64,13 @@ export type StepOutcome =
 export interface ForeignTarget {
   username?: string;
   label?: string;
+  changes?: number;
 }
 
 export interface RevertPrHint {
   prId?: string;
   title?: string;
+  mode?: 'revert' | 'reapply';
 }
 
 export interface OtherChange {
@@ -175,7 +177,7 @@ export const undoRedoService = {
     kind: 'undo' | 'redo',
     expected: { changeId?: string; auditId?: string },
     opId: string,
-    confirmOther?: boolean,
+    confirmOther?: boolean | 'target',
   ): Promise<StepOutcome> {
     const guard =
       kind === 'undo'
@@ -183,7 +185,7 @@ export const undoRedoService = {
         : expected.auditId ? `&expectedAuditId=${encodeURIComponent(expected.auditId)}` : '';
     try {
       const res = (await apiClient.post<ServerBody>(
-        `${base(projectId)}/${kind}?draft=${draftFlag()}&opId=${encodeURIComponent(opId)}${guard}${confirmOther ? '&confirmOther=true' : ''}`,
+        `${base(projectId)}/${kind}?draft=${draftFlag()}&opId=${encodeURIComponent(opId)}${guard}${confirmOther === 'target' ? '&confirmTarget=true' : confirmOther ? '&confirmOther=true' : ''}`,
         {},
       )) as { status?: number } & ServerBody;
       const body = unwrap(res);

@@ -94,13 +94,84 @@ public class HistorySyncService {
         return result.getModifiedCount();
     }
 
+    private static Criteria unlinkedPublishRows(String projectId, String userId,
+                                                java.time.LocalDateTime from, java.time.LocalDateTime to) {
+        return Criteria.where("projectId").is(projectId).and("userId").is(userId).and("draft").is(false)
+                .and("publishedPrId").is(null).and("source").ne("ROLLBACK")
+                .and("operationType").nin(RollbackWorkSupport.PR_PUBLISHED, RollbackWorkSupport.PR_REVERTED)
+                .and("timestamp").gte(from).lte(to)
+                .orOperator(Criteria.where("changeSetId").is(null), Criteria.where("operationType").is("publishDraft"));
+    }
+
+    public long tagUnlinkedRows(String projectId, String userId, java.time.LocalDateTime from,
+                                java.time.LocalDateTime to, String prId) {
+        if (projectId == null || userId == null || prId == null || from == null || to == null) {
+            return 0;
+        }
+        return mongoTemplate.updateMulti(Query.query(unlinkedPublishRows(projectId, userId, from, to)),
+                new Update().set("publishedPrId", prId), HistoryChange.class).getModifiedCount();
+    }
+
+    public long countUnlinkedRows(String projectId, String userId, java.time.LocalDateTime from, java.time.LocalDateTime to) {
+        if (projectId == null || userId == null || from == null || to == null) {
+            return 0;
+        }
+        return mongoTemplate.count(Query.query(unlinkedPublishRows(projectId, userId, from, to)), HistoryChange.class);
+    }
+
+    public java.time.LocalDateTime prPublicationTime(String projectId, String prId) {
+        HistoryChange record = mongoTemplate.findOne(Query.query(Criteria.where("projectId").is(projectId)
+                .and("entityIRI").is(PrEntries.iriOf(prId)).and("operationType").is(RollbackWorkSupport.PR_PUBLISHED)), HistoryChange.class);
+        return record == null ? null : record.getTimestamp();
+    }
+
+    public long markPrRowsReverted(String projectId, String prId) {
+        if (projectId == null || prId == null) {
+            return 0;
+        }
+        return mongoTemplate.updateMulti(Query.query(Criteria.where("projectId").is(projectId).and("publishedPrId").is(prId)
+                        .and("source").ne(ChangeOrigin.ROLLBACK).and("reverted").ne(true)),
+                new Update().set("reverted", true), HistoryChange.class).getModifiedCount();
+    }
+
+    public long tagRollbackRowsOfPr(String projectId, java.util.List<String> changeSetIds, String prId) {
+        if (projectId == null || prId == null || changeSetIds == null || changeSetIds.isEmpty()) {
+            return 0;
+        }
+        return mongoTemplate.updateMulti(Query.query(Criteria.where("projectId").is(projectId)
+                        .and("source").is(ChangeOrigin.ROLLBACK).and("metadata.revertsChangeSetId").in(changeSetIds)
+                        .and("publishedPrId").is(null)),
+                new Update().set("publishedPrId", prId), HistoryChange.class).getModifiedCount();
+    }
+
+    public long markPrPublicationRestored(String projectId, String prId) {
+        return setReverted(Criteria.where("projectId").is(projectId).and("entityIRI").is(PrEntries.iriOf(prId))
+                .and("operationType").is(RollbackWorkSupport.PR_PUBLISHED).and("reverted").is(true), false);
+    }
+
+    public long markPrRowsRestored(String projectId, String prId) {
+        return setReverted(Criteria.where("projectId").is(projectId).and("publishedPrId").is(prId)
+                .and("source").ne(ChangeOrigin.ROLLBACK).and("reverted").is(true), false);
+    }
+
+    public long markPrReversalUndone(String projectId, String prId) {
+        return setReverted(Criteria.where("projectId").is(projectId).and("entityIRI").is(PrEntries.iriOf(prId))
+                .and("operationType").is(RollbackWorkSupport.PR_REVERTED).and("reverted").ne(true), true);
+    }
+
+    private long setReverted(Criteria match, boolean reverted) {
+        return mongoTemplate.updateMulti(Query.query(match), new Update().set("reverted", reverted), HistoryChange.class)
+                .getModifiedCount();
+    }
+
     public boolean hasPrPublication(String projectId, String prId) {
         return mongoTemplate.exists(Query.query(Criteria.where("projectId").is(projectId)
                 .and("entityIRI").is(PrEntries.iriOf(prId)).and("operationType").is(RollbackWorkSupport.PR_PUBLISHED)), HistoryChange.class);
     }
 
     public java.util.List<HistoryChange> publishedRows(String projectId, String prId) {
-        return historyChangeRepository.findByProjectIdAndPublishedPrId(projectId, prId);
+        return historyChangeRepository.findByProjectIdAndPublishedPrId(projectId, prId).stream()
+                .filter(row -> !ChangeOrigin.ROLLBACK.equals(row.getSource())).toList();
     }
 
     public long markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
@@ -135,12 +206,19 @@ public class HistorySyncService {
     }
 
     public long markDraftsDiscarded(String projectId, String userId) {
+        return markDraftsDiscarded(projectId, userId, java.util.List.of());
+    }
+
+    public long markDraftsDiscarded(String projectId, String userId, java.util.Collection<String> keepChangeSetIds) {
         if (projectId == null) {
             return 0;
         }
         Criteria match = Criteria.where("projectId").is(projectId).and("draft").is(true).and("draftDiscarded").ne(true);
         if (userId != null && !userId.isBlank()) {
             match = match.and("userId").is(userId);
+        }
+        if (keepChangeSetIds != null && !keepChangeSetIds.isEmpty()) {
+            match = match.and("changeSetId").nin(keepChangeSetIds);
         }
         var result = mongoTemplate.updateMulti(Query.query(match), new Update().set("draftDiscarded", true), HistoryChange.class);
         if (result.getModifiedCount() > 0) {

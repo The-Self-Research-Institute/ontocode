@@ -301,7 +301,7 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
       const head = entries[0];
       if (head) {
         head.opId = newOpId();
-        head.confirmOther = true;
+        head.confirmOther = foreignTarget ? 'target' : true;
       }
       others = [];
       revertPr = undefined;

@@ -128,7 +128,29 @@ public class UserUndoService {
                     first.getEntityIRI(), entries.size() == 1 ? labelOf(first) : entries.size() + " changes", null,
                     List.of());
         }
+        HistoryChange reversal = draft ? null : latestOwnPrReversal(projectId, who);
+        if (reversal != null) {
+            String title = reversal.getEntityLabel() == null ? "" : reversal.getEntityLabel().replaceFirst("^Reverted PR: ", "");
+            return new Next(true, ChangeRollbackService.REDO, reversal.getId(), null, null, reversal.getEntityIRI(),
+                    "Apply again: " + title, null, List.of());
+        }
         return Next.none(ChangeRollbackService.REDO, "Nothing to redo");
+    }
+
+    private HistoryChange latestOwnPrReversal(String projectId, Identity who) {
+        List<HistoryChange> own = history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(
+                projectId, false, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
+        for (HistoryChange entry : own) {
+            if (isRollbackEntry(entry)) {
+                continue;
+            }
+            boolean reversal = RollbackWorkSupport.PR_REVERTED.equals(entry.getOperationType())
+                    && PrEntries.prIdOf(entry.getEntityIRI()) != null;
+            if (reversal && !entry.isReverted()) {
+                return entry;
+            }
+        }
+        return null;
     }
 
     private HistoryChange latestOwn(String projectId, boolean draft, Identity who) {

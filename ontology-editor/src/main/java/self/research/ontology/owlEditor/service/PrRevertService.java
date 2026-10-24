@@ -87,8 +87,8 @@ public class PrRevertService {
             ChangeRollbackService.Result preview = rollback.undoChangeSet(projectId, changeSetId,
                     new Actor(userId, username == null ? userId : username, null), true);
             boolean already = alreadyUndone(preview);
-            report.add(entry(changeSetId, preview, already));
-            if (!preview.ok() && !already) {
+            report.add(entry(changeSetId, preview, already, canProceed(preview, already, false), historySync.getChangeSet(projectId, changeSetId)));
+            if (!canProceed(preview, already, false)) {
                 blocked = true;
             }
         }
@@ -106,22 +106,22 @@ public class PrRevertService {
         int done = 0;
         for (int i = 0; i < ordered.size(); i++) {
             String changeSetId = ordered.get(i);
-            if (Boolean.TRUE.equals(report.get(i).get("alreadyUndone"))) {
-                done++;
-                continue;
-            }
             ChangeRollbackService.Result result = rollback.undoChangeSet(projectId, changeSetId,
                     new Actor(userId, username == null ? userId : username, prId + ":" + changeSetId), false);
-            if (!result.ok() && !alreadyUndone(result)) {
+            historySync.tagRollbackRowsOfPr(projectId, ordered, prId);
+            if (!canProceed(result, alreadyUndone(result))) {
                 report.get(i).put("failed", true);
                 report.get(i).put("reasons", reasons(result));
                 return new Outcome(409, false, false, "Reverted " + done + " of " + ordered.size()
-                        + " change sets, then stopped. The rest were not changed", report, false);
+                        + " change sets, then stopped: " + String.join("; ", reasons(result))
+                        + ". Confirm again to continue with the rest", report, false);
             }
             report.get(i).put("reverted", true);
             done++;
         }
         historySync.markPrPublicationReverted(projectId, prId);
+        historySync.markPrRowsReverted(projectId, prId);
+        historySync.tagRollbackRowsOfPr(projectId, ordered, prId);
         pr.setStatus(DraftPullRequest.Status.REVERTED);
         pr.setRevertedAt(Instant.now());
         pr.setRevertedBy(userId);
@@ -129,6 +129,96 @@ public class PrRevertService {
         prs.save(pr);
         drafts.recordPrReversal(projectId, prId, pr.getTitle(), username == null ? userId : username, ordered.size(), cleanReason);
         return new Outcome(200, true, false, "Reverted " + ordered.size() + " change sets", report, false);
+    }
+
+    private static final String NOT_UNDONE = "It hasn't been undone";
+
+    private static boolean nothingToRedo(ChangeRollbackService.Result result) {
+        return result.applied().isEmpty() && !result.skipped().isEmpty()
+                && result.skipped().stream().allMatch(item -> NOT_UNDONE.equals(item.reason()));
+    }
+
+    private static boolean canRedo(ChangeRollbackService.Result result) {
+        return canRedo(result, true);
+    }
+
+    private static boolean canRedo(ChangeRollbackService.Result result, boolean strict) {
+        if (result.skipped().stream().anyMatch(item -> !NOT_UNDONE.equals(item.reason())
+                && (strict || !ALREADY_GONE.equals(item.reason())))) {
+            return false;
+        }
+        return result.ok() || (result.status() == 200 && result.applied().isEmpty());
+    }
+
+    public Outcome reapply(String projectId, String prId, String userId, String username, boolean dryRun) {
+        if (dryRun) {
+            return reapplyNow(projectId, prId, userId, username, true);
+        }
+        synchronized (monitorOf(prId)) {
+            return reapplyNow(projectId, prId, userId, username, false);
+        }
+    }
+
+    private Outcome reapplyNow(String projectId, String prId, String userId, String username, boolean dryRun) {
+        DraftPullRequest pr = prs.findById(prId).orElse(null);
+        if (pr == null || !projectId.equals(pr.getProjectId())) {
+            return fail(404, dryRun, "Pull request not found");
+        }
+        if (userId == null || !ownership.canPublishToProject(userId, projectId)) {
+            return fail(403, dryRun, "Only project owners, admins, or editors can apply a pull request again");
+        }
+        if (pr.getStatus() != DraftPullRequest.Status.REVERTED) {
+            return fail(409, dryRun, "Only a reverted pull request can be applied again");
+        }
+        List<String> ids = pr.getPublishedChangeSetIds();
+        if (ids == null || ids.isEmpty()) {
+            return fail(409, dryRun, "This pull request has no recorded changes to apply again");
+        }
+        List<String> oldestFirst = new ArrayList<>(newestFirst(projectId, ids));
+        java.util.Collections.reverse(oldestFirst);
+        String name = username == null ? userId : username;
+        List<Map<String, Object>> report = new ArrayList<>();
+        boolean blocked = false;
+        for (String changeSetId : oldestFirst) {
+            ChangeRollbackService.Result preview = rollback.redoChangeSetForPr(projectId, changeSetId, new Actor(userId, name, null), true);
+            boolean satisfied = nothingToRedo(preview);
+            boolean proceed = canRedo(preview, false);
+            report.add(entry(changeSetId, preview, satisfied, proceed, historySync.getChangeSet(projectId, changeSetId)));
+            if (!proceed) {
+                blocked = true;
+            }
+        }
+        if (blocked) {
+            return new Outcome(409, false, dryRun,
+                    "This pull request can't be applied again automatically. See which change sets are blocked and why", report, false);
+        }
+        if (dryRun) {
+            return new Outcome(200, true, true, "Preview ready: " + oldestFirst.size() + " change sets can be applied again", report, false);
+        }
+        int done = 0;
+        for (int i = 0; i < oldestFirst.size(); i++) {
+            ChangeRollbackService.Result result = rollback.redoChangeSetForPr(projectId, oldestFirst.get(i),
+                    new Actor(userId, name, prId + ":reapply:" + oldestFirst.get(i)), false);
+            historySync.tagRollbackRowsOfPr(projectId, oldestFirst, prId);
+            if (!canRedo(result)) {
+                report.get(i).put("failed", true);
+                report.get(i).put("reasons", reasons(result));
+                return new Outcome(409, false, false, "Applied " + done + " of " + oldestFirst.size()
+                        + " change sets, then stopped: " + String.join("; ", reasons(result))
+                        + ". Confirm again to continue with the rest", report, false);
+            }
+            done++;
+        }
+        historySync.markPrPublicationRestored(projectId, prId);
+        historySync.markPrRowsRestored(projectId, prId);
+        historySync.markPrReversalUndone(projectId, prId);
+        pr.setStatus(DraftPullRequest.Status.APPROVED);
+        pr.setRevertedAt(null);
+        pr.setRevertedBy(null);
+        pr.setRevertReason(null);
+        pr.setRevertStartedAt(null);
+        prs.save(pr);
+        return new Outcome(200, true, false, "Applied " + oldestFirst.size() + " change sets again", report, false);
     }
 
     public Outcome restore(String projectId, String prId, String userId, String username) {
@@ -219,9 +309,37 @@ public class PrRevertService {
         return ordered;
     }
 
+    private static final String ALREADY_UNDONE = "Already undone";
+    private static final String ALREADY_GONE = "It no longer exists";
+
+    private static boolean settled(ChangeRollbackService.Item item) {
+        return ALREADY_UNDONE.equals(item.reason()) || ALREADY_GONE.equals(item.reason());
+    }
+
+    private static final String LATER_FIRST = "Later changes come first";
+
+    private static boolean blockedByAnything(ChangeRollbackService.Result result, boolean strict) {
+        return result.skipped().stream().anyMatch(item -> !settled(item)
+                && (strict || item.reason() == null || !item.reason().startsWith(LATER_FIRST)));
+    }
+
+    private static boolean canProceed(ChangeRollbackService.Result result, boolean already) {
+        return canProceed(result, already, true);
+    }
+
+    private static boolean canProceed(ChangeRollbackService.Result result, boolean already, boolean strict) {
+        if (already) {
+            return true;
+        }
+        if (blockedByAnything(result, strict)) {
+            return false;
+        }
+        return result.ok() || (result.status() == 200 && result.applied().isEmpty());
+    }
+
     private static boolean alreadyUndone(ChangeRollbackService.Result result) {
         return result.applied().isEmpty() && !result.skipped().isEmpty()
-                && result.skipped().stream().allMatch(item -> "Already undone".equals(item.reason()));
+                && result.skipped().stream().allMatch(PrRevertService::settled);
     }
 
     private static List<String> reasons(ChangeRollbackService.Result result) {
@@ -237,13 +355,44 @@ public class PrRevertService {
         return reasons;
     }
 
-    private static Map<String, Object> entry(String changeSetId, ChangeRollbackService.Result result, boolean already) {
+    static String describe(HistoryChange row) {
+        String name = UserUndoService.labelOf(row);
+        String operation = row.getOperationType();
+        if (operation == null || operation.isBlank() || operation.contains("Merge") || operation.contains("merge")) {
+            return name;
+        }
+        StringBuilder words = new StringBuilder();
+        for (char ch : operation.toCharArray()) {
+            if (Character.isUpperCase(ch) && words.length() > 0) {
+                words.append(' ');
+            }
+            words.append(words.length() == 0 ? Character.toUpperCase(ch) : Character.toLowerCase(ch));
+        }
+        String phrase = words.toString();
+        if (phrase.toLowerCase().contains(name.toLowerCase())) {
+            return phrase;
+        }
+        return name.toLowerCase().startsWith(phrase.toLowerCase()) ? name : phrase + " " + name;
+    }
+
+    private static Map<String, Object> entry(String changeSetId, ChangeRollbackService.Result result, boolean already,
+                                             boolean proceed, List<HistoryChange> rows) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("changeSetId", changeSetId);
-        map.put("canRevert", result.ok() || already);
+        map.put("canRevert", proceed);
         map.put("alreadyUndone", already);
         map.put("willRemove", result.applied().size());
-        map.put("reasons", result.ok() || already ? List.of() : reasons(result));
+        map.put("reasons", proceed ? List.of() : reasons(result));
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (HistoryChange row : rows) {
+            if (RollbackWorkSupport.isPublicationEntry(row) || RollbackWorkSupport.isRollbackEntry(row)) {
+                continue;
+            }
+            Map<String, Object> shown = new LinkedHashMap<>();
+            shown.put("label", describe(row));
+            items.add(shown);
+        }
+        map.put("items", items);
         return map;
     }
 

@@ -13,7 +13,11 @@ export default function UndoConflictDialog({ status, menu, onClose }: { status: 
         projectId={menu.projectId}
         prId={status.revertPr.prId}
         title={status.revertPr.title}
-        onClose={onClose}
+        mode={status.revertPr.mode === "reapply" ? "reapply" : "revert"}
+        onClose={() => {
+          menu.stopPending();
+          onClose();
+        }}
         onDone={() => {
           menu.stopPending();
           menu.refresh?.();
@@ -23,7 +27,7 @@ export default function UndoConflictDialog({ status, menu, onClose }: { status: 
     );
   }
   if (!unknown && status.foreignTarget) {
-    const { username, label } = status.foreignTarget;
+    const { username, label, changes } = status.foreignTarget;
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35">
         <div
@@ -34,7 +38,7 @@ export default function UndoConflictDialog({ status, menu, onClose }: { status: 
         >
           <b className="block text-sm">Undo someone else's change?</b>
           <p>
-            {label || "This change"} was made by {username || "someone else"}. Undoing it removes their change from the shared ontology.
+            {label || "This change"} was made by {username || "someone else"}{changes && changes > 1 ? ` and is part of an edit with ${changes} changes` : ""}. Undoing it removes {changes && changes > 1 ? "all of them" : "their change"} from the shared ontology.
           </p>
           <div className="flex flex-wrap gap-2 pt-1">
             <UndoActionButton tone="danger" onClick={menu.confirmOthers ?? (() => undefined)}>Undo it anyway</UndoActionButton>

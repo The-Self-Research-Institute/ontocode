@@ -277,7 +277,10 @@ public class DraftController {
             DraftTrackingService.DiscardDraftsResult result =
                 draftTrackingService.discardDrafts(projectId, userId);
             if (result.isSuccess()) {
-                draftTrackingService.markDraftHistoryDiscarded(projectId, userId);
+                List<String> keep = prRepository.findByProjectIdAndAuthorIdAndStatus(projectId, userId, DraftPullRequest.Status.OPEN)
+                        .map(open -> open.getPublishedChangeSetIds() == null ? List.<String>of() : open.getPublishedChangeSetIds())
+                        .orElse(List.of());
+                draftTrackingService.markDraftHistoryDiscarded(projectId, userId, keep);
             }
             
             Map<String, Object> response = new HashMap<>();
@@ -659,6 +662,7 @@ public class DraftController {
                 return ResponseEntity.status(409).body(Map.of("success", false, "error", "Pull request is already " + pr.getStatus().name().toLowerCase()));
             }
 
+            java.time.LocalDateTime publishStart = java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).minusSeconds(2);
             boolean frozen = pr.getSnapshotKey() != null && snapshots != null;
             List<String> publishedChangeSetIds = frozen ? pr.getPublishedChangeSetIds()
                     : draftTrackingService.draftChangeSetIds(projectId, pr.getAuthorId());
@@ -699,7 +703,8 @@ public class DraftController {
             prRepository.save(pr);
             if (draftTrackingService.recordPrPublication(projectId, prId, pr.getTitle(), pr.getAuthorUsername(),
                     reviewerId, result.getAppliedCount())) {
-                draftTrackingService.tagPrPublishedRows(projectId, pr.getPublishedChangeSetIds(), prId);
+                draftTrackingService.tagPrPublishedRows(projectId, pr.getPublishedChangeSetIds(), prId,
+                        pr.getAuthorId(), publishStart);
             }
             if (frozen) {
                 catchUpAuthorsDraft(projectId, pr.getAuthorId());

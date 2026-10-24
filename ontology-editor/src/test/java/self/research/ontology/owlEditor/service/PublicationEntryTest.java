@@ -55,6 +55,8 @@ class PublicationEntryTest {
         merged.setEntityIRI("urn:ontocode:pr:pr1");
         when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any()))
                 .thenReturn(List.of(row("r", "prReverted", "owner"), merged, edit));
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), org.mockito.ArgumentMatchers.anyBoolean(), any()))
+                .thenReturn(List.of(row("r", "prReverted", "owner"), merged, edit));
         UserUndoService.Next next = service.nextUndo("proj", false, UserUndoService.Identity.of("owner"));
         assertEquals("p", next.changeId());
         assertTrue(next.available());

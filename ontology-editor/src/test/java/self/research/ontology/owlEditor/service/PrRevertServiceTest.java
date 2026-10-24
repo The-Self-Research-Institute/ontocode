@@ -170,7 +170,7 @@ class PrRevertServiceTest {
         when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
 
         assertTrue(service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false).ok());
-        verify(rollback, never()).undoChangeSet(eq(P), eq("cs-new"), any(Actor.class), eq(false));
+        verify(rollback).undoChangeSet(eq(P), eq("cs-new"), any(Actor.class), eq(false));
         assertEquals(DraftPullRequest.Status.REVERTED, pr.getStatus());
     }
 
@@ -188,6 +188,247 @@ class PrRevertServiceTest {
         verify(drafts, never()).recordPrReversal(anyString(), anyString(), anyString(), anyString(), anyInt(), anyString());
     }
 
+    private static Result nothingLeft(boolean dryRun) {
+        return new Result(200, !dryRun ? false : true, dryRun, "UNDO", "cs", List.of(), List.of(), null, "Nothing to undo");
+    }
+
+    private static Result partlySkipped(String reason) {
+        return new Result(200, true, true, "UNDO", "cs", List.of(new Item("c", null, "urn:x", "Pizzanew", null, null)),
+                List.of(new Item("d", null, "urn:y", "Other", null, reason)), null, null);
+    }
+
+    private static Result notUndone() {
+        return new Result(200, true, false, "REDO", "cs", List.of(),
+                List.of(new Item("c", null, "urn:x", "X", null, "It hasn't been undone")), null, null);
+    }
+
+    @Test
+    void applyingAgainRedoesTheChangeSetsOldestFirstAndMakesThePrMergedAgain() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        pr.setRevertStartedAt(java.time.Instant.now());
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+
+        PrRevertService.Outcome outcome = service.reapply(P, "pr1", "owner", "Owner", false);
+
+        assertTrue(outcome.ok());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(rollback, historySync);
+        order.verify(rollback).redoChangeSetForPr(eq(P), eq("cs-old"), any(Actor.class), eq(false));
+        order.verify(rollback).redoChangeSetForPr(eq(P), eq("cs-new"), any(Actor.class), eq(false));
+        order.verify(historySync).markPrPublicationRestored(P, "pr1");
+        verify(historySync).markPrReversalUndone(P, "pr1");
+        verify(historySync).markPrRowsRestored(P, "pr1");
+        assertEquals(DraftPullRequest.Status.APPROVED, pr.getStatus());
+        assertEquals(null, pr.getRevertStartedAt());
+        assertEquals(null, pr.getRevertReason());
+    }
+
+    @Test
+    void onlyAReversedPrCanBeAppliedAgainAndOnlyByAnOwnerAdminOrEditor() {
+        assertEquals(409, service.reapply(P, "pr1", "owner", "Owner", false).status());
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        assertEquals(403, service.reapply(P, "pr1", "viewer", "Viewer", false).status());
+    }
+
+    @Test
+    void thePreviewForApplyingAgainDoesNotBlockOnAnEntityAnEarlierSetOfThePrWillBringBack() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.redoChangeSetForPr(eq(P), eq("cs-new"), any(Actor.class), eq(true)))
+                .thenReturn(blocked("It no longer exists"));
+
+        PrRevertService.Outcome preview = service.reapply(P, "pr1", "owner", "Owner", true);
+
+        assertTrue(preview.ok());
+    }
+
+    @Test
+    void applyingAgainStopsForRealWhenTheEntityIsStillMissingAtItsTurn() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+        when(rollback.redoChangeSetForPr(eq(P), eq("cs-new"), any(Actor.class), eq(false)))
+                .thenReturn(blocked("It no longer exists"));
+
+        PrRevertService.Outcome outcome = service.reapply(P, "pr1", "owner", "Owner", false);
+
+        assertEquals(409, outcome.status());
+        assertEquals(DraftPullRequest.Status.REVERTED, pr.getStatus());
+        verify(rollback).redoChangeSetForPr(eq(P), eq("cs-old"), any(Actor.class), eq(false));
+    }
+
+    @Test
+    void confirmingApplyAgainRunsTheSetsEvenWhenThePreviewSawAnEntityThatAnEarlierSetBringsBack() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.redoChangeSetForPr(eq(P), eq("cs-new"), any(Actor.class), eq(true)))
+                .thenReturn(blocked("It no longer exists"));
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+
+        PrRevertService.Outcome outcome = service.reapply(P, "pr1", "owner", "Owner", false);
+
+        assertTrue(outcome.ok());
+        assertEquals(DraftPullRequest.Status.APPROVED, pr.getStatus());
+    }
+
+    @Test
+    void applyingAgainIsRefusedWhenAChangeSetIsBlockedAndNothingIsApplied() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.redoChangeSetForPr(eq(P), eq("cs-new"), any(Actor.class), eq(true)))
+                .thenReturn(blocked("It already exists again"));
+
+        PrRevertService.Outcome outcome = service.reapply(P, "pr1", "owner", "Owner", true);
+
+        assertEquals(409, outcome.status());
+        verify(rollback, never()).redoChangeSetForPr(eq(P), anyString(), any(Actor.class), eq(false));
+        assertEquals(DraftPullRequest.Status.REVERTED, pr.getStatus());
+    }
+
+    @Test
+    void aChangeSetThatWasNeverUndoneIsFineWhenApplyingAgain() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        when(rollback.redoChangeSetForPr(eq(P), eq("cs-old"), any(Actor.class), anyBoolean())).thenReturn(notUndone());
+        when(rollback.redoChangeSetForPr(eq(P), eq("cs-new"), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+
+        assertTrue(service.reapply(P, "pr1", "owner", "Owner", false).ok());
+        verify(rollback).redoChangeSetForPr(eq(P), eq("cs-old"), any(Actor.class), eq(false));
+        assertEquals(DraftPullRequest.Status.APPROVED, pr.getStatus());
+    }
+
+    @Test
+    void aRevertTagsItsOwnUndoRowsToThePrSoTheyAreNotListedOneByOne() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+
+        service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);
+
+        verify(historySync, org.mockito.Mockito.atLeastOnce()).tagRollbackRowsOfPr(eq(P), any(), eq("pr1"));
+    }
+
+    @Test
+    void everySetIsJudgedWhenItsTurnComesNotByTheEarlierPreview() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(alreadyUndone());
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+
+        assertTrue(service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false).ok());
+
+        verify(rollback).undoChangeSet(eq(P), eq("cs-new"), any(Actor.class), eq(false));
+        verify(rollback).undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(false));
+    }
+
+    @Test
+    void aLaterChangeOfTheSamePrDoesNotBlockThePreviewButStillBlocksTheRealRun() {
+        Result laterFirst = new Result(200, true, true, "UNDO", "cs", List.of(),
+                List.of(new Item("c", null, "urn:x", "X", null, "Later changes come first. Undo these before this one: Y")), null, null);
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(true))).thenReturn(laterFirst);
+
+        assertEquals(200, service.revert(P, "pr1", "owner", "Owner", null, true).status());
+
+        when(rollback.undoChangeSet(eq(P), eq("cs-new"), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(false))).thenReturn(
+                new Result(200, true, false, "UNDO", "cs", List.of(),
+                        List.of(new Item("c", null, "urn:x", "X", null, "Later changes come first. Undo these before this one: Z")), null, null));
+        PrRevertService.Outcome outcome = service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);
+
+        assertEquals(409, outcome.status());
+        assertEquals(DraftPullRequest.Status.APPROVED, pr.getStatus());
+    }
+
+    @Test
+    void theUndoAndRedoRowsOfEachStepAreTaggedAsTheyAreWrittenSoTheyNeverShowOneByOne() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+        service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);
+        verify(historySync, org.mockito.Mockito.atLeast(2)).tagRollbackRowsOfPr(eq(P), any(), eq("pr1"));
+
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        org.mockito.Mockito.clearInvocations(historySync);
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+        service.reapply(P, "pr1", "owner", "Owner", false);
+        verify(historySync, org.mockito.Mockito.atLeast(2)).tagRollbackRowsOfPr(eq(P), any(), eq("pr1"));
+    }
+
+    @Test
+    void aChangeSetWithNothingLeftToRemoveDoesNotStopTheRevert() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-new"), any(Actor.class), eq(false))).thenReturn(nothingLeft(false));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+
+        PrRevertService.Outcome outcome = service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);
+
+        assertTrue(outcome.ok());
+        assertEquals(DraftPullRequest.Status.REVERTED, pr.getStatus());
+    }
+
+    @Test
+    void aPreviewThatReportsSkippedItemsCountsAsBlockedEvenWhenTheCallItselfSucceeded() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(true)))
+                .thenReturn(partlySkipped("It was changed since this edit"));
+
+        PrRevertService.Outcome outcome = service.revert(P, "pr1", "owner", "Owner", null, true);
+
+        assertEquals(409, outcome.status());
+        verify(rollback, never()).undoChangeSet(eq(P), anyString(), any(Actor.class), eq(false));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void thePreviewListsTheChangesThatWillBeRemoved() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(new Result(200, true, true, "UNDO", "cs",
+                List.of(new Item("c", null, "urn:x#Pizzanew", "Pizzanew", "http://x#subClassOf", null)), List.of(), null, null));
+
+        PrRevertService.Outcome outcome = service.revert(P, "pr1", "owner", "Owner", null, true);
+
+        java.util.Map<String, Object> first = (java.util.Map<String, Object>) outcome.changeSets().get(0);
+        java.util.List<java.util.Map<String, Object>> items = (java.util.List<java.util.Map<String, Object>>) first.get("items");
+        assertEquals(historySync.getChangeSet(P, "cs-new").size(), items.size());
+        assertEquals(PrRevertService.describe(historySync.getChangeSet(P, "cs-new").get(0)), items.get(0).get("label"));
+    }
+
+    @Test
+    void anEntityThatIsAlreadyGoneIsNothingToRemoveAndDoesNotBlockTheRevert() {
+        Result gone = new Result(200, false, true, "UNDO", "cs", List.of(),
+                List.of(new Item("c", null, "urn:x", "PizzaThing", null, "It no longer exists")), null, null);
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(true))).thenReturn(gone);
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(false))).thenReturn(gone);
+
+        PrRevertService.Outcome preview = service.revert(P, "pr1", "owner", "Owner", null, true);
+        assertEquals(200, preview.status());
+
+        assertTrue(service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false).ok());
+        assertEquals(DraftPullRequest.Status.REVERTED, pr.getStatus());
+    }
+
+    @Test
+    void theDescriptionReadsLikeTheCreateClassWordsOfTheUndoMenu() {
+        HistoryChange created = new HistoryChange();
+        created.setOperationType("createClass");
+        created.setEntityLabel("PizzaThing");
+        HistoryChange merge = new HistoryChange();
+        merge.setOperationType("ontologyMerge");
+        merge.setEntityLabel("Ontology merge");
+
+        assertEquals("Create class PizzaThing", PrRevertService.describe(created));
+        assertEquals("Ontology merge", PrRevertService.describe(merge));
+
+        created.setEntityLabel("Create class PizzaThing");
+        assertEquals("Create class PizzaThing", PrRevertService.describe(created));
+    }
+
+    @Test
+    void whenTheRevertStopsTheMessageSaysWhy() {
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), eq(true))).thenReturn(ok(true, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-new"), any(Actor.class), eq(false))).thenReturn(ok(false, 1));
+        when(rollback.undoChangeSet(eq(P), eq("cs-old"), any(Actor.class), eq(false))).thenReturn(blocked("changed meanwhile"));
+
+        PrRevertService.Outcome outcome = service.revert(P, "pr1", "owner", "Owner", "Wrong merge order", false);
+
+        assertTrue(outcome.message().contains("changed meanwhile"));
+        assertTrue(outcome.message().contains("Confirm again to continue"));
+    }
+
     @Test
     void theMergeRecordIsMarkedRevertedBeforeThePrItselfIsSaved() {
         when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
@@ -196,6 +437,7 @@ class PrRevertServiceTest {
 
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(historySync, prs);
         order.verify(historySync).markPrPublicationReverted(P, "pr1");
+        order.verify(historySync).markPrRowsReverted(P, "pr1");
         order.verify(prs).save(pr);
     }
 

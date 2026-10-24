@@ -279,6 +279,9 @@ public class ChangeTrackingController {
         UndoAbility.Result undoAbility = UndoAbility.of(change);
         map.put("undoable", undoAbility.undoable());
         map.put("undoReason", undoAbility.reason());
+        if (self.research.ontology.owlEditor.service.PrEntries.isPublicationRecord(change)) {
+            map.put("setOnly", true);
+        }
         if (change.isReverted()) {
             Map<String, Object> auditInfo = resolveAuditInfo(change.getRevertedAuditId());
             map.put("revertedBy", auditInfo.get("revertedBy"));

@@ -63,10 +63,10 @@ describe('undo panels', () => {
 
   it('asks to confirm before undoing a change by someone else and then confirms through the menu', () => {
     const confirmOthers = vi.fn();
-    const foreign = { ...status, foreignTarget: { username: 'Sam', label: 'Created class Pizza' } };
+    const foreign = { ...status, foreignTarget: { username: 'Sam', label: 'Created class Pizza', changes: 3 } };
     const host = mount(<UndoConflictDialog status={foreign} menu={{ ...menu, confirmOthers }} onClose={() => undefined} />);
     expect(host.textContent).toContain("Undo someone else's change?");
-    expect(host.textContent).toContain('Created class Pizza was made by Sam');
+    expect(host.textContent).toContain('Created class Pizza was made by Sam and is part of an edit with 3 changes');
     act(() => find(host, 'Undo it anyway').click());
     expect(confirmOthers).toHaveBeenCalled();
   });

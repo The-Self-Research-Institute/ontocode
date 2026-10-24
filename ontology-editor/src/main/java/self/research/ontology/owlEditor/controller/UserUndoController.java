@@ -110,6 +110,10 @@ public class UserUndoController {
                     return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
                 }
                 if (PrEntries.isMergedPrEntry(target)) {
+                    ResponseEntity<Map<String, Object>> notAllowed = support.denyIfNotAllowed(List.of(target), projectId, request);
+                    if (notAllowed != null) {
+                        return notAllowed;
+                    }
                     return revertPrInstead(projectId, draft, who, target);
                 }
                 List<HistoryChange> scope = next.changeSetId() == null
@@ -118,8 +122,9 @@ public class UserUndoController {
                 if (denied != null) {
                     return denied;
                 }
-                if (!draft && !who.owns(target.getUserId()) && !"true".equals(request.getParameter("confirmOther"))) {
-                    return confirmForeignTarget(projectId, who, target);
+                if (!draft && !who.owns(target.getUserId()) && !"true".equals(request.getParameter("confirmOther"))
+                        && !"true".equals(request.getParameter("confirmTarget"))) {
+                    return confirmForeignTarget(projectId, who, target, scope.size());
                 }
                 Optional<String> violation = preconditions.violation(projectId, scope, who);
                 if (violation.isPresent() && "true".equals(request.getParameter("confirmOther"))) {
@@ -167,6 +172,9 @@ public class UserUndoController {
                 Next next = undoService.nextRedo(projectId, draft, who);
                 if (!next.available()) {
                     return refused(projectId, draft, who, next);
+                }
+                if (next.auditId() == null && PrEntries.prIdOf(next.entityIRI()) != null) {
+                    return reapplyPrInstead(projectId, draft, who, next);
                 }
                 if (expectedAuditId != null && !expectedAuditId.equals(next.auditId())) {
                     return changed(projectId, draft, who, ChangeRollbackService.REDO, next.auditId());
@@ -222,7 +230,7 @@ public class UserUndoController {
         return ResponseEntity.status(409).body(body);
     }
 
-    private ResponseEntity<Map<String, Object>> confirmForeignTarget(String projectId, Identity who, HistoryChange target) {
+    private ResponseEntity<Map<String, Object>> confirmForeignTarget(String projectId, Identity who, HistoryChange target, int changes) {
         String owner = target.getUsername() != null && !target.getUsername().isBlank() ? target.getUsername() : "someone else";
         String label = UserUndoService.labelOf(target);
         UndoRefusalLog.record(projectId, who, ChangeRollbackService.UNDO, target.getId(), "Waiting for confirmation: change by " + owner);
@@ -232,6 +240,7 @@ public class UserUndoController {
         Map<String, Object> foreign = new HashMap<>();
         foreign.put("username", owner);
         foreign.put("label", label);
+        foreign.put("changes", changes);
         body.put("foreignTarget", foreign);
         Map<String, Object> item = new HashMap<>();
         item.put("changeId", target.getId());
@@ -239,6 +248,19 @@ public class UserUndoController {
         item.put("username", owner);
         item.put("label", label);
         body.put("othersOnTop", List.of(item));
+        return ResponseEntity.status(409).body(body);
+    }
+
+    private ResponseEntity<Map<String, Object>> reapplyPrInstead(String projectId, boolean draft, Identity who, Next next) {
+        UndoRefusalLog.record(projectId, who, ChangeRollbackService.REDO, next.changeId(), "Applying a pull request again needs a preview");
+        Map<String, Object> body = new HashMap<>(state(projectId, draft, who));
+        body.put("success", false);
+        body.put("error", "This redo applies a whole pull request again. Preview it first.");
+        Map<String, Object> pr = new HashMap<>();
+        pr.put("prId", PrEntries.prIdOf(next.entityIRI()));
+        pr.put("title", next.label() == null ? "" : next.label().replaceFirst("^Apply again: ", ""));
+        pr.put("mode", "reapply");
+        body.put("revertPr", pr);
         return ResponseEntity.status(409).body(body);
     }
 

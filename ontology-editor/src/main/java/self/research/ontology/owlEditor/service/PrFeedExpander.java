@@ -44,6 +44,7 @@ public final class PrFeedExpander {
             map.put("undoable", false);
             map.put("undoReason", PrEntries.MERGED_PR_PART);
             map.put("mergedPrId", prId);
+            map.put("mergedPrReverted", entry.isReverted());
             map.put("mergedBy", entry.getUsername());
             out.add(map);
         }

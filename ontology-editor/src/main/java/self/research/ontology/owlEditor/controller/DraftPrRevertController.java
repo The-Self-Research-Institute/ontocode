@@ -36,6 +36,18 @@ public class DraftPrRevertController {
         return body(service.revert(projectId, prId, caller.userId(), request.username(), request.reason(), dryRun));
     }
 
+    @PostMapping("/{projectId}/draft-prs/{prId}/reapply")
+    public ResponseEntity<Map<String, Object>> reapply(@PathVariable String projectId, @PathVariable String prId,
+                                                       @RequestParam(defaultValue = "false") boolean dryRun,
+                                                       @RequestBody RevertPRRequest request,
+                                                       jakarta.servlet.http.HttpServletRequest httpRequest) {
+        VerifiedUser.Result caller = VerifiedUser.resolve(httpRequest, request.userId());
+        if (caller.denial() != null) {
+            return caller.denial();
+        }
+        return body(service.reapply(projectId, prId, caller.userId(), request.username(), dryRun));
+    }
+
     @PostMapping("/{projectId}/draft-prs/{prId}/restore")
     public ResponseEntity<Map<String, Object>> restore(@PathVariable String projectId, @PathVariable String prId,
                                                        @RequestBody RevertPRRequest request,

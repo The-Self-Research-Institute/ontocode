@@ -58,10 +58,16 @@ public class ChangeRollbackService {
 
     record Request(String projectId, String direction, String level, String changeSetId, String changeId,
                            String subChangeId, Actor actor, boolean dryRun, String undoAuditId,
-                           List<String> auditChangeIds) {
+                           List<String> auditChangeIds, boolean forPrReapply) {
+        Request(String projectId, String direction, String level, String changeSetId, String changeId,
+                String subChangeId, Actor actor, boolean dryRun, String undoAuditId, List<String> auditChangeIds) {
+            this(projectId, direction, level, changeSetId, changeId, subChangeId, actor, dryRun, undoAuditId,
+                    auditChangeIds, false);
+        }
+
         Request withUndoAudit(String auditId) {
             return new Request(projectId, direction, level, changeSetId, changeId, subChangeId, actor, dryRun, auditId,
-                    auditChangeIds);
+                    auditChangeIds, forPrReapply);
         }
     }
 
@@ -119,6 +125,10 @@ public class ChangeRollbackService {
         return run(new Request(projectId, UNDO, CHANGESET, changeSetId, null, null, actor, dryRun, null, null));
     }
 
+    public Result redoChangeSetForPr(String projectId, String changeSetId, Actor actor, boolean dryRun) {
+        return run(new Request(projectId, REDO, CHANGESET, changeSetId, null, null, actor, dryRun, null, null, true));
+    }
+
     public Result redoChangeSet(String projectId, String changeSetId, Actor actor, boolean dryRun) {
         return run(new Request(projectId, REDO, CHANGESET, changeSetId, null, null, actor, dryRun, null, null));
     }
@@ -173,7 +183,7 @@ public class ChangeRollbackService {
                     "Change not found");
         }
         if (redoGuard != null) {
-            java.util.Optional<String> refusal = REDO.equals(req.direction())
+            java.util.Optional<String> refusal = REDO.equals(req.direction()) && !req.forPrReapply()
                     ? redoGuard.refusal(req.projectId(), entries) : redoGuard.discardedRefusal(entries);
             if (refusal.isPresent()) {
                 return new Result(409, false, req.dryRun(), req.direction(), scopeId(req), List.of(), List.of(), null,

@@ -97,7 +97,7 @@ describe('undoQueue', () => {
     await vi.advanceTimersByTimeAsync(50);
 
     const calls = (api.send as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    expect(calls[1][4]).toBe(true);
+    expect(calls[1][4]).toBe('target');
     expect(queue.getSnapshot().foreignTarget).toBeUndefined();
     expect(queue.getSnapshot().phase).toBe('finished');
   });
@@ -283,6 +283,15 @@ describe('undoQueue', () => {
     expect(queue.getSnapshot().pending).toBe(0);
   });
 
+  it('sends a redo that has no audit id, as when a reverted pull request is applied again', async () => {
+    const { queue, sends } = setup([]);
+    const hint = { available: true, direction: 'REDO' as const, changeId: 'rv', label: 'Apply again: PR', dependents: [] };
+    const result = await queue.press('p', 'redo', hint);
+    await vi.runAllTimersAsync();
+    expect(result.accepted).toBe(true);
+    expect(sends[0].id).toBe('rv');
+  });
+
   it('runs a redo from the shown step without the queue endpoint', async () => {
     const { queue, api, sends } = setup([]);
     const hint = { available: true, direction: 'REDO' as const, changeId: 'c', auditId: 'au', label: 'R', dependents: [] };
@@ -365,6 +374,6 @@ describe('undoQueue', () => {
   it('only builds steps from available hints', () => {
     expect(stepFromHint(undefined, 'undo')).toBeUndefined();
     expect(stepFromHint({ available: false, direction: 'UNDO', changeId: 'a', dependents: [] }, 'undo')).toBeUndefined();
-    expect(stepFromHint({ available: true, direction: 'REDO', changeId: 'a', dependents: [] }, 'redo')).toBeUndefined();
+    expect(stepFromHint({ available: true, direction: 'REDO', dependents: [] }, 'redo')).toBeUndefined();
   });
 });

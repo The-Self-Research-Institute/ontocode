@@ -72,7 +72,7 @@ export function useChangeFeed(projectId: string, query = '') {
         return;
       }
       const parsedChanges = data.changes.map((change: any) => parseChange(change));
-      nextOffsetRef.current = nextFeedOffset(data, 0);
+      if (olderRef.current.length === 0) nextOffsetRef.current = nextFeedOffset(data, 0);
       setChanges(parsedChanges);
       setHasMore(olderRef.current.length === 0 ? !!data.hasMore : true);
       setLastRefresh(new Date());
@@ -86,6 +86,8 @@ export function useChangeFeed(projectId: string, query = '') {
 
   useEffect(() => {
     setOlderChanges([]);
+    olderRef.current = [];
+    nextOffsetRef.current = 0;
     setHasMore(false);
     loadChanges();
     loadDraftChanges();
