@@ -14,12 +14,19 @@ public final class UndoAbility {
     private UndoAbility() {
     }
 
+    public static boolean isMergedPrEntry(HistoryChange change) {
+        return RollbackWorkSupport.isUndoablePublication(change);
+    }
+
     public static Result of(HistoryChange change) {
         if (change.isReverted()) {
             return new Result(false, "Already undone");
         }
         if (RollbackWorkSupport.isRollbackEntry(change)) {
             return new Result(false, "This is an undo or redo, so it can't be undone itself");
+        }
+        if (RollbackWorkSupport.isPublicationEntry(change)) {
+            return new Result(false, "This records a pull request being merged. Revert the pull request instead");
         }
         if (change.getUndoBlockedReason() != null) {
             return new Result(false, change.getUndoBlockedReason());

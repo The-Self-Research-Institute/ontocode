@@ -180,6 +180,7 @@ import {
 } from "./dialogs";
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
 import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
+import { usePullPending } from "../hooks/usePullPending";
 import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
@@ -1561,7 +1562,24 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [focusPrId, setFocusPrId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId) {
+        setFocusPrId(detail.prId);
+        setShowDraftPRPanel(true);
+      }
+    };
+    window.addEventListener("ontology:open-pr", open);
+    return () => window.removeEventListener("ontology:open-pr", open);
+  }, []);
   const [showPullPreview, setShowPullPreview] = useState(false);
+  const pullPending = usePullPending(
+    projectId || undefined,
+    resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+    syncMode === "private" && !!projectId,
+  );
   const [openPRCount, setOpenPRCount] = useState(0);
 
   const startDraftCopySession = useCallback((
@@ -1679,8 +1697,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     notificationService.success("Pull Complete", "Public changes were merged into your draft.");
     fetchData(projectId, false);
     announceMutationApplied(projectId, [{ type: "draftPull" }], undefined, true);
+    pullPending.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
-  }, [projectId]);
+  }, [projectId, pullPending.refresh]);
 
   const refreshOpenPRCount = useCallback(async () => {
     if (!projectId) return;
@@ -17712,10 +17731,18 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   onClick={() => setShowPullPreview(true)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
                   style={{ borderColor: "var(--color-border)" }}
-                  title="Preview and pull latest public version into your draft"
+                  title={pullPending.pending
+                    ? "Public has new changes since your draft started. Pull them into your draft."
+                    : "Preview and pull latest public version into your draft"}
                 >
                   <Download size={12} />
                   <span className="hidden sm:inline">Pull</span>
+                  {pullPending.pending && (
+                    <span
+                      aria-label="Pull pending"
+                      className="inline-block w-2 h-2 rounded-full bg-amber-500"
+                    />
+                  )}
                 </button>
               )}
               {syncMode === 'private' && projectId && (
@@ -18545,7 +18572,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
       {projectId && (
         <DraftPRPanel
           isOpen={showDraftPRPanel}
-          onClose={() => setShowDraftPRPanel(false)}
+          focusPrId={focusPrId}
+          onClose={() => { setShowDraftPRPanel(false); setFocusPrId(undefined); }}
           projectId={projectId}
           userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
           username={user?.username || user?.email || ""}

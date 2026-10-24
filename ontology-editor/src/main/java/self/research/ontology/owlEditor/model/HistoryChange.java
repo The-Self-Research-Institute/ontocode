@@ -78,6 +78,8 @@ public class HistoryChange {
     private List<SubChange> subChanges = new ArrayList<>();
 
     private boolean draft = false;
+    private boolean draftDiscarded = false;
+    private String draftSessionId;
 
     // Rollback tracking (whole-entry rollback)
     private boolean reverted = false;
@@ -636,6 +638,22 @@ public class HistoryChange {
 
     public void setDraft(boolean draft) {
         this.draft = draft;
+    }
+
+    public String getDraftSessionId() {
+        return draftSessionId;
+    }
+
+    public void setDraftSessionId(String draftSessionId) {
+        this.draftSessionId = draftSessionId;
+    }
+
+    public boolean isDraftDiscarded() {
+        return draftDiscarded;
+    }
+
+    public void setDraftDiscarded(boolean draftDiscarded) {
+        this.draftDiscarded = draftDiscarded;
     }
 
     public boolean isReverted() {

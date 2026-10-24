@@ -84,6 +84,37 @@ class UserUndoServiceTest {
     }
 
     @Test
+    void skipsDraftChangesOfADiscardedDraft() {
+        HistoryChange discarded = change("b", "Me@x.com", "e:B", T0.plusMinutes(2));
+        discarded.setDraft(true);
+        discarded.setDraftDiscarded(true);
+        ownChanges(discarded, change("a", "Me@x.com", "e:A", T0));
+        assertEquals("a", service.nextUndo(P, true, me).changeId());
+    }
+
+    @Test
+    void draftUndoSkipsChangesFromAnEarlierDraftInstance() {
+        self.research.ontology.owlEditor.repository.DraftSessionRepository sessions =
+                org.mockito.Mockito.mock(self.research.ontology.owlEditor.repository.DraftSessionRepository.class);
+        self.research.ontology.owlEditor.model.DraftSession live =
+                new self.research.ontology.owlEditor.model.DraftSession(P, "Me@x.com", 1, 1);
+        live.setId("s2");
+        org.mockito.Mockito.when(sessions.findByProjectIdAndUserId(anyString(), anyString()))
+                .thenReturn(java.util.Optional.empty());
+        org.mockito.Mockito.when(sessions.findByProjectIdAndUserId(P, "Me@x.com"))
+                .thenReturn(java.util.Optional.of(live));
+        service.setDraftSessions(sessions);
+        HistoryChange old = change("b", "Me@x.com", "e:B", T0.plusMinutes(2));
+        old.setDraft(true);
+        old.setDraftSessionId("s1");
+        HistoryChange current = change("a", "Me@x.com", "e:A", T0);
+        current.setDraft(true);
+        current.setDraftSessionId("s2");
+        ownChanges(old, current);
+        assertEquals("a", service.nextUndo(P, true, me).changeId());
+    }
+
+    @Test
     void reportsNothingToUndoWithoutOwnChanges() {
         Next next = service.nextUndo(P, false, me);
         assertFalse(next.available());

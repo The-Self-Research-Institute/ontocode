@@ -48,4 +48,33 @@ class HistorySyncDraftPublishedTest {
         assertEquals(0, sync.markDraftsPublished("p1", null));
         verify(mongo, never()).updateMulti(any(Query.class), any(Update.class), eq(HistoryChange.class));
     }
+
+    @Test
+    void discardingMarksOnlyThatUsersLiveDraftEntriesInThatProject() {
+        when(mongo.updateMulti(any(Query.class), any(Update.class), eq(HistoryChange.class)))
+                .thenReturn(UpdateResult.acknowledged(2, 2L, null));
+
+        assertEquals(2, sync.markDraftsDiscarded("p1", "u1"));
+
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        ArgumentCaptor<Update> update = ArgumentCaptor.forClass(Update.class);
+        verify(mongo).updateMulti(query.capture(), update.capture(), eq(HistoryChange.class));
+        Document criteria = query.getValue().getQueryObject();
+        assertEquals("p1", criteria.get("projectId"));
+        assertEquals("u1", criteria.get("userId"));
+        assertEquals(true, criteria.get("draft"));
+        assertEquals(true, ((Document) update.getValue().getUpdateObject().get("$set")).get("draftDiscarded"));
+    }
+
+    @Test
+    void discardingWithoutAUserMarksEveryDraftEntryOfTheProject() {
+        when(mongo.updateMulti(any(Query.class), any(Update.class), eq(HistoryChange.class)))
+                .thenReturn(UpdateResult.acknowledged(0, 0L, null));
+
+        sync.markDraftsDiscarded("p1", null);
+
+        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
+        verify(mongo).updateMulti(query.capture(), any(Update.class), eq(HistoryChange.class));
+        assertEquals(false, query.getValue().getQueryObject().containsKey("userId"));
+    }
 }

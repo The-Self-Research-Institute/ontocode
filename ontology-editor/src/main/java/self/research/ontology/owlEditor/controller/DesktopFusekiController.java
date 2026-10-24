@@ -83,6 +83,11 @@ public class DesktopFusekiController {
         }
         try {
             desktopOntologyLoader.discardDraft(projectId);
+            try {
+                draftTrackingService.markDraftHistoryDiscarded(projectId, DESKTOP_USER_ID);
+            } catch (Exception e) {
+                log.warn("[Desktop] Failed to mark draft history discarded for {}: {}", projectId, e.getMessage());
+            }
             return ResponseEntity.ok(Map.of("discarded", true));
         } catch (java.io.IOException e) {
             log.error("[Desktop] Discard failed for {}: {}", projectId, e.getMessage());

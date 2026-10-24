@@ -21,12 +21,17 @@ interface DraftPR {
   authorUsername: string;
   title: string;
   description?: string;
-  status: "OPEN" | "APPROVED" | "REJECTED";
+  status: "OPEN" | "APPROVED" | "REJECTED" | "REVERTED";
   changeCount: number;
   createdAt: string;
   reviewedAt?: string;
   reviewerId?: string;
   reviewNote?: string;
+  revertReason?: string;
+  submittedChangeIds?: string[];
+  snapshotKey?: string;
+  draftChanged?: boolean;
+  currentChangeCount?: number;
 }
 
 interface DraftPRPanelProps {
@@ -41,6 +46,7 @@ interface DraftPRPanelProps {
   canRaisePR: boolean;
   /** current draft change count for the user */
   draftCount: number;
+  focusPrId?: string;
   onPRApproved?: () => void;
 }
 
@@ -53,6 +59,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   canReview,
   canRaisePR,
   draftCount,
+  focusPrId,
   onPRApproved,
 }) => {
   const [prs, setPRs] = useState<DraftPR[]>([]);
@@ -89,16 +96,18 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const [expandedMerges, setExpandedMerges] = useState<Set<string>>(new Set());
   const fetchedConflictsRef = useRef<Set<string>>(new Set());
 
-  const fetchPRs = useCallback(async () => {
-    if (!projectId) return;
+  const fetchPRs = useCallback(async (): Promise<DraftPR[] | undefined> => {
+    if (!projectId) return undefined;
     setLoading(true);
     setError(null);
     try {
       const res = await apiClient.get<any>(`/api/ontology/${projectId}/draft-prs`);
       const data = res?.data || res;
       setPRs(data.prs || []);
+      return data.prs || [];
     } catch (e: any) {
       setError("Failed to load pull requests");
+      return undefined;
     } finally {
       setLoading(false);
     }
@@ -121,7 +130,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const loadPRDetails = async (pr: DraftPR) => {
     if (fetchedConflictsRef.current.has(pr.id)) return;
     fetchedConflictsRef.current.add(pr.id);
-    apiClient.get<any>(`/api/ontology/${projectId}/drafts/full-diff`, { userId: pr.authorId })
+    apiClient.get<any>(`/api/ontology/${projectId}/drafts/full-diff`, { userId: pr.snapshotKey || pr.authorId })
       .then((res: any) => {
         const diff = normalizeFullDiff(res?.data || res);
         setPrFullDiffMap((prev) => (prev[pr.id] ? prev : { ...prev, [pr.id]: diff }));
@@ -132,10 +141,12 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
     try {
       const [changesRes, previewRes] = await Promise.all([
         apiClient.get<any>(`/api/ontology/${projectId}/drafts`, { userId: pr.authorId }),
-        apiClient.get<any>(`/api/ontology/${projectId}/drafts/publish-preview`, { userId: pr.authorId }),
+        apiClient.get<any>(`/api/ontology/${projectId}/drafts/publish-preview`, { userId: pr.snapshotKey || pr.authorId }),
       ]);
       const changesData = changesRes?.data || changesRes;
-      setPrChangesMap((prev) => ({ ...prev, [pr.id]: changesData.drafts || [] }));
+      const submitted = pr.submittedChangeIds && pr.submittedChangeIds.length > 0 ? new Set(pr.submittedChangeIds) : null;
+      const raised = (changesData.drafts || []).filter((draft: DraftChange) => !submitted || submitted.has(draft.id));
+      setPrChangesMap((prev) => ({ ...prev, [pr.id]: raised }));
       const preview = previewRes?.data || previewRes;
       if (preview) {
         setPrConflictMap((prev) => ({
@@ -226,6 +237,85 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
     }
   };
 
+  const handleUpdatePR = async (pr: DraftPR) => {
+    setReviewing(true);
+    try {
+      await apiClient.post(`/api/ontology/${projectId}/draft-prs/${pr.id}/update`, { userId });
+      fetchedConflictsRef.current.delete(pr.id);
+      setPrChangesMap((prev) => {
+        const next = { ...prev };
+        delete next[pr.id];
+        return next;
+      });
+      setPrFullDiffMap((prev) => {
+        const next = { ...prev };
+        delete next[pr.id];
+        return next;
+      });
+      const fresh = await fetchPRs();
+      const updated = fresh?.find((candidate) => candidate.id === pr.id);
+      if (updated) {
+        void loadPRDetails(updated);
+      }
+      refreshDraftCount();
+    } catch (e: any) {
+      const msg = e?.data?.error || e?.response?.data?.error || e?.message || "Failed to update pull request";
+      setError(msg);
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const [revertPreview, setRevertPreview] = useState<Record<string, { ok: boolean; message: string; changeSets: any[] } | null>>({});
+  const [revertNotice, setRevertNotice] = useState<Record<string, string>>({});
+  const [revertReason, setRevertReason] = useState<Record<string, string>>({});
+
+  const readOutcome = (e: any) => {
+    const data = e?.data || e?.response?.data;
+    return { ok: false, message: data?.error || data?.message || e?.message || "Request failed", changeSets: data?.changeSets || [] };
+  };
+
+  const handleRevertPreview = async (pr: DraftPR) => {
+    setReviewing(true);
+    try {
+      const res = await apiClient.post<any>(`/api/ontology/${projectId}/draft-prs/${pr.id}/revert?dryRun=true`, { userId, username: userId });
+      setRevertPreview((prev) => ({ ...prev, [pr.id]: { ok: true, message: res?.message || "Preview ready", changeSets: res?.changeSets || [] } }));
+    } catch (e: any) {
+      setRevertPreview((prev) => ({ ...prev, [pr.id]: readOutcome(e) }));
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const handleRevertConfirm = async (pr: DraftPR) => {
+    setReviewing(true);
+    try {
+      const res = await apiClient.post<any>(`/api/ontology/${projectId}/draft-prs/${pr.id}/revert`, { userId, username: userId, reason: (revertReason[pr.id] || "").trim() });
+      setRevertPreview((prev) => ({ ...prev, [pr.id]: null }));
+      setRevertNotice((prev) => ({ ...prev, [pr.id]: res?.message || "Reverted" }));
+      await fetchPRs();
+      window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["draftPrReverted"] } }));
+    } catch (e: any) {
+      setRevertPreview((prev) => ({ ...prev, [pr.id]: readOutcome(e) }));
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const handleRestore = async (pr: DraftPR) => {
+    setReviewing(true);
+    try {
+      const res = await apiClient.post<any>(`/api/ontology/${projectId}/draft-prs/${pr.id}/restore`, { userId, username: userId });
+      setRevertNotice((prev) => ({ ...prev, [pr.id]: res?.message || "Restored into your draft" }));
+      refreshDraftCount();
+      window.dispatchEvent(new CustomEvent("ontology:mutated", { detail: { projectId, ops: ["draftPrRestored"] } }));
+    } catch (e: any) {
+      setRevertNotice((prev) => ({ ...prev, [pr.id]: readOutcome(e).message }));
+    } finally {
+      setReviewing(false);
+    }
+  };
+
   const handleReject = async (pr: DraftPR) => {
     setReviewing(true);
     try {
@@ -247,6 +337,14 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
   const openPRs = prs.filter((p) => p.status === "OPEN");
   const closedPRs = prs.filter((p) => p.status !== "OPEN");
   const displayedPRs = activeTab === "open" ? openPRs : closedPRs;
+
+  useEffect(() => {
+    if (!isOpen || !focusPrId) return;
+    const target = prs.find((candidate) => candidate.id === focusPrId);
+    if (!target) return;
+    setActiveTab(target.status === "OPEN" ? "open" : "closed");
+    setExpandedPrId(focusPrId);
+  }, [isOpen, focusPrId, prs]);
 
   const myOpenPR = prs.find((p) => p.status === "OPEN" && p.authorId === userId);
 
@@ -311,6 +409,22 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
             {myOpenPR ? (
               <div className="text-xs rounded px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700">
                 You have an open pull request: <strong>{myOpenPR.title}</strong>. Wait for it to be reviewed before raising another.
+                {(myOpenPR.draftChanged || !myOpenPR.snapshotKey) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span>
+                      {myOpenPR.snapshotKey
+                        ? `Your draft has changes that are not in it (${myOpenPR.changeCount} in the PR, ${myOpenPR.currentChangeCount ?? "more"} in your draft now).`
+                        : "This PR has no saved copy yet, so approving it would publish your whole draft as it is then."}
+                    </span>
+                    <button
+                      onClick={() => handleUpdatePR(myOpenPR)}
+                      disabled={reviewing}
+                      className="text-xs px-3 py-1 rounded border border-amber-400 font-medium bg-white text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+                    >
+                      Update this PR to my current draft
+                    </button>
+                  </div>
+                )}
               </div>
             ) : !showRaiseForm ? (
               <button
@@ -419,14 +533,14 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
               >
                 <GitPullRequest
                   size={14}
-                  className={`mt-0.5 flex-shrink-0 ${pr.status === "OPEN" ? "text-blue-500" : pr.status === "APPROVED" ? "text-green-500" : "text-red-400"}`}
+                  className={`mt-0.5 flex-shrink-0 ${pr.status === "OPEN" ? "text-blue-500" : pr.status === "APPROVED" ? "text-green-500" : pr.status === "REVERTED" ? "text-amber-500" : "text-red-400"}`}
                 />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">{pr.title}</div>
                   <div className="opacity-60 mt-0.5">
                     {pr.authorUsername} · {formatDate(pr.createdAt)} · {pr.changeCount} change{pr.changeCount !== 1 ? "s" : ""}
                     {pr.status !== "OPEN" && pr.reviewedAt && (
-                      <> · {pr.status === "APPROVED" ? "Approved" : "Rejected"} {formatDate(pr.reviewedAt)}</>
+                      <> · {pr.status === "APPROVED" ? "Approved" : pr.status === "REVERTED" ? "Reverted" : "Rejected"} {formatDate(pr.reviewedAt)}</>
                     )}
                   </div>
                 </div>
@@ -437,6 +551,7 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                   <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                     pr.status === "OPEN" ? "bg-blue-100 text-blue-700"
                     : pr.status === "APPROVED" ? "bg-green-100 text-green-700"
+                    : pr.status === "REVERTED" ? "bg-amber-100 text-amber-700"
                     : "bg-red-100 text-red-600"
                   }`}>
                     {pr.status}
@@ -454,8 +569,111 @@ export const DraftPRPanel: React.FC<DraftPRPanelProps> = ({
                   {pr.reviewNote && (
                     <div className="mt-2 italic opacity-70 text-xs">Review note: {pr.reviewNote}</div>
                   )}
+                  {pr.status === "REVERTED" && pr.revertReason && (
+                    <div className="mt-2 italic opacity-70 text-xs">Reverted because: {pr.revertReason}</div>
+                  )}
                   {!pr.description && !pr.reviewNote && !canReview && pr.status === "OPEN" && (
                     <div className="mt-2 text-xs opacity-50 italic">Awaiting review</div>
+                  )}
+                  {pr.status === "APPROVED" && canReview && (
+                    <div className="mt-2">
+                      {!revertPreview[pr.id] ? (
+                        <button
+                          onClick={() => handleRevertPreview(pr)}
+                          disabled={reviewing}
+                          className="text-xs px-3 py-1.5 rounded border font-medium transition-colors disabled:opacity-60"
+                          style={{ borderColor: "var(--color-border)", color: "var(--color-text)" }}
+                        >
+                          Revert this pull request...
+                        </button>
+                      ) : (
+                        <div className="rounded border p-2 text-xs" style={{ borderColor: "var(--color-border)" }}>
+                          <div className="font-medium">{revertPreview[pr.id]!.message}</div>
+                          <ul className="mt-1 list-disc pl-4">
+                            {revertPreview[pr.id]!.changeSets.map((cs: any) => (
+                              <li key={cs.changeSetId}>
+                                {cs.alreadyUndone ? "Already undone" : cs.canRevert ? `Can be reverted (${cs.willRemove} change${cs.willRemove === 1 ? "" : "s"})` : `Blocked: ${(cs.reasons || []).join("; ") || "unknown reason"}`}
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="mt-1 text-[11px] opacity-60">
+                            Checked: the statements this pull request added and removed, and whether later changes use them. Not checked: logical consistency. Run the reasoner after reverting.
+                          </div>
+                          {revertPreview[pr.id]!.ok && (
+                            <textarea
+                              className="mt-2 w-full text-xs px-2 py-1.5 rounded border outline-none resize-none"
+                              style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-input, var(--color-background))", color: "var(--color-text)" }}
+                              placeholder="Why are you reverting this pull request? (required)"
+                              value={revertReason[pr.id] || ""}
+                              onChange={(e) => setRevertReason((prev) => ({ ...prev, [pr.id]: e.target.value }))}
+                              rows={2}
+                            />
+                          )}
+                          <div className="mt-2 flex gap-2">
+                            {revertPreview[pr.id]!.ok && (
+                              <button
+                                onClick={() => handleRevertConfirm(pr)}
+                                disabled={reviewing || !(revertReason[pr.id] || "").trim()}
+                                className="text-xs px-3 py-1.5 rounded font-medium bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60"
+                              >
+                                Confirm revert
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setRevertPreview((prev) => ({ ...prev, [pr.id]: null }))}
+                              className="text-xs px-3 py-1.5 rounded border"
+                              style={{ borderColor: "var(--color-border)" }}
+                            >
+                              Close
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {pr.status === "REVERTED" && pr.authorId === userId && (
+                    <div className="mt-2">
+                      <button
+                        onClick={() => handleRestore(pr)}
+                        disabled={reviewing}
+                        className="text-xs px-3 py-1.5 rounded border font-medium transition-colors disabled:opacity-60"
+                        style={{ borderColor: "var(--color-border)", color: "var(--color-text)" }}
+                      >
+                        Restore these changes to my draft
+                      </button>
+                      <div className="mt-1 text-[11px] opacity-60">
+                        Puts the reverted changes back into your draft. Raise a new pull request when you are ready.
+                      </div>
+                    </div>
+                  )}
+                  {revertNotice[pr.id] && (
+                    <div className="mt-2 text-xs opacity-80">{revertNotice[pr.id]}</div>
+                  )}
+                  {pr.status === "OPEN" && pr.draftChanged && (
+                    <div className="mt-2 text-xs rounded border border-amber-500 p-2">
+                      {pr.snapshotKey
+                        ? (pr.authorId === userId
+                          ? `Your draft now has ${pr.currentChangeCount ?? "more"} changes and this PR has ${pr.changeCount}. The newer ones are not in this PR. They stay in your draft and go in your next PR. Approving this PR publishes only its ${pr.changeCount}.`
+                          : `The author's draft now has ${pr.currentChangeCount ?? "more"} changes and this PR has ${pr.changeCount}. Approving publishes only the ${pr.changeCount} this PR was raised with.`)
+                        : `This PR was raised with ${pr.changeCount} change${pr.changeCount === 1 ? "" : "s"}, and the draft now has ${pr.currentChangeCount ?? "more"}. The list below shows the whole current draft, and approving publishes all of it.`}
+                    </div>
+                  )}
+                  {pr.status === "OPEN" && pr.authorId === userId && (pr.draftChanged || !pr.snapshotKey) && (
+                    <div className="mt-2">
+                      <button
+                        onClick={() => handleUpdatePR(pr)}
+                        disabled={reviewing}
+                        className="text-xs px-3 py-1.5 rounded border font-medium transition-colors disabled:opacity-60"
+                        style={{ borderColor: "var(--color-border)", color: "var(--color-text)" }}
+                      >
+                        Update this PR to my current draft
+                      </button>
+                      <div className="mt-1 text-[11px] opacity-60">
+                        {pr.snapshotKey
+                          ? "Only if you want the newer changes in this PR. Otherwise leave it and raise another PR later."
+                          : "Saves a copy of your draft as it is now, so approving publishes exactly that and your later changes stay in your draft."}
+                      </div>
+                    </div>
                   )}
 
                   {/* Full change list for reviewers */}

@@ -39,6 +39,22 @@ public class OntologyHistoryService {
     @Lazy
     private ExactCoverService exactCoverService;
 
+    public java.util.List<String> draftChangeSetIds(String projectId, String userId) {
+        return historySyncService == null ? java.util.List.of() : historySyncService.draftChangeSetIds(projectId, userId);
+    }
+
+    public void markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
+        if (historySyncService != null) {
+            historySyncService.markChangeSetsPublished(projectId, userId, changeSetIds);
+        }
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsDiscarded(projectId, userId);
+        }
+    }
+
     public Set<String> markDraftHistoryPublished(String projectId, String userId) {
         if (historySyncService == null) {
             return Set.of();

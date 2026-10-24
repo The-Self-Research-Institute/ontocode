@@ -14,7 +14,7 @@ import java.time.Instant;
 })
 public class DraftPullRequest {
 
-    public enum Status { OPEN, APPROVED, REJECTED }
+    public enum Status { OPEN, APPROVED, REJECTED, REVERTED }
 
     @Id
     private String id;
@@ -26,6 +26,17 @@ public class DraftPullRequest {
     private String description;
     private Status status;
     private int changeCount;
+    private java.util.List<String> submittedChangeIds;
+    private String snapshotKey;
+    private java.util.List<String> publishedChangeSetIds;
+    @org.springframework.data.annotation.Transient
+    private Boolean draftChanged;
+    @org.springframework.data.annotation.Transient
+    private Integer currentChangeCount;
+    private Instant revertedAt;
+    private String revertedBy;
+    private String revertReason;
+    private Instant restoredAt;
 
     private Instant createdAt;
     private Instant reviewedAt;
@@ -60,6 +71,33 @@ public class DraftPullRequest {
 
     public int getChangeCount() { return changeCount; }
     public void setChangeCount(int changeCount) { this.changeCount = changeCount; }
+
+    public Boolean getDraftChanged() { return draftChanged; }
+    public void setDraftChanged(Boolean draftChanged) { this.draftChanged = draftChanged; }
+
+    public Integer getCurrentChangeCount() { return currentChangeCount; }
+    public void setCurrentChangeCount(Integer currentChangeCount) { this.currentChangeCount = currentChangeCount; }
+
+    public Instant getRevertedAt() { return revertedAt; }
+    public void setRevertedAt(Instant revertedAt) { this.revertedAt = revertedAt; }
+
+    public String getRevertReason() { return revertReason; }
+    public void setRevertReason(String revertReason) { this.revertReason = revertReason; }
+
+    public String getRevertedBy() { return revertedBy; }
+    public void setRevertedBy(String revertedBy) { this.revertedBy = revertedBy; }
+
+    public Instant getRestoredAt() { return restoredAt; }
+    public void setRestoredAt(Instant restoredAt) { this.restoredAt = restoredAt; }
+
+    public java.util.List<String> getPublishedChangeSetIds() { return publishedChangeSetIds; }
+    public void setPublishedChangeSetIds(java.util.List<String> publishedChangeSetIds) { this.publishedChangeSetIds = publishedChangeSetIds; }
+
+    public String getSnapshotKey() { return snapshotKey; }
+    public void setSnapshotKey(String snapshotKey) { this.snapshotKey = snapshotKey; }
+
+    public java.util.List<String> getSubmittedChangeIds() { return submittedChangeIds; }
+    public void setSubmittedChangeIds(java.util.List<String> submittedChangeIds) { this.submittedChangeIds = submittedChangeIds; }
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }

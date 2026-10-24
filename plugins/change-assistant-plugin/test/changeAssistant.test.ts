@@ -12,6 +12,7 @@ import {
 } from '../src/assistant/changeKinds';
 import { computeStats, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
 import { buildEntityRow, canUndoEntry, manualHeading, propertyRows } from '../src/changeSets/entityRows';
+import { entityTarget, propertyTarget } from '../src/changeSets/targets';
 import { parseServerTime } from '../src/changeSets/timeFormat';
 import type { ChangeEntry } from '../src/changeSets/types';
 
@@ -258,5 +259,33 @@ describe('author key', () => {
     expect(authorKey('a@x.com', 'a@x.com')).not.toBe(authorKey('b@x.com', 'b@x.com'));
     expect(authorKey('Local user', '')).toBe('local user');
     expect(authorKey('', '6ab0')).toBe('6ab0');
+  });
+});
+
+describe('one item of a merge shown like an AI edit', () => {
+  const item = parseChange({
+    ...base,
+    id: 'm1#0',
+    operationType: 'mergeAddStatements',
+    entityIRI: 'http://x#Hawaiian',
+    entityLabel: 'Hawaiian',
+    undoable: true,
+    setOnly: true,
+    changeSetId: 'set-1',
+    subChanges: [{ id: '0', predicate: 'http://x#hasBase', newValue: 'http://x#DeepPan', addition: true }]
+  }) as unknown as ChangeEntry;
+
+  it('shows the item name, an Added badge and its property rows', () => {
+    const row = buildEntityRow(item);
+    expect(row.label).toBe('Hawaiian');
+    expect(row.badge).toBe('Added');
+    expect(row.properties).toHaveLength(1);
+    expect(row.properties[0].addition).toBe(true);
+  });
+
+  it('offers no undo of its own because the merge is undone as a whole', () => {
+    const row = buildEntityRow(item);
+    expect(entityTarget(row)).toBeNull();
+    expect(propertyTarget(row, row.properties[0])).toBeNull();
   });
 });

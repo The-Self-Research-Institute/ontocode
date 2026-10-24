@@ -197,15 +197,17 @@ public class ChangeTrackingController {
             List<HistoryChange> historyChanges = feed.changes();
             Map<String, HistorySyncService.ConflictMatch> conflicts = historySyncService.computeConflicts(historyChanges);
 
-            List<Map<String, Object>> changes = historyChanges.stream()
-                .map(change -> historyChangeToMap(change, conflicts))
-                .collect(Collectors.toList());
+            List<Map<String, Object>> changes = new ArrayList<>();
+            for (HistoryChange change : historyChanges) {
+                changes.addAll(self.research.ontology.owlEditor.service.MergeFeedExpander
+                        .expand(change, historyChangeToMap(change, conflicts)));
+            }
 
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "changes", changes,
                 "hasMore", feed.hasMore(),
-                "nextOffset", offset + changes.size()
+                "nextOffset", offset + historyChanges.size()
             ));
             
         } catch (Exception e) {
@@ -571,7 +573,8 @@ public class ChangeTrackingController {
     ) {
         try {
             // Try to find in MongoDB synced changes first (has comments)
-            HistoryChange historyChange = historySyncService.getHistoryChange(changeId);
+            HistoryChange historyChange = historySyncService.getHistoryChange(
+                    self.research.ontology.owlEditor.service.MergeFeedExpander.baseId(changeId));
 
             if (historyChange != null) {
                 Map<String, HistorySyncService.ConflictMatch> conflicts = historySyncService.computeConflicts(
@@ -672,7 +675,8 @@ public class ChangeTrackingController {
             String text = request.get("text") != null ? request.get("text").toString() : null;
             ChangeRollbackService.Actor actor = rollbackSupport.actor(httpRequest, request);
 
-            boolean success = historySyncService.addComment(changeId, actor.userId(), actor.username(), text);
+            boolean success = historySyncService.addComment(
+                    self.research.ontology.owlEditor.service.MergeFeedExpander.baseId(changeId), actor.userId(), actor.username(), text);
             
             if (success) {
                 return ResponseEntity.ok(Map.of(

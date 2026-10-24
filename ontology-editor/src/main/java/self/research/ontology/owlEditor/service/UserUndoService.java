@@ -2,8 +2,10 @@ package self.research.ontology.owlEditor.service;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.RollbackAudit;
+import self.research.ontology.owlEditor.repository.DraftSessionRepository;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 
@@ -12,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -126,12 +129,39 @@ public class UserUndoService {
     private HistoryChange latestOwn(String projectId, boolean draft, Identity who) {
         List<HistoryChange> own = history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(
                 projectId, draft, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
+        String currentDraft = draft ? currentDraftSessionId(projectId, who) : null;
         for (HistoryChange entry : own) {
-            if (!entry.isReverted() && !isRollbackEntry(entry)) {
+            if (!entry.isReverted() && !entry.isDraftDiscarded() && !isRollbackEntry(entry)
+                    && (!RollbackWorkSupport.isPublicationEntry(entry) || RollbackWorkSupport.isUndoablePublication(entry))
+                    && !fromAnotherDraft(entry, draft, currentDraft)) {
                 return entry;
             }
         }
         return null;
+    }
+
+    private static boolean fromAnotherDraft(HistoryChange entry, boolean draft, String currentDraft) {
+        return draft && entry.getDraftSessionId() != null && !entry.getDraftSessionId().equals(currentDraft);
+    }
+
+    private String currentDraftSessionId(String projectId, Identity who) {
+        if (draftSessions == null) {
+            return null;
+        }
+        for (String alias : who.aliases()) {
+            Optional<DraftSession> session = draftSessions.findByProjectIdAndUserId(projectId, alias);
+            if (session.isPresent()) {
+                return session.get().getId();
+            }
+        }
+        return null;
+    }
+
+    private DraftSessionRepository draftSessions;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDraftSessions(DraftSessionRepository draftSessions) {
+        this.draftSessions = draftSessions;
     }
 
     private List<Dependent> dependentsOf(String projectId, HistoryChange target, Identity who) {

@@ -35,6 +35,53 @@ public class DraftChangeHistoryRecorder {
         return projectId + "::" + userId;
     }
 
+    public java.util.List<String> draftChangeSetIds(String projectId, String userId) {
+        try {
+            return historyService.draftChangeSetIds(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not list draft change sets for project {} user {}: {}", projectId, userId, e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    public void recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
+        try {
+            historyService.recordEdit(projectId, mergedBy, mergedBy, RollbackWorkSupport.PR_PUBLISHED,
+                    "urn:ontocode:pr:" + prId, "Merged PR: " + title, null, null,
+                    "Authored by " + authorName + ", merged by " + mergedBy + ": " + changes + " changes");
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not record the merged PR {} for project {}: {}", prId, projectId, e.getMessage());
+        }
+    }
+
+    public void recordPrReversal(String projectId, String prId, String title, String revertedBy, int changeSets, String reason) {
+        try {
+            historyService.recordEdit(projectId, revertedBy, revertedBy, RollbackWorkSupport.PR_REVERTED,
+                    "urn:ontocode:pr:" + prId, "Reverted PR: " + title, null, null,
+                    "Reverted by " + revertedBy + ": " + changeSets + " change sets undone. Reason: " + reason);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not record the reverted PR {} for project {}: {}", prId, projectId, e.getMessage());
+        }
+    }
+
+    public void markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
+        try {
+            historyService.markChangeSetsPublished(projectId, userId, changeSetIds);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark the published change sets for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
+    }
+
+    public void markDiscarded(String projectId, String userId) {
+        try {
+            historyService.markDraftHistoryDiscarded(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark discarded draft history entries for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
+    }
+
     public void markPublished(String projectId, String userId) {
         try {
             Set<String> iris = historyService.markDraftHistoryPublished(projectId, userId);

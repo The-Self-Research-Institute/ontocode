@@ -21,7 +21,28 @@ export default function UndoConflictDialog({ status, menu, onClose }: { status: 
           <dt className="opacity-60">Waiting</dt>
           <dd>{status.pending} change {status.pending === 1 ? "set" : "sets"}</dd>
         </dl>
+        {!unknown && status.othersOnTop && status.othersOnTop.length > 0 && (
+          <div className="rounded border border-amber-500 p-2 space-y-1">
+            <div>These changes by other people are on top of yours. Undoing yours also undoes them, newest first:</div>
+            <ul className="list-disc pl-4">
+              {status.othersOnTop.map((other) => (
+                <li key={other.changeSetId || other.changeId}>{other.label || "Change"} by {other.username || "someone"}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {!unknown && status.revertPr?.prId && (
+          <div className="rounded border border-amber-500 p-2">
+            This takes back the whole pull request{status.revertPr.title ? ` "${status.revertPr.title}"` : ""}. You see a preview of what it removes and give a reason before anything changes.
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 pt-1">
+          {!unknown && status.revertPr?.prId && menu.openPullRequest && (
+            <UndoActionButton tone="danger" onClick={() => menu.openPullRequest?.(status.revertPr?.prId as string)}>Open pull request to revert</UndoActionButton>
+          )}
+          {!unknown && status.othersOnTop && status.othersOnTop.length > 0 && menu.confirmOthers && (
+            <UndoActionButton tone="danger" onClick={menu.confirmOthers}>Undo their changes too</UndoActionButton>
+          )}
           <UndoActionButton tone="primary" onClick={menu.resume}>{unknown ? "Check again and continue" : "Revalidate and continue"}</UndoActionButton>
           <UndoActionButton tone="danger" onClick={menu.stopPending}>Stop pending</UndoActionButton>
           <UndoActionButton tone="neutral" onClick={onClose}>Close</UndoActionButton>

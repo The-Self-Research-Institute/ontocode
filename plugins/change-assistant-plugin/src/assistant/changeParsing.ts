@@ -126,6 +126,7 @@ export function parseChange(change: any) {
     rollbackAuditId: change.rollbackAuditId ?? null,
     undoable: typeof change.undoable === 'boolean' ? change.undoable : undefined,
     undoReason: change.undoReason ?? null,
+    setOnly: change.setOnly === true,
     draft: !!change.draft
   };
 }

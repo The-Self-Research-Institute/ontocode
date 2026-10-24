@@ -15,6 +15,8 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.HistorySyncService;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
+import self.research.ontology.owlEditor.service.UndoAbility;
+import self.research.ontology.owlEditor.service.UndoBlockers;
 import self.research.ontology.owlEditor.service.UndoOperations;
 import self.research.ontology.owlEditor.service.UndoPreconditions;
 import self.research.ontology.owlEditor.service.UndoRefusalLog;
@@ -39,6 +41,7 @@ public class UserUndoController {
     private final UndoPreconditions preconditions;
     private final ProjectWriteLockRegistry locks;
     private UndoOperations operations;
+    private UndoBlockers blockers;
 
     public UserUndoController(UserUndoService undoService, ChangeRollbackService rollbackService,
                               HistorySyncService historySync, RollbackRequestSupport support,
@@ -49,6 +52,11 @@ public class UserUndoController {
         this.support = support;
         this.preconditions = preconditions;
         this.locks = locks;
+    }
+
+    @Autowired(required = false)
+    void setBlockers(UndoBlockers blockers) {
+        this.blockers = blockers;
     }
 
     @Autowired(required = false)
@@ -100,15 +108,25 @@ public class UserUndoController {
                 if (target == null) {
                     return changed(projectId, draft, who, ChangeRollbackService.UNDO, next.changeId());
                 }
+                if (UndoAbility.isMergedPrEntry(target)) {
+                    return revertPrInstead(projectId, draft, who, target);
+                }
                 List<HistoryChange> scope = next.changeSetId() == null
                         ? List.of(target) : historySync.getChangeSet(projectId, next.changeSetId());
                 ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(scope, projectId, request);
                 if (denied != null) {
                     return denied;
                 }
-                Optional<String> violation = preconditions.violation(projectId, scope);
+                Optional<String> violation = preconditions.violation(projectId, scope, who);
+                if (violation.isPresent() && "true".equals(request.getParameter("confirmOther"))) {
+                    ResponseEntity<Map<String, Object>> stopped = undoOthersOnTop(projectId, who, target, request, actor);
+                    if (stopped != null) {
+                        return stopped;
+                    }
+                    violation = preconditions.violation(projectId, scope, who);
+                }
                 if (violation.isPresent()) {
-                    return changedUnderneath(projectId, draft, who, violation.get(), next.changeId());
+                    return changedUnderneath(projectId, draft, who, violation.get(), next.changeId(), target);
                 }
                 ChangeRollbackService.Result result = next.changeSetId() != null
                         ? rollbackService.undoChangeSet(projectId, next.changeSetId(), actor, false)
@@ -188,12 +206,81 @@ public class UserUndoController {
     }
 
     private ResponseEntity<Map<String, Object>> changedUnderneath(String projectId, boolean draft, Identity who,
-                                                                  String reason, String changeId) {
+                                                                  String reason, String changeId, HistoryChange target) {
         UndoRefusalLog.record(projectId, who, ChangeRollbackService.UNDO, changeId, reason);
         Map<String, Object> body = new HashMap<>(state(projectId, draft, who));
         body.put("success", false);
         body.put("error", "Nothing was undone: " + reason);
+        List<Map<String, Object>> others = describeOthers(projectId, who, target);
+        if (!others.isEmpty()) {
+            body.put("othersOnTop", others);
+        }
         return ResponseEntity.status(409).body(body);
+    }
+
+    private ResponseEntity<Map<String, Object>> revertPrInstead(String projectId, boolean draft, Identity who,
+                                                                HistoryChange target) {
+        String iri = target.getEntityIRI() == null ? "" : target.getEntityIRI();
+        String prId = iri.startsWith(PR_IRI_PREFIX) ? iri.substring(PR_IRI_PREFIX.length()) : null;
+        String label = target.getEntityLabel() == null ? "" : target.getEntityLabel();
+        UndoRefusalLog.record(projectId, who, ChangeRollbackService.UNDO, target.getId(), "Reverting a pull request needs a preview and a reason");
+        Map<String, Object> body = new HashMap<>(state(projectId, draft, who));
+        body.put("success", false);
+        body.put("error", "This undo takes back a whole pull request. Preview it and give a reason first.");
+        Map<String, Object> pr = new HashMap<>();
+        pr.put("prId", prId);
+        pr.put("title", label.startsWith("Merged PR: ") ? label.substring("Merged PR: ".length()) : label);
+        body.put("revertPr", pr);
+        return ResponseEntity.status(409).body(body);
+    }
+
+    private static final String PR_IRI_PREFIX = "urn:ontocode:pr:";
+
+    private List<HistoryChange> othersOf(String projectId, Identity who, HistoryChange target) {
+        return blockers == null ? List.of() : blockers.othersOnTop(projectId, target, who);
+    }
+
+    private List<Map<String, Object>> describeOthers(String projectId, Identity who, HistoryChange target) {
+        List<Map<String, Object>> list = new java.util.ArrayList<>();
+        for (HistoryChange other : othersOf(projectId, who, target)) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("changeId", other.getId());
+            item.put("changeSetId", other.getChangeSetId());
+            item.put("username", other.getUsername());
+            item.put("label", other.getEntityLabel() != null && !other.getEntityLabel().isBlank()
+                    ? other.getEntityLabel() : other.getOperationType());
+            list.add(item);
+        }
+        return list;
+    }
+
+    private ResponseEntity<Map<String, Object>> undoOthersOnTop(String projectId, Identity who, HistoryChange target,
+                                                                HttpServletRequest request,
+                                                                ChangeRollbackService.Actor actor) {
+        java.util.Set<String> done = new java.util.HashSet<>();
+        for (HistoryChange other : othersOf(projectId, who, target)) {
+            String key = other.getChangeSetId() != null ? other.getChangeSetId() : other.getId();
+            if (!done.add(key)) {
+                continue;
+            }
+            List<HistoryChange> scope = other.getChangeSetId() == null
+                    ? List.of(other) : historySync.getChangeSet(projectId, other.getChangeSetId());
+            ResponseEntity<Map<String, Object>> denied = support.denyIfNotAllowed(scope, projectId, request);
+            if (denied != null) {
+                return denied;
+            }
+            ChangeRollbackService.Actor step = new ChangeRollbackService.Actor(actor.userId(), actor.username(),
+                    actor.opId() == null ? null : actor.opId() + ":" + key);
+            ChangeRollbackService.Result result = other.getChangeSetId() == null
+                    ? rollbackService.undoEntry(projectId, other.getId(), step, false)
+                    : rollbackService.undoChangeSet(projectId, other.getChangeSetId(), step, false);
+            boolean already = result.applied().isEmpty() && !result.skipped().isEmpty()
+                    && result.skipped().stream().allMatch(item -> "Already undone".equals(item.reason()));
+            if (!result.ok() && !already) {
+                return finish(projectId, false, who, result);
+            }
+        }
+        return null;
     }
 
     private ResponseEntity<Map<String, Object>> changed(String projectId, boolean draft, Identity who,

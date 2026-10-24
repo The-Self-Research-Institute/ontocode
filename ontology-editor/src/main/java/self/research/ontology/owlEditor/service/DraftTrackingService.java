@@ -411,6 +411,117 @@ public class DraftTrackingService {
         void run() throws Exception;
     }
 
+    /**
+     * Publishes the frozen copy of a pull request: the snapshot graph and its saved starting version are
+     * used for the publish, and only the pull request's own changes are marked as published. The live
+     * draft of the author is not touched.
+     */
+    public ApplyDraftsResult applyFrozenPr(String projectId, String authorId, String graphKey,
+                                           List<String> submittedChangeIds, List<String> changeSetIds,
+                                           Map<String, ConflictResolution> resolutions) {
+        if (lockRegistry == null) {
+            return applyFrozenGuarded(projectId, authorId, graphKey, submittedChangeIds, changeSetIds, resolutions);
+        }
+        return lockRegistry.exclusive(projectId,
+                () -> applyFrozenGuarded(projectId, authorId, graphKey, submittedChangeIds, changeSetIds, resolutions));
+    }
+
+    private ApplyDraftsResult applyFrozenGuarded(String projectId, String authorId, String graphKey,
+                                                 List<String> submittedChangeIds, List<String> changeSetIds,
+                                                 Map<String, ConflictResolution> resolutions) {
+        ReentrantLock lock = getProjectLock(projectId);
+        boolean lockAcquired = false;
+        try {
+            lockAcquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
+            if (!lockAcquired) {
+                return new ApplyDraftsResult(false, 0, "Another save operation is in progress. Please try again.", false, null);
+            }
+            return applyFrozenInternal(projectId, authorId, graphKey, submittedChangeIds, changeSetIds, resolutions);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new ApplyDraftsResult(false, 0, "Operation interrupted", false, null);
+        } finally {
+            if (lockAcquired) {
+                lock.unlock();
+            }
+        }
+    }
+
+    private ApplyDraftsResult applyFrozenInternal(String projectId, String authorId, String graphKey,
+                                                  List<String> submittedChangeIds, List<String> changeSetIds,
+                                                  Map<String, ConflictResolution> resolutions) {
+        Set<String> ids = new java.util.HashSet<>(submittedChangeIds == null ? List.of() : submittedChangeIds);
+        List<DraftChange> drafts = getUnappliedDraftsForUser(projectId, authorId).stream()
+                .filter(draft -> ids.contains(draft.getId())).toList();
+        if (!draftCopyService.isReady(projectId, graphKey)) {
+            return new ApplyDraftsResult(false, 0,
+                    "The frozen copy of this pull request is not ready. Ask the author to update the pull request", false, null);
+        }
+        Map<String, ConflictResolution> chosen = resolutions == null ? Map.of() : resolutions;
+        DraftPublishDiff diff;
+        try {
+            diff = draftPublishMergeService.comparePublish(projectId, graphKey);
+        } catch (Exception e) {
+            log.error("[DRAFT] Could not compare the frozen copy {} with the shared ontology for project {}",
+                    graphKey, projectId, e);
+            return new ApplyDraftsResult(false, 0,
+                    "Could not compare the pull request with the shared ontology: " + e.getMessage(), false, null);
+        }
+        if (diff != null && diff.available() && diff.publicChanged()) {
+            Set<String> unresolved = diff.unresolved(chosen);
+            if (!unresolved.isEmpty()) {
+                String message = "The shared ontology changed since this pull request was raised and " + unresolved.size()
+                        + " item(s) were changed on both sides, choose what to keep for each";
+                return new ApplyDraftsResult(false, 0, message, true, null);
+            }
+            Optional<DeltaCapture> committed = beginCommit(projectId);
+            try {
+                draftPublishMergeService.publishReviewed(projectId, graphKey, chosen);
+            } catch (Exception e) {
+                log.error("[DRAFT] Frozen merge publish failed for project {} copy {}", projectId, graphKey, e);
+                return new ApplyDraftsResult(false, 0, "Failed to publish the pull request: " + e.getMessage(), false, null);
+            }
+            return finishFrozenPublish(projectId, authorId, graphKey, drafts, changeSetIds, committed, "Published pull request with merge");
+        }
+        long mainRevisionAtCopy = draftCopyService.getMainRevisionAtCopy(projectId, graphKey);
+        long currentRevision = mainGraphRevisionService.getRevision(projectId);
+        if (mainRevisionAtCopy >= 0 && currentRevision > mainRevisionAtCopy) {
+            return new ApplyDraftsResult(false, 0, "The shared ontology was updated since this pull request was raised (revision "
+                    + mainRevisionAtCopy + " to " + currentRevision + "). Ask the author to update the pull request", true, null);
+        }
+        Optional<DeltaCapture> committed = beginCommit(projectId);
+        try {
+            datasetService.moveDraftToMain(projectId, graphKey);
+        } catch (Exception e) {
+            log.error("[DRAFT] Frozen MOVE GRAPH publish failed for project {} copy {}", projectId, graphKey, e);
+            return new ApplyDraftsResult(false, 0, "Failed to publish the pull request: " + e.getMessage(), false, null);
+        }
+        return finishFrozenPublish(projectId, authorId, graphKey, drafts, changeSetIds, committed, "Published pull request");
+    }
+
+    private ApplyDraftsResult finishFrozenPublish(String projectId, String authorId, String graphKey,
+                                                  List<DraftChange> drafts, List<String> changeSetIds,
+                                                  Optional<DeltaCapture> committed, String message) {
+        reconcileCommit(projectId, authorId, committed);
+        draftChangeHistory.markChangeSetsPublished(projectId, authorId, changeSetIds);
+        try {
+            mainGraphRevisionService.incrementRevision(projectId);
+            draftPublishService.clearBaseline(projectId, graphKey);
+            if (springCacheEviction != null) {
+                springCacheEviction.evictForProject(projectId);
+            }
+            invalidateHierarchyCaches(projectId);
+            int recordingFailures = finalizeAppliedDrafts(projectId, authorId, drafts);
+            return new ApplyDraftsResult(true, drafts.size(), message + recordingFailureSuffix(recordingFailures), false, null);
+        } catch (Exception e) {
+            log.error("[DRAFT] Frozen publish succeeded but follow-up bookkeeping failed for project {} copy {}, "
+                    + "data is already live, do not retry", projectId, graphKey, e);
+            return new ApplyDraftsResult(true, drafts.size(),
+                    "Published, but some follow-up updates failed (" + e.getMessage()
+                            + "). Refresh to see the latest state.", false, null);
+        }
+    }
+
     private ApplyDraftsResult publishThroughMerge(String projectId, String userId, List<DraftChange> unappliedDrafts,
                                                   DraftPublishAnalysis analysis, MergePublish publish) {
         Optional<DeltaCapture> committed = beginCommit(projectId);
@@ -607,6 +718,22 @@ public class DraftTrackingService {
 
     public DiscardDraftsResult discardDrafts(String projectId) {
         return discardDrafts(projectId, null);
+    }
+
+    public java.util.List<String> draftChangeSetIds(String projectId, String userId) {
+        return draftChangeHistory.draftChangeSetIds(projectId, userId);
+    }
+
+    public void recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
+        draftChangeHistory.recordPrPublication(projectId, prId, title, authorName, mergedBy, changes);
+    }
+
+    public void recordPrReversal(String projectId, String prId, String title, String revertedBy, int changeSets, String reason) {
+        draftChangeHistory.recordPrReversal(projectId, prId, title, revertedBy, changeSets, reason);
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId) {
+        draftChangeHistory.markDiscarded(projectId, userId != null && !userId.isBlank() ? userId : null);
     }
 
     /**

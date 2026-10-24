@@ -49,6 +49,7 @@ export interface OntologyChange {
   rollbackAuditId?: string | null;
   undoable?: boolean;
   undoReason?: string | null;
+  setOnly?: boolean;
   draft?: boolean;
 }
 

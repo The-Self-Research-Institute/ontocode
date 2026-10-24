@@ -1,4 +1,4 @@
-import undoRedoService, { type QueueResponse, type QueueStep, type StepOutcome, type UndoState, type UndoStep } from './undoRedoService';
+import undoRedoService, { type OtherChange, type RevertPrHint, type QueueResponse, type QueueStep, type StepOutcome, type UndoState, type UndoStep } from './undoRedoService';
 
 export const MAX_WAITING = 25;
 export const REQUEST_TIMEOUT_MS = 30000;
@@ -34,6 +34,8 @@ export interface UndoRunSnapshot {
   summary?: string;
   finishedItems: FinishedItem[];
   lastState?: UndoState;
+  othersOnTop?: OtherChange[];
+  revertPr?: RevertPrHint;
 }
 
 export interface StepDetail {
@@ -55,7 +57,7 @@ export interface PressResult {
 
 export interface QueueApi {
   fetchQueue(projectId: string, count: number): Promise<QueueResponse>;
-  send(projectId: string, kind: UndoKind, step: QueueStep, opId: string): Promise<StepOutcome>;
+  send(projectId: string, kind: UndoKind, step: QueueStep, opId: string, confirmOther?: boolean): Promise<StepOutcome>;
   announce(projectId: string, step: QueueStep, kind: UndoKind, auditId?: string): void;
   refused(projectId: string): void;
 }
@@ -65,6 +67,7 @@ export interface Entry {
   label: string;
   opId: string;
   unknown: boolean;
+  confirmOther?: boolean;
 }
 
 export const TIMED_OUT = Symbol('timed-out');
@@ -96,8 +99,8 @@ export function summaryOf(kind: UndoKind, sets: number, changes: number): string
 
 export const defaultQueueApi: QueueApi = {
   fetchQueue: (projectId, count) => undoRedoService.fetchQueue(projectId, count),
-  send: (projectId, kind, step, opId) =>
-    undoRedoService.sendStep(projectId, kind, { changeId: step.changeId, auditId: step.auditId }, opId),
+  send: (projectId, kind, step, opId, confirmOther) =>
+    undoRedoService.sendStep(projectId, kind, { changeId: step.changeId, auditId: step.auditId }, opId, confirmOther),
   announce: (projectId, step, kind, auditId) => undoRedoService.announceStep(projectId, step, kind, auditId),
   refused: (projectId) => undoRedoService.notifyRefusal(projectId),
 };

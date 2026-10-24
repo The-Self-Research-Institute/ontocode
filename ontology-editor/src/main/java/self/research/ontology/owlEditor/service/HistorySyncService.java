@@ -75,6 +75,53 @@ public class HistorySyncService {
         return result.getModifiedCount();
     }
 
+    public long markChangeSetsPublished(String projectId, String userId, java.util.List<String> changeSetIds) {
+        if (projectId == null || userId == null || changeSetIds == null || changeSetIds.isEmpty()) {
+            return 0;
+        }
+        var result = mongoTemplate.updateMulti(
+                Query.query(Criteria.where("projectId").is(projectId).and("userId").is(userId).and("draft").is(true)
+                        .and("changeSetId").in(changeSetIds)),
+                new Update().set("draft", false), HistoryChange.class);
+        return result.getModifiedCount();
+    }
+
+    public long markPrPublicationReverted(String projectId, String prId) {
+        if (projectId == null || prId == null) {
+            return 0;
+        }
+        var result = mongoTemplate.updateMulti(
+                Query.query(Criteria.where("projectId").is(projectId).and("entityIRI").is("urn:ontocode:pr:" + prId)
+                        .and("operationType").is("prPublished").and("reverted").ne(true)),
+                new Update().set("reverted", true), HistoryChange.class);
+        return result.getModifiedCount();
+    }
+
+    public java.util.List<String> draftChangeSetIds(String projectId, String userId) {
+        if (projectId == null || userId == null) {
+            return java.util.List.of();
+        }
+        Criteria match = Criteria.where("projectId").is(projectId).and("userId").is(userId).and("draft").is(true)
+                .and("draftDiscarded").ne(true).and("reverted").ne(true).and("changeSetId").ne(null);
+        return mongoTemplate.findDistinct(Query.query(match), "changeSetId", HistoryChange.class, String.class);
+    }
+
+    public long markDraftsDiscarded(String projectId, String userId) {
+        if (projectId == null) {
+            return 0;
+        }
+        Criteria match = Criteria.where("projectId").is(projectId).and("draft").is(true).and("draftDiscarded").ne(true);
+        if (userId != null && !userId.isBlank()) {
+            match = match.and("userId").is(userId);
+        }
+        var result = mongoTemplate.updateMulti(Query.query(match), new Update().set("draftDiscarded", true), HistoryChange.class);
+        if (result.getModifiedCount() > 0) {
+            log.info("Marked {} draft history entries as discarded for project {} user {}",
+                    result.getModifiedCount(), projectId, userId);
+        }
+        return result.getModifiedCount();
+    }
+
     public void syncChange(String projectId, String editId, Map<String, Object> changeData) {
 
         if (historyChangeRepository.existsByProjectIdAndEditId(projectId, editId)) {

@@ -26,6 +26,8 @@ export interface UndoMenu {
   redoHint?: string;
   stopPending: () => void;
   resume: () => void;
+  confirmOthers?: () => void;
+  openPullRequest?: (prId: string) => void;
   openHistory: () => void;
   refresh?: () => void;
 }
@@ -169,6 +171,11 @@ export function useOntologyUndoRedo({ projectId, draft, onOpenHistory }: Options
     redoHint: redoHintFor(snap.phase),
     stopPending: undoQueue.stopPending,
     resume: () => void undoQueue.resume(),
+    confirmOthers: () => void undoQueue.confirmOthers(),
+    openPullRequest: (prId: string) => {
+      undoQueue.stopPending();
+      window.dispatchEvent(new CustomEvent('ontology:open-pr', { detail: { projectId, prId } }));
+    },
     openHistory: () => historyRef.current?.(),
     refresh: () => void refresh(),
   };
