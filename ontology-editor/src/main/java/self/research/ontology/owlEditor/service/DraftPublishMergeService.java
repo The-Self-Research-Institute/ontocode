@@ -74,6 +74,15 @@ public class DraftPublishMergeService {
         return relative;
     }
 
+    public Optional<String> baselineOf(String projectId, String userId) {
+        return sessionRepository.findByProjectIdAndUserId(projectId, userId)
+                .flatMap(session -> readBaselineIfAvailable(projectId, userId, session));
+    }
+
+    public String writeBaselineFor(String projectId, String userId, String rdf) throws IOException {
+        return writeBaselineSnapshot(projectId, userId, rdf);
+    }
+
     public void deleteBaselineSnapshot(String projectId, String userId) {
         sessionRepository.findByProjectIdAndUserId(projectId, userId).ifPresent(session -> {
             String relative = session.getBaselineSnapshotPath();

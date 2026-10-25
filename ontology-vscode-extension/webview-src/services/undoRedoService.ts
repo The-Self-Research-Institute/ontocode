@@ -57,9 +57,28 @@ export interface QueueResponse {
 
 export type StepOutcome =
   | { kind: 'done'; auditId?: string; state?: UndoState }
-  | { kind: 'refused'; message: string; state?: UndoState }
+  | { kind: 'refused'; message: string; state?: UndoState; othersOnTop?: OtherChange[]; revertPr?: RevertPrHint; foreignTarget?: ForeignTarget }
   | { kind: 'running' }
   | { kind: 'unknown'; message: string };
+
+export interface ForeignTarget {
+  username?: string;
+  label?: string;
+  changes?: number;
+}
+
+export interface RevertPrHint {
+  prId?: string;
+  title?: string;
+  mode?: 'revert' | 'reapply';
+}
+
+export interface OtherChange {
+  changeId?: string;
+  changeSetId?: string;
+  username?: string;
+  label?: string;
+}
 
 interface ServerBody extends Partial<UndoState> {
   success?: boolean;
@@ -72,6 +91,9 @@ interface ServerBody extends Partial<UndoState> {
   inProgress?: boolean;
   steps?: QueueStep[];
   blocked?: QueueBlock | null;
+  othersOnTop?: OtherChange[];
+  revertPr?: RevertPrHint;
+  foreignTarget?: ForeignTarget;
 }
 
 function isStillRunning(body: ServerBody, status?: number): boolean {
@@ -155,6 +177,7 @@ export const undoRedoService = {
     kind: 'undo' | 'redo',
     expected: { changeId?: string; auditId?: string },
     opId: string,
+    confirmOther?: boolean | 'target',
   ): Promise<StepOutcome> {
     const guard =
       kind === 'undo'
@@ -162,13 +185,13 @@ export const undoRedoService = {
         : expected.auditId ? `&expectedAuditId=${encodeURIComponent(expected.auditId)}` : '';
     try {
       const res = (await apiClient.post<ServerBody>(
-        `${base(projectId)}/${kind}?draft=${draftFlag()}&opId=${encodeURIComponent(opId)}${guard}`,
+        `${base(projectId)}/${kind}?draft=${draftFlag()}&opId=${encodeURIComponent(opId)}${guard}${confirmOther === 'target' ? '&confirmTarget=true' : confirmOther ? '&confirmOther=true' : ''}`,
         {},
       )) as { status?: number } & ServerBody;
       const body = unwrap(res);
       if (isStillRunning(body, res?.status)) return { kind: 'running' };
       if (body.success === false) {
-        return { kind: 'refused', message: body.error || body.message || 'The request failed', state: stateOf(body) };
+        return { kind: 'refused', message: body.error || body.message || 'The request failed', state: stateOf(body), othersOnTop: body.othersOnTop, revertPr: body.revertPr, foreignTarget: body.foreignTarget };
       }
       return { kind: 'done', auditId: body.auditId, state: stateOf(body) };
     } catch (error) {
@@ -176,7 +199,7 @@ export const undoRedoService = {
       const { text, body } = failureText(error);
       if (body && isStillRunning(body, status)) return { kind: 'running' };
       if (!body || (status !== undefined && status >= 500)) return { kind: 'unknown', message: text };
-      return { kind: 'refused', message: text, state: stateOf(body) };
+      return { kind: 'refused', message: text, state: stateOf(body), othersOnTop: body.othersOnTop, revertPr: body.revertPr, foreignTarget: body.foreignTarget };
     }
   },
 

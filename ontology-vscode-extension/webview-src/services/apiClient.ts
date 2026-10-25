@@ -3,6 +3,7 @@ import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios';
 import { getGatewayUrl, getStoredDeploymentType, type DeploymentType } from '../config/deploymentConfig';
 import { isDesktop } from '../utils/desktop';
 import { resolveMutationUserId } from '../utils/mutationActor';
+import { announceOntologyHeaderWrite } from '../utils/ontologyHeaderWrite';
 
 // Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
@@ -429,7 +430,7 @@ class ApiClient {
       const resp = await this.axiosClient!.post(url, body, postConfig);
       data = resp.data as T;
     }
-    return data;
+    return announceOntologyHeaderWrite(url, data);
   }
 
   async put<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
@@ -442,7 +443,7 @@ class ApiClient {
       data = resp.data as T;
     }
     console.log(data, url);
-    return data;
+    return announceOntologyHeaderWrite(url, data);
   }
 
   async patch<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
@@ -468,7 +469,7 @@ class ApiClient {
       data = resp.data as T;
     }
     console.log(data, url);
-    return data;
+    return announceOntologyHeaderWrite(url, data);
   }
 }
 

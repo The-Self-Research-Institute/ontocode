@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { isTextElement } from '../utils/textEditTarget';
+import { isModalOpen } from '../utils/modalOpen';
 
 interface DesktopApi {
-  onMenuUndoRedo?: (callback: (kind: string) => void) => void;
+  onMenuUndoRedo?: (callback: (kind: string) => void) => void | (() => void);
 }
 
 export function hasDesktopUndoMenu(): boolean {
@@ -25,17 +26,22 @@ export function useDesktopUndoRouting({ onUndo, onRedo }: Handlers): void {
       return;
     }
     const api = (window as unknown as { electronAPI: DesktopApi }).electronAPI;
-    api.onMenuUndoRedo?.((kind) => {
+    const unsubscribe = api.onMenuUndoRedo?.((kind) => {
       if (kind !== 'undo' && kind !== 'redo') {
         return;
       }
       if (isTextElement(document.activeElement)) {
         document.execCommand(kind);
+      } else if (isModalOpen()) {
+        return;
       } else if (kind === 'undo') {
         handlers.current.onUndo();
       } else {
         handlers.current.onRedo();
       }
     });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
   }, []);
 }

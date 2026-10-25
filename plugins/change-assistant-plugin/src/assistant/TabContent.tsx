@@ -14,6 +14,7 @@ interface TabContentProps {
   activeTab: AssistantTab;
   liveActivity: LiveActivity[];
   changes: OntologyChange[];
+  timelineChanges: OntologyChange[];
   draftChanges: OntologyChange[];
   filteredDrafts: OntologyChange[];
   stats: ChangeStats;
@@ -63,7 +64,7 @@ const TabContent: React.FC<TabContentProps> = (props) => (
       <ConflictsTab changes={props.changes} onResolveClick={props.onResolveClick} onAutoResolve={props.onAutoResolve} />
     )}
     {props.activeTab === 'history' && (
-      <ChangeTimeline changes={timelineItems(props.changes)} onSelectChange={props.onSelectTimeline} />
+      <ChangeTimeline changes={timelineItems(props.timelineChanges)} onSelectChange={props.onSelectTimeline} />
     )}
     {props.activeTab === 'stats' && (
       <StatsTab stats={props.stats} changes={props.changes} draftChanges={props.draftChanges} />

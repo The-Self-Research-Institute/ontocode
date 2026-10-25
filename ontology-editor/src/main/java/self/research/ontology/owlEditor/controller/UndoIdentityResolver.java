@@ -12,10 +12,17 @@ final class UndoIdentityResolver {
     private UndoIdentityResolver() {
     }
 
+    private static String[] withDesktopUser(String[] claims) {
+        String[] all = java.util.Arrays.copyOf(claims, claims.length + 1);
+        all[claims.length] = JwtIdentityExtractor.DESKTOP_USER;
+        return all;
+    }
+
     static Identity resolve(RollbackRequestSupport support, HttpServletRequest request, Map<String, Object> body) {
         String verified = JwtIdentityExtractor.extractEmail(request).orElse(null);
         if (verified != null) {
-            return Identity.of(verified, JwtClaimUtils.extractIdentityClaims(request.getHeader("Authorization")));
+            String[] claims = JwtClaimUtils.extractIdentityClaims(request.getHeader("Authorization"));
+            return support.isDesktop() ? Identity.of(verified, withDesktopUser(claims)) : Identity.of(verified, claims);
         }
         if (JwtIdentityExtractor.signatureRequired()) {
             return null;

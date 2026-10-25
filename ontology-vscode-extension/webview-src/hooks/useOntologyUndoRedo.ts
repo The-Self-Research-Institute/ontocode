@@ -4,6 +4,7 @@ import { undoQueue } from '../services/undoQueue';
 import { notificationService } from '../services/notificationService';
 import { isRealVSCode } from '../utils/desktop';
 import { isTextElement } from '../utils/textEditTarget';
+import { isModalOpen } from '../utils/modalOpen';
 import { useVsCodeUndoRouting } from './useVsCodeUndoRouting';
 import { hasDesktopUndoMenu, useDesktopUndoRouting } from './useDesktopUndoRouting';
 import { useCommittedChangeRefresh } from './useCommittedChangeRefresh';
@@ -14,9 +15,10 @@ interface Options {
   onOpenHistory?: () => void;
 }
 
-const PUBLISH_OPS = ['draftPublish', 'draftPrApproved'];
+const PUBLISH_OPS = ['draftPublish', 'draftPrApproved', 'draftPrReverted', 'draftPrReapplied'];
 
 export interface UndoMenu {
+  projectId?: string;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
@@ -26,6 +28,7 @@ export interface UndoMenu {
   redoHint?: string;
   stopPending: () => void;
   resume: () => void;
+  confirmOthers?: () => void;
   openHistory: () => void;
   refresh?: () => void;
 }
@@ -132,7 +135,7 @@ export function useOntologyUndoRedo({ projectId, draft, onOpenHistory }: Options
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.altKey || isTextElement(event.target as Element | null)) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || isTextElement(event.target as Element | null) || isModalOpen()) {
         return;
       }
       const key = event.key.toLowerCase();
@@ -160,6 +163,7 @@ export function useOntologyUndoRedo({ projectId, draft, onOpenHistory }: Options
   const canUndo = !!projectId && (settled ? state?.undo.available !== false : snap.phase === 'running' && snap.kind === 'undo');
   const canRedo = !!projectId && settled && !!state?.redo.available;
   const menu: UndoMenu = {
+    projectId: projectId ?? undefined,
     undo,
     redo,
     canUndo,
@@ -169,6 +173,7 @@ export function useOntologyUndoRedo({ projectId, draft, onOpenHistory }: Options
     redoHint: redoHintFor(snap.phase),
     stopPending: undoQueue.stopPending,
     resume: () => void undoQueue.resume(),
+    confirmOthers: () => void undoQueue.confirmOthers(),
     openHistory: () => historyRef.current?.(),
     refresh: () => void refresh(),
   };

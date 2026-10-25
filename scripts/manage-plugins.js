@@ -96,6 +96,16 @@ const PLUGINS = [
     category: 'Reasoning',
     keywords: ['reasoner', 'owl', 'hermit', 'elk', 'pellet', 'inference', 'consistency', 'classification'],
     featured: true
+  },
+  {
+    pluginId: 'spreadsheet-import-plugin',
+    name: 'Spreadsheet Import',
+    shortDescription: 'Import spreadsheet rows into the ontology with Cellfie-style rules',
+    description: 'Turn xlsx, xls and csv rows into classes, individuals and property values with transformation rules, preview the axioms, and import them as one undoable change.',
+    version: '1.0.0',
+    category: 'Import/Export',
+    keywords: ['spreadsheet', 'excel', 'csv', 'import', 'cellfie'],
+    featured: true
   }
 ];
 

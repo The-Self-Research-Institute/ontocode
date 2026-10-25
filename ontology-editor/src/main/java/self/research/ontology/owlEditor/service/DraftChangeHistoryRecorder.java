@@ -35,6 +35,72 @@ public class DraftChangeHistoryRecorder {
         return projectId + "::" + userId;
     }
 
+    public java.util.List<String> draftChangeSetIds(String projectId, String userId) {
+        try {
+            return historyService.draftChangeSetIds(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not list draft change sets for project {} user {}: {}", projectId, userId, e.getMessage());
+            return java.util.List.of();
+        }
+    }
+
+    public boolean recordPrPublication(String projectId, String prId, String title, String authorName, String mergedBy, int changes) {
+        try {
+            historyService.recordEdit(projectId, mergedBy, mergedBy, RollbackWorkSupport.PR_PUBLISHED,
+                    PrEntries.iriOf(prId), "Merged PR: " + title, null, null,
+                    "Authored by " + authorName + ", merged by " + mergedBy + ": " + changes + " changes");
+            return true;
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not record the merged PR {} for project {}: {}", prId, projectId, e.getMessage());
+            return false;
+        }
+    }
+
+    public void recordPrReversal(String projectId, String prId, String title, String revertedBy, int changeSets, String reason) {
+        try {
+            historyService.recordEdit(projectId, revertedBy, revertedBy, RollbackWorkSupport.PR_REVERTED,
+                    PrEntries.iriOf(prId), "Reverted PR: " + title, null, null,
+                    "Reverted by " + revertedBy + ": " + changeSets + " change sets undone. Reason: " + reason);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not record the reverted PR {} for project {}: {}", prId, projectId, e.getMessage());
+        }
+    }
+
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId,
+                                   String authorId, java.time.LocalDateTime since) {
+        try {
+            historyService.tagPrPublishedRows(projectId, changeSetIds, prId, authorId, since);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not tag the rows published by PR {} in project {}: {}", prId, projectId, e.getMessage());
+        }
+    }
+
+    public void markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
+        try {
+            historyService.markChangeSetsPublished(projectId, changeSetIds);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark the published change sets for project {}: {}", projectId, e.getMessage());
+        }
+    }
+
+    public void markDiscarded(String projectId, String userId, java.util.Collection<String> keepChangeSetIds) {
+        try {
+            historyService.markDraftHistoryDiscarded(projectId, userId, keepChangeSetIds);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark discarded draft history entries for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
+    }
+
+    public void markDiscarded(String projectId, String userId) {
+        try {
+            historyService.markDraftHistoryDiscarded(projectId, userId);
+        } catch (Exception e) {
+            log.warn("[DRAFT] Could not mark discarded draft history entries for project {} user {}: {}",
+                    projectId, userId, e.getMessage());
+        }
+    }
+
     public void markPublished(String projectId, String userId) {
         try {
             Set<String> iris = historyService.markDraftHistoryPublished(projectId, userId);

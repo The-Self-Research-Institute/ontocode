@@ -20,6 +20,7 @@ function setContext(set: ChangeSet): EventContext {
 }
 
 export function setTarget(set: ChangeSet, direction: 'UNDO' | 'REDO'): OperationTarget | null {
+  if (set.changeSetId?.startsWith('pr:')) return null;
   if (set.changeSetId) {
     return { kind: 'set', direction, changeSetId: set.changeSetId, label: set.title, context: setContext(set) };
   }
@@ -47,11 +48,12 @@ export function propertyRedoTarget(entity: EntityRow, property: PropertyRow, lab
 }
 
 export function entityTarget(entity: EntityRow): OperationTarget | null {
-  if (!entity.entry.entityUri) return null;
+  if (!entity.entry.entityUri || entity.entry.setOnly) return null;
   return { kind: 'entry', direction: 'UNDO', changeId: entity.entry.id, label: entity.label, context: entityContext(entity) };
 }
 
 export function propertyTarget(entity: EntityRow, property: PropertyRow): OperationTarget | null {
+  if (entity.entry.setOnly) return null;
   if (!property.subChangeId) return entityTarget(entity);
   const context: EventContext = {
     ...entityContext(entity),

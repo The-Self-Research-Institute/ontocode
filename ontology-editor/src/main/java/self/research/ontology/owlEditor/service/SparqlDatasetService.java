@@ -1375,6 +1375,25 @@ public class SparqlDatasetService {
         }
     }
 
+    public int copyDraftGraph(String projectId, String fromUserKey, String toUserKey) {
+        String from = getDraftGraphUri(projectId, fromUserKey);
+        String to = getDraftGraphUri(projectId, toUserKey);
+        long start = System.nanoTime();
+        int copied;
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
+            copied = GraphStatementOps.copy(conn, from, to);
+        } finally {
+            noteGraphWritten(to);
+        }
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
+        evictDraftReadyCache(projectId, toUserKey);
+        log.info("[DRAFT-COPY] Copied {} triples draft {} -> {} for project {} in {}ms",
+                copied, fromUserKey, toUserKey, projectId, elapsedMillis(start));
+        return copied;
+    }
+
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
         return exportDraftGraphContent(projectId, userId, rdfFormat, readProjectPrefixes(projectId, true, userId));
     }
