@@ -74,6 +74,10 @@ public class OntologyMetadataService {
     @org.springframework.context.annotation.Lazy
     private ExactChangeRecorder exactRecorder;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private DesktopOwlApiMutationService desktopOwlApi;
+
     public OntologyMetadataService(SparqlDatasetService datasetService,
                                    ProjectMetadataService projectMetadataService,
                                    @Lazy OntologyMutationService mutationService,
@@ -1078,11 +1082,25 @@ public class OntologyMetadataService {
         ontologyIriCache.remove(event.projectId());
     }
 
+    private String[] liveOntologyIds(String projectId) {
+        if (desktopOwlApi == null || ontologyCache == null || !desktopOwlApi.isAuthoritative(projectId)) {
+            return null;
+        }
+        return ontologyCache.get(projectId).map(entry -> {
+            var id = entry.ontology().getOntologyID();
+            return new String[] {
+                    id.getOntologyIRI().map(Object::toString).orElse(null),
+                    id.getVersionIRI().map(Object::toString).orElse(null)
+            };
+        }).orElse(null);
+    }
+
     public void refreshOntologyMetadata(String projectId) {
         ontologyIriCache.remove(projectId);
-        String iri = getOntologyIri(projectId);
-        String version = null;
-        if (iri != null) {
+        String[] live = liveOntologyIds(projectId);
+        String iri = live != null ? live[0] : getOntologyIri(projectId);
+        String version = live != null ? live[1] : null;
+        if (live == null && iri != null) {
             try (TupleQueryResult rs = datasetService.execSelect(projectId,
                     PREFIXES + "SELECT ?v WHERE { " + formatResource(iri) + " owl:versionIRI ?v } LIMIT 1")) {
                 version = rs.hasNext() ? rs.next().getValue("v").stringValue() : null;
@@ -1410,6 +1428,13 @@ public class OntologyMetadataService {
     }
 
     private String resolveOntologyIri(String projectId, boolean useCache) {
+        if (useCache) {
+            String[] live = liveOntologyIds(projectId);
+            if (live != null && live[0] != null) {
+                ontologyIriCache.put(projectId, live[0]);
+                return live[0];
+            }
+        }
         // 1. Check cache
         if (useCache && ontologyIriCache.containsKey(projectId)) {
             return ontologyIriCache.get(projectId);

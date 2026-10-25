@@ -1596,6 +1596,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     options?: { showModal?: boolean; onReady?: () => void }
   ) => {
     if (!targetProjectId || !userId) { return; }
+    if (isDesktop()) {
+      options?.onReady?.();
+      return;
+    }
 
     let settled = false;
 
@@ -8464,6 +8468,10 @@ const updateItemInState = useCallback(
       }
 
       scheduleRollbackRefresh(() => {
+        if (detail?.source !== "AI") {
+          refreshAfterBulkWriteRef.current("rollback");
+          return;
+        }
         if (detail?.entityIRI) {
           console.log("[Dashboard] 🔄 Refreshing entity details after rollback for:", detail.entityIRI);
           console.log("[Dashboard] 🔄 Entity type from event:", detail.entityType, "Current tab:", entitiesTab);
@@ -15014,6 +15022,7 @@ const updateItemInState = useCallback(
                     <div className="flex items-center gap-2">
                       <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
                       <a
+                        data-testid="ontology-iri-value"
                         href={(metadata as any)?.ontologyIRI || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -15034,7 +15043,7 @@ const updateItemInState = useCallback(
                     </div>
                     <div className="flex items-center gap-2">
                       <LinkIcon size={14} className="flex-shrink-0" style={{ color: "var(--success)" }} />
-                      <div className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
+                      <div data-testid="ontology-version-iri-value" className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
                         {(metadata as any)?.versionIRI || "Not specified"}
                       </div>
                     </div>
@@ -15075,6 +15084,7 @@ const updateItemInState = useCallback(
                       return (
                         <div
                           key={key}
+                          data-testid="ontology-annotation-card"
                           className="border rounded-md transition-colors"
                           style={{ borderColor: "var(--border)" }}
                           onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
@@ -15284,6 +15294,8 @@ const updateItemInState = useCallback(
                               {prefixMappings.map((p, idx) => (
                                 <tr
                                   key={`${p.prefix}-${idx}`}
+                                  data-testid="prefix-row"
+                                  data-prefix={p.prefix}
                                   className="border-b"
                                   style={{ borderColor: "var(--border)" }}
                                   onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
