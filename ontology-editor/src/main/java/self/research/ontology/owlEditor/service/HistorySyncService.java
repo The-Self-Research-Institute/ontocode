@@ -144,6 +144,21 @@ public class HistorySyncService {
                 new Update().set("publishedPrId", prId), HistoryChange.class).getModifiedCount();
     }
 
+    public java.util.Set<String> setsUndoneForPr(String projectId, String prId) {
+        java.util.Set<String> undone = new java.util.LinkedHashSet<>();
+        if (projectId == null || prId == null) {
+            return undone;
+        }
+        mongoTemplate.find(Query.query(Criteria.where("projectId").is(projectId).and("publishedPrId").is(prId)
+                .and("source").is(ChangeOrigin.ROLLBACK).and("operationType").regex("^ROLLBACK_")), HistoryChange.class)
+                .forEach(row -> {
+                    if (row.getMetadata() != null && row.getMetadata().get("revertsChangeSetId") instanceof String id) {
+                        undone.add(id);
+                    }
+                });
+        return undone;
+    }
+
     public long markPrPublicationRestored(String projectId, String prId) {
         return setReverted(Criteria.where("projectId").is(projectId).and("entityIRI").is(PrEntries.iriOf(prId))
                 .and("operationType").is(RollbackWorkSupport.PR_PUBLISHED).and("reverted").is(true), false);

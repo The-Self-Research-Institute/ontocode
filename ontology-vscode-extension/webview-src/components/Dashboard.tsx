@@ -8866,6 +8866,20 @@ const updateItemInState = useCallback(
     }
   }, [projectId, user?.userId, user?.email]);
 
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const onPrChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; ops?: string[] }>).detail;
+      if (detail?.projectId !== projectId || !detail.ops?.some((op) => op === "draftPrReverted" || op === "draftPrReapplied")) return;
+      refreshOpenPRCount();
+      void updateDraftCount();
+      fetchData(projectId, false, undefined, true);
+      window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
+    };
+    window.addEventListener("ontology:mutated", onPrChanged);
+    return () => window.removeEventListener("ontology:mutated", onPrChanged);
+  }, [projectId, refreshOpenPRCount, updateDraftCount, fetchData]);
+
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
     const requestId = ++metadataRequestSeqRef.current;
