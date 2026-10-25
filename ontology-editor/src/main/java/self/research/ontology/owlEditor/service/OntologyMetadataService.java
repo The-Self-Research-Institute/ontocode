@@ -70,6 +70,10 @@ public class OntologyMetadataService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private ExactChangeRecorder exactRecorder;
+
     public OntologyMetadataService(SparqlDatasetService datasetService,
                                    ProjectMetadataService projectMetadataService,
                                    @Lazy OntologyMutationService mutationService,
@@ -860,16 +864,29 @@ public class OntologyMetadataService {
             throw new IllegalArgumentException(
                     "GCA could not be parsed. Use Manchester syntax (e.g. 'A and (p some B) SubClassOf C')");
         }
-        if (draft) {
-            mutationService.applyDraft(projectId, userId, List.of(op));
-        } else {
-            mutationService.apply(projectId, List.of(op));
-        }
-        if (historyService != null) {
-            String changeSetId = historyService.recordGroupedMutations(projectId, userId, username, List.of(op), draft);
+        applyRecorded(projectId, userId, username, draft, List.of(op));
+    }
+
+    private void applyRecorded(String projectId, String userId, String username, boolean draft,
+                               List<OntologyMutationService.MutationOp> ops) {
+        Runnable apply = () -> {
             if (draft) {
-                DraftRecordScope.link(changeSetId);
+                mutationService.applyDraft(projectId, userId, ops);
+            } else {
+                mutationService.apply(projectId, ops);
             }
+        };
+        String changeSetId = null;
+        if (exactRecorder != null && historyService != null) {
+            changeSetId = exactRecorder.recordGrouped(projectId, draft, userId, username, ops, apply);
+        } else {
+            apply.run();
+            if (historyService != null) {
+                changeSetId = historyService.recordGroupedMutations(projectId, userId, username, ops, draft);
+            }
+        }
+        if (draft && historyService != null) {
+            DraftRecordScope.link(changeSetId);
         }
     }
 
@@ -925,17 +942,7 @@ public class OntologyMetadataService {
                     new OntologyMutationService.MutationOp(
                             "deleteAxiom", blankNodeId, null, null, null, null,
                             null, null, null, null, null, null, null, null, null));
-            if (draft) {
-                mutationService.applyDraft(projectId, userId, ops);
-            } else {
-                mutationService.apply(projectId, ops);
-            }
-            if (historyService != null) {
-                String changeSetId = historyService.recordGroupedMutations(projectId, userId, username, ops, draft);
-                if (draft) {
-                    DraftRecordScope.link(changeSetId);
-                }
-            }
+            applyRecorded(projectId, userId, username, draft, ops);
         }
     }
 

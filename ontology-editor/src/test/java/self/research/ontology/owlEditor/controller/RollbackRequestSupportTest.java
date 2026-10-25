@@ -92,4 +92,26 @@ class RollbackRequestSupportTest {
     void withoutSignatureCheckingAndWithoutATokenTheOldLocalBehaviourStays() {
         assertNull(support.denyIfNotAllowed(publicChange, P, new MockHttpServletRequest()));
     }
+
+    @Test
+    void aRefusalNamesTheRealSkippedReasonInsteadOfNothingToUndo() {
+        var skipped = new self.research.ontology.owlEditor.service.ChangeRollbackService.Item(
+                "c", null, null, "skos", null, "It was changed since this edit");
+        var result = new self.research.ontology.owlEditor.service.ChangeRollbackService.Result(
+                200, false, false, "UNDO", "cs", List.of(), List.of(skipped), null, "Nothing to undo");
+
+        ResponseEntity<Map<String, Object>> response = RollbackRequestSupport.toBody(result, null, null);
+
+        assertEquals(409, response.getStatusCode().value());
+        assertEquals("It was changed since this edit", response.getBody().get("message"));
+        assertEquals("It was changed since this edit", response.getBody().get("error"));
+    }
+
+    @Test
+    void nothingToUndoStaysWhenNothingWasSkipped() {
+        var result = new self.research.ontology.owlEditor.service.ChangeRollbackService.Result(
+                200, false, false, "UNDO", "cs", List.of(), List.of(), null, "Nothing to undo");
+
+        assertEquals("Nothing to undo", RollbackRequestSupport.toBody(result, null, null).getBody().get("message"));
+    }
 }

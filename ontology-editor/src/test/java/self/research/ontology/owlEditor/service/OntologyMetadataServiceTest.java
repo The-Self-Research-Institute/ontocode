@@ -192,6 +192,27 @@ class OntologyMetadataServiceTest {
         assertEquals("addGCAIntersection", opsCaptor.getValue().get(0).type());
     }
 
+    @Test
+    void addGCIGoesThroughTheExactRecorderSoItCanBeUndone() throws Exception {
+        doThrow(new RuntimeException("manchester parse failed"))
+                .when(generalClassAxiomService)
+                .addGeneralClassAxiom(anyString(), anyString(), anyString(), eq(false), anyString(), anyString());
+        ExactChangeRecorder recorder = org.mockito.Mockito.mock(ExactChangeRecorder.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "exactRecorder", recorder);
+        ArgumentCaptor<Runnable> apply = ArgumentCaptor.forClass(Runnable.class);
+        when(recorder.recordGrouped(eq("proj-1"), eq(false), eq("u1"), eq("User One"), org.mockito.ArgumentMatchers.anyList(),
+                apply.capture())).thenReturn("cs-1");
+
+        service.addGCI("proj-1", "http://ex.org/A and http://ex.org/B", "http://ex.org/C", false, "u1", "User One");
+
+        verify(recorder).recordGrouped(eq("proj-1"), eq(false), eq("u1"), eq("User One"),
+                org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any(Runnable.class));
+        verify(historyService, never()).recordGroupedMutations(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyBoolean());
+        apply.getValue().run();
+        verify(mutationService).apply(eq("proj-1"), org.mockito.ArgumentMatchers.anyList());
+    }
+
     private void givenPublicPrefixes(Map<String, String> prefixes) {
         when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.of(
                 new java.util.HashMap<String, Object>(Map.of("prefixes", new java.util.HashMap<>(prefixes)))));

@@ -51,7 +51,7 @@ public class PrefixRollbackActions implements RollbackActionRunner {
         }
         String current = draft ? currentDraftNamespace(projectId, action, draftOwner) : currentNamespace(projectId, action);
         if (action.expectAbsent()) {
-            return current == null;
+            return current == null || current.equals(OntologyMetadataService.STANDARD_PREFIXES.get(action.prefix()));
         }
         return action.expectedNamespace() == null || action.expectedNamespace().equals(current);
     }

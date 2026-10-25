@@ -114,7 +114,7 @@ import {
 } from "../services/reasoningJobWait";
 import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
-import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields, draftControlsVisible } from "../utils/draftScope";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import codeViewCacheService from "../services/codeViewCacheService";
 import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
@@ -1054,11 +1054,7 @@ const TopMenuBar = ({
 
       <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
         <UndoRunControls menu={undoMenu} />
-        {isDesktop() ? (
-          <span className="hidden sm:inline text-xs font-medium text-gray-500" title="Edits are kept in your private draft until you click Save">
-            Private (Draft)
-          </span>
-        ) : (
+        {isDesktop() ? null : (
           <>
             {autoDraftStatus === 'copying' && (
               <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
@@ -5010,9 +5006,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/id/${encodeProjectId(projectId)}`, {
-        ontologyIRI: ontologyIriDraft.trim(),
-        versionIRI: versionIriDraft.trim() || null,
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/iri`), {
+        ontologyIri: ontologyIriDraft.trim(),
+        versionIri: versionIriDraft.trim(),
+        ...draftBodyFields(),
       });
       setIsEditingOntologyId(false);
       await apiClient
@@ -17752,7 +17749,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   Public View
                 </span>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={() => setShowPullPreview(true)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
@@ -17771,7 +17768,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   )}
                 </button>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={handleDiscardDraft}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
