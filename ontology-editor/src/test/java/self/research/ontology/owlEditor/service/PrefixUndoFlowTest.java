@@ -57,6 +57,12 @@ class PrefixUndoFlowTest {
                     return rows.stream().filter(r -> r.isDraft() == draft && users.contains(r.getUserId()))
                             .sorted((a, b) -> b.getTimestamp().compareTo(a.getTimestamp())).toList();
                 });
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenAnswer(inv -> {
+                    boolean draft = inv.getArgument(1);
+                    return rows.stream().filter(r -> r.isDraft() == draft)
+                            .sorted((a, b) -> b.getTimestamp().compareTo(a.getTimestamp())).toList();
+                });
         RollbackAuditRepository audits = mock(RollbackAuditRepository.class);
         when(audits.save(any())).thenAnswer(inv -> {
             RollbackAudit audit = inv.getArgument(0);
@@ -215,14 +221,14 @@ class PrefixUndoFlowTest {
     }
 
     @Test
-    void aTokenCarryingOnlyTheEmailCannotFindARowStoredUnderTheDatabaseId() {
-        recorded("c1", "prefixAdded", "ex", null, null, "http://ex/", 1);
+    void aTokenCarryingOnlyTheEmailDoesNotOwnARowStoredUnderTheDatabaseIdSoItAsksFirst() {
+        HistoryChange row = recorded("c1", "prefixAdded", "ex", null, null, "http://ex/", 1);
 
         Next next = undoService.nextUndo(P, false, Identity.of(EMAIL));
 
-        assertFalse(next.available());
-        assertEquals("You have no changes to undo", next.reason());
-        assertNull(next.changeId());
+        assertTrue(next.available());
+        assertEquals("c1", next.changeId());
+        assertFalse(Identity.of(EMAIL).owns(row.getUserId()));
     }
 
     @Test

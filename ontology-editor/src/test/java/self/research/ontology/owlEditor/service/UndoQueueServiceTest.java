@@ -56,6 +56,30 @@ class UndoQueueServiceTest {
     private void own(HistoryChange... changes) {
         when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), anyBoolean(), any(), any()))
                 .thenReturn(List.of(changes));
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenReturn(List.of(changes));
+    }
+
+    @Test
+    void thePublicQueueIncludesOtherPeoplesChangesNewestFirst() {
+        own(change("s", "Sam@x.com", "e:S", 6), change("a", "Me@x.com", "e:A", 1));
+
+        Queue queue = service.queue(P, false, me, 5);
+
+        assertEquals("s", queue.steps().get(0).changeId());
+        assertEquals("a", queue.steps().get(1).changeId());
+    }
+
+    @Test
+    void aDiscardedDraftEntryIsNotOfferedAsAStep() {
+        HistoryChange discarded = change("d", "Me@x.com", "e:D", 5);
+        discarded.setDraftDiscarded(true);
+        own(discarded, change("a", "Me@x.com", "e:A", 1));
+
+        Queue queue = service.queue(P, true, me, 5);
+
+        assertEquals(1, queue.steps().size());
+        assertEquals("a", queue.steps().get(0).changeId());
     }
 
     @Test

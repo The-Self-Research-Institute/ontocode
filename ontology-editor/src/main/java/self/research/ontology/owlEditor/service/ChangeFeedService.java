@@ -16,7 +16,11 @@ public class ChangeFeedService {
 
 
     public record Query(int count, int offset, String type, String author, String text,
-                        boolean includeRollbacks, Set<String> viewerIds) {}
+                        boolean includeRollbacks, Set<String> viewerIds) {
+        boolean filtered() {
+            return (type != null && !type.isBlank()) || (author != null && !author.isBlank()) || (text != null && !text.isBlank());
+        }
+    }
 
     public record Page(List<HistoryChange> changes, boolean hasMore) {}
 
@@ -55,6 +59,9 @@ public class ChangeFeedService {
     }
 
     static boolean visible(HistoryChange change, Query query) {
+        if (change.isDraftDiscarded() || (change.getPublishedPrId() != null && !query.filtered())) {
+            return false;
+        }
         if (change.isDraft() && !ownedBy(change, query.viewerIds())) {
             return false;
         }

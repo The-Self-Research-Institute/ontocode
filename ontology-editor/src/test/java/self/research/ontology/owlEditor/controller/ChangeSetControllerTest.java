@@ -70,6 +70,21 @@ class ChangeSetControllerTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void undoOfAChangeSetPublishedByAMergedPrIsRefusedAndPointsToTheRevert() {
+        HistoryChange merged = new HistoryChange();
+        merged.setPublishedPrId("pr1");
+        when(history.getChangeSet("p", "set-1")).thenReturn(List.of(merged));
+
+        ResponseEntity<Map<String, Object>> response = controller.undo("p", "set-1", false, null, request);
+
+        assertEquals(409, response.getStatusCode().value());
+        assertEquals(self.research.ontology.owlEditor.service.PrEntries.MERGED_PR_PART, response.getBody().get("error"));
+        assertEquals("pr1", ((Map<String, Object>) response.getBody().get("revertPr")).get("prId"));
+        verify(rollback, never()).undoChangeSet(any(), any(), any(), anyBoolean());
+    }
+
+    @Test
     void undoRunsForTheActorAndReportsTheChangeSet() {
         List<HistoryChange> entries = List.of(new HistoryChange());
         when(history.getChangeSet("p", "set-1")).thenReturn(entries);

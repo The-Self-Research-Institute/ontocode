@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { isRealVSCode } from '../utils/desktop';
+import { isModalOpen } from '../utils/modalOpen';
 
 const TEXT_SELECTOR = 'input, textarea, select, [contenteditable="true"], [contenteditable=""], .monaco-editor, .cm-editor';
-const MODAL_SELECTOR = '[role="dialog"], [aria-modal="true"]';
 
 function ontologyHasFocus(): boolean {
   if (typeof document === 'undefined' || !document.hasFocus()) {
@@ -12,7 +12,7 @@ function ontologyHasFocus(): boolean {
   if (active && active !== document.body && active.closest(TEXT_SELECTOR)) {
     return false;
   }
-  return !document.querySelector(MODAL_SELECTOR);
+  return !isModalOpen();
 }
 
 interface Handlers {

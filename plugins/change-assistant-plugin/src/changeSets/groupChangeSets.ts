@@ -46,8 +46,22 @@ function newest(entries: ChangeEntry[]): Date {
   return entries.reduce((max, e) => (e.timestamp > max ? e.timestamp : max), entries[0].timestamp);
 }
 
+const ONTOLOGY_HEADER = 'ontology header';
+
+export function ontologyIriChange(entries: ChangeEntry[]): { from: string; to: string } | null {
+  const headers = entries.filter(e => (e.entityLabel || '').toLowerCase() === ONTOLOGY_HEADER);
+  if (headers.length !== entries.length || headers.length !== 2) return null;
+  const removed = headers.find(e => (e.operationType || '').toLowerCase().startsWith('remove'));
+  const added = headers.find(e => (e.operationType || '').toLowerCase().startsWith('add'));
+  if (!removed || !added || !removed.entityUri || !added.entityUri || removed.entityUri === added.entityUri) return null;
+  return { from: removed.entityUri, to: added.entityUri };
+}
+
 export function setTitle(source: 'AI' | 'MANUAL', entries: ChangeEntry[], entityCount: number, summary?: string): string {
+  if (entries[0].changeSetId?.startsWith('pr:')) return entries[0].description || 'Merged PR';
   if (source === 'AI') return summary?.trim() || 'AI edit';
+  const iriChange = ontologyIriChange(entries);
+  if (iriChange) return `Ontology IRI changed: ${iriChange.from} → ${iriChange.to}`;
   if (entityCount > 1) return 'Code View save';
   return entries[0].description || entries[0].entityLabel || 'Manual edit';
 }
@@ -70,7 +84,8 @@ export function buildChangeSet(key: string, entries: ChangeEntry[]): ChangeSet {
   const remaining = entities.reduce((sum, e) => sum + e.remaining, 0);
   const undoable = entities.filter(e => e.undoable);
   const fullyUndone = undoable.length > 0 && undoable.every(e => e.undone);
-  const heading = source === 'MANUAL' && entityCount === 1 ? manualHeading(sorted[0]) : undefined;
+  const mergedPr = !!sorted[0].changeSetId?.startsWith('pr:');
+  const heading = !mergedPr && source === 'MANUAL' && entityCount === 1 ? manualHeading(sorted[0]) : undefined;
   return {
     key,
     changeSetId: sorted[0].changeSetId || null,

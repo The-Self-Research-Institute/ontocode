@@ -50,6 +50,69 @@ describe('undoQueue', () => {
     expect(queue.getSnapshot().summary).toBe('3 change sets undone · 6 changes');
   });
 
+  it('pauses with the list of other people on top and resends with the confirmation flag once confirmed', async () => {
+    const { queue, outcomes, api } = setup([step('a')]);
+    const others = [{ changeSetId: 'cs-o', username: 'sam', label: 'Ontology merge' }];
+    outcomes.push({ kind: 'refused', message: 'Other people on top', othersOnTop: others });
+    await queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().phase).toBe('paused');
+    expect(queue.getSnapshot().othersOnTop).toEqual(others);
+
+    await queue.confirmOthers();
+    await vi.advanceTimersByTimeAsync(50);
+
+    const calls = (api.send as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls[0][4]).toBeUndefined();
+    expect(calls[1][4]).toBe(true);
+    expect(queue.getSnapshot().othersOnTop).toBeUndefined();
+    expect(queue.getSnapshot().phase).toBe('finished');
+  });
+
+  it('pauses with the pull request to revert when the undo target is a merged pull request', async () => {
+    const { queue, outcomes } = setup([step('a')]);
+    outcomes.push({ kind: 'refused', message: 'Reverting a pull request needs a preview', revertPr: { prId: 'pr1', title: 'Add toppings' } });
+    await queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().phase).toBe('paused');
+    expect(queue.getSnapshot().revertPr).toEqual({ prId: 'pr1', title: 'Add toppings' });
+    queue.stopPending();
+    queue.reset();
+    expect(queue.getSnapshot().revertPr).toBeUndefined();
+  });
+
+  it('pauses on someone else\'s change and undoes it after the person confirms', async () => {
+    const { queue, outcomes, api } = setup([step('a')]);
+    outcomes.push({
+      kind: 'refused', message: 'Confirm to undo it',
+      othersOnTop: [{ changeId: 'a', username: 'Sam', label: 'Created class Pizza' }],
+      foreignTarget: { username: 'Sam', label: 'Created class Pizza' },
+    });
+    await queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().phase).toBe('paused');
+    expect(queue.getSnapshot().foreignTarget).toEqual({ username: 'Sam', label: 'Created class Pizza' });
+
+    await queue.confirmOthers();
+    await vi.advanceTimersByTimeAsync(50);
+
+    const calls = (api.send as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls[1][4]).toBe('target');
+    expect(queue.getSnapshot().foreignTarget).toBeUndefined();
+    expect(queue.getSnapshot().phase).toBe('finished');
+  });
+
+  it('ignores a confirmation when nobody else is on top', async () => {
+    const { queue, outcomes, api } = setup([step('a')]);
+    outcomes.push({ kind: 'refused', message: 'Something else' });
+    await queue.press('p', 'undo');
+    await vi.advanceTimersByTimeAsync(50);
+    await queue.confirmOthers();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queue.getSnapshot().phase).toBe('paused');
+    expect((api.send as unknown as { mock: { calls: unknown[][] } }).mock.calls).toHaveLength(1);
+  });
+
   it('exposes the running step detail and keeps it while paused', async () => {
     const detailed = step('a', { source: 'Entities → Classes', affected: 'Dog', restoring: 'A → B', entityIRI: 'http://x#Dog' });
     const { queue, outcomes } = setup([detailed]);
@@ -220,6 +283,15 @@ describe('undoQueue', () => {
     expect(queue.getSnapshot().pending).toBe(0);
   });
 
+  it('sends a redo that has no audit id, as when a reverted pull request is applied again', async () => {
+    const { queue, sends } = setup([]);
+    const hint = { available: true, direction: 'REDO' as const, changeId: 'rv', label: 'Apply again: PR', dependents: [] };
+    const result = await queue.press('p', 'redo', hint);
+    await vi.runAllTimersAsync();
+    expect(result.accepted).toBe(true);
+    expect(sends[0].id).toBe('rv');
+  });
+
   it('runs a redo from the shown step without the queue endpoint', async () => {
     const { queue, api, sends } = setup([]);
     const hint = { available: true, direction: 'REDO' as const, changeId: 'c', auditId: 'au', label: 'R', dependents: [] };
@@ -302,6 +374,6 @@ describe('undoQueue', () => {
   it('only builds steps from available hints', () => {
     expect(stepFromHint(undefined, 'undo')).toBeUndefined();
     expect(stepFromHint({ available: false, direction: 'UNDO', changeId: 'a', dependents: [] }, 'undo')).toBeUndefined();
-    expect(stepFromHint({ available: true, direction: 'REDO', changeId: 'a', dependents: [] }, 'redo')).toBeUndefined();
+    expect(stepFromHint({ available: true, direction: 'REDO', dependents: [] }, 'redo')).toBeUndefined();
   });
 });

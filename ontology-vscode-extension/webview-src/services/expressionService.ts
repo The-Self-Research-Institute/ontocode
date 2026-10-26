@@ -1,6 +1,7 @@
 import apiClient from './apiClient';
 import ontologyMutationService from './ontologyMutationService';
 import { isDesktop } from '../utils/desktop';
+import { announceMutationApplied } from '../utils/committedChange';
 
 export type ClassAxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
 export type PropertyRelationType = 'Domain' | 'Range';
@@ -11,6 +12,10 @@ function withDraftParams(params: URLSearchParams, userId?: string): URLSearchPar
     if (userId) params.set('userId', userId);
   }
   return params;
+}
+
+function announceExpressionEdit(projectId: string, type: string, iri: string, params: URLSearchParams): void {
+  announceMutationApplied(projectId, [{ type, iri }], undefined, params.get('draft') === 'true');
 }
 
 export function isSimpleOntologyIri(value: string): boolean {
@@ -79,6 +84,7 @@ export const expressionService = {
       `/api/ontology/${encodeURIComponent(projectId)}/expression/add-class-axiom${qs ? `?${qs}` : ''}`,
       { classIri, axiomType, expression },
     );
+    announceExpressionEdit(projectId, 'addClassExpression', classIri, params);
   },
 
   async addPropertyExpressionAxiom(
@@ -99,6 +105,7 @@ export const expressionService = {
       `/api/ontology/${encodeURIComponent(projectId)}/expression/add-property-axiom${qs ? `?${qs}` : ''}`,
       { propertyIri, relationType, expression, isDataProperty },
     );
+    announceExpressionEdit(projectId, `addProperty${relationType}`, propertyIri, params);
   },
 
   async deletePropertyExpressionAxiom(
@@ -119,6 +126,7 @@ export const expressionService = {
       `/api/ontology/${encodeURIComponent(projectId)}/expression/delete-property-axiom${qs ? `?${qs}` : ''}`,
       { propertyIri, relationType, expression, isDataProperty },
     );
+    announceExpressionEdit(projectId, `deleteProperty${relationType}`, propertyIri, params);
   },
 };
 

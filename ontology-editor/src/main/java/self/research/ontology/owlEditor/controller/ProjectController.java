@@ -36,6 +36,9 @@ public class ProjectController {
     private final GridFSFileService gridFsFileService;
     private final SparqlDatasetService datasetService;
     private final DraftTrackingService draftTrackingService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.PrSnapshotService prSnapshots;
     private final ChangeTrackingService changeTrackingService;
 
     public ProjectController(ProjectRepository projectRepository,
@@ -209,6 +212,9 @@ public class ProjectController {
 
             // Clear drafts and history (best-effort)
             try {
+                if (prSnapshots != null) {
+                    prSnapshots.dropAllForProject(projectId);
+                }
                 draftTrackingService.discardDrafts(projectId);
                 draftTrackingService.clearAppliedDrafts(projectId);
             } catch (Exception e) {

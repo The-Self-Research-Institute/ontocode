@@ -1009,7 +1009,7 @@
       "rule": "section-3-file-size",
       "file": "ontology-vscode-extension/webview-src/services/apiClient.ts",
       "category": "utility-api-client",
-      "measuredNonblankLines": 434,
+      "measuredNonblankLines": 435,
       "reviewThreshold": 300,
       "blobSha": "b7af1f58c96449aeb286af29a2aa400ab490702c",
       "reason": "Pre-existing file already over the section 3 review threshold when this baseline was captured; not touched by the change that introduced this registry.",

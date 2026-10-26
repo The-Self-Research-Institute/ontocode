@@ -114,7 +114,8 @@ import {
 } from "../services/reasoningJobWait";
 import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
-import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields, draftControlsVisible } from "../utils/draftScope";
+import { isBuiltInPrefix } from "../utils/builtInPrefixes";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import codeViewCacheService from "../services/codeViewCacheService";
 import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
@@ -180,6 +181,7 @@ import {
 } from "./dialogs";
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
 import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
+import { usePullPending } from "../hooks/usePullPending";
 import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
@@ -258,6 +260,7 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
 import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
+import RevertPrDialog from "./RevertPrDialog";
 import PullPreviewDialog from "./PullPreviewDialog";
 
 const DRAFT_SAVE_DISABLED_HINT =
@@ -1052,11 +1055,7 @@ const TopMenuBar = ({
 
       <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
         <UndoRunControls menu={undoMenu} />
-        {isDesktop() ? (
-          <span className="hidden sm:inline text-xs font-medium text-gray-500" title="Edits are kept in your private draft until you click Save">
-            Private (Draft)
-          </span>
-        ) : (
+        {isDesktop() ? null : (
           <>
             {autoDraftStatus === 'copying' && (
               <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
@@ -1524,6 +1523,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [syncMode, setSyncMode] = useState<"private" | "public">("public");
+  const pluginDraftMode = !isDesktop() && syncMode === "private";
   const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
   const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
   const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
@@ -1561,7 +1561,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [revertPr, setRevertPr] = useState<{ prId: string; title?: string } | null>(null);
+  const [reapplyPr, setReapplyPr] = useState<{ prId: string; title?: string } | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setReapplyPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:reapply-pr", open);
+    return () => window.removeEventListener("ontology:reapply-pr", open);
+  }, [projectId]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setRevertPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:revert-pr", open);
+    return () => window.removeEventListener("ontology:revert-pr", open);
+  }, [projectId]);
   const [showPullPreview, setShowPullPreview] = useState(false);
+  const pullPending = usePullPending(
+    projectId || undefined,
+    resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+    syncMode === "private" && !!projectId,
+  );
   const [openPRCount, setOpenPRCount] = useState(0);
 
   const startDraftCopySession = useCallback((
@@ -1570,6 +1597,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     options?: { showModal?: boolean; onReady?: () => void }
   ) => {
     if (!targetProjectId || !userId) { return; }
+    if (isDesktop()) {
+      options?.onReady?.();
+      return;
+    }
 
     let settled = false;
 
@@ -1679,8 +1710,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     notificationService.success("Pull Complete", "Public changes were merged into your draft.");
     fetchData(projectId, false);
     announceMutationApplied(projectId, [{ type: "draftPull" }], undefined, true);
+    pullPending.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
-  }, [projectId]);
+  }, [projectId, pullPending.refresh]);
 
   const refreshOpenPRCount = useCallback(async () => {
     if (!projectId) return;
@@ -4979,9 +5011,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/id/${encodeProjectId(projectId)}`, {
-        ontologyIRI: ontologyIriDraft.trim(),
-        versionIRI: versionIriDraft.trim() || null,
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/iri`), {
+        ontologyIri: ontologyIriDraft.trim(),
+        versionIri: versionIriDraft.trim(),
+        ...draftBodyFields(),
       });
       setIsEditingOntologyId(false);
       await apiClient
@@ -8436,6 +8469,10 @@ const updateItemInState = useCallback(
       }
 
       scheduleRollbackRefresh(() => {
+        if (detail?.source !== "AI") {
+          refreshAfterBulkWriteRef.current("rollback");
+          return;
+        }
         if (detail?.entityIRI) {
           console.log("[Dashboard] 🔄 Refreshing entity details after rollback for:", detail.entityIRI);
           console.log("[Dashboard] 🔄 Entity type from event:", detail.entityType, "Current tab:", entitiesTab);
@@ -8834,6 +8871,20 @@ const updateItemInState = useCallback(
       console.error("[Dashboard] Failed to update draft count:", error);
     }
   }, [projectId, user?.userId, user?.email]);
+
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const onPrChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; ops?: string[] }>).detail;
+      if (detail?.projectId !== projectId || !detail.ops?.some((op) => op === "draftPrReverted" || op === "draftPrReapplied")) return;
+      refreshOpenPRCount();
+      void updateDraftCount();
+      fetchData(projectId, false, undefined, true);
+      window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
+    };
+    window.addEventListener("ontology:mutated", onPrChanged);
+    return () => window.removeEventListener("ontology:mutated", onPrChanged);
+  }, [projectId, refreshOpenPRCount, updateDraftCount, fetchData]);
 
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
@@ -14621,7 +14672,7 @@ const updateItemInState = useCallback(
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
-                  draftMode={!isDesktop() && syncMode === "private"}
+                  draftMode={pluginDraftMode}
                   prefixes={(metadata as any)?.prefixes || []}
                   context={{
                     apiClient,
@@ -14672,7 +14723,7 @@ const updateItemInState = useCallback(
               context={{
                 projectId,
                 apiBaseUrl: getBaseUrl(),
-                draftMode: !isDesktop() && syncMode === "private",
+                draftMode: pluginDraftMode,
                 userId: graphActor.userId,
                 username: graphActor.username,
                 permissions: {
@@ -14749,7 +14800,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} draftMode={!isDesktop() && syncMode === "private"} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14788,7 +14839,7 @@ const updateItemInState = useCallback(
               context={{ apiClient }}
               userId={actor.userId}
               username={actor.username}
-              draftMode={!isDesktop() && syncMode === "private"}
+              draftMode={pluginDraftMode}
               onViewOnlyAction={isViewOnlyMember ? handleViewOnlyAction : undefined}
               onDraftRequired={!isDesktop() && isProjectDraftEditorRole && syncMode !== 'private'
                 ? () => setShowProPromptType('draftRequired')
@@ -14833,7 +14884,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14972,6 +15023,7 @@ const updateItemInState = useCallback(
                     <div className="flex items-center gap-2">
                       <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
                       <a
+                        data-testid="ontology-iri-value"
                         href={(metadata as any)?.ontologyIRI || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -14992,7 +15044,7 @@ const updateItemInState = useCallback(
                     </div>
                     <div className="flex items-center gap-2">
                       <LinkIcon size={14} className="flex-shrink-0" style={{ color: "var(--success)" }} />
-                      <div className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
+                      <div data-testid="ontology-version-iri-value" className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
                         {(metadata as any)?.versionIRI || "Not specified"}
                       </div>
                     </div>
@@ -15033,6 +15085,7 @@ const updateItemInState = useCallback(
                       return (
                         <div
                           key={key}
+                          data-testid="ontology-annotation-card"
                           className="border rounded-md transition-colors"
                           style={{ borderColor: "var(--border)" }}
                           onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
@@ -15242,6 +15295,8 @@ const updateItemInState = useCallback(
                               {prefixMappings.map((p, idx) => (
                                 <tr
                                   key={`${p.prefix}-${idx}`}
+                                  data-testid="prefix-row"
+                                  data-prefix={p.prefix}
                                   className="border-b"
                                   style={{ borderColor: "var(--border)" }}
                                   onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
@@ -15263,6 +15318,9 @@ const updateItemInState = useCallback(
                                       >
                                         <Edit2 size={12} />
                                       </button>
+                                      {isBuiltInPrefix(p.prefix, p.namespace) ? (
+                                        <span className="px-1 text-[10px] opacity-60" title="Standard prefix, always available">built-in</span>
+                                      ) : (
                                       <button
                                         onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeletePrefix(p.prefix)}
                                         className="p-1 rounded text-[10px]"
@@ -15271,6 +15329,7 @@ const updateItemInState = useCallback(
                                       >
                                         <Trash2 size={12} />
                                       </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -17707,18 +17766,26 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   Public View
                 </span>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={() => setShowPullPreview(true)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
                   style={{ borderColor: "var(--color-border)" }}
-                  title="Preview and pull latest public version into your draft"
+                  title={pullPending.pending
+                    ? "Public has new changes since your draft started. Pull them into your draft."
+                    : "Preview and pull latest public version into your draft"}
                 >
                   <Download size={12} />
                   <span className="hidden sm:inline">Pull</span>
+                  {pullPending.pending && (
+                    <span
+                      aria-label="Pull pending"
+                      className="inline-block w-2 h-2 rounded-full bg-amber-500"
+                    />
+                  )}
                 </button>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={handleDiscardDraft}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
@@ -18541,6 +18608,27 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           }
         }}
       />
+
+      {projectId && reapplyPr && (
+        <RevertPrDialog
+          mode="reapply"
+          projectId={projectId}
+          prId={reapplyPr.prId}
+          title={reapplyPr.title}
+          onClose={() => setReapplyPr(null)}
+          onDone={() => setReapplyPr(null)}
+        />
+      )}
+
+      {projectId && revertPr && (
+        <RevertPrDialog
+          projectId={projectId}
+          prId={revertPr.prId}
+          title={revertPr.title}
+          onClose={() => setRevertPr(null)}
+          onDone={() => setRevertPr(null)}
+        />
+      )}
 
       {projectId && (
         <DraftPRPanel
