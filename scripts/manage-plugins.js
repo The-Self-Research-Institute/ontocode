@@ -104,7 +104,7 @@ const PLUGINS = [
     description: 'Turn xlsx, xls and csv rows into classes, individuals and property values with transformation rules, preview the axioms, and import them as one undoable change.',
     version: '1.0.0',
     category: 'Import/Export',
-    keywords: ['spreadsheet', 'excel', 'csv', 'import', 'cellfie', 'mapping', 'owl', 'ontology'],
+    keywords: ['spreadsheet', 'excel', 'csv', 'import', 'cellfie'],
     featured: true
   }
 ];
