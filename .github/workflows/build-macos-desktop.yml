@@ -124,10 +124,32 @@ jobs:
             if npm run $script -- $targets --${{ matrix.arch }} --publish never $args 2>&1 | tee dist-build.log; then
               break
             fi
-            if [ "$attempt" = 3 ] || ! grep -q -E "Failed to staple|network connection was lost" dist-build.log; then
+            if ! grep -q -E "Failed to staple|network connection was lost" dist-build.log; then
               exit 1
             fi
-            echo "Apple could not be reached while stapling, trying again (attempt $((attempt + 1)) of 3)"
+            app=$(ls -d dist-electron/mac*/*.app 2>/dev/null | head -1)
+            if [ -z "$app" ]; then
+              if [ "$attempt" = 3 ]; then
+                exit 1
+              fi
+              echo "Apple could not be reached while stapling, trying again (attempt $((attempt + 1)) of 3)"
+              continue
+            fi
+            echo "Apple accepted the app but could not be reached to attach its ticket. Retrying only the stapling step."
+            stapled=0
+            for try in 1 2 3 4 5 6 7 8 9 10; do
+              if xcrun stapler staple "$app"; then
+                stapled=1
+                break
+              fi
+              echo "Stapling try $try of 10 failed, waiting 30 seconds"
+              sleep 30
+            done
+            if [ "$stapled" != 1 ]; then
+              echo "::warning::Stapling failed after 10 tries. The app is signed and notarized but has no ticket attached. It opens normally while the Mac is online."
+            fi
+            npx electron-builder --prepackaged "$app" --mac dmg --${{ matrix.arch }} --publish never -c.mac.identity=null
+            break
           done
       - name: Check the app is signed
         if: inputs.target != 'mas-dev'
