@@ -128,6 +128,68 @@ class DisjointAndMoveHistoryTest {
         assertEquals(true, plan.unsupported().isEmpty());
     }
 
+    private static final String DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
+    private static final String RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
+
+    @Test
+    void addingADomainIsARecordedStatementThatCanBeReversed() {
+        Map<String, Object> row = record(op("addPropertyDomain", "http://x/hasWeight", null, "http://x/Vehicle"));
+        assertEquals(1, subs(row).size());
+        assertEquals(DOMAIN, subs(row).get(0).get("predicate"));
+        assertEquals("http://x/Vehicle", subs(row).get(0).get("newValue"));
+        assertEquals("true", subs(row).get(0).get("addition"));
+        assertEquals("addStatement", row.get("operationType"));
+    }
+
+    @Test
+    void removingADomainOrChangingARangeKeepsTheClassIri() {
+        Map<String, Object> removed = record(op("deletePropertyDomain", "http://x/hasWeight", null, "http://x/Vehicle"));
+        assertEquals("http://x/Vehicle", subs(removed).get(0).get("oldValue"));
+        assertEquals("false", subs(removed).get(0).get("addition"));
+        Map<String, Object> range = record(op("addPropertyRange", "http://x/hasWeight", null, "http://www.w3.org/2001/XMLSchema#decimal"));
+        assertEquals(RANGE, subs(range).get(0).get("predicate"));
+    }
+
+    @Test
+    void aRestrictionDomainIsNotSquashedIntoAPlainDomain() {
+        MutationOp restriction = new MutationOp("addPropertyDomain", "http://x/hasWeight", null, null, null, null,
+                "http://x/Vehicle", null, "some", null, null, null, null, null, null);
+        Map<String, Object> row = record(restriction);
+        assertEquals(null, row.get("subChanges"));
+        assertEquals("addPropertyDomain", row.get("operationType"));
+    }
+
+    @Test
+    void undoingADomainOrRangeAddRemovesIt() {
+        var change = new self.research.ontology.owlEditor.model.HistoryChange();
+        change.setEntityIRI("http://x/hasWeight");
+        var plan = new RollbackMutationPlanner().planSubChanges(change, List.of(
+                sub("1", DOMAIN, null, "http://x/Vehicle", true),
+                sub("2", RANGE, null, "http://x/Range", true)), true);
+        assertEquals(List.of("deletePropertyDomain:http://x/Vehicle", "deletePropertyRange:http://x/Range"),
+                plan.mutations().stream().map(m -> m.type() + ":" + m.target()).toList());
+    }
+
+    @Test
+    void undoingACharacteristicAddRemovesTheCharacteristicNotAClassAssertion() {
+        var change = new self.research.ontology.owlEditor.model.HistoryChange();
+        change.setEntityIRI("http://x/drives");
+        String functional = "http://www.w3.org/2002/07/owl#FunctionalProperty";
+        var plan = new RollbackMutationPlanner().planSubChanges(change, List.of(
+                sub("1", "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", null, functional, true)), true);
+        assertEquals(List.of("deleteCharacteristic:" + functional),
+                plan.mutations().stream().map(m -> m.type() + ":" + m.target()).toList());
+    }
+
+    @Test
+    void undoingATypeThatIsAClassStaysAClassAssertion() {
+        var change = new self.research.ontology.owlEditor.model.HistoryChange();
+        change.setEntityIRI("http://x/car1");
+        var plan = new RollbackMutationPlanner().planSubChanges(change, List.of(
+                sub("1", "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", null, "http://x/Car", true)), true);
+        assertEquals(List.of("removeClassAssertion"), plan.mutations().stream().map(m -> m.type()).toList());
+    }
+
     @Test
     void classificationUsesTheTargetAsTheNewValueOfAnUpdate() {
         MutationOp update = op("updateSubClassOf", "http://x/A", "http://x/old", "http://x/new");

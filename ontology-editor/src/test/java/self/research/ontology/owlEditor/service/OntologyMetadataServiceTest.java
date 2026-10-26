@@ -192,6 +192,69 @@ class OntologyMetadataServiceTest {
         assertEquals("addGCAIntersection", opsCaptor.getValue().get(0).type());
     }
 
+    @Test
+    void addGCIGoesThroughTheExactRecorderSoItCanBeUndone() throws Exception {
+        doThrow(new RuntimeException("manchester parse failed"))
+                .when(generalClassAxiomService)
+                .addGeneralClassAxiom(anyString(), anyString(), anyString(), eq(false), anyString(), anyString());
+        ExactChangeRecorder recorder = org.mockito.Mockito.mock(ExactChangeRecorder.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "exactRecorder", recorder);
+        ArgumentCaptor<Runnable> apply = ArgumentCaptor.forClass(Runnable.class);
+        when(recorder.recordGrouped(eq("proj-1"), eq(false), eq("u1"), eq("User One"), org.mockito.ArgumentMatchers.anyList(),
+                apply.capture())).thenReturn("cs-1");
+
+        service.addGCI("proj-1", "http://ex.org/A and http://ex.org/B", "http://ex.org/C", false, "u1", "User One");
+
+        verify(recorder).recordGrouped(eq("proj-1"), eq(false), eq("u1"), eq("User One"),
+                org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.any(Runnable.class));
+        verify(historyService, never()).recordGroupedMutations(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyBoolean());
+        apply.getValue().run();
+        verify(mutationService).apply(eq("proj-1"), org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void refreshingAfterAnUndoReadsTheIriFromTheLiveModelOnDesktopNotFromTheStaleStore() throws Exception {
+        var manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(new org.semanticweb.owlapi.model.OWLOntologyID(
+                java.util.Optional.of(org.semanticweb.owlapi.model.IRI.create("http://ex.org/restored")),
+                java.util.Optional.of(org.semanticweb.owlapi.model.IRI.create("http://ex.org/restored/1.0"))));
+        var cache = org.mockito.Mockito.mock(self.research.ontology.owlEditor.cache.ProjectOntologyCache.class);
+        when(cache.get("proj-1")).thenReturn(Optional.of(
+                new self.research.ontology.owlEditor.cache.ProjectOntologyCache.CachedOntology(ontology, null, manager, false)));
+        var desktop = org.mockito.Mockito.mock(DesktopOwlApiMutationService.class);
+        when(desktop.isAuthoritative("proj-1")).thenReturn(true);
+        ReflectionTestUtils.setField(service, "ontologyCache", cache);
+        ReflectionTestUtils.setField(service, "desktopOwlApi", desktop);
+        when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.of(
+                new java.util.HashMap<String, Object>(Map.of("ontologyIRI", "http://ex.org/stale"))));
+
+        service.refreshOntologyMetadata("proj-1");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> written = ArgumentCaptor.forClass(Map.class);
+        verify(projectMetadataService).writeMeta(eq("proj-1"), written.capture());
+        assertEquals("http://ex.org/restored", written.getValue().get("ontologyIRI"));
+        assertEquals("http://ex.org/restored/1.0", written.getValue().get("versionIRI"));
+        verify(datasetService, never()).execSelect(anyString(), anyString());
+    }
+
+    @Test
+    void theOntologyIriComesFromTheLiveModelOnDesktopEvenWhenTheGraphStoreHasNothingYet() throws Exception {
+        var manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(org.semanticweb.owlapi.model.IRI.create("http://ex.org/live"));
+        var cache = org.mockito.Mockito.mock(self.research.ontology.owlEditor.cache.ProjectOntologyCache.class);
+        when(cache.get("proj-1")).thenReturn(Optional.of(
+                new self.research.ontology.owlEditor.cache.ProjectOntologyCache.CachedOntology(ontology, null, manager, false)));
+        var desktop = org.mockito.Mockito.mock(DesktopOwlApiMutationService.class);
+        when(desktop.isAuthoritative("proj-1")).thenReturn(true);
+        ReflectionTestUtils.setField(service, "ontologyCache", cache);
+        ReflectionTestUtils.setField(service, "desktopOwlApi", desktop);
+
+        assertEquals("http://ex.org/live", service.currentOntologyIri("proj-1", false, null));
+        verify(datasetService, never()).execSelect(anyString(), anyString());
+    }
+
     private void givenPublicPrefixes(Map<String, String> prefixes) {
         when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.of(
                 new java.util.HashMap<String, Object>(Map.of("prefixes", new java.util.HashMap<>(prefixes)))));

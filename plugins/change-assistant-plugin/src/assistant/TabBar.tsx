@@ -8,6 +8,8 @@ interface TabBarProps {
   liveCount: number;
   stats: ChangeStats;
   isDraftActive: boolean;
+  changesLabel?: string;
+  changesCount?: number;
 }
 
 function badgeClass(id: string): string {
@@ -16,7 +18,7 @@ function badgeClass(id: string): string {
     'bg-purple-100 text-purple-600';
 }
 
-const TabBar: React.FC<TabBarProps> = ({ activeTab, onSelect, liveCount, stats, isDraftActive }) => (
+const TabBar: React.FC<TabBarProps> = ({ activeTab, onSelect, liveCount, stats, isDraftActive, changesLabel, changesCount }) => (
   <div className="border-b">
     <div className="flex overflow-x-auto">
       {[
@@ -24,7 +26,7 @@ const TabBar: React.FC<TabBarProps> = ({ activeTab, onSelect, liveCount, stats, 
         ...(isDraftActive || stats.draftChanges > 0
           ? [{ id: 'drafts', label: 'Drafts', icon: Edit3, count: stats.draftChanges > 0 ? stats.draftChanges : undefined }]
           : []),
-        { id: 'changes', label: 'Saved', icon: GitCommit, count: stats.totalChanges },
+        { id: 'changes', label: changesLabel ?? 'Saved', icon: GitCommit, count: changesCount ?? stats.totalChanges },
         { id: 'conflicts', label: 'Conflicts', icon: AlertTriangle, count: stats.conflicts > 0 ? stats.conflicts : undefined },
         { id: 'history', label: 'Timeline', icon: History },
         { id: 'stats', label: 'Stats', icon: BarChart3 }

@@ -359,7 +359,8 @@ public class OntologyMutationService {
         org.eclipse.rdf4j.model.Model before = rawUpdateHistory == null ? null : rawUpdateHistory.snapshot(projectId, draft, userId);
         applyRawUpdate(projectId, sparql, draft, userId);
         if (before != null) {
-            rawUpdateHistory.record(projectId, draft, userId, username, before);
+            String actor = RequestActor.recordedId(null, userId, draft);
+            rawUpdateHistory.record(projectId, draft, actor, username == null || username.isBlank() ? actor : username, before);
         }
     }
 

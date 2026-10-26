@@ -121,7 +121,7 @@ export function buildEntityRow(entry: ChangeEntry): EntityRow {
     entry,
     undoable,
     label: entry.entityLabel || (undoable ? 'Unnamed entity' : otherChangesLabel(entry)),
-    badge: undoable ? entityBadge(entry) : entry.undoReason ? `Can't undo: ${entry.undoReason}` : "Can't undo",
+    badge: undoable || entry.setOnly ? entityBadge(entry) : entry.undoReason ? `Can't undo: ${entry.undoReason}` : "Can't undo",
     properties,
     undone,
     undoneBy: entry.revertedBy || last?.undoneBy,

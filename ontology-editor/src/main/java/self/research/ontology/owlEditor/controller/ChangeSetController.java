@@ -77,6 +77,10 @@ public class ChangeSetController {
         if (denied != null) {
             return denied;
         }
+        ResponseEntity<Map<String, Object>> mergedPr = undo ? RollbackRequestSupport.denyIfMergedPr(entries) : null;
+        if (mergedPr != null) {
+            return mergedPr;
+        }
         ChangeRollbackService.Actor actor = support.actor(request, body);
         ChangeRollbackService.Result result = undo
                 ? rollbackService.undoChangeSet(projectId, changeSetId, actor, dryRun)

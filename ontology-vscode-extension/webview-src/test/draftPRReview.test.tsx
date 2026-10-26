@@ -90,7 +90,7 @@ beforeEach(() => {
       return { prs: [{ id: "pr1", projectId: "p1", authorId: "author1", authorUsername: "Author", title: TITLE,
         status: "OPEN", changeCount: DRAFTS.length, createdAt: "2026-10-20" }] };
     }
-    if (url.endsWith("/drafts")) {
+    if (url.endsWith("/drafts") || url.endsWith("/changes")) {
       return { drafts: DRAFTS };
     }
     if (url.endsWith("/drafts/full-diff")) {

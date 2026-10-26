@@ -100,6 +100,29 @@ class OntologyMutationServiceTest {
     }
 
     @Test
+    void onDesktopARawUpdateIsRecordedForTheLocalUserWhateverThePageSent() {
+        var subject = VF.createIRI("http://ex.org/Pizza");
+        var predicate = VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label");
+        Statement before = VF.createStatement(subject, predicate, VF.createLiteral("Pizza"));
+        Statement after = VF.createStatement(subject, predicate, VF.createLiteral("Pizza Margherita"));
+        when(datasetService.execConstructAll("proj-1"))
+                .thenReturn(fakeResult(List.of(before)))
+                .thenReturn(fakeResult(List.of(after)));
+        RequestActor.useDesktopIdentity(true);
+        try {
+            service.applyRawUpdateWithHistory("proj-1", "DELETE {...} INSERT {...} WHERE {...}", false, "anonymous", "User One");
+        } finally {
+            RequestActor.useDesktopIdentity(false);
+        }
+
+        verify(historyService).recordEdit(anyString(), org.mockito.ArgumentMatchers.eq("desktop-user-local"), anyString(),
+                anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+                anyString(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.argThat(subChanges -> subChanges != null && !subChanges.isEmpty()),
+                org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void applyRawUpdateWithHistoryRecordsDraftUpdatesFromTheDraftGraph() {
         var subject = VF.createIRI("http://ex.org/Pizza");
         var predicate = VF.createIRI("http://www.w3.org/2000/01/rdf-schema#label");

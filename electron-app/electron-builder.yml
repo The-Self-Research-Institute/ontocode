@@ -113,9 +113,18 @@ mac:
         - arm64
   icon: build-assets/icon.icns
   category: public.app-category.developer-tools
+  signIgnore:
+    - '\.jsa$'
   # Notarisation (set APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD in CI)
   # notarize:
   #   teamId: YOUR_TEAM_ID
+
+mas:
+  hardenedRuntime: false
+  entitlements: build-assets/entitlements.mas.plist
+  entitlementsInherit: build-assets/entitlements.mas.inherit.plist
+  provisioningProfile: build-assets/embedded.provisionprofile
+  category: public.app-category.developer-tools
 
 dmg:
   window:
