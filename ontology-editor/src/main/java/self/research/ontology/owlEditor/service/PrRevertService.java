@@ -107,7 +107,7 @@ public class PrRevertService {
         for (int i = 0; i < ordered.size(); i++) {
             String changeSetId = ordered.get(i);
             ChangeRollbackService.Result result = rollback.undoChangeSet(projectId, changeSetId,
-                    new Actor(userId, username == null ? userId : username, prId + ":" + changeSetId), false);
+                    new Actor(userId, username == null ? userId : username, prId + ":" + pr.getRevertStartedAt().toEpochMilli() + ":" + changeSetId), false);
             historySync.tagRollbackRowsOfPr(projectId, ordered, prId);
             if (!canProceed(result, alreadyUndone(result))) {
                 report.get(i).put("failed", true);
@@ -176,6 +176,10 @@ public class PrRevertService {
         }
         List<String> oldestFirst = new ArrayList<>(newestFirst(projectId, ids));
         java.util.Collections.reverse(oldestFirst);
+        java.util.Set<String> undoneByRevert = historySync.setsUndoneForPr(projectId, prId);
+        if (!undoneByRevert.isEmpty()) {
+            oldestFirst.removeIf(id -> !undoneByRevert.contains(id));
+        }
         String name = username == null ? userId : username;
         List<Map<String, Object>> report = new ArrayList<>();
         boolean blocked = false;
@@ -198,7 +202,7 @@ public class PrRevertService {
         int done = 0;
         for (int i = 0; i < oldestFirst.size(); i++) {
             ChangeRollbackService.Result result = rollback.redoChangeSetForPr(projectId, oldestFirst.get(i),
-                    new Actor(userId, name, prId + ":reapply:" + oldestFirst.get(i)), false);
+                    new Actor(userId, name, prId + ":reapply:" + (pr.getRevertedAt() == null ? 0 : pr.getRevertedAt().toEpochMilli()) + ":" + oldestFirst.get(i)), false);
             historySync.tagRollbackRowsOfPr(projectId, oldestFirst, prId);
             if (!canRedo(result)) {
                 report.get(i).put("failed", true);

@@ -84,6 +84,10 @@ public class ChangeRollbackService {
     private RollbackActionRunner actionRunner;
 
     @Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private OntologyMetadataService metadataService;
+
+    @Autowired(required = false)
     private DraftMergeApplier mergeApplier;
 
     @Autowired(required = false)
@@ -206,6 +210,18 @@ public class ChangeRollbackService {
         return new Result(200, true, true, req.direction(), scopeId(req), applied, skipped, null, message);
     }
 
+    private void refreshStoredMetadata(Request req, List<HistoryChange> entries) {
+        if (metadataService == null || entries.isEmpty() || entries.get(0).isDraft()) {
+            return;
+        }
+        try {
+            metadataService.refreshOntologyMetadata(req.projectId());
+        } catch (RuntimeException e) {
+            log.warn("[UNDO] Could not refresh the stored ontology IRI after {} in project {}: {}",
+                    req.direction(), req.projectId(), e.getMessage());
+        }
+    }
+
     private Result applyInOrder(Request req, List<HistoryChange> entries) {
         List<Item> applied = new ArrayList<>();
         List<Item> skipped = new ArrayList<>();
@@ -248,6 +264,7 @@ public class ChangeRollbackService {
         String description = recorder.recordHistory(req, entries, applied, audit.getId());
         recorder.broadcast(req, audit.getId(), entries, description);
         String warning = groups == null || !UNDO.equals(req.direction()) ? null : groups.warning(entries);
+        refreshStoredMetadata(req, entries);
         return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), warning);
     }
 

@@ -114,7 +114,8 @@ import {
 } from "../services/reasoningJobWait";
 import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
-import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields, draftControlsVisible } from "../utils/draftScope";
+import { isBuiltInPrefix } from "../utils/builtInPrefixes";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import codeViewCacheService from "../services/codeViewCacheService";
 import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
@@ -1054,11 +1055,7 @@ const TopMenuBar = ({
 
       <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
         <UndoRunControls menu={undoMenu} />
-        {isDesktop() ? (
-          <span className="hidden sm:inline text-xs font-medium text-gray-500" title="Edits are kept in your private draft until you click Save">
-            Private (Draft)
-          </span>
-        ) : (
+        {isDesktop() ? null : (
           <>
             {autoDraftStatus === 'copying' && (
               <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
@@ -1600,6 +1597,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     options?: { showModal?: boolean; onReady?: () => void }
   ) => {
     if (!targetProjectId || !userId) { return; }
+    if (isDesktop()) {
+      options?.onReady?.();
+      return;
+    }
 
     let settled = false;
 
@@ -5010,9 +5011,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/id/${encodeProjectId(projectId)}`, {
-        ontologyIRI: ontologyIriDraft.trim(),
-        versionIRI: versionIriDraft.trim() || null,
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/iri`), {
+        ontologyIri: ontologyIriDraft.trim(),
+        versionIri: versionIriDraft.trim(),
+        ...draftBodyFields(),
       });
       setIsEditingOntologyId(false);
       await apiClient
@@ -8467,6 +8469,10 @@ const updateItemInState = useCallback(
       }
 
       scheduleRollbackRefresh(() => {
+        if (detail?.source !== "AI") {
+          refreshAfterBulkWriteRef.current("rollback");
+          return;
+        }
         if (detail?.entityIRI) {
           console.log("[Dashboard] 🔄 Refreshing entity details after rollback for:", detail.entityIRI);
           console.log("[Dashboard] 🔄 Entity type from event:", detail.entityType, "Current tab:", entitiesTab);
@@ -8865,6 +8871,20 @@ const updateItemInState = useCallback(
       console.error("[Dashboard] Failed to update draft count:", error);
     }
   }, [projectId, user?.userId, user?.email]);
+
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const onPrChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; ops?: string[] }>).detail;
+      if (detail?.projectId !== projectId || !detail.ops?.some((op) => op === "draftPrReverted" || op === "draftPrReapplied")) return;
+      refreshOpenPRCount();
+      void updateDraftCount();
+      fetchData(projectId, false, undefined, true);
+      window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
+    };
+    window.addEventListener("ontology:mutated", onPrChanged);
+    return () => window.removeEventListener("ontology:mutated", onPrChanged);
+  }, [projectId, refreshOpenPRCount, updateDraftCount, fetchData]);
 
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
@@ -15003,6 +15023,7 @@ const updateItemInState = useCallback(
                     <div className="flex items-center gap-2">
                       <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
                       <a
+                        data-testid="ontology-iri-value"
                         href={(metadata as any)?.ontologyIRI || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -15023,7 +15044,7 @@ const updateItemInState = useCallback(
                     </div>
                     <div className="flex items-center gap-2">
                       <LinkIcon size={14} className="flex-shrink-0" style={{ color: "var(--success)" }} />
-                      <div className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
+                      <div data-testid="ontology-version-iri-value" className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
                         {(metadata as any)?.versionIRI || "Not specified"}
                       </div>
                     </div>
@@ -15064,6 +15085,7 @@ const updateItemInState = useCallback(
                       return (
                         <div
                           key={key}
+                          data-testid="ontology-annotation-card"
                           className="border rounded-md transition-colors"
                           style={{ borderColor: "var(--border)" }}
                           onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
@@ -15273,6 +15295,8 @@ const updateItemInState = useCallback(
                               {prefixMappings.map((p, idx) => (
                                 <tr
                                   key={`${p.prefix}-${idx}`}
+                                  data-testid="prefix-row"
+                                  data-prefix={p.prefix}
                                   className="border-b"
                                   style={{ borderColor: "var(--border)" }}
                                   onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
@@ -15294,6 +15318,9 @@ const updateItemInState = useCallback(
                                       >
                                         <Edit2 size={12} />
                                       </button>
+                                      {isBuiltInPrefix(p.prefix, p.namespace) ? (
+                                        <span className="px-1 text-[10px] opacity-60" title="Standard prefix, always available">built-in</span>
+                                      ) : (
                                       <button
                                         onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeletePrefix(p.prefix)}
                                         className="p-1 rounded text-[10px]"
@@ -15302,6 +15329,7 @@ const updateItemInState = useCallback(
                                       >
                                         <Trash2 size={12} />
                                       </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -17738,7 +17766,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   Public View
                 </span>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={() => setShowPullPreview(true)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
@@ -17757,7 +17785,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   )}
                 </button>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={handleDiscardDraft}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"

@@ -13,7 +13,7 @@ import {
 import { computeStats, countEntries, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
 import { buildEntityRow, canUndoEntry, manualHeading, propertyRows } from '../src/changeSets/entityRows';
 import { entityTarget, propertyTarget, setTarget } from '../src/changeSets/targets';
-import { groupChangeSets } from '../src/changeSets/groupChangeSets';
+import { groupChangeSets, ontologyIriChange } from '../src/changeSets/groupChangeSets';
 import { inScope } from '../src/assistant/hooks/useChangeFilters';
 import { nextFeedOffset } from '../src/assistant/feedPaging';
 import { STATUS_FILTERS } from '../src/assistant/statusFilters';
@@ -426,5 +426,25 @@ describe('a merged pull request card', () => {
 
   it('is not a merged pull request card for ordinary change sets', () => {
     expect(mergedPrOf((groupChangeSets([item({ changeSetId: 'set-1' })])[0] as any).set)).toBeNull();
+  });
+});
+
+describe('ontology IRI change', () => {
+  const header = (op: string, uri: string, id: string): ChangeEntry => ({
+    id, timestamp: new Date('2026-10-25T08:00:00Z'), author: 'Local user', type: 'axiom', action: op.startsWith('add') ? 'added' : 'removed',
+    entityUri: uri, entityLabel: 'ontology header', description: 'Ontology header: type=Ontology', operationType: op,
+    changeSetId: 'cs-iri', source: 'MANUAL'
+  });
+
+  it('is named by the old and the new IRI instead of a generic Code View save', () => {
+    const entries = [header('removeStatement', 'http://x/pizza', 'a'), header('addStatement', 'http://x/pizzaas', 'b')];
+    expect(ontologyIriChange(entries)).toEqual({ from: 'http://x/pizza', to: 'http://x/pizzaas' });
+    const items = groupChangeSets(entries);
+    expect((items[0] as any).set.title).toBe('Ontology IRI changed: http://x/pizza → http://x/pizzaas');
+  });
+
+  it('leaves other header edits alone', () => {
+    expect(ontologyIriChange([header('addStatement', 'http://x/pizza', 'a')])).toBeNull();
+    expect(ontologyIriChange([header('removeStatement', 'http://x/pizza', 'a'), header('addStatement', 'http://x/pizza', 'b')])).toBeNull();
   });
 });
