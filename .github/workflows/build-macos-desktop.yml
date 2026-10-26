@@ -75,6 +75,9 @@ jobs:
           for d in electron-app ontology-vscode-extension ontology-vscode-extension/webview-src plugins/*; do
             (cd "$d" && npm ci)
           done
+      - name: Build the plugin bundles
+        working-directory: electron-app
+        run: node scripts/build-desktop.js --plugins
       - name: Build the dmg
         working-directory: electron-app
         env:
