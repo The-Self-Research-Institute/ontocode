@@ -213,7 +213,7 @@ import {
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
 import { buildEntityIri, isBulkChangeIri, labelForNewEntity } from "../utils/entityIri";
 import { requestChangeAssistantTab } from "../utils/changeAssistantNav";
-import { clearChildrenOf, keepPendingChildren } from "../utils/treeChildren";
+import { keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
 import { DRAFT_COPY_MAX_MISSING, DRAFT_COPY_MAX_WAIT_MS, ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
 import { useLastCallTimer } from "../hooks/useLastCallTimer";
@@ -7362,7 +7362,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
   }, [showLoadingChoice, isExpectingFileReady, backgroundImportActive, projectId, pendingImportProjectId]);
 
   const loadChildren = useCallback(
-    async (nodeId: string, pendingChildren?: TreeNode[]) => {
+    async (nodeId: string, pendingChildren?: TreeNode[], force?: boolean) => {
       if (!projectId) return;
       try {
         console.log(`[loadChildren] Loading children for node: ${nodeId}`);
@@ -7387,7 +7387,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           return prev;
         });
 
-        if (alreadyLoaded) {
+        if (alreadyLoaded && !force) {
           console.log(`[loadChildren] ⚡ Children already loaded for node: ${nodeId}, skipping API call`);
           return;
         }
@@ -7399,7 +7399,19 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`
           : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`;
 
-        const response = await apiClient.get<any>(endpoint);
+        let response = await apiClient.get<any>(endpoint);
+        const hierarchyBuilding = (res: any) =>
+          !!res &&
+          !Array.isArray(res) &&
+          (res.hierarchyReady === false || res.status === 202 || res.success === false || isOwlApiWarmingResponse(res));
+        for (let attempt = 0; attempt < 8 && hierarchyBuilding(response); attempt += 1) {
+          console.warn(`[loadChildren] Class hierarchy not ready for ${nodeId} (attempt ${attempt + 1}) — keeping current tree and retrying`);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          response = await apiClient.get<any>(endpoint);
+        }
+        if (hierarchyBuilding(response)) {
+          return;
+        }
 
         const children = Array.isArray(response)
           ? response
@@ -7412,9 +7424,10 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         const updateTree = (nodes: TreeNode[]): TreeNode[] =>
           nodes.map((n: TreeNode) => {
             if (n.id === nodeId) {
+              const loadedBefore = new Map((n.children || []).map((existing) => [existing.id, existing]));
               const mappedChildren = keepPendingChildren(children.map((c: TopLevelClass) => ({
                 ...c,
-                children: c.hasChildren ? [] : undefined,
+                children: loadedBefore.get(c.id)?.children?.length ? loadedBefore.get(c.id)!.children : c.hasChildren ? [] : undefined,
                 hasChildren: c.hasChildren,
                 subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: n.label }],
               })) as TreeNode[], pendingChildren);
@@ -10353,9 +10366,7 @@ const updateItemInState = useCallback(
 
         await new Promise((resolve) => setTimeout(resolve, 300));
 
-        setClassHierarchy((prev) => clearChildrenOf(prev, parentIri));
-
-        await loadChildren(parentIri, [newNode]);
+        await loadChildren(parentIri, [newNode], true);
 
         console.log("[handleAddClassInline] Refresh complete");
         showNotification(`Class "${name}" created successfully!`);
@@ -10627,8 +10638,7 @@ const updateItemInState = useCallback(
 
           if (type === "subclass") {
             await new Promise((resolve) => setTimeout(resolve, 300));
-            setClassHierarchy((prev) => clearChildrenOf(prev, parentIri));
-            await loadChildren(parentIri, [newNode]);
+            await loadChildren(parentIri, [newNode], true);
           }
         } else if (entitiesTab === "ObjectProperties") {
           parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
