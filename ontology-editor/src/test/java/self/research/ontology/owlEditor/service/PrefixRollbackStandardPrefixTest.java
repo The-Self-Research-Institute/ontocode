@@ -42,6 +42,20 @@ class PrefixRollbackStandardPrefixTest {
     }
 
     @Test
+    void undoingAnAddedPrefixThatIsAlreadyGoneIsNotRefused() {
+        PrefixRollbackActions actions = actionsWith(List.of());
+
+        assertTrue(actions.holds("p", RollbackAction.deletePrefix("ges", "http://www.w3.org/2001/XMLSchema#"), false, null));
+    }
+
+    @Test
+    void undoingAnAddedPrefixThatNowPointsElsewhereIsStillRefused() {
+        PrefixRollbackActions actions = actionsWith(List.of(Map.of("prefix", "ges", "namespace", "http://example.org/other#")));
+
+        assertFalse(actions.holds("p", RollbackAction.deletePrefix("ges", "http://www.w3.org/2001/XMLSchema#"), false, null));
+    }
+
+    @Test
     void aCustomPrefixThatIsGoneCanBeRestored() {
         PrefixRollbackActions actions = actionsWith(List.of());
 

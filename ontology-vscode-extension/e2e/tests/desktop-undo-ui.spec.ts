@@ -2,6 +2,7 @@ import { test, expect } from '../fixtures/electronDesktop';
 import { loadDesktopAuth } from '../helpers/desktopApi';
 import {
   addNamed,
+  addPrefix,
   changeCards,
   currentProjectId,
   deletePrefix,
@@ -59,14 +60,27 @@ test.describe('desktop undo and redo through the UI', () => {
     await expect(page.getByTestId('ontology-iri-value')).toHaveText(changed, { timeout: 30_000 });
   });
 
-  test('deleting a built-in prefix can be undone and redone', async ({ page, electronApp }) => {
+  test('built-in prefixes cannot be deleted, and a prefix you add can be deleted, undone and redone', async ({ page, electronApp }) => {
     await openActiveOntology(page);
-    await deletePrefix(page, 'xsd');
+    await page.getByRole('button', { name: 'Ontology Prefixes' }).click();
+    const builtIn = page.locator('[data-testid="prefix-row"][data-prefix^="xsd"]');
+    await expect(builtIn).toBeVisible({ timeout: 30_000 });
+    await expect(builtIn.getByTitle('Delete')).toHaveCount(0);
+
+    await addPrefix(page, 'pizzae2e', 'http://example.org/pizzae2e#');
+    await deletePrefix(page, 'pizzae2e');
+    await expect(page.locator('[data-testid="prefix-row"][data-prefix^="pizzae2e"]')).toHaveCount(0, { timeout: 30_000 });
     await openChangeAssistant(page);
-    expect((await newestCardTitle(page)).toLowerCase()).toContain('xsd');
+    expect((await newestCardTitle(page)).toLowerCase()).toContain('pizzae2e');
 
     await undoAndWait(electronApp, page, 'undo');
+    await openActiveOntology(page);
+    await page.getByRole('button', { name: 'Ontology Prefixes' }).click();
+    await expect(page.locator('[data-testid="prefix-row"][data-prefix^="pizzae2e"]')).toHaveCount(1, { timeout: 30_000 });
     await undoAndWait(electronApp, page, 'redo');
+    await openActiveOntology(page);
+    await page.getByRole('button', { name: 'Ontology Prefixes' }).click();
+    await expect(page.locator('[data-testid="prefix-row"][data-prefix^="pizzae2e"]')).toHaveCount(0, { timeout: 30_000 });
   });
 
   test('a data property domain is recorded, shown, and can be undone and redone', async ({ page, electronApp }) => {

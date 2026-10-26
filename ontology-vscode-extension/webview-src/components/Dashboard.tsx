@@ -115,6 +115,7 @@ import {
 import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields, draftControlsVisible } from "../utils/draftScope";
+import { isBuiltInPrefix } from "../utils/builtInPrefixes";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import codeViewCacheService from "../services/codeViewCacheService";
 import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
@@ -15317,6 +15318,9 @@ const updateItemInState = useCallback(
                                       >
                                         <Edit2 size={12} />
                                       </button>
+                                      {isBuiltInPrefix(p.prefix, p.namespace) ? (
+                                        <span className="px-1 text-[10px] opacity-60" title="Standard prefix, always available">built-in</span>
+                                      ) : (
                                       <button
                                         onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeletePrefix(p.prefix)}
                                         className="p-1 rounded text-[10px]"
@@ -15325,6 +15329,7 @@ const updateItemInState = useCallback(
                                       >
                                         <Trash2 size={12} />
                                       </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>

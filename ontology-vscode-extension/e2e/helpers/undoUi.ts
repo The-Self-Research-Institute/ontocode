@@ -60,6 +60,16 @@ export async function setOntologyIri(page: Page, iri: string) {
   await page.getByRole('button', { name: 'OK', exact: true }).click();
 }
 
+export async function addPrefix(page: Page, prefix: string, namespace: string) {
+  await page.getByRole('button', { name: 'Ontology Prefixes' }).click();
+  await page.getByRole('button', { name: 'Add Prefix' }).first().click();
+  const dialog = page.locator('div.fixed.inset-0').filter({ has: page.getByRole('heading', { name: 'Add Prefix' }) });
+  await dialog.getByPlaceholder('owl').fill(prefix);
+  await dialog.getByPlaceholder('http://www.w3.org/2002/07/owl#').fill(namespace);
+  await dialog.getByRole('button', { name: 'Add Prefix' }).click();
+  await expect(page.locator(`[data-testid="prefix-row"][data-prefix^="${prefix}"]`)).toBeVisible({ timeout: 30_000 });
+}
+
 export async function deletePrefix(page: Page, prefix: string) {
   await page.getByRole('button', { name: 'Ontology Prefixes' }).click();
   const row = page.locator(`[data-testid="prefix-row"][data-prefix^="${prefix}"]`);
