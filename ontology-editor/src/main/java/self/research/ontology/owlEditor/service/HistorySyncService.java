@@ -572,7 +572,8 @@ public class HistorySyncService {
     }
 
     private boolean isGenuineConflict(HistoryChange earlier, HistoryChange later, long windowMillis) {
-        if (Objects.equals(earlier.getUserId(), later.getUserId())) {
+        if (Objects.equals(earlier.getUserId(), later.getUserId()) || sameNamedPerson(earlier, later)
+                || isUndoOrRedoRecord(earlier) || isUndoOrRedoRecord(later)) {
             return false;
         }
         if (earlier.getResolvedAt() != null || later.getResolvedAt() != null) {
@@ -590,6 +591,17 @@ public class HistorySyncService {
             return false;
         }
         return !Objects.equals(later.getNewValue(), earlier.getNewValue());
+    }
+
+    private static boolean sameNamedPerson(HistoryChange first, HistoryChange second) {
+        String name = first.getUsername();
+        return name != null && !name.isBlank() && !"anonymous".equalsIgnoreCase(name.trim())
+                && name.trim().equalsIgnoreCase(second.getUsername() == null ? "" : second.getUsername().trim());
+    }
+
+    private static boolean isUndoOrRedoRecord(HistoryChange change) {
+        String type = change.getOperationType();
+        return type != null && (type.startsWith("ROLLBACK_") || type.startsWith("REDO_"));
     }
 
     private static ConflictMatch conflictMatchFor(HistoryChange change) {

@@ -36,6 +36,19 @@ public final class SparqlText {
         return at < 0 ? sparql : sparql.substring(0, at) + replacement + sparql.substring(at + keyword.length());
     }
 
+    public static String withAskDataset(String sparql, String fromClause) {
+        int ask = indexOfKeyword(sparql, "ASK");
+        int body = ask < 0 ? -1 : indexOfOpenBrace(sparql, ask);
+        if (body < 0) {
+            return null;
+        }
+        String between = sparql.substring(ask + 3, body).trim();
+        if (!between.isEmpty() && !between.equalsIgnoreCase("WHERE")) {
+            return null;
+        }
+        return sparql.substring(0, ask + 3) + " " + fromClause + " WHERE " + sparql.substring(body);
+    }
+
     public static String removeFromClauses(String sparql) {
         StringBuilder out = new StringBuilder(sparql.length());
         int copied = 0;

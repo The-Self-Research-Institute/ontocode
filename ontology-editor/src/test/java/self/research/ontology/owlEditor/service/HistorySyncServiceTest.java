@@ -46,6 +46,27 @@ class HistorySyncServiceTest {
     }
 
     @Test
+    void thePersonUnderTwoIdsNeverConflictsWithThemselves() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        HistoryChange first = change("c1", "6aad38791b710a5ec3350f46", "iri:A", "base", "v1", now);
+        first.setUsername("soundhar@coretopia.com");
+        HistoryChange second = change("c2", "soundhar@coretopia.com", "iri:A", "base", "v2", now.plusMinutes(1));
+        second.setUsername("Soundhar@coretopia.com");
+
+        assertTrue(service.computeConflicts(List.of(first, second)).isEmpty());
+    }
+
+    @Test
+    void anUndoRecordIsNeverTheOtherSideOfAConflict() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        HistoryChange edit = change("c1", "u1", "iri:A", "base", "v1", now);
+        HistoryChange undo = change("c2", "u2", "iri:A", null, null, now.plusMinutes(1));
+        undo.setOperationType("ROLLBACK_ENTRY");
+
+        assertTrue(service.computeConflicts(List.of(edit, undo)).isEmpty());
+    }
+
+    @Test
     void awareSequentialEditDoesNotConflict() {
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         HistoryChange first = change("c1", "u1", "iri:A", "base", "v1", now);
