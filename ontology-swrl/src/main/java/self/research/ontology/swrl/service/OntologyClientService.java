@@ -34,6 +34,9 @@ public class OntologyClientService {
     private final RestTemplate restTemplate;
     private final String editorServiceUrl;
 
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
     public OntologyClientService(
             RestTemplateBuilder restTemplateBuilder,
             @Value("${ontology.editor.service.url}") String editorServiceUrl) {
@@ -133,14 +136,22 @@ public class OntologyClientService {
             // Stream ontology directly into OWL parser to avoid holding entire byte[] in heap
             final Long[] revision = new Long[1];
             final String[] draftVersion = new String[1];
-            OWLOntology ontology = restTemplate.execute(
-                draftUserId != null
+            boolean internalCall = authHeader == null && internalToken != null && !internalToken.isBlank();
+            String exportPath = internalCall
+                ? (draftUserId != null
+                    ? "/internal/reasoning/{projectId}/export.ttl?draft=true&userId={userId}"
+                    : "/internal/reasoning/{projectId}/export.ttl")
+                : (draftUserId != null
                     ? "/api/ontology/export/{projectId}?draft=true&userId={userId}"
-                    : "/api/ontology/export/{projectId}",
+                    : "/api/ontology/export/{projectId}");
+            OWLOntology ontology = restTemplate.execute(
+                exportPath,
                 org.springframework.http.HttpMethod.GET,
                 request -> {
                     if (authHeader != null) {
                         request.getHeaders().set("Authorization", authHeader);
+                    } else if (internalCall) {
+                        request.getHeaders().set("X-Ontocode-Internal-Token", internalToken);
                     }
                 },
                 response -> {

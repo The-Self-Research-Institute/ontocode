@@ -193,13 +193,14 @@ public class SwrlController {
         }
     }
 
-    @GetMapping(value = "/{projectId}/rules/owl", produces = "text/plain")
+    @GetMapping(value = "/{projectId}/rules/owl")
     public ResponseEntity<?> getRulesAsOwl(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "false") boolean draft,
                                            @RequestParam(required = false) String userId,
                                            @RequestHeader(value = "X-Ontocode-Internal-Token", required = false) String token) {
         if (!hasInternalToken(token)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(createErrorResponse("This endpoint is for internal services only"));
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(createErrorResponse("This endpoint is for internal services only"));
         }
         try {
             SwrlEngineService.RulesExport export = swrlEngineService.exportEnabledRulesAsOwl(projectId, draft ? userId : null);
@@ -210,7 +211,8 @@ public class SwrlController {
                     .body(export.text());
         } catch (Exception e) {
             logger.error("Failed to export the rules of project {} as OWL", projectId, e);
-            return ResponseEntity.status(500).body(createErrorResponse("Could not export the rules"));
+            return ResponseEntity.status(500).contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                    .body(createErrorResponse("Could not export the rules"));
         }
     }
 
