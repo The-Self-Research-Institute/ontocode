@@ -751,6 +751,7 @@ public class ReasonerController {
                 ReasonerType type = ReasonerType.parse(reasonerType);
 
                 long startTime = System.currentTimeMillis();
+                reasonerService.beginRuleScope();
                 boolean isConsistent = reasonerService.isConsistent(ontology, type);
                 long duration = System.currentTimeMillis() - startTime;
 
@@ -759,6 +760,7 @@ public class ReasonerController {
                 result.put("reasonerType", type.getDisplayName());
                 result.put("durationMs", duration);
                 result.put("projectId", projectId);
+                noteLeftOutRules(result, type);
 
                 if (!isConsistent) {
                     Set<OWLClass> unsatisfiable = reasonerService.getUnsatisfiableClasses(ontology, type);
@@ -773,6 +775,7 @@ public class ReasonerController {
 
                 return ResponseEntity.ok(result);
             } finally {
+                reasonerService.endRuleScope();
                 endDraftUse(ontology);
             }
 
@@ -1275,6 +1278,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                 ReasonerType type = ReasonerType.parse(reasonerType);
 
                 long startTime = System.currentTimeMillis();
+                reasonerService.beginRuleScope();
                 Set<OWLAxiom> inferredAxioms = reasonerService.getInferredAxioms(ontology, type);
                 long duration = System.currentTimeMillis() - startTime;
 
@@ -1298,14 +1302,26 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                 result.put("axioms", axiomsList);
                 result.put("totalInferredAxioms", inferredAxioms.size());
                 result.put("durationMs", duration);
+                noteLeftOutRules(result, type);
 
                 return ResponseEntity.ok(result);
             } finally {
+                reasonerService.endRuleScope();
                 endDraftUse(ontology);
             }
 
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "getting inferred axioms");
+        }
+    }
+
+    private void noteLeftOutRules(Map<String, Object> result, ReasonerType type) {
+        if (type != ReasonerType.HERMIT) {
+            return;
+        }
+        String note = reasonerService.ruleNote();
+        if (note != null) {
+            result.put("downgradedWarning", note);
         }
     }
 

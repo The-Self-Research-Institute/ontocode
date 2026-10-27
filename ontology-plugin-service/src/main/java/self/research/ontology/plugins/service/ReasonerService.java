@@ -26,6 +26,8 @@ import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntai
 import org.semanticweb.owl.explanation.impl.blackbox.checker.SatisfiabilityEntailmentChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.common.PreparedOntology;
+import self.research.ontology.common.RestRuleStage;
 import self.research.ontology.common.SwrlBuiltIns;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -61,7 +63,18 @@ public class ReasonerService {
     // executor, and the controller's LRU-eviction path concurrently.
     private final Map<String, CompletableFuture<OWLReasoner>> reasonerCache = new ConcurrentHashMap<>();
 
-    private final Map<OWLOntology, Long> ontologyIdentitySequence = new IdentityHashMap<>();
+    private record RuleOutcome(String note, boolean complete) {
+    }
+
+    private static final class RuleScope {
+        final Map<String, OWLReasoner> partials = new HashMap<>();
+        String note;
+    }
+
+    private final Map<OWLReasoner, RuleOutcome> ruleOutcomes = Collections.synchronizedMap(new WeakHashMap<>());
+    private final ThreadLocal<RuleScope> ruleScope = new ThreadLocal<>();
+
+    private final Map<OWLOntology, Long> ontologyIdentitySequence =new IdentityHashMap<>();
     private final java.util.concurrent.atomic.AtomicLong nextOntologyIdentitySequence = new java.util.concurrent.atomic.AtomicLong(1);
 
     private long identityKeyFor(OWLOntology ontology) {
@@ -127,9 +140,26 @@ public class ReasonerService {
      */
     public OWLReasoner getReasoner(OWLOntology ontology, ReasonerType type) {
         String cacheKey = identityKeyFor(ontology) + "-" + ontology.getOntologyID() + "-" + type.name();
+        RuleScope scope = ruleScope.get();
+        OWLReasoner scoped = scope != null ? scope.partials.get(cacheKey) : null;
+        if (scoped != null) {
+            scope.note = ruleOutcomes.get(scoped).note();
+            return scoped;
+        }
         CompletableFuture<OWLReasoner> future = reasonerCache.computeIfAbsent(cacheKey, k -> submitReasonerBuild(ontology, type));
         try {
-            return future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
+            OWLReasoner reasoner = future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
+            RuleOutcome outcome = ruleOutcomes.get(reasoner);
+            if (outcome != null && !outcome.complete()) {
+                reasonerCache.remove(cacheKey, future);
+                if (scope != null) {
+                    scope.partials.put(cacheKey, reasoner);
+                }
+            }
+            if (scope != null) {
+                scope.note = outcome != null ? outcome.note() : null;
+            }
+            return reasoner;
         } catch (TimeoutException e) {
             if (reasonerCache.remove(cacheKey, future)) {
                 disposeWhenBuilt(future);
@@ -187,14 +217,41 @@ public class ReasonerService {
         OWLReasonerConfiguration config = configurationFor(type);
 
         try {
-            OWLOntology target = type == ReasonerType.HERMIT ? SwrlBuiltIns.withoutBuiltInRules(ontology) : ontology;
-            return getReasonerFactory(type).createReasoner(target, config);
+            PreparedOntology prepared = prepareRules(ontology, type);
+            OWLOntology target = prepared != null ? prepared.forHermit() : ontology;
+            OWLReasoner reasoner = getReasonerFactory(type).createReasoner(target, config);
+            if (prepared != null) {
+                ruleOutcomes.put(reasoner, new RuleOutcome(prepared.note(), prepared.complete()));
+            }
+            return reasoner;
         } catch (Throwable e) {
             log.error("Failed to create {} reasoner", type, e);
             throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }
     }
 
+
+    PreparedOntology prepareRules(OWLOntology ontology, ReasonerType type) {
+        if (type != ReasonerType.HERMIT) {
+            return null;
+        }
+        return SwrlBuiltIns.prepareChained(ontology, RestRuleStage.shared(),
+                input -> new ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519",
+                String.valueOf(identityKeyFor(ontology)));
+    }
+
+    public void beginRuleScope() {
+        ruleScope.set(new RuleScope());
+    }
+
+    public String ruleNote() {
+        RuleScope scope = ruleScope.get();
+        return scope != null ? scope.note : null;
+    }
+
+    public void endRuleScope() {
+        ruleScope.remove();
+    }
 
     private OWLReasonerConfiguration configurationFor(ReasonerType type) {
         if (type != ReasonerType.HERMIT) {

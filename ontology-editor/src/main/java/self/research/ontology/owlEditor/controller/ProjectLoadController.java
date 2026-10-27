@@ -891,6 +891,9 @@ public class ProjectLoadController {
     @org.springframework.beans.factory.annotation.Autowired
     private self.research.ontology.owlEditor.service.ExportScopeResolver exportScopeResolver;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.OntologyVersionStamps exportStampSource;
+
     @GetMapping("/export/{projectId:.+}")
     public ResponseEntity<?> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format,
@@ -905,8 +908,13 @@ public class ProjectLoadController {
                 return ResponseEntity.status(scope.status()).body(Map.of("error", scope.error()));
             }
             if (scope.draft()) {
+                HttpHeaders draftStamp = new HttpHeaders();
+                if (exportStampSource != null) {
+                    draftStamp.set("X-Ontology-Draft-Version", exportStampSource.draftVersion(projectId, scope.userId()));
+                }
                 exportPath = storageManager.resolveCodeViewFile(projectId, format, scope.contentScope());
                 return ResponseEntity.ok()
+                        .headers(draftStamp)
                         .contentType(MediaType.APPLICATION_OCTET_STREAM)
                         .contentLength(Files.size(exportPath))
                         .header(HttpHeaders.CONTENT_DISPOSITION,
@@ -915,6 +923,11 @@ public class ProjectLoadController {
             }
 
             importService.syncProjectToFuseki(projectId);
+
+            HttpHeaders publicStamp = new HttpHeaders();
+            if (exportStampSource != null) {
+                publicStamp.set("X-Ontology-Revision", String.valueOf(exportStampSource.publicRevision(projectId)));
+            }
 
             Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
             if (cachedContent.isPresent()) {
@@ -931,6 +944,7 @@ public class ProjectLoadController {
             
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
             return ResponseEntity.ok()
+                    .headers(publicStamp)
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(Files.size(exportPath))
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + exportPath.getFileName())

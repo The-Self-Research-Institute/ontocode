@@ -694,6 +694,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
 interface ResultsPanelProps {
   results: ExecutionResponse | null;
   isExecuting: boolean;
+  onAdd?: (axioms: InferredAxiom[]) => Promise<{ ok: boolean; message: string }>;
 }
 
 
@@ -994,12 +995,15 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, 
   );
 };
 
-const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd }) => {
+  const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
   const [showInferredAxioms, setShowInferredAxioms] = useState(true);
   const [viewMode, setViewMode] = useState<'grouped' | 'table' | 'raw'>('grouped');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [searchFilter, setSearchFilter] = useState('');
   const [showWarning, setShowWarning] = useState(false);
+  const [scopeChoice, setScopeChoice] = useState<'conclusions' | 'structure' | 'all' | null>(null);
+  const [visibleLimit, setVisibleLimit] = useState(100);
 
   const toggleGroup = (type: string) => {
     const newExpanded = new Set(expandedGroups);
@@ -1030,17 +1034,26 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
     </div>
   );
 
-  const filteredAxioms = searchFilter.trim() 
-    ? results.inferredAxioms.filter(ax => {
+  const conclusionTotal = results.inferredAxioms.filter(ax => ax.category === 'conclusion').length;
+  const structureTotal = results.inferredAxioms.filter(ax => ax.category === 'structure').length;
+  const scope = scopeChoice ?? (conclusionTotal > 0 ? 'conclusions' : 'all');
+  const inScope = results.inferredAxioms.filter(ax => {
+    if (!ax.category || scope === 'all') return true;
+    return scope === 'conclusions' ? ax.category === 'conclusion' : ax.category === 'structure';
+  });
+  const matchedAxioms = searchFilter.trim()
+    ? inScope.filter(ax => {
         const searchLower = searchFilter.toLowerCase();
         const readable = (ax.readable || ax.description || '').toLowerCase();
         const parsed = formatInferredAxiom(ax);
-        return readable.includes(searchLower) || 
+        return readable.includes(searchLower) ||
                parsed.subject?.toLowerCase().includes(searchLower) ||
                parsed.object?.toLowerCase().includes(searchLower) ||
                parsed.type?.toLowerCase().includes(searchLower);
       })
-    : results.inferredAxioms;
+    : inScope;
+  const filteredAxioms = matchedAxioms.slice(0, visibleLimit);
+  const matchedConclusions = matchedAxioms.filter(ax => ax.category === 'conclusion');
 
   const groupedAxioms = groupAxiomsByType(filteredAxioms);
   
@@ -1206,7 +1219,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
                 <span className="text-purple-600">📚</span>
                 All Inferred Axioms
                 <span className="text-sm font-normal" style={{ color: '#6b7280' }}>
-                  ({searchFilter ? `${filteredAxioms.length} of ${results.inferredAxiomsCount}` : results.inferredAxiomsCount} total, {groupedAxioms.size} types)
+                  ({matchedAxioms.length} matching{matchedAxioms.length > filteredAxioms.length ? `, showing ${filteredAxioms.length}` : ''}, {groupedAxioms.size} types)
                 </span>
               </h3>
               <div className="flex items-center gap-3">
@@ -1274,7 +1287,56 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
               </div>
               {searchFilter && (
                 <div className="mt-2 text-xs text-gray-500">
-                  Found {filteredAxioms.length} axioms matching "{searchFilter}"
+                  Found {matchedAxioms.length} axioms matching "{searchFilter}"
+                </div>
+              )}
+              {onAdd && matchedConclusions.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  {addState.phase === 'idle' || addState.phase === 'done' || addState.phase === 'error' ? (
+                    <button
+                      onClick={() => setAddState({ phase: 'confirm' })}
+                      className="px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
+                    >
+                      Add {matchedConclusions.length} conclusion{matchedConclusions.length === 1 ? '' : 's'} to the ontology
+                    </button>
+                  ) : addState.phase === 'confirm' ? (
+                    <>
+                      <span className="text-gray-700">
+                        This writes {matchedConclusions.length} fact{matchedConclusions.length === 1 ? '' : 's'} into the ontology as one change you can undo. Facts that are already there are skipped.
+                      </span>
+                      <button
+                        onClick={async () => {
+                          setAddState({ phase: 'busy' });
+                          const outcome = await onAdd(matchedConclusions);
+                          setAddState({ phase: outcome.ok ? 'done' : 'error', message: outcome.message });
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
+                      >
+                        Yes, add them
+                      </button>
+                      <button onClick={() => setAddState({ phase: 'idle' })} className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700">Cancel</button>
+                    </>
+                  ) : (
+                    <span className="text-gray-600">Adding…</span>
+                  )}
+                  {addState.message && (
+                    <span className={addState.phase === 'error' ? 'text-red-700' : 'text-green-700'}>{addState.message}</span>
+                  )}
+                </div>
+              )}
+              {conclusionTotal + structureTotal > 0 && results.conclusionCount !== undefined && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  {([['conclusions', `Rule conclusions (${results.conclusionCount})`], ['structure', `Ontology structure (${results.structureCount ?? structureTotal})`], ['all', 'Everything']] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      onClick={() => { setScopeChoice(key); setVisibleLimit(100); }}
+                      className={`px-3 py-1 rounded-full border ${scope === key ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  {results.omittedTrivialCount ? <span className="text-gray-500">{results.omittedTrivialCount} trivial same-individual facts hidden</span> : null}
+                  {results.truncated ? <span className="text-amber-700">Only the first {results.inferredAxioms.length} are listed; the rest are cut off.</span> : null}
                 </div>
               )}
             </div>
@@ -1353,6 +1415,14 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting }) => 
             </div>
           )}
 
+          {showInferredAxioms && matchedAxioms.length > filteredAxioms.length && (
+            <div className="p-3 text-center border-t border-gray-100">
+              <button onClick={() => setVisibleLimit(visibleLimit + 100)} className="px-4 py-1.5 text-sm text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100">
+                Show 100 more ({matchedAxioms.length - filteredAxioms.length} remaining)
+              </button>
+            </div>
+          )}
+
           {showInferredAxioms && viewMode === 'raw' && (
             <div className="max-h-[70vh] overflow-y-auto">
               {filteredAxioms.map((ax, i) => {
@@ -1408,6 +1478,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
+  const [embeddedRules, setEmbeddedRules] = useState<Array<{ name: string; ruleText: string; comment?: string }>>([]);
+  const [copyingEmbedded, setCopyingEmbedded] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query'>('editor');
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
@@ -1592,6 +1664,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       if (rulesVersionRef.current === myVersion) {
         setRules(res.content || []);
       }
+      try {
+        const embedded = await apiClient.get<Array<{ name: string; ruleText: string; comment?: string }>>(`/api/swrl/${projectId}/rules/embedded`);
+        if (rulesVersionRef.current === myVersion) setEmbeddedRules(Array.isArray(embedded) ? embedded : []);
+      } catch (embeddedError) {
+        console.error('Failed to load rules stored in the ontology:', embeddedError);
+        if (rulesVersionRef.current === myVersion) setEmbeddedRules([]);
+      }
     } catch (e) {
       console.error('Failed to load rules:', e);
     } finally {
@@ -1694,6 +1773,61 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       setSaveError(e?.data?.message || e?.message || 'Failed to save rule — please try again.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleAddConclusions = async (axioms: InferredAxiom[]): Promise<{ ok: boolean; message: string }> => {
+    const ops = axioms.flatMap<Record<string, string | undefined>>(ax => {
+      if (!ax.subjectIri || !ax.predicateIri) return [];
+      if (ax.predicateIri === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' && ax.objectIri) {
+        return [{ type: 'addClassAssertion', iri: ax.subjectIri, classIri: ax.objectIri }];
+      }
+      if (ax.objectIri) {
+        return [{ type: 'addObjectPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, target: ax.objectIri }];
+      }
+      if (ax.objectLiteral != null) {
+        return [{ type: 'addDataPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, value: ax.objectLiteral, datatype: ax.literalDatatypeIri || undefined }];
+      }
+      return [];
+    });
+    if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
+    try {
+      const res = await apiClient.post<{ changeSetId?: string }>(
+        `/api/ontology/mutations/${projectId}?draft=false`,
+        { ops, username: 'SWRL rules', sessionId: `swrl-add-${Date.now()}`, precondition: executionResult?.stamp ?? null }
+      );
+      window.dispatchEvent(new CustomEvent('ontocode:committed-change', { detail: { projectId, direction: 'APPLY', changeSetId: res?.changeSetId } }));
+      return { ok: true, message: `Added ${ops.length} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.` };
+    } catch (e: any) {
+      if (/stale|out of date|\(409\)|changed since/i.test(String(e?.message || ''))) {
+        return { ok: false, message: 'The ontology or the rules changed since you ran this. Run the rules again, then add.' };
+      }
+      return { ok: false, message: e?.data?.message || e?.message || 'Could not add the facts.' };
+    }
+  };
+
+  const handleCopyEmbedded = async (embedded: { name: string; ruleText: string; comment?: string }) => {
+    setCopyingEmbedded(embedded.name);
+    setSaveError(null);
+    try {
+      const taken = new Set(rules.map(r => r.ruleName));
+      let name = embedded.name;
+      if (taken.has(name)) name = `${embedded.name} (from ontology)`;
+      const res = await apiClient.post<SwrlRule>(`/api/swrl/${projectId}/rules`, {
+        ruleName: name,
+        ruleText: embedded.ruleText,
+        comment: embedded.comment || '',
+        category: '',
+        enabled: true
+      });
+      rulesVersionRef.current++;
+      setRules(prev => [...prev, res]);
+      setSelectedRule(res);
+    } catch (e: any) {
+      console.error('Copy failed:', e);
+      setSaveError(e?.data?.message || e?.message || 'Could not copy this rule into your editable rules.');
+    } finally {
+      setCopyingEmbedded(null);
     }
   };
 
@@ -1861,7 +1995,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-gray-900">SWRL Rule Editor</h1>
-            <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled</p>
+            <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled{embeddedRules.length > 0 ? ` · ${embeddedRules.length} stored in the ontology` : ''}</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-2">
@@ -1949,7 +2083,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
               </div>
             ) : filteredRules.length === 0 ? (
               <div className="p-6 text-center text-gray-400">
-                {searchQuery ? 'No matching rules' : 'No rules yet'}
+                {searchQuery ? 'No matching rules' : embeddedRules.length > 0 ? 'No saved rules yet' : 'No rules yet'}
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
@@ -1965,6 +2099,33 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     onDelete={() => setConfirmDialog({ isOpen: true, ruleName: rule.ruleName, ruleId: rule.id })}
                   />
                 ))}
+              </div>
+            )}
+            {!isLoading && embeddedRules.length > 0 && (
+              <div className="border-t-2 border-gray-200 mt-2">
+                <div className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50">
+                  Stored in the ontology file ({embeddedRules.length})
+                </div>
+                <p className="px-3 py-2 text-[11px] text-gray-500">
+                  These rules are part of the ontology and already apply when you reason. Copy one to edit or run it here.
+                </p>
+                <div className="divide-y divide-gray-100">
+                  {embeddedRules
+                    .filter(r => !searchQuery.trim() || `${r.name} ${r.ruleText}`.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map(r => (
+                      <div key={r.name} className="px-3 py-2">
+                        <div className="text-sm font-medium text-gray-800 truncate" title={r.name}>{r.name}</div>
+                        <div className="text-[11px] text-gray-500 font-mono break-words line-clamp-2" title={r.ruleText}>{r.ruleText}</div>
+                        <button
+                          onClick={() => handleCopyEmbedded(r)}
+                          disabled={copyingEmbedded === r.name}
+                          className="mt-1 text-xs text-purple-700 hover:underline disabled:opacity-50"
+                        >
+                          {copyingEmbedded === r.name ? 'Copying…' : 'Copy to my rules'}
+                        </button>
+                      </div>
+                    ))}
+                </div>
               </div>
             )}
           </div>
@@ -2152,14 +2313,16 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       placeholder="Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> Adult(?p)"
                     />
 
-                    {isEditing && validationResult && (
-                      <div className={`px-4 py-2 flex items-center gap-2 text-sm ${
-                        validationResult.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                      }`}>
-                        {validationResult.valid ? <Check size={14} /> : <AlertCircle size={14} />}
-                        {validationResult.valid ? 'Valid syntax' : validationResult.errorMessage}
-                      </div>
-                    )}
+                    <div className="min-h-[2.5rem]">
+                      {isEditing && validationResult && (
+                        <div className={`px-4 py-2 flex items-center gap-2 text-sm ${
+                          validationResult.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                        }`}>
+                          {validationResult.valid ? <Check size={14} /> : <AlertCircle size={14} />}
+                          {validationResult.valid ? 'Valid syntax' : validationResult.errorMessage}
+                        </div>
+                      )}
+                    </div>
 
                     {saveError && (
                       <div className="px-4 py-2 flex items-center gap-2 text-sm bg-red-50 text-red-700 border-t border-red-100">
@@ -2251,7 +2414,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
               )}
             </div>
           ) : activePanel === 'results' ? (
-            <ResultsPanel results={executionResult} isExecuting={isExecuting} />
+            <ResultsPanel results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} />
           ) : activePanel === 'query' ? (
             <SQWRLQueryPanel projectId={projectId} context={context!} />
           ) : (

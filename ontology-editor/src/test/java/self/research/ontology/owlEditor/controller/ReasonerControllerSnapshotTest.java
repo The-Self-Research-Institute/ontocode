@@ -285,7 +285,7 @@ class ReasonerControllerSnapshotTest {
         assertEquals(true, body.get("success"));
         assertEquals("HermiT", body.get("reasonerType"));
         assertEquals("HERMIT", body.get("requestedReasoner"));
-        assertTrue(String.valueOf(body.get("downgradedWarning")).contains("built-in"));
+        assertTrue(String.valueOf(body.get("downgradedWarning")).contains("built-in"), String.valueOf(body.get("downgradedWarning")));
         assertEquals(true, body.get("consistent"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> unsatisfiable = (List<Map<String, Object>>) body.get("unsatisfiableClasses");
@@ -354,5 +354,68 @@ class ReasonerControllerSnapshotTest {
         assertEquals(false, body.get("success"));
         assertNotNull(body.get("error"));
         assertNotNull(body.get("technicalDetail"));
+    }
+
+    private OWLOntology ontologyWithAMathsRule() throws Exception {
+        OWLOntology draftOntology = smallOntology();
+        OWLOntologyManager manager = draftOntology.getOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLClass dog = df.getOWLClass(IRI.create(NS + "Dog"));
+        OWLClass oldDog = df.getOWLClass(IRI.create(NS + "OldDog"));
+        org.semanticweb.owlapi.model.OWLDataProperty age = df.getOWLDataProperty(IRI.create(NS + "age"));
+        org.semanticweb.owlapi.model.SWRLVariable x = df.getSWRLVariable(IRI.create(NS + "x"));
+        org.semanticweb.owlapi.model.SWRLVariable a = df.getSWRLVariable(IRI.create(NS + "a"));
+        org.semanticweb.owlapi.model.SWRLVariable b = df.getSWRLVariable(IRI.create(NS + "b"));
+        manager.addAxiom(draftOntology, df.getSWRLRule(
+                java.util.Set.of(
+                        df.getSWRLClassAtom(dog, x),
+                        df.getSWRLDataPropertyAtom(age, x, a),
+                        df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#add"),
+                                List.of(b, a, df.getSWRLLiteralArgument(df.getOWLLiteral(1)))),
+                        df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#greaterThan"),
+                                List.of(b, df.getSWRLLiteralArgument(df.getOWLLiteral(10))))),
+                java.util.Set.of(df.getSWRLClassAtom(oldDog, x))));
+        return draftOntology;
+    }
+
+    private void stubDraftWithAMathsRule() throws Exception {
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.getDraftWriteStamp("proj-1", "user-1")).thenReturn(9L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> ontologyWithAMathsRule());
+    }
+
+    @Test
+    void aSnapshotBuiltWhileTheRuleEngineWasDownIsPartialAndIsNotKept() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        controller.useRuleStage((ontology, rules) -> {
+            calls.incrementAndGet();
+            return Optional.empty();
+        });
+        stubDraftWithAMathsRule();
+
+        Map<String, Object> first = snapshot("HERMIT", "user-1", true);
+        Map<String, Object> second = snapshot("HERMIT", "user-1", true);
+
+        assertEquals("partial", first.get("completion"));
+        assertTrue(String.valueOf(first.get("downgradedWarning")).contains("could not be reached"), String.valueOf(first.get("downgradedWarning")));
+        assertEquals(false, second.get("cached"));
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void aSnapshotWithEveryRuleAppliedIsCompleteKeptAndPreparedOncePerRun() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        controller.useRuleStage((ontology, rules) -> {
+            calls.incrementAndGet();
+            return Optional.of(java.util.Set.of());
+        });
+        stubDraftWithAMathsRule();
+
+        Map<String, Object> first = snapshot("HERMIT", "user-1", true);
+        Map<String, Object> second = snapshot("HERMIT", "user-1", true);
+
+        assertEquals("complete", first.get("completion"));
+        assertEquals(true, second.get("cached"));
+        assertEquals(1, calls.get());
     }
 }

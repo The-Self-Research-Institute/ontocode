@@ -96,6 +96,10 @@ public class DLQueryService {
                 );
             }
 
+            if (resolvedTypes.stream().anyMatch(t -> t.equalsIgnoreCase("instances") || t.equalsIgnoreCase("directinstances"))) {
+                reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
+            }
+
             Map<String, Object> results = new HashMap<>();
             for (String queryType : resolvedTypes) {
                 switch (queryType.toLowerCase()) {
@@ -124,6 +128,10 @@ public class DLQueryService {
             response.put("queryType", resolvedTypes);
             response.put("results", results);
             response.put("executionTime", duration);
+            if (session.note() != null) {
+                response.put("downgradedWarning", session.note());
+            }
+            response.put("completion", session.complete() ? "complete" : "partial");
             log.info("DL Query completed for project {} in {}ms", projectId, duration);
             return response;
         }
@@ -177,9 +185,12 @@ public class DLQueryService {
         LoadedOntology loaded = loadOntology(projectId, draftUserId);
         org.semanticweb.HermiT.Configuration hermitConfig = new org.semanticweb.HermiT.Configuration();
         hermitConfig.ignoreUnsupportedDatatypes = true;
-        OWLReasoner reasoner = reasonerFactory.createReasoner(loaded.ontology(), hermitConfig);
+        self.research.ontology.common.PreparedOntology prepared = self.research.ontology.common.SwrlBuiltIns
+                .prepareChained(loaded.ontology(), self.research.ontology.common.RestRuleStage.shared(),
+                        input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519", projectId + ":" + loaded.ontology().getAxiomCount());
+        OWLReasoner reasoner = reasonerFactory.createReasoner(prepared.forHermit(), hermitConfig);
 
-        return new QuerySession(loaded.manager(), loaded.ontology(), reasoner);
+        return new QuerySession(loaded.manager(), loaded.ontology(), reasoner, prepared.note(), prepared.complete());
     }
 
     private LoadedOntology loadOntology(String projectId, String draftUserId) throws Exception {
@@ -363,11 +374,23 @@ public class DLQueryService {
         private final OWLOntologyManager manager;
         private final OWLOntology ontology;
         private final OWLReasoner reasoner;
+        private final String note;
+        private final boolean complete;
 
-        private QuerySession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner) {
+        private QuerySession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner, String note, boolean complete) {
             this.manager = manager;
             this.ontology = ontology;
             this.reasoner = reasoner;
+            this.note = note;
+            this.complete = complete;
+        }
+
+        boolean complete() {
+            return complete;
+        }
+
+        String note() {
+            return note;
         }
 
         OWLOntology ontology() {

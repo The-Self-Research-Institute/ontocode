@@ -10,6 +10,9 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.ReasonerInterruptedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.common.PreparedOntology;
+import self.research.ontology.common.RuleStage;
+import self.research.ontology.common.rules.OntologyRulesFingerprint;
 import self.research.ontology.common.SwrlBuiltIns;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -65,6 +68,12 @@ public class OntologySessionService {
         this.hermitMaxTriples = hermitMaxTriples;
         this.reasonerTimeoutMs = reasonerTimeoutMs;
         this.maxTriples = maxTriples;
+    }
+
+    private RuleStage ruleStage = self.research.ontology.common.RestRuleStage.shared();
+
+    void useRuleStage(RuleStage stage) {
+        this.ruleStage = stage;
     }
 
     public long currentRevision(String projectId) {
@@ -141,18 +150,7 @@ public class OntologySessionService {
         }
 
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        OWLOntology ontology = editorClient.loadOntologyStream(projectId, userId, in -> {
-            try {
-                StreamDocumentSource source = new StreamDocumentSource(
-                        in,
-                        IRI.create("urn:ontocode:load:" + projectId),
-                        new NTriplesDocumentFormat(),
-                        "application/n-triples");
-                return manager.loadOntologyFromOntologyDocument(source);
-            } catch (org.semanticweb.owlapi.model.OWLOntologyCreationException e) {
-                throw new RuntimeException("Failed to load ontology for project " + projectId + ": " + e.getMessage(), e);
-            }
-        });
+        OWLOntology ontology = loadOntology(projectId, userId, manager);
         log.info("Loaded ontology for {} ({} axioms, userId={}, reasoner={})",
                 projectId, ontology.getAxiomCount(), userId, effectiveType);
 
@@ -172,26 +170,76 @@ public class OntologySessionService {
         }
     }
 
+    private OWLOntology loadOntology(String projectId, String userId, OWLOntologyManager manager) {
+        return editorClient.loadOntologyStream(projectId, userId, in -> {
+            try {
+                StreamDocumentSource source = new StreamDocumentSource(
+                        in,
+                        IRI.create("urn:ontocode:load:" + projectId),
+                        new NTriplesDocumentFormat(),
+                        "application/n-triples");
+                return manager.loadOntologyFromOntologyDocument(source);
+            } catch (org.semanticweb.owlapi.model.OWLOntologyCreationException e) {
+                throw new RuntimeException("Failed to load ontology for project " + projectId + ": " + e.getMessage(), e);
+            }
+        });
+    }
+
+    public String currentRulesFingerprint(String projectId, long revision, long tripleCount) {
+        if (revision <= 0 || tripleCount < 0) {
+            return null;
+        }
+        try {
+            var cached = ontologyCache.getAndBeginUse(projectId, revision, tripleCount);
+            if (cached.isPresent()) {
+                try {
+                    return OntologyRulesFingerprint.of(cached.get());
+                } finally {
+                    ontologyCache.endUse(cached.get());
+                }
+            }
+            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntology ontology = loadOntology(projectId, null, manager);
+            ontologyCache.putAndBeginUse(projectId, revision, tripleCount, manager, ontology);
+            try {
+                return OntologyRulesFingerprint.of(ontology);
+            } finally {
+                ontologyCache.endUse(ontology);
+            }
+        } catch (RuntimeException e) {
+            log.warn("[Reasoner] Could not fingerprint the rules of project {}: {}", projectId, e.getMessage());
+            return null;
+        }
+    }
+
+    private PreparedOntology prepareRules(OWLOntology ontology, long revision, long tripleCount) {
+        return SwrlBuiltIns.prepareChained(ontology, ruleStage,
+                input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519",
+                revision + ":" + tripleCount);
+    }
+
     private ReasoningSession startSession(OWLOntologyManager manager, OWLOntology ontology, ReasonerType type,
                                           String downgradedWarning, boolean fromCache, OntologyCache cache,
                                           long revision, boolean snapshot, long tripleCount) {
+        PreparedOntology prepared = null;
         if (type == ReasonerType.HERMIT) {
-            long omittedRules = SwrlBuiltIns.countBuiltInRules(ontology);
-            if (omittedRules > 0) {
-                String note = SwrlBuiltIns.omissionNote(omittedRules);
-                downgradedWarning = downgradedWarning == null ? note : downgradedWarning + " " + note;
+            prepared = prepareRules(ontology, revision, tripleCount);
+            if (prepared.note() != null) {
+                downgradedWarning = downgradedWarning == null ? prepared.note() : downgradedWarning + " " + prepared.note();
             }
         }
+        boolean rulesComplete = prepared == null || prepared.complete();
+        OWLOntology reasoningInput = prepared != null ? prepared.forHermit() : ontology;
         if (!snapshot) {
-            OWLReasoner reasoner = createRegisteredReasoner(ontology, type);
+            OWLReasoner reasoner = createRegisteredReasoner(reasoningInput, type);
             return new ReasoningSession(manager, ontology, reasoner, type, downgradedWarning, fromCache, cache, revision,
-                    null, type, tripleCount);
+                    null, type, tripleCount, rulesComplete);
         }
 
         ReasonerType classType = type;
         OWLReasoner classReasoner;
         try {
-            classReasoner = createRegisteredReasoner(ontology, classType);
+            classReasoner = createRegisteredReasoner(reasoningInput, classType);
         } catch (RuntimeException e) {
             if (classType != ReasonerType.HERMIT || e instanceof ReasonerInterruptedException
                     || Thread.currentThread().isInterrupted()) {
@@ -209,8 +257,13 @@ public class OntologySessionService {
         OWLReasoner propertyReasoner = null;
         if (classType == ReasonerType.ELK && tripleCount <= hermitMaxTriples) {
             try {
-                propertyReasoner = createRegisteredReasoner(ontology, ReasonerType.HERMIT);
+                PreparedOntology forProperty = prepared != null ? prepared : prepareRules(ontology, revision, tripleCount);
+                propertyReasoner = createRegisteredReasoner(forProperty.forHermit(), ReasonerType.HERMIT);
                 propertyType = ReasonerType.HERMIT;
+                rulesComplete = rulesComplete && forProperty.complete();
+                if (prepared == null && forProperty.note() != null) {
+                    downgradedWarning = downgradedWarning == null ? forProperty.note() : downgradedWarning + " " + forProperty.note();
+                }
             } catch (ReasonerInterruptedException e) {
                 closeReasoner(classReasoner);
                 throw e;
@@ -220,7 +273,7 @@ public class OntologySessionService {
             }
         }
         return new ReasoningSession(manager, ontology, classReasoner, classType, downgradedWarning, fromCache, cache,
-                revision, propertyReasoner, propertyType, tripleCount);
+                revision, propertyReasoner, propertyType, tripleCount, rulesComplete);
     }
 
     static String rootMessage(Throwable error) {
@@ -302,6 +355,7 @@ public class OntologySessionService {
         private final OWLReasoner propertyReasoner;
         private final ReasonerType propertyReasonerType;
         private final long tripleCount;
+        private final boolean rulesComplete;
 
         ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
                          ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
@@ -322,6 +376,15 @@ public class OntologySessionService {
                          ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
                          OntologyCache cache, long revision,
                          OWLReasoner propertyReasoner, ReasonerType propertyReasonerType, long tripleCount) {
+            this(manager, ontology, reasoner, actualReasonerType, downgradedWarning, fromCache, cache, revision,
+                    propertyReasoner, propertyReasonerType, tripleCount, true);
+        }
+
+        ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
+                         ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
+                         OntologyCache cache, long revision,
+                         OWLReasoner propertyReasoner, ReasonerType propertyReasonerType, long tripleCount,
+                         boolean rulesComplete) {
             this.manager = manager;
             this.ontology = ontology;
             this.reasoner = reasoner;
@@ -333,6 +396,7 @@ public class OntologySessionService {
             this.propertyReasoner = propertyReasoner;
             this.propertyReasonerType = propertyReasonerType != null ? propertyReasonerType : actualReasonerType;
             this.tripleCount = tripleCount;
+            this.rulesComplete = rulesComplete;
         }
 
         public OWLOntology ontology() { return ontology; }
@@ -343,6 +407,7 @@ public class OntologySessionService {
         public String downgradedWarning() { return downgradedWarning; }
         public long revision() { return revision; }
         public long tripleCount() { return tripleCount; }
+        public boolean rulesComplete() { return rulesComplete; }
 
         @Override
         public void close() {

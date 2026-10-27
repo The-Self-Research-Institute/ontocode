@@ -93,15 +93,50 @@ public class OntologyClientService {
         return null;
     }
 
+    public record FetchedOntology(OWLOntology ontology, Long ontologyRevision, String draftVersion) {}
+
+    public record RuleAccess(boolean allowed, String reason) {
+    }
+
+    public RuleAccess canWriteRules(String projectId) {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        String authHeader = currentAuthorizationHeader();
+        if (authHeader != null) {
+            headers.set("Authorization", authHeader);
+        }
+        try {
+            ResponseEntity<java.util.Map> response = restTemplate.exchange("/api/ontology/{projectId}/rules-access",
+                    org.springframework.http.HttpMethod.GET, new org.springframework.http.HttpEntity<>(headers),
+                    java.util.Map.class, projectId);
+            java.util.Map<?, ?> body = response.getBody();
+            boolean allowed = body != null && Boolean.TRUE.equals(body.get("canWriteRules"));
+            Object reason = body != null ? body.get("reason") : null;
+            return new RuleAccess(allowed, reason != null ? String.valueOf(reason) : "You cannot change the rules of this project.");
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            if (e.getStatusCode().value() == 401 || e.getStatusCode().value() == 403) {
+                return new RuleAccess(false, "You do not have access to change the rules of this project.");
+            }
+            throw e;
+        }
+    }
+
     public OWLOntology fetchOntology(String projectId) throws OWLOntologyCreationException {
-        logger.info("Fetching ontology for project: {}", projectId);
+        return fetchOntologyWithStamp(projectId, null).ontology();
+    }
+
+    public FetchedOntology fetchOntologyWithStamp(String projectId, String draftUserId) throws OWLOntologyCreationException {
+        logger.info("Fetching ontology for project: {}{}", projectId, draftUserId != null ? " (draft)" : "");
         long startTime = System.currentTimeMillis();
 
         try {
             String authHeader = currentAuthorizationHeader();
             // Stream ontology directly into OWL parser to avoid holding entire byte[] in heap
+            final Long[] revision = new Long[1];
+            final String[] draftVersion = new String[1];
             OWLOntology ontology = restTemplate.execute(
-                "/api/ontology/export/{projectId}",
+                draftUserId != null
+                    ? "/api/ontology/export/{projectId}?draft=true&userId={userId}"
+                    : "/api/ontology/export/{projectId}",
                 org.springframework.http.HttpMethod.GET,
                 request -> {
                     if (authHeader != null) {
@@ -114,6 +149,15 @@ public class OntologyClientService {
                             "Failed to fetch ontology: HTTP " + response.getStatusCode()
                         );
                     }
+                    String revisionHeader = response.getHeaders().getFirst("X-Ontology-Revision");
+                    if (revisionHeader != null) {
+                        try {
+                            revision[0] = Long.valueOf(revisionHeader.trim());
+                        } catch (NumberFormatException ignored) {
+                            revision[0] = null;
+                        }
+                    }
+                    draftVersion[0] = response.getHeaders().getFirst("X-Ontology-Draft-Version");
                     OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                     // Mirror only the first DIAGNOSTIC_CAPTURE_LIMIT bytes into a small in-memory
                     // buffer as the parser reads, so a parse failure can log what the editor
@@ -134,12 +178,14 @@ public class OntologyClientService {
                         throw new RuntimeException("OWL parsing error", e);
                     }
                 },
-                projectId
+                draftUserId != null ? new Object[]{projectId, draftUserId} : new Object[]{projectId}
             );
 
             if (ontology == null) {
                 throw new RuntimeException("Failed to fetch ontology: null response");
             }
+
+            PlainLiteralNormalizer.apply(ontology);
 
             long loadTime = System.currentTimeMillis() - startTime;
             logger.info("Successfully loaded ontology for project {} in {}ms. " +
@@ -150,7 +196,7 @@ public class OntologyClientService {
                        ontology.getObjectPropertiesInSignature().size(),
                        ontology.getIndividualsInSignature().size());
             
-            return ontology;
+            return new FetchedOntology(ontology, revision[0], draftVersion[0]);
 
         } catch (RestClientException e) {
             logger.error("REST client error fetching ontology for project: {}", projectId, e);

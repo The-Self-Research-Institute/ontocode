@@ -54,14 +54,14 @@ class SwrlBuiltInsTest {
     }
 
     @Test
-    void theCopyKeepsEverythingExceptTheBuiltInRules() throws Exception {
+    void theCopyTurnsTheComparisonRuleIntoOwlAndKeepsTheRest() throws Exception {
         OWLOntology original = ontologyWithOneRuleOfEachKind();
 
-        OWLOntology copy = SwrlBuiltIns.withoutBuiltInRules(original);
+        OWLOntology copy = SwrlBuiltIns.withoutBuiltInRules(original, null);
 
         assertEquals(0, SwrlBuiltIns.countBuiltInRules(copy));
         assertEquals(1, copy.axioms(AxiomType.SWRL_RULE).count());
-        assertEquals(1, copy.axioms(AxiomType.SUBCLASS_OF).count());
+        assertEquals(2, copy.axioms(AxiomType.SUBCLASS_OF).count());
         assertEquals(1, SwrlBuiltIns.countBuiltInRules(original));
     }
 

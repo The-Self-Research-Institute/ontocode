@@ -67,6 +67,12 @@ export interface InferredAxiom {
   axiomType: string;
   description: string;
   readable: string;
+  category?: 'conclusion' | 'structure';
+  subjectIri?: string | null;
+  predicateIri?: string | null;
+  objectIri?: string | null;
+  objectLiteral?: string | null;
+  literalDatatypeIri?: string | null;
 }
 
 export interface ExecutionResponse {
@@ -78,6 +84,11 @@ export interface ExecutionResponse {
   errorMessage: string | null;
   executedRuleNames?: string[]; // Names of rules that were actually executed
   executionMode?: 'all' | 'selected'; // Indicates if all rules or selected rules were executed
+  stamp?: { ontologyRevision: string; draftVersion: string; rulesFingerprint: string } | null;
+  conclusionCount?: number;
+  structureCount?: number;
+  omittedTrivialCount?: number;
+  truncated?: boolean;
 }
 
 export interface PluginContext {

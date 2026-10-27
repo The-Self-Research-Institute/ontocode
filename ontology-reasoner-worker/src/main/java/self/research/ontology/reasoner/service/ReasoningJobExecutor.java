@@ -113,6 +113,10 @@ public class ReasoningJobExecutor {
                 return parseFailure;
             }
 
+            if (types.stream().anyMatch(t -> t.equalsIgnoreCase("instances") || t.equalsIgnoreCase("directinstances"))) {
+                reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
+            }
+
             Map<String, Object> results = new HashMap<>();
             for (String queryType : types) {
                 switch (queryType.toLowerCase(Locale.ROOT)) {
@@ -927,6 +931,7 @@ public class ReasoningJobExecutor {
         if (session.downgradedWarning() != null) {
             result.put("downgradedWarning", session.downgradedWarning());
         }
+        result.put("completion", session.rulesComplete() ? "complete" : "partial");
         if (session.revision() >= 0) {
             result.put("ontologyRevision", session.revision());
         }

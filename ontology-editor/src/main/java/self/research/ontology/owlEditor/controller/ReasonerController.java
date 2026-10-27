@@ -498,7 +498,9 @@ public class ReasonerController {
                 try {
                     Map<String, Object> snapshot = computeSnapshot(projectId, requestedType, draftUserId,
                             draftVersion, revision, run);
-                    editorReasonerCache.putSnapshot(cacheKey, snapshot);
+                    if (!"partial".equals(snapshot.get("completion"))) {
+                        editorReasonerCache.putSnapshot(cacheKey, snapshot);
+                    }
                     run.result.complete(snapshot);
                 } catch (Throwable t) {
                     run.result.completeExceptionally(t);
@@ -509,6 +511,17 @@ public class ReasonerController {
                     new RuntimeException("Too many reasoning requests in progress — please try again shortly."));
         }
         return run;
+    }
+
+    private self.research.ontology.common.PreparedOntology chained(OWLOntology ontology, String projectId) {
+        return SwrlBuiltIns.prepareChained(ontology, ruleStage,
+                input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519", projectId + ":" + ontology.getAxiomCount());
+    }
+
+    private self.research.ontology.common.RuleStage ruleStage = self.research.ontology.common.RestRuleStage.shared();
+
+    void useRuleStage(self.research.ontology.common.RuleStage stage) {
+        this.ruleStage = stage;
     }
 
     private Map<String, Object> computeSnapshot(String projectId, ReasonerType requestedType, String draftUserId,
@@ -533,30 +546,41 @@ public class ReasonerController {
                     + "hierarchy is shown instead of %s.", axiomCount, requestedType.getDisplayName());
         }
 
-        long omittedRules = classType == ReasonerType.HERMIT ? SwrlBuiltIns.countBuiltInRules(ontology) : 0;
-        if (omittedRules > 0) {
-            String note = SwrlBuiltIns.omissionNote(omittedRules);
-            downgradedWarning = downgradedWarning == null ? note : downgradedWarning + " " + note;
+        self.research.ontology.common.PreparedOntology prepared = classType == ReasonerType.HERMIT
+                ? chained(ontology, projectId) : null;
+        if (prepared != null && prepared.note() != null) {
+            downgradedWarning = downgradedWarning == null ? prepared.note() : downgradedWarning + " " + prepared.note();
         }
+        boolean rulesComplete = prepared == null || prepared.complete();
+        OWLOntology classInput = prepared != null ? prepared.forHermit() : ontology;
 
         OWLReasoner classReasoner;
         try {
-            classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
+            classReasoner = reasonerService.getClassHierarchyReasoner(classInput, classType);
         } catch (RuntimeException e) {
             if (classType != ReasonerType.HERMIT || run.isStopped() || isStopFailure(e)) {
                 throw e;
             }
             log.warn("HermiT could not be started for project {}; using JFact instead", projectId, e);
             classType = ReasonerType.FACTPLUSPLUS;
+            classInput = ontology;
             downgradedWarning = "HermiT could not be started for this ontology (" + rootMessage(e)
                     + "), so JFact was used instead.";
-            classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
+            classReasoner = reasonerService.getClassHierarchyReasoner(classInput, classType);
         }
         run.attach(classReasoner);
         ReasonerType propertyType = classType == ReasonerType.ELK ? ReasonerType.HERMIT : classType;
         OWLReasoner propertyReasoner = null;
+        OWLOntology propertyInput = ontology;
         if (propertyType != classType) {
-            propertyReasoner = reasonerService.getUnwarmedReasoner(ontology, propertyType);
+            self.research.ontology.common.PreparedOntology forProperty = prepared != null
+                    ? prepared : chained(ontology, projectId);
+            propertyInput = forProperty.forHermit();
+            rulesComplete = rulesComplete && forProperty.complete();
+            if (prepared == null && forProperty.note() != null) {
+                downgradedWarning = downgradedWarning == null ? forProperty.note() : downgradedWarning + " " + forProperty.note();
+            }
+            propertyReasoner = reasonerService.getUnwarmedReasoner(propertyInput, propertyType);
             run.attach(propertyReasoner);
         }
 
@@ -566,10 +590,13 @@ public class ReasonerController {
             snapshot.putAll(ReasoningSnapshot.build(ontology, classReasoner, propertyReasoner));
         } catch (RuntimeException e) {
             if (run.isStopped()) {
-                reasonerService.disposeReasoner(ontology, classType);
+                reasonerService.disposeReasoner(classInput, classType);
                 if (propertyReasoner != null) {
-                    reasonerService.disposeReasoner(ontology, propertyType);
+                    reasonerService.disposeReasoner(propertyInput, propertyType);
                 }
+            }
+            if (!run.isStopped() && downgradedWarning != null && downgradedWarning.contains("HermiT could not be started")) {
+                throw new IllegalStateException(downgradedWarning + " The JFact fallback also failed: " + rootMessage(e), e);
             }
             throw e;
         }
@@ -578,6 +605,7 @@ public class ReasonerController {
         snapshot.put("requestedReasoner", requestedType.name());
         snapshot.put("ontologyRevision", revision);
         snapshot.put("draft", isDraft);
+        snapshot.put("completion", rulesComplete ? "complete" : "partial");
         if (downgradedWarning != null) {
             snapshot.put("downgradedWarning", downgradedWarning);
         }

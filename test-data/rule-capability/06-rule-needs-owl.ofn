@@ -1,0 +1,13 @@
+Prefix(:=<http://example.org/rc#>)
+Prefix(owl:=<http://www.w3.org/2002/07/owl#>)
+Prefix(xsd:=<http://www.w3.org/2001/XMLSchema#>)
+Prefix(swrlb:=<http://www.w3.org/2003/11/swrlb#>)
+Ontology(<http://example.org/rc>
+Declaration(Class(:Dog))
+Declaration(Class(:Animal))
+Declaration(Class(:Pet))
+Declaration(NamedIndividual(:a))
+SubClassOf(:Dog :Animal)
+ClassAssertion(:Dog :a)
+DLSafeRule(Body(ClassAtom(:Animal Variable(:x))) Head(ClassAtom(:Pet Variable(:x))))
+)

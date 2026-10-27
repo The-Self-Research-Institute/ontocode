@@ -30,6 +30,52 @@ public class SwrlController {
     @Autowired
     private SwrlEngineService swrlEngineService;
 
+    @Autowired
+    private self.research.ontology.swrl.service.OntologyClientService ontologyClient;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
+    private ResponseEntity<?> denyUnlessMayWriteRules(String projectId) {
+        try {
+            self.research.ontology.swrl.service.OntologyClientService.RuleAccess access = ontologyClient.canWriteRules(projectId);
+            if (access.allowed()) {
+                return null;
+            }
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(createErrorResponse(access.reason()));
+        } catch (RuntimeException e) {
+            logger.warn("Could not check the permission to change rules of project {}: {}", projectId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(createErrorResponse("Could not check your permission to change rules. Try again shortly."));
+        }
+    }
+
+    private boolean hasInternalToken(String presented) {
+        return presented != null && java.security.MessageDigest.isEqual(
+                presented.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                internalToken.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    @PostMapping(value = "/infer/ontology-rules", consumes = {"text/plain", "application/octet-stream"})
+    public ResponseEntity<?> inferOntologyRules(@RequestBody String ontologyText,
+            @org.springframework.web.bind.annotation.RequestHeader(value = "X-Ontocode-Internal-Token", required = false) String token) {
+        if (!hasInternalToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(createErrorResponse("This endpoint is for internal services only"));
+        }
+        try {
+            return ResponseEntity.ok()
+                    .contentType(org.springframework.http.MediaType.TEXT_PLAIN)
+                    .body(swrlEngineService.inferOntologyRules(ontologyText));
+        } catch (java.util.concurrent.TimeoutException e) {
+            return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
+                    .body(createErrorResponse("The rule engine timed out"));
+        } catch (Exception e) {
+            logger.error("Inferring the rules of an ontology failed", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(createErrorResponse("Rule engine failed: " + e.getMessage()));
+        }
+    }
+
     /**
      * Validate a SWRL rule
      */
@@ -63,6 +109,10 @@ public class SwrlController {
     public ResponseEntity<?> createRule(
             @PathVariable String projectId,
             @Valid @RequestBody CreateRuleRequest request) {
+        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
+        if (denied != null) {
+            return denied;
+        }
         
         try {
             SwrlRule rule = swrlEngineService.createRule(
@@ -131,6 +181,18 @@ public class SwrlController {
     /**
      * ✅ FIXED: Get single rule - Now implemented!
      */
+    @GetMapping("/{projectId}/rules/embedded")
+    public ResponseEntity<?> getEmbeddedRules(@PathVariable String projectId,
+                                              @RequestParam(defaultValue = "false") boolean draft,
+                                              @RequestParam(required = false) String userId) {
+        try {
+            return ResponseEntity.ok(swrlEngineService.listEmbeddedRules(projectId, draft ? userId : null));
+        } catch (Exception e) {
+            logger.error("Failed to list rules stored in the ontology for project {}", projectId, e);
+            return ResponseEntity.status(500).body(createErrorResponse("Could not read the rules stored in the ontology"));
+        }
+    }
+
     @GetMapping("/{projectId}/rules/{ruleId}")
     public ResponseEntity<?> getRule(
             @PathVariable String projectId,
@@ -158,9 +220,14 @@ public class SwrlController {
             @PathVariable String projectId,
             @PathVariable String ruleId,
             @RequestBody UpdateRuleRequest request) {
+        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
+        if (denied != null) {
+            return denied;
+        }
         
         try {
             SwrlRule rule = swrlEngineService.updateRule(
+                projectId,
                 ruleId,
                 request.getRuleText(),
                 request.getComment(),
@@ -188,9 +255,13 @@ public class SwrlController {
     public ResponseEntity<?> deleteRule(
             @PathVariable String projectId,
             @PathVariable String ruleId) {
+        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
+        if (denied != null) {
+            return denied;
+        }
         
         try {
-            swrlEngineService.deleteRule(ruleId);
+            swrlEngineService.deleteRule(projectId, ruleId);
             return ResponseEntity.noContent().build();
             
         } catch (IllegalArgumentException e) {
@@ -207,9 +278,15 @@ public class SwrlController {
      * Execute all enabled rules
      */
     @PostMapping("/{projectId}/execute")
-    public ResponseEntity<?> executeRules(@PathVariable String projectId) {
+    public ResponseEntity<?> executeRules(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to run on a private draft"));
+        }
         try {
-            ExecutionResult result = swrlEngineService.executeRules(projectId);
+            ExecutionResult result = swrlEngineService.executeRules(projectId, draft ? userId : null);
             
             ExecutionResponse response = new ExecutionResponse(
                 result.isSuccess(),
@@ -222,6 +299,13 @@ public class SwrlController {
             // Pass through rule names and execution mode
             response.setExecutedRuleNames(result.getExecutedRuleNames());
             response.setExecutionMode(result.getExecutionMode());
+            response.setStamp(result.getStamp());
+            response.setSkippedRules(result.getSkippedRules());
+            response.setConclusionCount(result.getConclusionCount());
+            response.setStructureCount(result.getStructureCount());
+            response.setOmittedTrivialCount(result.getOmittedTrivialCount());
+            response.setTruncated(result.isTruncated());
+            response.setCompletion(result.getCompletion());
             
             return ResponseEntity.ok(response);
             
@@ -260,6 +344,12 @@ public class SwrlController {
             // Pass through rule names and execution mode
             response.setExecutedRuleNames(result.getExecutedRuleNames());
             response.setExecutionMode(result.getExecutionMode());
+            response.setSkippedRules(result.getSkippedRules());
+            response.setConclusionCount(result.getConclusionCount());
+            response.setStructureCount(result.getStructureCount());
+            response.setOmittedTrivialCount(result.getOmittedTrivialCount());
+            response.setTruncated(result.isTruncated());
+            response.setCompletion(result.getCompletion());
             
             return ResponseEntity.ok(response);
             
@@ -299,6 +389,10 @@ public class SwrlController {
     public ResponseEntity<?> createRulesBatch(
             @PathVariable String projectId,
             @RequestBody List<CreateRuleRequest> requests) {
+        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
+        if (denied != null) {
+            return denied;
+        }
         
         try {
             List<SwrlRule> createdRules = swrlEngineService.createRulesBatch(projectId, requests);
@@ -318,9 +412,13 @@ public class SwrlController {
     public ResponseEntity<?> deleteRulesBatch(
             @PathVariable String projectId,
             @RequestBody List<String> ruleIds) {
+        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
+        if (denied != null) {
+            return denied;
+        }
         
         try {
-            swrlEngineService.deleteRulesBatch(ruleIds);
+            swrlEngineService.deleteRulesBatch(projectId, ruleIds);
             return ResponseEntity.noContent().build();
             
         } catch (Exception e) {
@@ -355,6 +453,10 @@ public class SwrlController {
     public ResponseEntity<?> importRules(
             @PathVariable String projectId,
             @RequestBody List<CreateRuleRequest> rules) {
+        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
+        if (denied != null) {
+            return denied;
+        }
         
         try {
             ImportResult result = swrlEngineService.importRules(projectId, rules);
@@ -391,10 +493,14 @@ public class SwrlController {
             @PathVariable String projectId,
             @PathVariable String ruleId,
             @RequestBody(required = false) Map<String, String> request) {
+        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
+        if (denied != null) {
+            return denied;
+        }
         
         try {
             String newName = request != null ? request.get("newName") : null;
-            SwrlRule duplicated = swrlEngineService.duplicateRule(ruleId, newName);
+            SwrlRule duplicated = swrlEngineService.duplicateRule(projectId, ruleId, newName);
             return ResponseEntity.status(HttpStatus.CREATED).body(duplicated);
             
         } catch (IllegalArgumentException e) {

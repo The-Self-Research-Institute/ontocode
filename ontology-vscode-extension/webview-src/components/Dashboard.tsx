@@ -1293,6 +1293,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   const currentProjectIdRef = useRef(projectId);
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
   const reasonerRunIdRef = useRef(0);
+  const lastReasonerNoteRef = useRef("");
+  const announceReasonerNote = (results: any) => {
+    const note = results?.downgradedWarning;
+    if (typeof note !== "string" || !note.trim()) return;
+    const key = `${currentProjectIdRef.current}|${note}`;
+    if (lastReasonerNoteRef.current === key) return;
+    lastReasonerNoteRef.current = key;
+    showNotification(note, "warning");
+  };
 
   useEffect(() => {
     if (!projectId || projectId === prevProjectIdRef.current) return;
@@ -3222,6 +3231,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         : await fetchReasonerBundle(reasonerType, isStaleRun);
       if (isStaleRun()) return;
       setReasonerResults(results);
+      announceReasonerNote(results);
             console.log("[Dashboard] reasoner bundle:", results);
       console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
 
@@ -3473,6 +3483,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
       setReasonerResults(results);
+      announceReasonerNote(results);
 
       if ((results as any)?.inconsistent === true) {
         markReasonerResultInconsistent(results, selectedReasoner, request.projectId);

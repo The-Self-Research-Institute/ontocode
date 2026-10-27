@@ -22,6 +22,7 @@ public class ReasoningSnapshotRecord {
     private long revision;
     private long tripleCount;
     private String reasoner;
+    private String rulesFingerprint;
     private String resultJson;
     private Instant createdAt;
     private Instant updatedAt;

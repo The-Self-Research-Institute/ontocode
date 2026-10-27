@@ -16,6 +16,7 @@ This directory contains OWL ontology files designed for testing all 7 OntoCode p
 | `test-citation-ontology.owl` | Cardiovascular | 10+ | 7 | Citation |
 | `consistent-ontology.owl` | Fruit taxonomy | 7 | 5 | Reasoner (should pass) |
 | `inconsistent-ontology.owl` | Animals / Plants | 6+ | 3 | Reasoner (should fail) |
+| `triage-demo.owl` | Hospital triage | 15 | 8 | Reasoner and SWRL rule pipeline (comparison, maths and text rules inside the file) |
 
 ---
 

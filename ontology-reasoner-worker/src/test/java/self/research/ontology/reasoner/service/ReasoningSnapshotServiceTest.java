@@ -216,14 +216,17 @@ class ReasoningSnapshotServiceTest {
     @Test
     void hermitLeavesOutSwrlBuiltInRulesInsteadOfFailing() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor().project("P1", SnapshotTestSupport.PIZZA);
-        ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(SnapshotTestSupport.sessions(editor));
+        OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
+        sessions.useRuleStage((ontology, rules) -> java.util.Optional.empty());
+        ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
 
         Map<String, Object> snapshot = snapshots.snapshot("P1", "HERMIT", null);
 
         assertEquals("HermiT", snapshot.get("reasonerType"));
-        assertTrue(snapshot.get("downgradedWarning").toString().contains("built-in"));
+        assertTrue(snapshot.get("downgradedWarning").toString().contains("could not be reached"));
         assertEquals(true, snapshot.get("consistent"));
-        assertEquals(true, snapshots.snapshot("P1", "HERMIT", null).get("cached"));
+        assertEquals("partial", snapshot.get("completion"));
+        assertEquals(false, snapshots.snapshot("P1", "HERMIT", null).get("cached"));
     }
 
     @Test

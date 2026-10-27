@@ -1,0 +1,11 @@
+Prefix(:=<http://example.org/rc#>)
+Prefix(owl:=<http://www.w3.org/2002/07/owl#>)
+Prefix(xsd:=<http://www.w3.org/2001/XMLSchema#>)
+Prefix(swrlb:=<http://www.w3.org/2003/11/swrlb#>)
+Ontology(<http://example.org/rc>
+Declaration(Class(:Pair))
+Declaration(NamedIndividual(:a))
+Declaration(NamedIndividual(:b))
+DifferentIndividuals(:a :b)
+DLSafeRule(Body(DifferentIndividualsAtom(Variable(:x) Variable(:y))) Head(ClassAtom(:Pair Variable(:x))))
+)
