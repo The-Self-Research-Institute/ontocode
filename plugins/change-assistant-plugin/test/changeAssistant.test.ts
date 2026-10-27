@@ -10,8 +10,14 @@ import {
   resolveChangeType,
   TYPE_LABELS
 } from '../src/assistant/changeKinds';
-import { computeStats, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
+import { computeStats, countEntries, countableChanges, extractLabelFromIRI, parseChange } from '../src/assistant/changeParsing';
 import { buildEntityRow, canUndoEntry, manualHeading, propertyRows } from '../src/changeSets/entityRows';
+import { entityTarget, propertyTarget, setTarget } from '../src/changeSets/targets';
+import { groupChangeSets, ontologyIriChange } from '../src/changeSets/groupChangeSets';
+import { inScope } from '../src/assistant/hooks/useChangeFilters';
+import { nextFeedOffset } from '../src/assistant/feedPaging';
+import { STATUS_FILTERS } from '../src/assistant/statusFilters';
+import { mergedPrOf, prReversalOf } from '../src/changeSets/prReversal';
 import { parseServerTime } from '../src/changeSets/timeFormat';
 import type { ChangeEntry } from '../src/changeSets/types';
 
@@ -258,5 +264,187 @@ describe('author key', () => {
     expect(authorKey('a@x.com', 'a@x.com')).not.toBe(authorKey('b@x.com', 'b@x.com'));
     expect(authorKey('Local user', '')).toBe('local user');
     expect(authorKey('', '6ab0')).toBe('6ab0');
+  });
+});
+
+describe('one item of a merge shown like an AI edit', () => {
+  const item = parseChange({
+    ...base,
+    id: 'm1#0',
+    operationType: 'mergeAddStatements',
+    entityIRI: 'http://x#Hawaiian',
+    entityLabel: 'Hawaiian',
+    undoable: true,
+    setOnly: true,
+    changeSetId: 'set-1',
+    subChanges: [{ id: '0', predicate: 'http://x#hasBase', newValue: 'http://x#DeepPan', addition: true }]
+  }) as unknown as ChangeEntry;
+
+  it('shows the item name, an Added badge and its property rows', () => {
+    const row = buildEntityRow(item);
+    expect(row.label).toBe('Hawaiian');
+    expect(row.badge).toBe('Added');
+    expect(row.properties).toHaveLength(1);
+    expect(row.properties[0].addition).toBe(true);
+  });
+
+  it('offers no undo of its own because the merge is undone as a whole', () => {
+    const row = buildEntityRow(item);
+    expect(entityTarget(row)).toBeNull();
+    expect(propertyTarget(row, row.properties[0])).toBeNull();
+  });
+});
+
+describe('a merged pull request shown as one card', () => {
+  const entries = ['r1', 'r2'].map(
+    (id, i) =>
+      parseChange({
+        ...base,
+        id: `pr1#${i}`,
+        operationType: 'createClass',
+        entityIRI: `http://x#${id}`,
+        entityLabel: id,
+        setOnly: true,
+        changeSetId: 'pr:7',
+        description: 'Merged PR: Pizza toppings'
+      }) as unknown as ChangeEntry
+  );
+
+  it('groups the items into one set titled with the pull request and offers no undo', () => {
+    const items = groupChangeSets(entries);
+    expect(items).toHaveLength(1);
+    const set = (items[0] as any).set;
+    expect(set.title).toBe('Merged PR: Pizza toppings');
+    expect(setTarget(set, 'UNDO')).toBeNull();
+    expect(setTarget(set, 'REDO')).toBeNull();
+  });
+});
+
+describe('merged pull request items', () => {
+  it('show what was done and no undo-refusal badge', () => {
+    const entry = parseChange({
+      ...base,
+      id: 'pr1#0',
+      operationType: 'createClass',
+      entityIRI: 'http://x#ok',
+      entityLabel: 'ok',
+      setOnly: true,
+      undoable: false,
+      undoReason: 'Part of a merged pull request. Revert the pull request instead',
+      changeSetId: 'pr:7'
+    }) as unknown as ChangeEntry;
+    expect(buildEntityRow(entry).badge).not.toMatch(/Can't undo/);
+  });
+});
+
+describe('which changes the Change Assistant shows by default', () => {
+  const draft = parseChange({ ...base, id: 'd1', draft: true }) as any;
+  const publicChange = parseChange({ ...base, id: 'p1', draft: false }) as any;
+
+  it('shows only draft changes while in draft mode and only public changes otherwise', () => {
+    expect(inScope(draft, 'mode', true)).toBe(true);
+    expect(inScope(publicChange, 'mode', true)).toBe(false);
+    expect(inScope(draft, 'mode', false)).toBe(false);
+    expect(inScope(publicChange, 'mode', false)).toBe(true);
+  });
+
+  it('shows everything when all changes are chosen', () => {
+    for (const mode of [true, false]) {
+      expect(inScope(draft, 'all', mode)).toBe(true);
+      expect(inScope(publicChange, 'all', mode)).toBe(true);
+    }
+  });
+});
+
+describe('the saved count while drafting', () => {
+  it('does not count draft changes as saved', () => {
+    const published = parseChange({ ...base, id: 'p1', draft: false, operationType: 'createClass' }) as any;
+    const drafted = parseChange({ ...base, id: 'd1', draft: true, operationType: 'createClass' }) as any;
+    expect(computeStats([published, drafted], []).totalChanges).toBe(1);
+    expect(computeStats([drafted], []).totalChanges).toBe(0);
+  });
+});
+
+describe('loading older changes after a merged pull request', () => {
+  it('continues from the position the server reports, not from the number of rows shown', () => {
+    const expandedRows = Array.from({ length: 139 }, (_, i) => ({ id: `r${i}` }));
+    expect(nextFeedOffset({ nextOffset: 100, changes: expandedRows }, 0)).toBe(100);
+    expect(nextFeedOffset({ nextOffset: 200, changes: expandedRows }, 100)).toBe(200);
+  });
+
+  it('falls back to counting the rows when the server sends no position', () => {
+    expect(nextFeedOffset({ changes: [{}, {}, {}] }, 100)).toBe(103);
+    expect(nextFeedOffset({}, 5)).toBe(5);
+  });
+});
+
+describe('the saved count follows what the history shows', () => {
+  it('counts a merged pull request once however many items it holds', () => {
+    const items = ['a', 'b', 'c'].map((name, i) => parseChange({
+      ...base, id: `pr1#${i}`, operationType: 'createClass', entityIRI: `http://x#${name}`, changeSetId: 'pr:7', draft: false
+    }) as any);
+    const single = parseChange({ ...base, id: 's1', operationType: 'createClass', draft: false }) as any;
+    expect(computeStats([...items, single], []).totalChanges).toBe(2);
+    expect(countEntries(items)).toBe(1);
+  });
+});
+
+describe('the status filter', () => {
+  it('only offers states the scope choice cannot express', () => {
+    expect(STATUS_FILTERS.map(option => option.value)).toEqual(['all', 'reverted', 'conflicted']);
+  });
+});
+
+describe('a reverted pull request entry', () => {
+  const entryOf = (overrides: Record<string, unknown>) => parseChange({
+    ...base, id: 'rev1', operationType: 'prReverted', entityIRI: 'urn:ontocode:pr:7', entityLabel: 'Reverted PR: Pizza toppings', ...overrides
+  }) as unknown as ChangeEntry;
+
+  it('offers one redo that names the pull request', () => {
+    const set = (groupChangeSets([entryOf({})])[0] as any).set;
+    expect(prReversalOf(set)).toEqual({ prId: '7', title: 'Pizza toppings' });
+  });
+
+  it('offers nothing once it was applied again or for other entries', () => {
+    expect(prReversalOf((groupChangeSets([entryOf({ reverted: true })])[0] as any).set)).toBeNull();
+    expect(prReversalOf((groupChangeSets([entryOf({ operationType: 'createClass' })])[0] as any).set)).toBeNull();
+  });
+});
+
+describe('a merged pull request card', () => {
+  const item = (overrides: Record<string, unknown>) => parseChange({
+    ...base, id: 'pr1#0', operationType: 'createClass', entityIRI: 'http://x#ok', setOnly: true, changeSetId: 'pr:7',
+    description: 'Merged PR: Pizza toppings', ...overrides
+  }) as unknown as ChangeEntry;
+
+  it('offers Revert while the pull request is live and Redo once it is reverted', () => {
+    const live = (groupChangeSets([item({})])[0] as any).set;
+    expect(mergedPrOf(live)).toEqual({ prId: '7', title: 'Pizza toppings', reverted: false });
+    const reverted = (groupChangeSets([item({ mergedPrReverted: true })])[0] as any).set;
+    expect(mergedPrOf(reverted)?.reverted).toBe(true);
+  });
+
+  it('is not a merged pull request card for ordinary change sets', () => {
+    expect(mergedPrOf((groupChangeSets([item({ changeSetId: 'set-1' })])[0] as any).set)).toBeNull();
+  });
+});
+
+describe('ontology IRI change', () => {
+  const header = (op: string, uri: string, id: string): ChangeEntry => ({
+    id, timestamp: new Date('2026-10-25T08:00:00Z'), author: 'Local user', type: 'axiom', action: op.startsWith('add') ? 'added' : 'removed',
+    entityUri: uri, entityLabel: 'ontology header', description: 'Ontology header: type=Ontology', operationType: op,
+    changeSetId: 'cs-iri', source: 'MANUAL'
+  });
+
+  it('is named by the old and the new IRI instead of a generic Code View save', () => {
+    const entries = [header('removeStatement', 'http://x/pizza', 'a'), header('addStatement', 'http://x/pizzaas', 'b')];
+    expect(ontologyIriChange(entries)).toEqual({ from: 'http://x/pizza', to: 'http://x/pizzaas' });
+    const items = groupChangeSets(entries);
+    expect((items[0] as any).set.title).toBe('Ontology IRI changed: http://x/pizza → http://x/pizzaas');
+  });
+
+  it('leaves other header edits alone', () => {
+    expect(ontologyIriChange([header('addStatement', 'http://x/pizza', 'a')])).toBeNull();
+    expect(ontologyIriChange([header('removeStatement', 'http://x/pizza', 'a'), header('addStatement', 'http://x/pizza', 'b')])).toBeNull();
   });
 });

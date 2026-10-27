@@ -41,6 +41,7 @@ class UserUndoServiceTest {
         service = new UserUndoService(history, audits, rollback);
         when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), anyBoolean(), any(), any()))
                 .thenReturn(List.of());
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any())).thenReturn(List.of());
         when(history.findByProjectIdAndEntityIRIOrderByTimestampDesc(anyString(), anyString(), any()))
                 .thenReturn(List.of());
         when(audits.findByProjectIdAndDirectionAndRevertedByUserIdInOrderByRevertedAtDesc(anyString(), anyString(), any(), any()))
@@ -63,6 +64,82 @@ class UserUndoServiceTest {
     private void ownChanges(HistoryChange... changes) {
         when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), anyBoolean(), any(), any()))
                 .thenReturn(List.of(changes));
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenReturn(List.of(changes));
+    }
+
+    @Test
+    void inPublicModeTheNewestChangeOfAnyoneIsTheNextUndo() {
+        HistoryChange others = change("s", "Sam@x.com", "e:S", T0.plusMinutes(5));
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenReturn(List.of(others, change("a", "Me@x.com", "e:A", T0)));
+
+        Next next = service.nextUndo(P, false, me);
+
+        assertTrue(next.available());
+        assertEquals("s", next.changeId());
+    }
+
+    @Test
+    void inDraftModeOnlyTheUsersOwnDraftChangesAreOffered() {
+        when(history.findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any()))
+                .thenReturn(List.of(change("s", "Sam@x.com", "e:S", T0.plusMinutes(5))));
+        when(history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(anyString(), anyBoolean(), any(), any()))
+                .thenReturn(List.of(change("a", "Me@x.com", "e:A", T0)));
+
+        Next next = service.nextUndo(P, true, me);
+
+        assertEquals("a", next.changeId());
+        org.mockito.Mockito.verify(history, org.mockito.Mockito.never()).findByProjectIdAndDraftOrderByTimestampDesc(anyString(), anyBoolean(), any());
+    }
+
+    private HistoryChange reversal(String id, boolean reverted, int minute) {
+        HistoryChange change = change(id, "Me@x.com", "urn:ontocode:pr:pr1", T0.plusMinutes(minute));
+        change.setOperationType("prReverted");
+        change.setEntityLabel("Reverted PR: Pizza toppings");
+        change.setReverted(reverted);
+        return change;
+    }
+
+    @Test
+    void redoAfterRevertingAPrOffersToApplyThePrAgain() {
+        ownChanges(reversal("rv", false, 10), change("a", "Me@x.com", "e:A", T0));
+
+        Next next = service.nextRedo(P, false, me);
+
+        assertTrue(next.available());
+        assertEquals("rv", next.changeId());
+        assertEquals("Apply again: Pizza toppings", next.label());
+        assertEquals(null, next.auditId());
+    }
+
+    @Test
+    void redoOffersNothingForAPrReversalThatWasAppliedAgain() {
+        ownChanges(reversal("rv", true, 10), change("a", "Me@x.com", "e:A", T0));
+        assertFalse(service.nextRedo(P, false, me).available());
+    }
+
+    @Test
+    void redoStillOffersToApplyAPrAgainAfterALaterChange() {
+        ownChanges(change("n", "Me@x.com", "e:N", T0.plusMinutes(20)), reversal("rv", false, 10));
+
+        Next next = service.nextRedo(P, false, me);
+
+        assertTrue(next.available());
+        assertEquals("rv", next.changeId());
+    }
+
+    @Test
+    void inDraftModeRedoNeverOffersAPrReversal() {
+        ownChanges(reversal("rv", false, 10));
+        assertFalse(service.nextRedo(P, true, me).available());
+    }
+
+    @Test
+    void anEmptyPublicHistorySaysThereIsNothingToUndo() {
+        Next next = service.nextUndo(P, false, me);
+        assertFalse(next.available());
+        assertEquals("There is nothing to undo", next.reason());
     }
 
     @Test
@@ -84,10 +161,41 @@ class UserUndoServiceTest {
     }
 
     @Test
+    void skipsDraftChangesOfADiscardedDraft() {
+        HistoryChange discarded = change("b", "Me@x.com", "e:B", T0.plusMinutes(2));
+        discarded.setDraft(true);
+        discarded.setDraftDiscarded(true);
+        ownChanges(discarded, change("a", "Me@x.com", "e:A", T0));
+        assertEquals("a", service.nextUndo(P, true, me).changeId());
+    }
+
+    @Test
+    void draftUndoSkipsChangesFromAnEarlierDraftInstance() {
+        self.research.ontology.owlEditor.repository.DraftSessionRepository sessions =
+                org.mockito.Mockito.mock(self.research.ontology.owlEditor.repository.DraftSessionRepository.class);
+        self.research.ontology.owlEditor.model.DraftSession live =
+                new self.research.ontology.owlEditor.model.DraftSession(P, "Me@x.com", 1, 1);
+        live.setId("s2");
+        org.mockito.Mockito.when(sessions.findByProjectIdAndUserId(anyString(), anyString()))
+                .thenReturn(java.util.Optional.empty());
+        org.mockito.Mockito.when(sessions.findByProjectIdAndUserId(P, "Me@x.com"))
+                .thenReturn(java.util.Optional.of(live));
+        service.setDraftSessions(sessions);
+        HistoryChange old = change("b", "Me@x.com", "e:B", T0.plusMinutes(2));
+        old.setDraft(true);
+        old.setDraftSessionId("s1");
+        HistoryChange current = change("a", "Me@x.com", "e:A", T0);
+        current.setDraft(true);
+        current.setDraftSessionId("s2");
+        ownChanges(old, current);
+        assertEquals("a", service.nextUndo(P, true, me).changeId());
+    }
+
+    @Test
     void reportsNothingToUndoWithoutOwnChanges() {
         Next next = service.nextUndo(P, false, me);
         assertFalse(next.available());
-        assertEquals("You have no changes to undo", next.reason());
+        assertEquals("There is nothing to undo", next.reason());
     }
 
     @Test
@@ -149,6 +257,23 @@ class UserUndoServiceTest {
         undone.setRevertedAuditId("au1");
         when(rollback.entriesForUndo(P, "au1")).thenReturn(List.of(undone));
         ownChanges(change("n", "Me@x.com", "e:N", T0.plusMinutes(20)));
+        assertFalse(service.nextRedo(P, false, me).available());
+    }
+
+    @Test
+    void offersNoRedoForAnUndoThatTheRedoGuardRefuses() {
+        RollbackAudit audit = new RollbackAudit();
+        audit.setId("au1");
+        audit.setRevertedAt(T0.plusMinutes(10));
+        when(audits.findByProjectIdAndDirectionAndRevertedByUserIdInOrderByRevertedAtDesc(anyString(), anyString(), any(), any()))
+                .thenReturn(List.of(audit));
+        HistoryChange undone = change("a", "Me@x.com", "e:A", T0);
+        undone.setReverted(true);
+        undone.setRevertedAuditId("au1");
+        when(rollback.entriesForUndo(P, "au1")).thenReturn(List.of(undone));
+        RedoGuard guard = mock(RedoGuard.class);
+        when(guard.refusal(anyString(), any())).thenReturn(java.util.Optional.of(RedoGuard.PR_REVERTED));
+        service.setRedoGuard(guard);
         assertFalse(service.nextRedo(P, false, me).available());
     }
 

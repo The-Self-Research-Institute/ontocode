@@ -17,7 +17,7 @@ Part of the [OntoCode Studio platform](https://github.com/The-Self-Research-Inst
 2. Click **Open OntoCode Editor** and create an account. The Free plan needs no credit card.
 3. Create a project or open an ontology file (`.owl`, `.ttl`, `.rdf`) and start editing.
 
-Want to try it without an account or without VS Code? Use the [desktop app](#-download-the-desktop-app), which works offline with no sign-up, or open [ontocode.selfresearch.org](https://ontocode.selfresearch.org/login) in your browser.
+Want to try it without an account or without VS Code? Use the [desktop app](https://ontocode.selfresearch.org/download), which works offline with no sign-up, or open [ontocode.selfresearch.org](https://ontocode.selfresearch.org/login) in your browser.
 
 ---
 
@@ -58,13 +58,14 @@ Prefer not to use VS Code? The desktop app is the same editor with its own built
 | Your computer | Download | How to install |
 |---------------|----------|----------------|
 | Windows 10 or later (64-bit) | [Windows installer (.exe)](https://ontocodeapi.selfresearch.org/api/downloads/windows-x64) | Run the installer. |
+| macOS, Apple silicon (M1 or later) | [macOS disk image (.dmg)](https://ontocodeapi.selfresearch.org/api/downloads/mac-arm64) | Open the .dmg and drag OntoCode Studio into Applications. |
+| macOS, Intel | [macOS disk image (.dmg)](https://ontocodeapi.selfresearch.org/api/downloads/mac-x64) | Same as above. |
 | Linux, any distribution | [AppImage](https://ontocodeapi.selfresearch.org/api/downloads/linux-x64) | `chmod +x OntoCode*.AppImage && ./OntoCode*.AppImage` |
 | Debian or Ubuntu | [.deb package](https://ontocodeapi.selfresearch.org/api/downloads/linux-deb) | `sudo apt install ./ontocode-desktop_*_amd64.deb` |
 | Linux on ARM64 | [AppImage](https://ontocodeapi.selfresearch.org/api/downloads/linux-arm64) or [.deb](https://ontocodeapi.selfresearch.org/api/downloads/linux-deb-arm64) | Same as above. |
 | Flatpak | [Flatpak package](https://ontocodeapi.selfresearch.org/api/downloads/linux-flatpak) | Open the downloaded file with your software center, or install it with `flatpak`. |
 
-Or open it in your browser: [ontocode.selfresearch.org/login](https://ontocode.selfresearch.org/login). A macOS build is on the way.
-
+Or open it in your browser: [ontocode.selfresearch.org/login](https://ontocode.selfresearch.org/login).
 ---
 
 ## 🖼 Screenshots

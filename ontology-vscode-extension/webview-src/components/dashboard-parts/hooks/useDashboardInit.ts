@@ -925,9 +925,9 @@ export function useDashboardInit(state: DashboardState) {
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/id/${encodeProjectId(projectId)}`, {
-        ontologyIRI: ontologyIriDraft.trim(),
-        versionIRI: versionIriDraft.trim() || null,
+      await apiClient.put(`/api/ontology/metadata/${projectId}/iri`, {
+        ontologyIri: ontologyIriDraft.trim(),
+        versionIri: versionIriDraft.trim(),
       });
       setIsEditingOntologyId(false);
       await apiClient

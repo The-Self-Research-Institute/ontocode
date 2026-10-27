@@ -8,12 +8,13 @@ const TONES: Record<Tone, string> = {
   neutral: "bg-transparent hover:bg-black/5",
 };
 
-export default function UndoActionButton({ tone, onClick, children }: { tone: Tone; onClick: () => void; children: React.ReactNode }) {
+export default function UndoActionButton({ tone, onClick, children, disabled }: { tone: Tone; onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`whitespace-nowrap shrink-0 rounded border px-2.5 py-1 font-semibold cursor-pointer ${TONES[tone]}`}
+      disabled={disabled}
+      className={`whitespace-nowrap shrink-0 rounded border px-2.5 py-1 font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${TONES[tone]}`}
       style={tone === "neutral" ? { borderColor: "var(--color-border)" } : undefined}
     >
       {children}

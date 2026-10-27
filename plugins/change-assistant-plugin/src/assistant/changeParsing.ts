@@ -126,6 +126,8 @@ export function parseChange(change: any) {
     rollbackAuditId: change.rollbackAuditId ?? null,
     undoable: typeof change.undoable === 'boolean' ? change.undoable : undefined,
     undoReason: change.undoReason ?? null,
+    setOnly: change.setOnly === true,
+    mergedPrReverted: change.mergedPrReverted === true,
     draft: !!change.draft
   };
 }
@@ -143,12 +145,17 @@ export function activeChanges<T extends { source?: string | null; operationType?
   return countableChanges(changes).filter(change => !isUndone(change));
 }
 
-export function computeStats(parsedChanges: any[], draftChanges: OntologyChange[]): ChangeStats {
+export function countEntries(changes: Array<{ id: string; changeSetId?: string | null }>): number {
+  return new Set(changes.map(change => change.changeSetId || change.id)).size;
+}
+
+export function computeStats(allChanges: any[], draftChanges: OntologyChange[]): ChangeStats {
+  const parsedChanges = allChanges.filter((change: any) => !change.draft);
   const countable = countableChanges(parsedChanges);
   const totalWarnings = [...countable, ...draftChanges]
     .reduce((sum, c) => sum + (c.warnings?.length || 0), 0);
   return {
-    totalChanges: activeChanges(parsedChanges).length,
+    totalChanges: countEntries(activeChanges(parsedChanges)),
     undoneChanges: countable.filter(isUndone).length,
     draftChanges: draftChanges.length,
     conflicts: countable.filter((c: any) => c.conflicts?.length > 0).length,

@@ -49,12 +49,48 @@ describe('useDesktopUndoRouting', () => {
     expect(document.execCommand).not.toHaveBeenCalled();
   });
 
-  it('leaves undo to the text field when one is focused', async () => {
+  function typeInto(input: HTMLInputElement) {
+    input.focus();
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  it('leaves undo to the text field while it has typing that was not saved', async () => {
     await act(async () => root.render(<Probe />));
-    (host.querySelector('input') as HTMLInputElement).focus();
+    typeInto(host.querySelector('input') as HTMLInputElement);
     menuCallback?.('undo');
     expect(document.execCommand).toHaveBeenCalledWith('undo');
     expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  it('undoes the ontology when a field has focus but nothing was typed in it', async () => {
+    await act(async () => root.render(<Probe />));
+    (host.querySelector('input') as HTMLInputElement).focus();
+    menuCallback?.('undo');
+    menuCallback?.('redo');
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(onRedo).toHaveBeenCalledTimes(1);
+    expect(document.execCommand).not.toHaveBeenCalled();
+  });
+
+  it('goes back to the ontology undo once the typing was saved', async () => {
+    await act(async () => root.render(<Probe />));
+    typeInto(host.querySelector('input') as HTMLInputElement);
+    window.dispatchEvent(new CustomEvent('ontologyChangesSaved', { detail: {} }));
+    menuCallback?.('undo');
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(document.execCommand).not.toHaveBeenCalled();
+  });
+
+  it('does not undo behind an open dialog', async () => {
+    await act(async () => root.render(<Probe />));
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    document.body.appendChild(dialog);
+    menuCallback?.('undo');
+    menuCallback?.('redo');
+    dialog.remove();
+    expect(onUndo).not.toHaveBeenCalled();
+    expect(onRedo).not.toHaveBeenCalled();
   });
 
   it('ignores unknown menu actions', async () => {

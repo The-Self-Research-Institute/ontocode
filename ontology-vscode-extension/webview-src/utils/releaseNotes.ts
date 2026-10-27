@@ -18,6 +18,17 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.7-beta.1",
+    webVersion: "1.2.7",
+    date: "October 26, 2026",
+    title: "macOS desktop app",
+    highlights: [
+      "Downloads — The macOS desktop app is now available for Apple silicon and Intel Macs.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.6-beta.1",
     webVersion: "1.2.6",
     date: "October 16, 2026",

@@ -97,6 +97,10 @@ export async function launchOntocodeElectron(): Promise<LaunchedElectron> {
 }
 
 export function cleanupUserDataDir(userDataDir: string): void {
+  if (process.env.E2E_KEEP_PROFILE === '1') {
+    console.log(`[electron] Keeping profile for inspection: ${userDataDir}`);
+    return;
+  }
   try {
     fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   } catch (e) {

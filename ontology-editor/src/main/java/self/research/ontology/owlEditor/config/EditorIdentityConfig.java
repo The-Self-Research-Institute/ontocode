@@ -40,13 +40,13 @@ public class EditorIdentityConfig {
 
     @PostConstruct
     void configure() {
+        RequestActor.useDesktopIdentity(desktopMode);
         if (desktopMode) {
             if (desktopLaunchKey == null || desktopLaunchKey.isBlank()) {
                 log.warn("[Security] No desktop launch key was provided, so Code View AI only accepts signed-in "
                         + "requests in this run.");
             }
             JwtIdentityExtractor.trustDesktopLaunchKey(desktopLaunchKey);
-            RequestActor.useDesktopIdentity(true);
             return;
         }
         boolean deployed = Arrays.stream(environment.getActiveProfiles()).anyMatch(DEPLOYED_PROFILES::contains);

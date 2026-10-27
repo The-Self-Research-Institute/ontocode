@@ -139,6 +139,9 @@ public class ProjectLoadController {
     private final GridFSFileService gridFSFileService;
     private final ProjectShareService shareService;
     private final DraftTrackingService draftTrackingService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.PrSnapshotService prSnapshots;
     private final DraftCopyService draftCopyService;
     private final OntologyHistoryService historyService;
     private final DraftChangeRepository draftChangeRepository;
@@ -2026,7 +2029,11 @@ public class ProjectLoadController {
 
             try {
                 log.info("[ProjectLoadController] Clearing drafts for project: {}", projectId);
+                if (prSnapshots != null) {
+                    prSnapshots.dropAllForProject(projectId);
+                }
                 draftTrackingService.discardDrafts(projectId);
+                draftTrackingService.markDraftHistoryDiscarded(projectId, null);
                 draftTrackingService.clearAppliedDrafts(projectId);
             } catch (Exception e) {
                 log.warn("[ProjectLoadController] Failed to clear drafts for {}: {}", projectId, e.getMessage());

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
+import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.Optional;
@@ -18,6 +19,7 @@ class EditorIdentityConfigTest {
     void reset() {
         JwtIdentityExtractor.requireSignature(null);
         JwtIdentityExtractor.trustDesktopLaunchKey(null);
+        RequestActor.useDesktopIdentity(false);
     }
 
     private static EditorIdentityConfig desktopConfig(String launchKey) {
@@ -31,6 +33,18 @@ class EditorIdentityConfigTest {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader(JwtIdentityExtractor.DESKTOP_LAUNCH_KEY_HEADER, key);
         return request;
+    }
+
+    @Test
+    void desktopModeRecordsEveryEditForTheLocalUserAndOtherModesDoNot() {
+        desktopConfig("key-from-electron").configure();
+        assertEquals("desktop-user-local", RequestActor.userIdOr(new MockHttpServletRequest(), "someone@x.org"));
+
+        EditorIdentityConfig web = new EditorIdentityConfig(new MockEnvironment());
+        ReflectionTestUtils.setField(web, "desktopMode", false);
+        web.configure();
+
+        assertEquals("someone@x.org", RequestActor.userIdOr(new MockHttpServletRequest(), "someone@x.org"));
     }
 
     @Test

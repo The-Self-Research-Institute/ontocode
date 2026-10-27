@@ -18,6 +18,7 @@ import self.research.ontology.owlEditor.service.OntologyMutationService.Mutation
 import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -183,5 +184,77 @@ class DesktopExactUndoTest {
         assertFalse(real.tryApplyRaw("p", "DELETE { } WHERE { }"));
         assertFalse(real.tryApplyRaw("p", " "));
         verify(loader, never()).persistToDisk(anyString());
+    }
+
+    private static MutationOp create(String type, String iri, String parent) {
+        return new MutationOp(type, iri, null, parent, null, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    private HistoryChange recordCreation(String operationType, String entity, MutationOp op, Runnable edit) {
+        HistoryChange entry = new HistoryChange();
+        entry.setId("e-create");
+        entry.setOperationType(operationType);
+        entry.setEntityIRI(entity);
+        entry.setChangeSetId("cs-create");
+        entry.setTimestamp(java.time.LocalDateTime.of(2026, 10, 14, 10, 0));
+        when(history.findByProjectIdAndChangeSetIdOrderByTimestampDesc("p", "cs-create")).thenReturn(List.of(entry));
+        recorder().recordAround("p", false, "u", List.of(op), edit, () -> "cs-create");
+        return entry;
+    }
+
+    @Test
+    void aSubclassCreatedUnderAParentIsRecordedExactlyAndItsDeltaHoldsForUndo() {
+        HistoryChange entry = recordCreation("createClass", NS + "Child", create("createClass", NS + "Child", NS + "A"), () -> {
+            manager.addAxiom(ontology, factory.getOWLDeclarationAxiom(clazz("Child")));
+            manager.addAxiom(ontology, factory.getOWLSubClassOfAxiom(clazz("Child"), clazz("A")));
+        });
+        RollbackGraphFacts facts = new RollbackGraphFacts(mock(SparqlDatasetService.class), cache, desktop);
+
+        assertTrue(entry.carriesExactDelta());
+        assertTrue(entry.getExactInserted().contains("subClassOf"));
+        assertTrue(facts.deltaHolds("p", entry, true));
+        assertFalse(facts.deltaHolds("p", entry, false));
+    }
+
+    @Test
+    void aSubPropertyCreatedUnderADataPropertyIsRecordedExactlyAndItsDeltaHoldsForUndo() {
+        var parent = factory.getOWLDataProperty(IRI.create(NS + "hasWeight"));
+        var child = factory.getOWLDataProperty(IRI.create(NS + "hasNetWeight"));
+        manager.addAxiom(ontology, factory.getOWLDeclarationAxiom(parent));
+        HistoryChange entry = recordCreation("createDataProperty", NS + "hasNetWeight",
+                create("createDataProperty", NS + "hasNetWeight", NS + "hasWeight"), () -> {
+                    manager.addAxiom(ontology, factory.getOWLDeclarationAxiom(child));
+                    manager.addAxiom(ontology, factory.getOWLSubDataPropertyOfAxiom(child, parent));
+                });
+        RollbackGraphFacts facts = new RollbackGraphFacts(mock(SparqlDatasetService.class), cache, desktop);
+
+        assertTrue(entry.carriesExactDelta());
+        assertTrue(entry.getExactInserted().contains("subPropertyOf"));
+        assertTrue(facts.deltaHolds("p", entry, true));
+    }
+
+    @Test
+    void aDomainOnADataPropertyIsRecordedExactlyAndItsDeltaHoldsForUndo() {
+        var property = factory.getOWLDataProperty(IRI.create(NS + "hasSpeed"));
+        manager.addAxiom(ontology, factory.getOWLDeclarationAxiom(property));
+        HistoryChange entry = recordCreation("addPropertyDomain", NS + "hasSpeed",
+                op("addPropertyDomain", NS + "hasSpeed", NS + "A"),
+                () -> manager.addAxiom(ontology, factory.getOWLDataPropertyDomainAxiom(property, clazz("A"))));
+        RollbackGraphFacts facts = new RollbackGraphFacts(mock(SparqlDatasetService.class), cache, desktop);
+
+        assertTrue(entry.carriesExactDelta());
+        assertTrue(entry.getExactInserted().contains("domain"));
+        assertTrue(facts.deltaHolds("p", entry, true));
+    }
+
+    @Test
+    void withoutAnExactRecordACreatedSubclassIsStillUndoneByDeletingIt() {
+        HistoryChange entry = new HistoryChange();
+        entry.setOperationType("createClass");
+        entry.setEntityIRI(NS + "Child");
+
+        assertEquals(RollbackMutationPlanner.Kind.CREATE, RollbackMutationPlanner.kindOf(entry));
+        var plan = new RollbackMutationPlanner().planUndo(entry, List.of());
+        assertEquals(List.of("deleteClass"), plan.mutations().stream().map(m -> m.type()).toList());
     }
 }

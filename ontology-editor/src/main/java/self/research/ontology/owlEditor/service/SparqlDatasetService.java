@@ -1279,11 +1279,14 @@ public class SparqlDatasetService {
             // Inject FROM clause if not present.
             // ASK queries legally omit the WHERE keyword (ASK { } is valid SPARQL), so we
             // cannot rely on finding WHERE — fall back to injecting FROM before the opening brace.
-            if (!sparqlQuery.toUpperCase().contains("FROM")) {
+            if (!SparqlText.hasFromClause(sparqlQuery)) {
                 String fromClause = forceGraphUri != null
                         ? "FROM <" + forceGraphUri + ">"
                         : buildFromClause(conn, projectId);
-                if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
+                String scoped = SparqlText.withAskDataset(sparqlQuery, fromClause);
+                if (scoped != null) {
+                    sparqlQuery = scoped;
+                } else if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
                     sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE", fromClause + " WHERE");
                 } else {
                     // ASK { ... } without WHERE — insert FROM <graph> WHERE before the body brace
@@ -1373,6 +1376,25 @@ public class SparqlDatasetService {
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
         }
+    }
+
+    public int copyDraftGraph(String projectId, String fromUserKey, String toUserKey) {
+        String from = getDraftGraphUri(projectId, fromUserKey);
+        String to = getDraftGraphUri(projectId, toUserKey);
+        long start = System.nanoTime();
+        int copied;
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
+            copied = GraphStatementOps.copy(conn, from, to);
+        } finally {
+            noteGraphWritten(to);
+        }
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
+        evictDraftReadyCache(projectId, toUserKey);
+        log.info("[DRAFT-COPY] Copied {} triples draft {} -> {} for project {} in {}ms",
+                copied, fromUserKey, toUserKey, projectId, elapsedMillis(start));
+        return copied;
     }
 
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {

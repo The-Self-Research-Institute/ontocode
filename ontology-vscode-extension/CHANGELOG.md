@@ -2,6 +2,12 @@
 
 All notable changes to OntoCode Studio are listed here, newest first. The same notes appear in the app under What's new.
 
+## [1.2.7] - 2026-10-26
+
+**macOS desktop app**
+
+- Downloads — The macOS desktop app is now available for Apple silicon and Intel Macs.
+
 ## [1.2.6] - 2026-10-16
 
 **Undo and Redo**

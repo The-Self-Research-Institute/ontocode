@@ -2,8 +2,10 @@ package self.research.ontology.owlEditor.service;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.RollbackAudit;
+import self.research.ontology.owlEditor.repository.DraftSessionRepository;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import self.research.ontology.owlEditor.repository.RollbackAuditRepository;
 
@@ -12,6 +14,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -39,7 +42,7 @@ public class UserUndoService {
             return values;
         }
 
-        boolean owns(String userId) {
+        public boolean owns(String userId) {
             if (userId == null) {
                 return false;
             }
@@ -73,9 +76,9 @@ public class UserUndoService {
     }
 
     public Next nextUndo(String projectId, boolean draft, Identity who) {
-        HistoryChange target = latestOwn(projectId, draft, who);
+        HistoryChange target = latestToUndo(projectId, draft, who);
         if (target == null) {
-            return Next.none(ChangeRollbackService.UNDO, "You have no changes to undo");
+            return Next.none(ChangeRollbackService.UNDO, draft ? "You have no changes to undo" : "There is nothing to undo");
         }
         Next blocked = blockage(projectId, draft, who, target);
         if (blocked != null) {
@@ -104,9 +107,14 @@ public class UserUndoService {
         List<RollbackAudit> undos = audits.findByProjectIdAndDirectionAndRevertedByUserIdInOrderByRevertedAtDesc(
                 projectId, ChangeRollbackService.UNDO, who.queryValues(), PageRequest.of(0, Limit.REDO_AUDIT_LOOKBACK.value()));
         HistoryChange latest = latestOwn(projectId, draft, who);
+        String currentDraft = draft ? currentDraftSessionId(projectId, who) : null;
         for (RollbackAudit undo : undos) {
             List<HistoryChange> entries = rollback.entriesForUndo(projectId, undo.getId());
             if (entries.isEmpty() || entries.get(0).isDraft() != draft) {
+                continue;
+            }
+            if (redoGuard != null && redoGuard.refusal(projectId, entries).isPresent()
+                    || fromAnotherDraft(entries.get(0), draft, currentDraft)) {
                 continue;
             }
             if (!stillUndone(entries, undo.getId())) {
@@ -120,18 +128,85 @@ public class UserUndoService {
                     first.getEntityIRI(), entries.size() == 1 ? labelOf(first) : entries.size() + " changes", null,
                     List.of());
         }
+        HistoryChange reversal = draft ? null : latestOwnPrReversal(projectId, who);
+        if (reversal != null) {
+            String title = reversal.getEntityLabel() == null ? "" : reversal.getEntityLabel().replaceFirst("^Reverted PR: ", "");
+            return new Next(true, ChangeRollbackService.REDO, reversal.getId(), null, null, reversal.getEntityIRI(),
+                    "Apply again: " + title, null, List.of());
+        }
         return Next.none(ChangeRollbackService.REDO, "Nothing to redo");
+    }
+
+    private HistoryChange latestOwnPrReversal(String projectId, Identity who) {
+        List<HistoryChange> own = history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(
+                projectId, false, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
+        for (HistoryChange entry : own) {
+            if (isRollbackEntry(entry)) {
+                continue;
+            }
+            boolean reversal = RollbackWorkSupport.PR_REVERTED.equals(entry.getOperationType())
+                    && PrEntries.prIdOf(entry.getEntityIRI()) != null;
+            if (reversal && !entry.isReverted()) {
+                return entry;
+            }
+        }
+        return null;
     }
 
     private HistoryChange latestOwn(String projectId, boolean draft, Identity who) {
         List<HistoryChange> own = history.findByProjectIdAndDraftAndUserIdInOrderByTimestampDesc(
                 projectId, draft, who.queryValues(), PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
-        for (HistoryChange entry : own) {
-            if (!entry.isReverted() && !isRollbackEntry(entry)) {
+        return firstUndoable(own, draft, draft ? currentDraftSessionId(projectId, who) : null);
+    }
+
+    private HistoryChange latestToUndo(String projectId, boolean draft, Identity who) {
+        if (draft) {
+            return latestOwn(projectId, true, who);
+        }
+        List<HistoryChange> newest = history.findByProjectIdAndDraftOrderByTimestampDesc(
+                projectId, false, PageRequest.of(0, Limit.UNDO_LOOKBACK.value()));
+        return firstUndoable(newest, false, null);
+    }
+
+    private static HistoryChange firstUndoable(List<HistoryChange> rows, boolean draft, String currentDraft) {
+        for (HistoryChange entry : rows) {
+            if (!entry.isReverted() && !entry.isDraftDiscarded() && entry.getPublishedPrId() == null && !isRollbackEntry(entry)
+                    && (!RollbackWorkSupport.isPublicationEntry(entry) || RollbackWorkSupport.isUndoablePublication(entry))
+                    && !fromAnotherDraft(entry, draft, currentDraft)) {
                 return entry;
             }
         }
         return null;
+    }
+
+    private static boolean fromAnotherDraft(HistoryChange entry, boolean draft, String currentDraft) {
+        return draft && entry.getDraftSessionId() != null && !entry.getDraftSessionId().equals(currentDraft);
+    }
+
+    private String currentDraftSessionId(String projectId, Identity who) {
+        if (draftSessions == null) {
+            return null;
+        }
+        for (String alias : who.aliases()) {
+            Optional<DraftSession> session = draftSessions.findByProjectIdAndUserId(projectId, alias);
+            if (session.isPresent()) {
+                return session.get().getId();
+            }
+        }
+        return null;
+    }
+
+    private DraftSessionRepository draftSessions;
+    private RedoGuard redoGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setRedoGuard(RedoGuard redoGuard) {
+        this.redoGuard = redoGuard;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDraftSessions(DraftSessionRepository draftSessions) {
+        this.draftSessions = draftSessions;
     }
 
     private List<Dependent> dependentsOf(String projectId, HistoryChange target, Identity who) {
@@ -183,7 +258,7 @@ public class UserUndoService {
         return value == null || value.isBlank();
     }
 
-    static String labelOf(HistoryChange entry) {
+    public static String labelOf(HistoryChange entry) {
         if (!isBlank(entry.getEntityLabel())) {
             return entry.getEntityLabel();
         }
