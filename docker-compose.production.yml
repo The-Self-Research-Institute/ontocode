@@ -296,12 +296,14 @@ services:
       ONTOCODE_REASONING_IDLE_EVICTION_MINUTES: ${ONTOCODE_REASONING_IDLE_EVICTION_MINUTES:-15}
       ONTOCODE_REASONER_MAX_TRIPLES: ${ONTOCODE_REASONER_MAX_TRIPLES:-5000000}
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
+      LOGGING_FILE_NAME: /app/logs/reasoner-worker.log
       JAVA_OPTS: >-
         -Xms2g -Xmx8g
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
-        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
+        -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/heapdumps
     volumes:
       - /var/log/ontocode/reasoner-worker:/app/logs
+      - reasoner-heapdumps:/app/heapdumps
     depends_on:
       owl-editor:
         condition: service_healthy
@@ -336,7 +338,7 @@ services:
       ONTOCODE_SWRL_URL: http://swrl-service:8084
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
+      JAVA_OPTS: -Xms128m -Xmx320m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
@@ -347,7 +349,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 320m
+          memory: 512m
 
   # Plugin Initialization Service
   plugin-init:
@@ -424,6 +426,7 @@ volumes:
   mongo-data:
   fuseki-data:
   editor-data:
+  reasoner-heapdumps:
 
 networks:
   ontology-net:
