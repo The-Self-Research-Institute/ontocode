@@ -233,7 +233,8 @@ public class ReasoningSnapshotService {
                     requested, projectId, session.revision(), session.actualReasonerType(),
                     session.propertyReasonerType(), built.get("durationMs"));
             return new Built(response, session.revision(), session.tripleCount(),
-                    OntologyRulesFingerprint.of(session.ontology()), session.rulesComplete());
+                    OntologySessionService.combineFingerprint(OntologyRulesFingerprint.of(session.ontology()),
+                            session.savedRulesKeyPart()), session.rulesComplete());
         }
     }
 

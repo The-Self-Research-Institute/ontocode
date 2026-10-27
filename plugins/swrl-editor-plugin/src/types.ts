@@ -86,6 +86,14 @@ export interface ExecutionResponse {
   executionMode?: 'all' | 'selected'; // Indicates if all rules or selected rules were executed
   stamp?: { ontologyRevision: string; draftVersion: string; rulesFingerprint: string } | null;
   conclusionCount?: number;
+  status?: string;
+  statusLabel?: string;
+  message?: string;
+  limitations?: string[];
+  consistencyStatement?: string;
+  rounds?: number;
+  snapshotId?: string;
+  engineVersions?: Record<string, string>;
   structureCount?: number;
   omittedTrivialCount?: number;
   truncated?: boolean;

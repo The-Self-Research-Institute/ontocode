@@ -392,6 +392,12 @@ public class HistorySyncService {
         if (changeData.get("ai") instanceof HistoryChange.AiInfo ai) {
             builder.ai(ai);
         }
+        if (changeData.get("toolSource") instanceof String toolSource) {
+            builder.metadata("toolSource", toolSource);
+        }
+        if (changeData.get("toolLabel") instanceof String toolLabel) {
+            builder.metadata("toolLabel", toolLabel);
+        }
         if (changeData.get("revertsChangeSetId") instanceof String reverts) {
             builder.metadata("revertsChangeSetId", reverts);
         }

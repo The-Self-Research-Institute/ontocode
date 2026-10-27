@@ -53,6 +53,13 @@ public class DLQueryService {
     private final long maxReasonerTriples;
     private final ProjectImportService importService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SavedRulesService savedRulesService;
+
+    void useSavedRules(SavedRulesService service) {
+        this.savedRulesService = service;
+    }
+
     public DLQueryService(GridFsTemplate gridfs,
                           SparqlDatasetService datasetService,
                           @Value("${ontocode.reasoner.max-triples:5000000}") long maxReasonerTriples,
@@ -185,12 +192,18 @@ public class DLQueryService {
         LoadedOntology loaded = loadOntology(projectId, draftUserId);
         org.semanticweb.HermiT.Configuration hermitConfig = new org.semanticweb.HermiT.Configuration();
         hermitConfig.ignoreUnsupportedDatatypes = true;
+        SavedRulesService.Merged merged = SavedRulesService.mergeOrPlain(savedRulesService, loaded.ontology(), projectId, draftUserId);
         self.research.ontology.common.PreparedOntology prepared = self.research.ontology.common.SwrlBuiltIns
-                .prepareChained(loaded.ontology(), self.research.ontology.common.RestRuleStage.shared(),
+                .prepareChained(merged.ontology(), self.research.ontology.common.RestRuleStage.shared(),
                         input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519", projectId + ":" + loaded.ontology().getAxiomCount());
         OWLReasoner reasoner = reasonerFactory.createReasoner(prepared.forHermit(), hermitConfig);
 
-        return new QuerySession(loaded.manager(), loaded.ontology(), reasoner, prepared.note(), prepared.complete());
+        String note = prepared.note();
+        if (merged.savedRulesUnavailable()) {
+            note = note == null ? SavedRulesService.UNAVAILABLE_NOTE : note + " " + SavedRulesService.UNAVAILABLE_NOTE;
+        }
+        return new QuerySession(loaded.manager(), loaded.ontology(), reasoner, note,
+                prepared.complete() && !merged.savedRulesUnavailable());
     }
 
     private LoadedOntology loadOntology(String projectId, String draftUserId) throws Exception {

@@ -3,6 +3,7 @@ package self.research.ontology.reasoner.service;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.NTriplesDocumentFormat;
 import org.semanticweb.owlapi.io.StreamDocumentSource;
+import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
@@ -14,10 +15,17 @@ import self.research.ontology.common.PreparedOntology;
 import self.research.ontology.common.RuleStage;
 import self.research.ontology.common.rules.OntologyRulesFingerprint;
 import self.research.ontology.common.SwrlBuiltIns;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.semanticweb.owlapi.model.OWLAxiom;
+import org.semanticweb.owlapi.model.SWRLRule;
 
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -58,11 +66,31 @@ public class OntologySessionService {
     private final long reasonerTimeoutMs;
     private final long maxTriples;
 
+    private static final long SAVED_FINGERPRINT_TTL_MS = 5_000L;
+
+    private record CachedSavedPart(String part, long atMs) {}
+
+    private record Merged(OWLOntology ontology, String keyPart, boolean unavailable) {}
+
+    private final ConcurrentHashMap<String, CachedSavedPart> savedParts = new ConcurrentHashMap<>();
+    private SavedRulesClient savedRulesClient;
+
     public OntologySessionService(EditorClient editorClient,
                                   OntologyCache ontologyCache,
+                                  long hermitMaxTriples,
+                                  long reasonerTimeoutMs,
+                                  long maxTriples) {
+        this(editorClient, ontologyCache, SavedRulesClient.none(), hermitMaxTriples, reasonerTimeoutMs, maxTriples);
+    }
+
+    @Autowired
+    public OntologySessionService(EditorClient editorClient,
+                                  OntologyCache ontologyCache,
+                                  SavedRulesClient savedRulesClient,
                                   @Value("${ontocode.reasoning.large-triple-threshold:500000}") long hermitMaxTriples,
                                   @Value("${ontocode.reasoning.job-timeout-ms:1800000}") long reasonerTimeoutMs,
                                   @Value("${ontocode.reasoner.max-triples:5000000}") long maxTriples) {
+        this.savedRulesClient = savedRulesClient;
         this.editorClient = editorClient;
         this.ontologyCache = ontologyCache;
         this.hermitMaxTriples = hermitMaxTriples;
@@ -74,6 +102,15 @@ public class OntologySessionService {
 
     void useRuleStage(RuleStage stage) {
         this.ruleStage = stage;
+    }
+
+    void useSavedRulesClient(SavedRulesClient client) {
+        this.savedRulesClient = client;
+        this.savedParts.clear();
+    }
+
+    static String combineFingerprint(String embedded, String savedPart) {
+        return savedPart == null || savedPart.isEmpty() ? embedded : embedded + "|saved:" + savedPart;
     }
 
     public long currentRevision(String projectId) {
@@ -141,7 +178,7 @@ public class OntologySessionService {
                 log.info("[Reasoner] Skipping OWL load — reusing cached ontology for {} (revision={})", projectId, revision);
                 try {
                     return startSession(null, ontology, effectiveType, downgradedWarning, true, ontologyCache,
-                            revision, snapshot, tripleCount);
+                            revision, snapshot, tripleCount, projectId, userId);
                 } catch (RuntimeException e) {
                     ontologyCache.endUse(ontology);
                     throw e;
@@ -161,7 +198,7 @@ public class OntologySessionService {
 
         try {
             return startSession(storedInCache ? null : manager, ontology, effectiveType, downgradedWarning,
-                    storedInCache, storedInCache ? ontologyCache : null, revision, snapshot, tripleCount);
+                    storedInCache, storedInCache ? ontologyCache : null, revision, snapshot, tripleCount, projectId, userId);
         } catch (RuntimeException e) {
             if (storedInCache) {
                 ontologyCache.endUse(ontology);
@@ -193,7 +230,7 @@ public class OntologySessionService {
             var cached = ontologyCache.getAndBeginUse(projectId, revision, tripleCount);
             if (cached.isPresent()) {
                 try {
-                    return OntologyRulesFingerprint.of(cached.get());
+                    return combineFingerprint(OntologyRulesFingerprint.of(cached.get()), currentSavedPart(projectId));
                 } finally {
                     ontologyCache.endUse(cached.get());
                 }
@@ -202,7 +239,7 @@ public class OntologySessionService {
             OWLOntology ontology = loadOntology(projectId, null, manager);
             ontologyCache.putAndBeginUse(projectId, revision, tripleCount, manager, ontology);
             try {
-                return OntologyRulesFingerprint.of(ontology);
+                return combineFingerprint(OntologyRulesFingerprint.of(ontology), currentSavedPart(projectId));
             } finally {
                 ontologyCache.endUse(ontology);
             }
@@ -212,28 +249,80 @@ public class OntologySessionService {
         }
     }
 
-    private PreparedOntology prepareRules(OWLOntology ontology, long revision, long tripleCount) {
+    private String currentSavedPart(String projectId) {
+        long now = System.currentTimeMillis();
+        CachedSavedPart known = savedParts.get(projectId);
+        if (known != null && now - known.atMs() < SAVED_FINGERPRINT_TTL_MS) {
+            return known.part();
+        }
+        Optional<SavedRulesClient.SavedRules> loaded = savedRulesClient.load(projectId, null);
+        String part = loaded.isPresent() ? loaded.get().keyPart() : "unavailable";
+        savedParts.put(projectId, new CachedSavedPart(part, now));
+        return part;
+    }
+
+    private Merged mergeSavedRules(OWLOntology base, String projectId, String userId) {
+        Optional<SavedRulesClient.SavedRules> loaded = savedRulesClient.load(projectId, userId);
+        if (loaded.isEmpty()) {
+            return new Merged(base, "unavailable", true);
+        }
+        SavedRulesClient.SavedRules saved = loaded.get();
+        String part = saved.keyPart();
+        Set<String> existing = base.importsClosure()
+                .flatMap(o -> o.axioms(AxiomType.SWRL_RULE))
+                .map(rule -> rule.getAxiomWithoutAnnotations().toString())
+                .collect(Collectors.toSet());
+        List<SWRLRule> toAdd = saved.rules().stream()
+                .filter(rule -> existing.add(rule.getAxiomWithoutAnnotations().toString()))
+                .toList();
+        if (toAdd.isEmpty()) {
+            return new Merged(base, part, false);
+        }
+        try {
+            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntology copy = manager.createOntology();
+            Set<OWLAxiom> axioms = base.importsClosure().flatMap(OWLOntology::axioms)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            manager.addAxioms(copy, axioms);
+            manager.addAxioms(copy, toAdd);
+            return new Merged(copy, part, false);
+        } catch (Exception e) {
+            log.warn("[Reasoner] Could not merge saved SWRL rules into the ontology: {}", e.toString());
+            return new Merged(base, "unavailable", true);
+        }
+    }
+
+    private PreparedOntology prepareRules(OWLOntology ontology, long revision, long tripleCount, String savedPart) {
+        String snapshotId = revision + ":" + tripleCount + (savedPart == null || savedPart.isEmpty() ? "" : ":" + savedPart);
         return SwrlBuiltIns.prepareChained(ontology, ruleStage,
                 input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519",
-                revision + ":" + tripleCount);
+                snapshotId);
     }
 
     private ReasoningSession startSession(OWLOntologyManager manager, OWLOntology ontology, ReasonerType type,
                                           String downgradedWarning, boolean fromCache, OntologyCache cache,
-                                          long revision, boolean snapshot, long tripleCount) {
+                                          long revision, boolean snapshot, long tripleCount,
+                                          String projectId, String userId) {
         PreparedOntology prepared = null;
+        Merged merged = null;
         if (type == ReasonerType.HERMIT) {
-            prepared = prepareRules(ontology, revision, tripleCount);
+            merged = mergeSavedRules(ontology, projectId, userId);
+            prepared = prepareRules(merged.ontology(), revision, tripleCount, merged.keyPart());
             if (prepared.note() != null) {
                 downgradedWarning = downgradedWarning == null ? prepared.note() : downgradedWarning + " " + prepared.note();
             }
+            if (merged.unavailable()) {
+                downgradedWarning = downgradedWarning == null ? SavedRulesClient.UNAVAILABLE_NOTE
+                        : downgradedWarning + " " + SavedRulesClient.UNAVAILABLE_NOTE;
+            }
         }
-        boolean rulesComplete = prepared == null || prepared.complete();
+        boolean rulesComplete = prepared == null || (prepared.complete() && !merged.unavailable());
+        String savedKeyPart = merged == null ? "" : merged.keyPart();
         OWLOntology reasoningInput = prepared != null ? prepared.forHermit() : ontology;
         if (!snapshot) {
             OWLReasoner reasoner = createRegisteredReasoner(reasoningInput, type);
             return new ReasoningSession(manager, ontology, reasoner, type, downgradedWarning, fromCache, cache, revision,
-                    null, type, tripleCount, rulesComplete);
+                    null, type, tripleCount, rulesComplete).withSavedRulesKeyPart(savedKeyPart);
         }
 
         ReasonerType classType = type;
@@ -257,12 +346,21 @@ public class OntologySessionService {
         OWLReasoner propertyReasoner = null;
         if (classType == ReasonerType.ELK && tripleCount <= hermitMaxTriples) {
             try {
-                PreparedOntology forProperty = prepared != null ? prepared : prepareRules(ontology, revision, tripleCount);
-                propertyReasoner = createRegisteredReasoner(forProperty.forHermit(), ReasonerType.HERMIT);
+                Merged propertyMerged = merged != null ? merged : mergeSavedRules(ontology, projectId, userId);
+                PreparedOntology forProperty = prepared != null ? prepared
+                        : prepareRules(propertyMerged.ontology(), revision, tripleCount, propertyMerged.keyPart());
+                if (merged == null) {
+                    savedKeyPart = propertyMerged.keyPart();
+                }
+                propertyReasoner = createRegisteredReasoner(propertyHierarchyInput(forProperty.forHermit()), ReasonerType.HERMIT);
                 propertyType = ReasonerType.HERMIT;
-                rulesComplete = rulesComplete && forProperty.complete();
+                rulesComplete = rulesComplete && forProperty.complete() && !propertyMerged.unavailable();
                 if (prepared == null && forProperty.note() != null) {
                     downgradedWarning = downgradedWarning == null ? forProperty.note() : downgradedWarning + " " + forProperty.note();
+                }
+                if (prepared == null && propertyMerged.unavailable()) {
+                    downgradedWarning = downgradedWarning == null ? SavedRulesClient.UNAVAILABLE_NOTE
+                            : downgradedWarning + " " + SavedRulesClient.UNAVAILABLE_NOTE;
                 }
             } catch (ReasonerInterruptedException e) {
                 closeReasoner(classReasoner);
@@ -273,7 +371,21 @@ public class OntologySessionService {
             }
         }
         return new ReasoningSession(manager, ontology, classReasoner, classType, downgradedWarning, fromCache, cache,
-                revision, propertyReasoner, propertyType, tripleCount, rulesComplete);
+                revision, propertyReasoner, propertyType, tripleCount, rulesComplete).withSavedRulesKeyPart(savedKeyPart);
+    }
+
+    static OWLOntology propertyHierarchyInput(OWLOntology source) {
+        try {
+            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntology target = manager.createOntology();
+            manager.addAxioms(target, source.getAxioms().stream()
+                    .filter(axiom -> axiom.isOfType(AxiomType.DECLARATION, AxiomType.OBJECT_PROPERTY_DOMAIN,
+                            AxiomType.OBJECT_PROPERTY_RANGE, AxiomType.DATA_PROPERTY_DOMAIN, AxiomType.DATA_PROPERTY_RANGE)
+                            || AxiomType.RBoxAxiomTypes.contains(axiom.getAxiomType())));
+            return target;
+        } catch (org.semanticweb.owlapi.model.OWLOntologyCreationException e) {
+            throw new RuntimeException("Could not prepare the property hierarchy input: " + e.getMessage(), e);
+        }
     }
 
     static String rootMessage(Throwable error) {
@@ -356,6 +468,7 @@ public class OntologySessionService {
         private final ReasonerType propertyReasonerType;
         private final long tripleCount;
         private final boolean rulesComplete;
+        private String savedRulesKeyPart = "";
 
         ReasoningSession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner,
                          ReasonerType actualReasonerType, String downgradedWarning, boolean fromCache,
@@ -408,6 +521,12 @@ public class OntologySessionService {
         public long revision() { return revision; }
         public long tripleCount() { return tripleCount; }
         public boolean rulesComplete() { return rulesComplete; }
+        public String savedRulesKeyPart() { return savedRulesKeyPart; }
+
+        ReasoningSession withSavedRulesKeyPart(String part) {
+            this.savedRulesKeyPart = part == null ? "" : part;
+            return this;
+        }
 
         @Override
         public void close() {

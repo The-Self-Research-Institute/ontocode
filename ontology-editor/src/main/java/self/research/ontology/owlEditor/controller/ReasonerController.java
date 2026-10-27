@@ -17,8 +17,14 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.common.rules.OntologyRulesFingerprint;
+import self.research.ontology.common.rules.RuleExecution;
+import self.research.ontology.common.rules.RuleExecutionLimits;
+import self.research.ontology.common.rules.RuleExecutionResult;
+import self.research.ontology.owlEditor.service.RuleExecutionPresenter;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.ReasonerService;
+import self.research.ontology.owlEditor.service.SavedRulesService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
@@ -103,6 +109,12 @@ public class ReasonerController {
     @Autowired(required = false)
     private MainGraphRevisionService mainGraphRevisionService;
 
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.SavedRulesService savedRulesService;
+
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.OntologyVersionStamps ontologyVersionStamps;
+
     static final String SNAPSHOT_JOB_TYPE = "REASONER_SNAPSHOT";
 
     private static final Set<String> WORKER_JOB_KEYS = Set.of(
@@ -113,6 +125,7 @@ public class ReasonerController {
         final CompletableFuture<Map<String, Object>> result = new CompletableFuture<>();
         final AtomicReference<Future<?>> task = new AtomicReference<>();
         private final List<OWLReasoner> reasoners = new ArrayList<>();
+        volatile String rulesFingerprint = OntologyRulesFingerprint.NONE;
         private boolean stopped;
 
         synchronized void attach(OWLReasoner reasoner) {
@@ -466,7 +479,16 @@ public class ReasonerController {
                         draftVersion + "." + draftWriteStamp)
                 : EditorReasonerCacheService.snapshotKey(projectId, requestedType.name(), revision);
 
-        Optional<Map<String, Object>> cached = editorReasonerCache.getSnapshot(cacheKey);
+        Optional<Map<String, Object>> cached = editorReasonerCache.getSnapshot(cacheKey, () -> {
+            try {
+                OWLOntology current = isDraft
+                        ? datasetService.loadDraftAsOntology(projectId, draftUserId, draftVersion)
+                        : loadOntology(projectId);
+                return SavedRulesService.mergeOrPlain(savedRulesService, current, projectId, draftUserId).fingerprint();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
         if (cached.isPresent()) {
             return ResponseEntity.ok(snapshotBody(projectId, cached.get(), true));
         }
@@ -499,7 +521,7 @@ public class ReasonerController {
                     Map<String, Object> snapshot = computeSnapshot(projectId, requestedType, draftUserId,
                             draftVersion, revision, run);
                     if (!"partial".equals(snapshot.get("completion"))) {
-                        editorReasonerCache.putSnapshot(cacheKey, snapshot);
+                        editorReasonerCache.putSnapshot(cacheKey, snapshot, run.rulesFingerprint);
                     }
                     run.result.complete(snapshot);
                 } catch (Throwable t) {
@@ -530,6 +552,8 @@ public class ReasonerController {
         OWLOntology ontology = isDraft
                 ? datasetService.loadDraftAsOntology(projectId, draftUserId, draftVersion)
                 : loadOntology(projectId);
+        SavedRulesService.Merged merged = SavedRulesService.mergeOrPlain(savedRulesService, ontology, projectId, draftUserId);
+        run.rulesFingerprint = merged.fingerprint();
 
         ReasonerType classType = requestedType;
         String downgradedWarning = null;
@@ -540,14 +564,16 @@ public class ReasonerController {
             downgradedWarning = String.format("This ontology has %,d axioms, so ELK was used instead of %s "
                     + "to keep reasoning fast.", axiomCount, requestedType.getDisplayName());
         }
-        if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && classType != ReasonerType.STRUCTURAL) {
+        int structuralAbove = requestedType == ReasonerType.ELK
+                ? Limit.REASONER_ELK_MAX_AXIOMS.value() : Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value();
+        if (axiomCount > structuralAbove && classType != ReasonerType.STRUCTURAL) {
             classType = ReasonerType.STRUCTURAL;
             downgradedWarning = String.format("This ontology has %,d axioms, so only the asserted (structural) "
                     + "hierarchy is shown instead of %s.", axiomCount, requestedType.getDisplayName());
         }
 
         self.research.ontology.common.PreparedOntology prepared = classType == ReasonerType.HERMIT
-                ? chained(ontology, projectId) : null;
+                ? chained(merged.ontology(), projectId) : null;
         if (prepared != null && prepared.note() != null) {
             downgradedWarning = downgradedWarning == null ? prepared.note() : downgradedWarning + " " + prepared.note();
         }
@@ -574,7 +600,7 @@ public class ReasonerController {
         OWLOntology propertyInput = ontology;
         if (propertyType != classType) {
             self.research.ontology.common.PreparedOntology forProperty = prepared != null
-                    ? prepared : chained(ontology, projectId);
+                    ? prepared : chained(merged.ontology(), projectId);
             propertyInput = forProperty.forHermit();
             rulesComplete = rulesComplete && forProperty.complete();
             if (prepared == null && forProperty.note() != null) {
@@ -582,6 +608,12 @@ public class ReasonerController {
             }
             propertyReasoner = reasonerService.getUnwarmedReasoner(propertyInput, propertyType);
             run.attach(propertyReasoner);
+        }
+
+        if (merged.savedRulesUnavailable() && (prepared != null || propertyReasoner != null)) {
+            rulesComplete = false;
+            downgradedWarning = downgradedWarning == null ? SavedRulesService.UNAVAILABLE_NOTE
+                    : downgradedWarning + " " + SavedRulesService.UNAVAILABLE_NOTE;
         }
 
         Map<String, Object> snapshot = new LinkedHashMap<>();
@@ -740,7 +772,14 @@ public class ReasonerController {
                     && !effectiveType.equalsIgnoreCase("ELK") && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 effectiveType = "ELK";
             }
-            if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+            boolean elkRequested = reasonerType.equalsIgnoreCase("ELK");
+            if (elkRequested && axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value()
+                    && axiomCount <= Limit.REASONER_ELK_MAX_AXIOMS.value()) {
+                effectiveType = "ELK";
+            }
+            int structuralAbove = elkRequested
+                    ? Limit.REASONER_ELK_MAX_AXIOMS.value() : Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value();
+            if (axiomCount > structuralAbove && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 effectiveType = "STRUCTURAL";
             }
             ReasonerType type = ReasonerType.parse(effectiveType);
@@ -825,7 +864,14 @@ public class ReasonerController {
                 effectiveType = "ELK";
             }
             // Very large ontologies (>100k): STRUCTURAL is safest (no reasoning, just asserted)
-            if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+            boolean elkRequested = reasonerType.equalsIgnoreCase("ELK");
+            if (elkRequested && axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value()
+                    && axiomCount <= Limit.REASONER_ELK_MAX_AXIOMS.value()) {
+                effectiveType = "ELK";
+            }
+            int structuralAbove = elkRequested
+                    ? Limit.REASONER_ELK_MAX_AXIOMS.value() : Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value();
+            if (axiomCount > structuralAbove && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 log.warn("Very large ontology ({} axioms) — switching to STRUCTURAL for project {}", axiomCount, projectId);
                 effectiveType = "STRUCTURAL";
             }
@@ -833,10 +879,11 @@ public class ReasonerController {
             ReasonerType type = ReasonerType.parse(effectiveType);
 
             // Return cached hierarchy immediately if still fresh (Caffeine handles TTL)
+            String rulesFingerprint = OntologyRulesFingerprint.of(ontology);
             String cacheKey = isDraft
                     ? EditorReasonerCacheService.draftHierarchyKey(projectId, type, resolvedUserId,
-                            draftVersion + "." + draftWriteStamp)
-                    : projectId + "-" + type.name();
+                            draftVersion + "." + draftWriteStamp, rulesFingerprint)
+                    : EditorReasonerCacheService.hierarchyKey(projectId, type, rulesFingerprint);
             EditorReasonerCacheService.HierarchyCacheEntry cached =
                     editorReasonerCache.getHierarchy(cacheKey).orElse(null);
             if (cached != null) {
@@ -1730,6 +1777,97 @@ public class ReasonerController {
         } catch (Exception e) {
             log.error("Error getting reasoner stats", e);
             return ResponseEntity.ok(friendlyError(e));
+        }
+    }
+
+    @PostMapping("/{projectId}/rules/execute")
+    public ResponseEntity<Map<String, Object>> executeRules(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
+    ) {
+        long started = System.currentTimeMillis();
+        try {
+            String resolvedUserId = resolveUserId(projectId, userId, request);
+            boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
+            String draftUserId = isDraft ? resolvedUserId : null;
+            OWLOntology ontology = isDraft ? loadDraftOntology(projectId, draftUserId) : loadOntology(projectId);
+            SavedRulesService.Merged merged = SavedRulesService.mergeOrPlain(savedRulesService, ontology, projectId, draftUserId);
+            RuleExecutionResult result = new RuleExecution(ruleStage,
+                    input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519")
+                    .run(merged.ontology(), projectId + ":" + merged.ontology().getAxiomCount(), RuleExecutionLimits.defaults());
+
+            Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(merged.ontology());
+            List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
+            RuleExecutionPresenter.Presented presented = RuleExecutionPresenter.present(derived, asserted, RuleExecutionPresenter.MAX_INFERRED);
+            List<Map<String, Object>> axioms = new ArrayList<>();
+            for (OWLAxiom axiom : presented.ordered()) {
+                axioms.add(RuleExecutionPresenter.toJson(axiom, presented.conclusions().contains(axiom) ? "conclusion" : "structure"));
+            }
+
+            List<Map<String, String>> skipped = new ArrayList<>();
+            for (SavedRulesService.SkippedSavedRule rule : merged.skipped()) {
+                skipped.add(Map.of("ruleName", rule.ruleName(), "reason", rule.reason()));
+            }
+            for (RuleExecutionResult.SkippedRule rule : result.skippedRules()) {
+                skipped.add(Map.of("ruleName", rule.ruleId(), "reason", rule.reason()));
+            }
+            List<String> limitations = new ArrayList<>(result.limitations());
+            String message = result.message();
+            if (merged.savedRulesUnavailable()) {
+                limitations.add(SavedRulesService.UNAVAILABLE_NOTE);
+                message = message == null || message.isBlank() ? SavedRulesService.UNAVAILABLE_NOTE
+                        : message + " " + SavedRulesService.UNAVAILABLE_NOTE;
+            }
+            RuleExecutionResult.Status status = result.status();
+            String completion = switch (status) {
+                case COMPLETED -> merged.savedRulesUnavailable() ? "completed_with_warnings" : "completed";
+                case PARTIAL_RULES_SKIPPED, PARTIAL_ENGINE_UNAVAILABLE, PARTIAL_LIMIT_REACHED -> "completed_with_warnings";
+                case FAILED -> "failed";
+                case INCONSISTENT -> "inconsistent";
+                case CANCELLED -> "cancelled";
+            };
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", status != RuleExecutionResult.Status.FAILED);
+            body.put("executionTimeMs", System.currentTimeMillis() - started);
+            body.put("inferredAxiomsCount", derived.size());
+            body.put("totalRulesExecuted", result.executedRules().size());
+            body.put("inferredAxioms", axioms);
+            body.put("errorMessage", status == RuleExecutionResult.Status.FAILED ? message : null);
+            body.put("executedRuleNames", result.executedRules());
+            body.put("skippedRules", skipped);
+            body.put("completion", completion);
+            body.put("stamp", ontologyVersionStamps != null ? ontologyVersionStamps.current(projectId, isDraft, draftUserId) : null);
+            body.put("conclusionCount", presented.conclusionCount());
+            body.put("structureCount", presented.structureCount());
+            body.put("omittedTrivialCount", presented.omittedTrivial());
+            body.put("truncated", presented.truncated());
+            body.put("executionMode", "all");
+            body.put("status", status.name());
+            body.put("statusLabel", status.label());
+            body.put("message", message);
+            body.put("limitations", limitations);
+            body.put("engineVersions", result.engineVersions());
+            body.put("rounds", result.stopping() != null ? result.stopping().rounds() : 0);
+            body.put("consistencyStatement", result.consistencyStatement());
+            body.put("snapshotId", result.snapshotId());
+            return ResponseEntity.ok(body);
+        } catch (Exception e) {
+            log.error("Error executing rules for project {}", projectId, e);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("executionTimeMs", System.currentTimeMillis() - started);
+            body.put("inferredAxiomsCount", 0);
+            body.put("totalRulesExecuted", 0);
+            body.put("inferredAxioms", List.of());
+            body.put("errorMessage", ReasoningFriendlyErrors.forUser(e.getMessage()));
+            body.put("completion", "failed");
+            body.put("status", RuleExecutionResult.Status.FAILED.name());
+            body.put("statusLabel", RuleExecutionResult.Status.FAILED.label());
+            body.put("executionMode", "all");
+            return ResponseEntity.ok(body);
         }
     }
 

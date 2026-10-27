@@ -80,6 +80,34 @@ class SwrlControllerAccessTest {
     }
 
     @Test
+    void theRulesOwlEndpointRefusesWithoutTheTokenAndSendsHeadersWithIt() throws Exception {
+        assertEquals(401, controller.getRulesAsOwl("p1", false, null, null).getStatusCode().value());
+        assertEquals(401, controller.getRulesAsOwl("p1", false, null, "guess").getStatusCode().value());
+        Mockito.verifyNoInteractions(engine);
+        Mockito.when(engine.exportEnabledRulesAsOwl("p1", null)).thenReturn(new SwrlEngineService.RulesExport(
+                "Ontology()", List.of(new self.research.ontology.swrl.model.SkippedRule("ré", "bad")), "abc"));
+
+        ResponseEntity<?> response = controller.getRulesAsOwl("p1", false, null, "secret");
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("abc", response.getHeaders().getFirst("X-Ontocode-Rules-Fingerprint"));
+        assertEquals("[{\"ruleName\":\"r\\u00E9\",\"reason\":\"bad\"}]", response.getHeaders().getFirst("X-Ontocode-Skipped-Rules"));
+    }
+
+    @Test
+    void aLongSkippedListIsTruncatedWithACount() {
+        List<self.research.ontology.swrl.model.SkippedRule> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 400; i++) {
+            many.add(new self.research.ontology.swrl.model.SkippedRule("rule " + i, "x".repeat(100)));
+        }
+
+        String header = SwrlController.skippedRulesHeader(many);
+
+        assertEquals(true, header.length() <= 8192);
+        assertEquals(true, header.contains("more skipped rules not listed"));
+    }
+
+    @Test
     void executeSelectedReportsSkippedRulesAndCompletion() {
         self.research.ontology.swrl.model.ExecutionResult result = new self.research.ontology.swrl.model.ExecutionResult(true, 5L, 0, List.of(), null);
         result.setSkippedRules(List.of(new self.research.ontology.swrl.model.SkippedRule("theirs", "This rule was not found in this project.")));

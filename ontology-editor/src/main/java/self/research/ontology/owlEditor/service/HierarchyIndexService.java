@@ -11,7 +11,6 @@ import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.document.HierarchySnapshotDoc;
 import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.hierarchy.HierarchyAlgorithmVersion;
-import self.research.ontology.owlEditor.repository.HierarchySnapshotRepository;
 
 import java.time.Instant;
 import java.util.*;
@@ -24,7 +23,7 @@ public class HierarchyIndexService {
 
     private static final Logger log = LoggerFactory.getLogger(HierarchyIndexService.class);
 
-    private final HierarchySnapshotRepository snapshotRepository;
+    private final HierarchySnapshotStore snapshotRepository;
     private final HierarchySnapshotBuildService buildService;
     private final Executor hierarchyIndexExecutor;
     private final ConcurrentHashMap<String, CompletableFuture<Void>> queuedBuilds =
@@ -42,7 +41,7 @@ public class HierarchyIndexService {
     @Autowired(required = false) @Nullable
     private ProjectOntologyCache ontologyCache;
 
-    public HierarchyIndexService(HierarchySnapshotRepository snapshotRepository,
+    public HierarchyIndexService(HierarchySnapshotStore snapshotRepository,
                                  HierarchySnapshotBuildService buildService,
                                  @Qualifier("hierarchyIndexExecutor") Executor hierarchyIndexExecutor) {
         this.snapshotRepository = snapshotRepository;
@@ -176,7 +175,7 @@ public class HierarchyIndexService {
     }
 
     public void markStale(String projectId) {
-        snapshotRepository.findById(projectId).ifPresent(doc -> {
+        snapshotRepository.findRaw(projectId).ifPresent(doc -> {
             doc.setStatus(HierarchySnapshotDoc.Status.STALE);
             snapshotRepository.save(doc);
         });

@@ -7,7 +7,9 @@ import {
   HelpCircle, Maximize2, Minimize2, Eye, EyeOff, Sparkles
 } from 'lucide-react';
 import apiClient from './apiClient';
+import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
 import { useUndoRefresh } from './useUndoRefresh';
+import RuleBuilder from './RuleBuilder';
 import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom } from './types';
 
 
@@ -692,6 +694,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
 
 
 interface ResultsPanelProps {
+  projectId: string;
   results: ExecutionResponse | null;
   isExecuting: boolean;
   onAdd?: (axioms: InferredAxiom[]) => Promise<{ ok: boolean; message: string }>;
@@ -919,6 +922,9 @@ interface GroupedAxiomItem {
   object?: string;
   rawReadable: string;
   axiomType: string;
+  key: string;
+  selectable: boolean;
+  axiom: InferredAxiom;
 }
 
 const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomItem[]> => {
@@ -935,7 +941,10 @@ const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomIte
       subject: parsed.subject || '(unknown)',
       object: parsed.object,
       rawReadable: axiom.readable || axiom.description || '',
-      axiomType: axiom.axiomType || type
+      axiomType: axiom.axiomType || type,
+      key: axiom.description,
+      selectable: axiom.category === 'conclusion',
+      axiom
     });
   });
   
@@ -961,7 +970,9 @@ const getAxiomTypeStyle = (type: string): { icon: string; bgColor: string; textC
   return styles[type] || { icon: '📄', bgColor: 'bg-gray-50', textColor: 'text-gray-800', borderColor: 'border-gray-200' };
 };
 
-const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, index }) => {
+const canExplain = (ax: InferredAxiom): boolean => ax.category === 'conclusion' && !!ax.subjectIri && !!ax.predicateIri;
+
+const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: boolean; onToggle?: (key: string) => void; onWhy?: (axiom: InferredAxiom) => void }> = ({ item, index, selected, onToggle, onWhy }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const displaySubject = item.subject || item.formatted || `Item ${index + 1}`;
   
@@ -972,6 +983,14 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, 
       onMouseLeave={() => setShowTooltip(false)}
     >
       <div className="inline-flex items-center gap-2 px-3 py-2 bg-white border-2 border-gray-200 rounded-lg text-sm hover:border-purple-300 hover:shadow-sm transition-all cursor-default min-w-[80px]">
+        {onToggle && item.selectable && (
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggle(item.key)}
+            aria-label="Select this conclusion"
+          />
+        )}
         <span className="font-semibold text-gray-900 truncate max-w-[200px]" title={displaySubject}>
           {displaySubject}
         </span>
@@ -982,6 +1001,9 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, 
               {item.object}
             </span>
           </>
+        )}
+        {onWhy && canExplain(item.axiom) && (
+          <button onClick={() => onWhy(item.axiom)} className="text-xs text-purple-700 hover:underline whitespace-nowrap">Why?</button>
         )}
       </div>
       {showTooltip && item.rawReadable && (
@@ -995,7 +1017,9 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number }> = ({ item, 
   );
 };
 
-const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd }) => {
+  const [explained, setExplained] = useState<InferredAxiom | null>(null);
+  const toggleWhy = (ax: InferredAxiom) => setExplained(prev => (prev === ax ? null : ax));
   const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
   const [showInferredAxioms, setShowInferredAxioms] = useState(true);
   const [viewMode, setViewMode] = useState<'grouped' | 'table' | 'raw'>('grouped');
@@ -1004,6 +1028,16 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
   const [showWarning, setShowWarning] = useState(false);
   const [scopeChoice, setScopeChoice] = useState<'conclusions' | 'structure' | 'all' | null>(null);
   const [visibleLimit, setVisibleLimit] = useState(100);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+
+  const toggleSelected = (key: string) => {
+    setSelectedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const toggleGroup = (type: string) => {
     const newExpanded = new Set(expandedGroups);
@@ -1054,6 +1088,17 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
     : inScope;
   const filteredAxioms = matchedAxioms.slice(0, visibleLimit);
   const matchedConclusions = matchedAxioms.filter(ax => ax.category === 'conclusion');
+  const selectedConclusions = results.inferredAxioms.filter(ax => ax.category === 'conclusion' && selectedKeys.has(ax.description));
+  const selectedCount = selectedConclusions.length;
+  const allShownSelected = matchedConclusions.length > 0 && matchedConclusions.every(ax => selectedKeys.has(ax.description));
+  const selectAllShown = () => {
+    setSelectedKeys(prev => {
+      const next = new Set(prev);
+      matchedConclusions.forEach(ax => next.add(ax.description));
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedKeys(new Set());
 
   const groupedAxioms = groupAxiomsByType(filteredAxioms);
   
@@ -1114,6 +1159,18 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
         )}
       </div>
 
+      {results.status && results.status !== 'COMPLETED' && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="font-semibold">{results.statusLabel || results.status}</div>
+          {results.message && <div className="mt-1">{results.message}</div>}
+          {results.consistencyStatement && <div className="mt-1">{results.consistencyStatement}</div>}
+        </div>
+      )}
+      {results.limitations && results.limitations.length > 0 && (
+        <div className="rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm text-gray-800">
+          {results.limitations.map((text, i) => <div key={i}>{text}</div>)}
+        </div>
+      )}
       {results.success && hasSwrlResults && (
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border-2 border-green-300 overflow-hidden shadow-md">
           <div className="p-4 border-b border-green-200 flex justify-between items-center">
@@ -1293,21 +1350,40 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
               {onAdd && matchedConclusions.length > 0 && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                   {addState.phase === 'idle' || addState.phase === 'done' || addState.phase === 'error' ? (
-                    <button
-                      onClick={() => setAddState({ phase: 'confirm' })}
-                      className="px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
-                    >
-                      Add {matchedConclusions.length} conclusion{matchedConclusions.length === 1 ? '' : 's'} to the ontology
-                    </button>
+                    <>
+                      <button
+                        onClick={selectAllShown}
+                        disabled={allShownSelected}
+                        className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        Select all shown ({matchedConclusions.length})
+                      </button>
+                      <button
+                        onClick={clearSelection}
+                        disabled={selectedCount === 0}
+                        className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                      <span className="text-gray-600">{selectedCount} selected</span>
+                      <button
+                        onClick={() => setAddState({ phase: 'confirm' })}
+                        disabled={selectedCount === 0}
+                        className="px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50"
+                      >
+                        Add {selectedCount} selected
+                      </button>
+                    </>
                   ) : addState.phase === 'confirm' ? (
                     <>
                       <span className="text-gray-700">
-                        This writes {matchedConclusions.length} fact{matchedConclusions.length === 1 ? '' : 's'} into the ontology as one change you can undo. Facts that are already there are skipped.
+                        This writes {selectedCount} fact{selectedCount === 1 ? '' : 's'} into the ontology as one change you can undo. Facts that are already there are skipped.
                       </span>
                       <button
                         onClick={async () => {
                           setAddState({ phase: 'busy' });
-                          const outcome = await onAdd(matchedConclusions);
+                          const outcome = await onAdd(selectedConclusions);
+                          if (outcome.ok) setSelectedKeys(new Set());
                           setAddState({ phase: outcome.ok ? 'done' : 'error', message: outcome.message });
                         }}
                         className="px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
@@ -1369,9 +1445,14 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
                       <div className="p-4 pt-2 bg-white">
                         <div className="flex flex-wrap gap-2">
                           {items.map((item, i) => (
-                            <AxiomCard key={i} item={item} index={i} />
+                            <AxiomCard key={i} item={item} index={i} selected={selectedKeys.has(item.key)} onToggle={onAdd ? toggleSelected : undefined} onWhy={toggleWhy} />
                           ))}
                         </div>
+                        {explained && items.some(it => it.axiom === explained) && (
+                          <div className="mt-2">
+                            <ExplainPanel projectId={projectId} axiom={explained} onClose={() => setExplained(null)} />
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1385,11 +1466,13 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
+                    {onAdd && <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b w-8"></th>}
                     <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">#</th>
                     <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Type</th>
                     <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Subject</th>
                     <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Relation</th>
                     <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Object</th>
+                    <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -1397,7 +1480,20 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
                     const parsed = formatInferredAxiom(ax);
                     const style = getAxiomTypeStyle(parsed.type);
                     return (
-                      <tr key={i} className="hover:bg-gray-50" title={ax.readable}>
+                      <React.Fragment key={i}>
+                      <tr className="hover:bg-gray-50" title={ax.readable}>
+                        {onAdd && (
+                          <td className="px-4 py-2">
+                            {ax.category === 'conclusion' && (
+                              <input
+                                type="checkbox"
+                                checked={selectedKeys.has(ax.description)}
+                                onChange={() => toggleSelected(ax.description)}
+                                aria-label="Select this conclusion"
+                              />
+                            )}
+                          </td>
+                        )}
                         <td className="px-4 py-2 text-gray-500 font-mono text-xs">{i + 1}</td>
                         <td className="px-4 py-2">
                           <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded ${style.bgColor} ${style.textColor}`}>
@@ -1407,7 +1503,20 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
                         <td className="px-4 py-2 font-medium text-gray-900 max-w-[200px] truncate">{parsed.subject || '-'}</td>
                         <td className="px-4 py-2 text-purple-500 font-bold text-center">{parsed.predicate || '→'}</td>
                         <td className="px-4 py-2 font-medium text-purple-700 max-w-[200px] truncate">{parsed.object || '-'}</td>
+                        <td className="px-4 py-2">
+                          {canExplain(ax) && (
+                            <button onClick={() => toggleWhy(ax)} className="text-xs text-purple-700 hover:underline">Why?</button>
+                          )}
+                        </td>
                       </tr>
+                      {explained === ax && (
+                        <tr>
+                          <td colSpan={onAdd ? 7 : 6} className="px-4 py-2">
+                            <ExplainPanel projectId={projectId} axiom={ax} onClose={() => setExplained(null)} />
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1430,12 +1539,28 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ results, isExecuting, onAdd
                 return (
                   <div key={i} className={`p-4 border-b border-gray-100 hover:bg-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
                     <div className="flex items-center gap-2 mb-2">
+                      {onAdd && ax.category === 'conclusion' && (
+                        <input
+                          type="checkbox"
+                          checked={selectedKeys.has(ax.description)}
+                          onChange={() => toggleSelected(ax.description)}
+                          aria-label="Select this conclusion"
+                        />
+                      )}
                       <span className="text-gray-400 font-mono text-xs">#{i + 1}</span>
                       <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded ${style.bgColor} ${style.textColor} border ${style.borderColor}`}>
                         {style.icon} {ax.axiomType}
                       </span>
+                      {canExplain(ax) && (
+                        <button onClick={() => toggleWhy(ax)} className="text-xs text-purple-700 hover:underline">Why?</button>
+                      )}
                     </div>
                     <pre className="text-sm text-gray-800 font-mono bg-gray-100 p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all">{ax.readable}</pre>
+                    {explained === ax && (
+                      <div className="mt-2">
+                        <ExplainPanel projectId={projectId} axiom={ax} onClose={() => setExplained(null)} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1485,6 +1610,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
   const [searchQuery, setSearchQuery] = useState('');
   const [dynamicTemplates, setDynamicTemplates] = useState<typeof RULE_TEMPLATES>([]);
+  const [showRuleBuilder, setShowRuleBuilder] = useState(false);
   const [ontologySchema, setOntologySchema] = useState<{ classes: string[], objectProperties: string[], dataProperties: string[] } | null>(null);
 
   const [editForm, setEditForm] = useState({
@@ -1794,7 +1920,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     try {
       const res = await apiClient.post<{ changeSetId?: string }>(
         `/api/ontology/mutations/${projectId}?draft=false`,
-        { ops, username: 'SWRL rules', sessionId: `swrl-add-${Date.now()}`, precondition: executionResult?.stamp ?? null }
+        {
+          ops,
+          username: 'SWRL rules',
+          sessionId: `swrl-add-${Date.now()}`,
+          precondition: executionResult?.stamp ?? null,
+          origin: { source: 'swrl-rules', label: 'Added from rule results (' + ops.length + ' facts)' }
+        }
       );
       window.dispatchEvent(new CustomEvent('ontocode:committed-change', { detail: { projectId, direction: 'APPLY', changeSetId: res?.changeSetId } }));
       return { ok: true, message: `Added ${ops.length} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.` };
@@ -1885,7 +2017,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     setActivePanel('results');
 
     try {
-      const res = await apiClient.post<ExecutionResponse>(`/api/swrl/${projectId}/execute`);
+      const res = await apiClient.post<ExecutionResponse>(`/api/ontology/${projectId}/rules/execute`);
       setExecutionResult(res);
     } catch (e) {
       console.error('Execution failed:', e);
@@ -2258,6 +2390,14 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
                       <label className="text-sm font-semibold text-gray-700">SWRL Expression</label>
+                      <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setShowRuleBuilder(true)}
+                        disabled={!isEditing}
+                        className="px-3 py-1 text-xs font-medium text-purple-700 bg-white border border-purple-200 rounded-lg hover:bg-purple-50 disabled:opacity-50"
+                      >
+                        Build rule
+                      </button>
                       <div className="relative group">
                         <button className="px-3 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1">
                           <BookOpen size={12} /> Templates
@@ -2302,8 +2442,18 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                           )}
                         </div>
                       </div>
+                      </div>
                     </div>
-                    
+
+                    {showRuleBuilder && isEditing && (
+                      <RuleBuilder
+                        ruleText={editForm.ruleText}
+                        schema={ontologySchema}
+                        onUse={text => setEditForm(prev => ({ ...prev, ruleText: text }))}
+                        onClose={() => setShowRuleBuilder(false)}
+                      />
+                    )}
+
                     <textarea
                       ref={textareaRef}
                       value={editForm.ruleText}
@@ -2387,7 +2537,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                       </button>
                     </div>
                   ) : selectedRule && (
-                    <div className="flex items-center gap-3 pt-2">
+                    <div className="flex flex-col gap-3 pt-2">
+                    <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} />
+                    <div className="flex items-center gap-3">
                       <button
                         onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule.ruleName, ruleId: selectedRule.id })}
                         className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 flex items-center gap-2"
@@ -2409,12 +2561,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                         <Code size={14} /> Edit
                       </button>
                     </div>
+                    </div>
                   )}
                 </div>
               )}
             </div>
           ) : activePanel === 'results' ? (
-            <ResultsPanel results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} />
+            <ResultsPanel projectId={projectId} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} />
           ) : activePanel === 'query' ? (
             <SQWRLQueryPanel projectId={projectId} context={context!} />
           ) : (

@@ -17,6 +17,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.model.DLQueryJob;
 import self.research.ontology.owlEditor.service.EditorJobResultRetention;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
+import self.research.ontology.owlEditor.service.Limit;
 import self.research.ontology.owlEditor.service.MainGraphRevisionService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
@@ -417,5 +418,84 @@ class ReasonerControllerSnapshotTest {
         assertEquals("complete", first.get("completion"));
         assertEquals(true, second.get("cached"));
         assertEquals(1, calls.get());
+    }
+
+    @Test
+    void aSnapshotIsNotServedWhenTheRulesChangedUnderTheSameVersion() throws Exception {
+        controller.useRuleStage((ontology, rules) -> Optional.of(java.util.Set.of()));
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.getDraftWriteStamp("proj-1", "user-1")).thenReturn(9L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> ontologyWithAMathsRule());
+
+        snapshot("HERMIT", "user-1", true);
+        assertEquals(true, snapshot("HERMIT", "user-1", true).get("cached"));
+
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> smallOntology());
+        assertEquals(false, snapshot("HERMIT", "user-1", true).get("cached"));
+    }
+
+    @Test
+    void aSnapshotWithoutRulesStillHitsTheCache() throws Exception {
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> smallOntology());
+
+        snapshot("HERMIT", "user-1", true);
+
+        assertEquals(true, snapshot("HERMIT", "user-1", true).get("cached"));
+    }
+
+    private static OWLOntology flatOntology(int axioms) throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLOntology ontology = manager.createOntology(IRI.create("http://example.org/big"));
+        OWLClass root = df.getOWLClass(IRI.create(NS + "Root"));
+        for (int i = 0; i < axioms; i++) {
+            manager.addAxiom(ontology, df.getOWLSubClassOfAxiom(df.getOWLClass(IRI.create(NS + "C" + i)), root));
+        }
+        return ontology;
+    }
+
+    private Map<String, Object> bigSnapshot(String type, OWLOntology ontology) throws Exception {
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.getDraftWriteStamp("proj-1", "user-1")).thenReturn(9L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenReturn(ontology);
+        return snapshot(type, "user-1", true);
+    }
+
+    @Test
+    void explicitElkStaysElkAboveTheStructuralCutoff() throws Exception {
+        int[] before = Limit.resolve(Limit.Profile.STANDARD, Map.of());
+        Limit.install(Limit.resolve(Limit.Profile.STANDARD,
+                Map.of(Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS, 1_000, Limit.REASONER_ELK_ABOVE_AXIOMS, 100)));
+        try {
+            Map<String, Object> body = bigSnapshot("ELK", flatOntology(3_000));
+
+            assertEquals("ELK", body.get("reasonerType"), String.valueOf(body));
+            assertFalse(body.containsKey("downgradedWarning"));
+        } finally {
+            Limit.install(before);
+        }
+    }
+
+    @Test
+    void hermitAboveTheStructuralCutoffIsStillDowngraded() throws Exception {
+        Map<String, Object> body = bigSnapshot("HERMIT", flatOntology(150_000));
+
+        assertEquals("Structural", body.get("reasonerType"));
+        assertTrue(String.valueOf(body.get("downgradedWarning")).contains("structural"));
+    }
+
+    @Test
+    void elkAboveItsOwnBoundIsDowngradedWithANote() throws Exception {
+        int[] before = Limit.resolve(Limit.Profile.STANDARD, Map.of());
+        Limit.install(Limit.resolve(Limit.Profile.STANDARD, Map.of(Limit.REASONER_ELK_MAX_AXIOMS, 10_000)));
+        try {
+            Map<String, Object> body = bigSnapshot("ELK", flatOntology(12_000));
+
+            assertEquals("Structural", body.get("reasonerType"));
+            assertTrue(String.valueOf(body.get("downgradedWarning")).contains("structural"));
+        } finally {
+            Limit.install(before);
+        }
     }
 }

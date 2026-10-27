@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.ReasoningHeapMonitor;
+import self.research.ontology.common.rules.OntologyRulesFingerprint;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -14,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 @Slf4j
 @Service
@@ -53,11 +55,25 @@ public class EditorReasonerCacheService {
         return projectId + "-" + type.name() + "-draft-" + userId + "@" + draftVersion;
     }
 
+    public static String draftHierarchyKey(String projectId, ReasonerType type, String userId, String draftVersion,
+                                           String rulesFingerprint) {
+        return draftHierarchyKey(projectId, type, userId, draftVersion) + rulesSuffix(rulesFingerprint);
+    }
+
+    public static String hierarchyKey(String projectId, ReasonerType type, String rulesFingerprint) {
+        return projectId + "-" + type.name() + rulesSuffix(rulesFingerprint);
+    }
+
+    private static String rulesSuffix(String rulesFingerprint) {
+        return rulesFingerprint == null || OntologyRulesFingerprint.NONE.equals(rulesFingerprint)
+                ? "" : "#rules=" + rulesFingerprint;
+    }
+
     private record CachedOntology(OWLOntology ontology, long version, Instant lastAccessed) {}
 
     private record CachedHierarchy(HierarchyCacheEntry entry, Instant lastAccessed) {}
 
-    private record CachedSnapshot(Map<String, Object> snapshot, Instant lastAccessed) {}
+    private record CachedSnapshot(Map<String, Object> snapshot, String rulesFingerprint, Instant lastAccessed) {}
 
     private static final String DRAFT_MARKER = "-draft-";
 
@@ -70,17 +86,38 @@ public class EditorReasonerCacheService {
     }
 
     public Optional<Map<String, Object>> getSnapshot(String cacheKey) {
+        return getSnapshot(cacheKey, null);
+    }
+
+    public Optional<Map<String, Object>> getSnapshot(String cacheKey, Supplier<String> currentRulesFingerprint) {
         synchronized (snapshots) {
             CachedSnapshot cached = snapshots.remove(cacheKey);
             if (cached == null) {
                 return Optional.empty();
             }
-            snapshots.put(cacheKey, new CachedSnapshot(cached.snapshot(), Instant.now()));
+            if (currentRulesFingerprint != null && !cached.rulesFingerprint().equals(fingerprintOrNone(currentRulesFingerprint))) {
+                log.info("[EditorReasonerCache] Dropped snapshot {} computed with different rules", cacheKey);
+                return Optional.empty();
+            }
+            snapshots.put(cacheKey, new CachedSnapshot(cached.snapshot(), cached.rulesFingerprint(), Instant.now()));
             return Optional.of(cached.snapshot());
         }
     }
 
+    private static String fingerprintOrNone(Supplier<String> supplier) {
+        try {
+            String fingerprint = supplier.get();
+            return fingerprint == null ? OntologyRulesFingerprint.NONE : fingerprint;
+        } catch (RuntimeException e) {
+            return "unavailable";
+        }
+    }
+
     public void putSnapshot(String cacheKey, Map<String, Object> snapshot) {
+        putSnapshot(cacheKey, snapshot, OntologyRulesFingerprint.NONE);
+    }
+
+    public void putSnapshot(String cacheKey, Map<String, Object> snapshot, String rulesFingerprint) {
         synchronized (snapshots) {
             snapshots.remove(cacheKey);
             while (!snapshots.isEmpty() && (snapshots.size() >= maxSnapshots || isHeapUnderPressure())) {
@@ -88,7 +125,8 @@ public class EditorReasonerCacheService {
                 snapshots.remove(oldest);
                 log.info("[EditorReasonerCache] LRU evicted snapshot {}", oldest);
             }
-            snapshots.put(cacheKey, new CachedSnapshot(snapshot, Instant.now()));
+            snapshots.put(cacheKey, new CachedSnapshot(snapshot,
+                    rulesFingerprint == null ? OntologyRulesFingerprint.NONE : rulesFingerprint, Instant.now()));
         }
     }
 

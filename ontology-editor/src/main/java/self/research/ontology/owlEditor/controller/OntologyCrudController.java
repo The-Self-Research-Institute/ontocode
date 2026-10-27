@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.ChangeOrigin;
 import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ExactChangeRecorder;
@@ -120,11 +121,11 @@ public class OntologyCrudController {
                 final String draftSessionId = sessionId;
                 draftChangeSetId = lockRegistry.runExclusive(projectId, () -> {
                     checkPrecondition(projectId, true, draftUserId, request.precondition());
-                    return exactRecorder.recordGrouped(projectId, true,
-                        draftUserId, draftUsername, request.ops(), () -> {
-                            mutationService.applyDraft(projectId, draftUserId, request.ops());
-                            draftTrackingService.recordDrafts(projectId, draftUserId, draftUsername, request.ops(), draftSessionId);
-                        });
+                    Runnable draftApply = () -> {
+                        mutationService.applyDraft(projectId, draftUserId, request.ops());
+                        draftTrackingService.recordDrafts(projectId, draftUserId, draftUsername, request.ops(), draftSessionId);
+                    };
+                    return recordMutation(projectId, true, draftUserId, draftUsername, request, draftApply);
                 });
             } catch (StalePreviewException e) {
                 return stalePreview(true, e);
@@ -171,8 +172,8 @@ public class OntologyCrudController {
                 final List<OntologyMutationService.MutationOp> ops = request.ops();
                 String changeSetId = lockRegistry.runExclusive(projectId, () -> {
                     checkPrecondition(projectId, false, finalUserId, request.precondition());
-                    return exactRecorder.recordGrouped(projectId, false,
-                        finalUserId, finalUsername, ops, () -> mutationService.apply(projectId, ops));
+                    return recordMutation(projectId, false, finalUserId, finalUsername, request,
+                        () -> mutationService.apply(projectId, ops));
                 });
 
                 CompletableFuture.runAsync(() -> {
@@ -275,11 +276,29 @@ public class OntologyCrudController {
         String userId,
         String username,
         String sessionId,
-        PreviewStamp precondition
+        PreviewStamp precondition,
+        MutationOrigin origin
     ) {
         public MutationRequest(List<OntologyMutationService.MutationOp> ops, String userId, String username, String sessionId) {
-            this(ops, userId, username, sessionId, null);
+            this(ops, userId, username, sessionId, null, null);
         }
+
+        public MutationRequest(List<OntologyMutationService.MutationOp> ops, String userId, String username, String sessionId,
+                               PreviewStamp precondition) {
+            this(ops, userId, username, sessionId, precondition, null);
+        }
+    }
+
+    public record MutationOrigin(String source, String label) {
+    }
+
+    private String recordMutation(String projectId, boolean draft, String userId, String username,
+                                  MutationRequest request, Runnable apply) {
+        if (request.origin() == null) {
+            return exactRecorder.recordGrouped(projectId, draft, userId, username, request.ops(), apply);
+        }
+        ChangeOrigin origin = ChangeOrigin.fromTool(request.origin().source(), request.origin().label());
+        return exactRecorder.recordGrouped(projectId, draft, userId, username, request.ops(), apply, origin);
     }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)

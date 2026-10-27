@@ -610,6 +610,53 @@ public class SwrlEngineService {
         }
     }
 
+    public record RulesExport(String text, List<SkippedRule> skipped, String fingerprint) {
+    }
+
+    public RulesExport exportEnabledRulesAsOwl(String projectId, String draftUserId) throws Exception {
+        OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
+        ensureNamespacePrefixes(projectId, ontology);
+        stripEmbeddedRules(ontology);
+        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
+        Map<String, Integer> nameCounts = new HashMap<>();
+        enabledRules.forEach(rule -> nameCounts.merge(rule.getRuleName(), 1, Integer::sum));
+
+        OWLOntologyManager manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        OWLDataFactory factory = manager.getOWLDataFactory();
+        OWLOntology result = manager.createOntology();
+        List<SkippedRule> skipped = new ArrayList<>();
+        Set<OWLEntity> entities = new LinkedHashSet<>();
+        int index = 0;
+        for (SwrlRule rule : enabledRules) {
+            String engineName = "export-" + index++;
+            try {
+                String resolved = resolveEntityNames(rule.getRuleText(), ontology);
+                org.swrlapi.core.SWRLAPIRule created = engine.createSWRLRule(engineName, resolved);
+                String label = nameCounts.get(rule.getRuleName()) > 1
+                        ? rule.getRuleName() + " (" + rule.getId() + ")"
+                        : rule.getRuleName();
+                SWRLRule axiom = factory.getSWRLRule(
+                        new LinkedHashSet<>(created.getBody()),
+                        new LinkedHashSet<>(created.getHead()),
+                        Collections.singleton(factory.getOWLAnnotation(factory.getRDFSLabel(), factory.getOWLLiteral(label))));
+                manager.addAxiom(result, axiom);
+                axiom.getSignature().stream().filter(entity -> !entity.isBuiltIn()).forEach(entities::add);
+            } catch (SWRLParseException e) {
+                skipped.add(skippedRule(rule, e, ontology));
+            } catch (RuntimeException e) {
+                skipped.add(new SkippedRule(rule.getRuleName(), "The rule could not be understood: " + e.getMessage()));
+            }
+        }
+        entities.forEach(entity -> manager.addAxiom(result, factory.getOWLDeclarationAxiom(entity)));
+        org.semanticweb.owlapi.io.StringDocumentTarget target = new org.semanticweb.owlapi.io.StringDocumentTarget();
+        manager.saveOntology(result, new org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat(), target);
+        String fingerprint = self.research.ontology.common.preview.RulesFingerprint.of(enabledRules.stream()
+                .map(rule -> new String[]{rule.getRuleName(), rule.getRuleText()})
+                .collect(Collectors.toList()));
+        return new RulesExport(target.toString(), skipped, fingerprint);
+    }
+
     public String inferOntologyRules(String ontologyText) throws Exception {
         OWLOntologyManager manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
         OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
@@ -1345,30 +1392,48 @@ public class SwrlEngineService {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
             ensureNamespacePrefixes(projectId, ontology);
             
-            // Create SQWRL query engine
-            stripEmbeddedRules(ontology);
-            org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
+            final String runName = queryName;
+            Future<org.swrlapi.sqwrl.SQWRLResult> future = executorService.submit(() -> {
+                // Create SQWRL query engine
+                stripEmbeddedRules(ontology);
+                org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
 
-            // SQWRL queries run on a fresh engine, so load the saved enabled
-            // SWRL rules first. Otherwise queries for inferred classes (for
-            // example HonorsStudent after a GPA rule) return no rows.
-            List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
-            for (SwrlRule rule : enabledRules) {
-                try {
-                    String resolvedRule = resolveEntityNames(rule.getRuleText(), ontology);
-                    queryEngine.createSWRLRule(rule.getRuleName(), resolvedRule);
-                } catch (org.swrlapi.parser.SWRLParseException e) {
-                    logger.warn("Skipping saved SWRL rule '{}' while preparing SQWRL query: {}",
-                            rule.getRuleName(), e.getMessage());
+                // SQWRL queries run on a fresh engine, so load the saved enabled
+                // SWRL rules first. Otherwise queries for inferred classes (for
+                // example HonorsStudent after a GPA rule) return no rows.
+                List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
+                for (SwrlRule rule : enabledRules) {
+                    try {
+                        String resolvedRule = resolveEntityNames(rule.getRuleText(), ontology);
+                        queryEngine.createSWRLRule(rule.getRuleName(), resolvedRule);
+                    } catch (org.swrlapi.parser.SWRLParseException e) {
+                        logger.warn("Skipping saved SWRL rule '{}' while preparing SQWRL query: {}",
+                                rule.getRuleName(), e.getMessage());
+                    }
                 }
+            
+                logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
+            
+                // Execute the query - resolve entity names for non-default namespaces
+                String resolvedQuery = resolveEntityNames(queryText, ontology);
+                return queryEngine.runSQWRLQuery(runName, resolvedQuery);
+            });
+
+            org.swrlapi.sqwrl.SQWRLResult sqwrlResult;
+            try {
+                sqwrlResult = future.get(executionTimeoutSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                logger.error("SQWRL query timed out for project: {}", projectId);
+                return new SqwrlQueryResult(false, queryName, queryText, 0, null, null,
+                    "Query timed out after " + executionTimeoutSeconds + " seconds");
+            } catch (ExecutionException e) {
+                if (e.getCause() instanceof Exception cause) {
+                    throw cause;
+                }
+                throw e;
             }
-            
-            logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
-            
-            // Execute the query - resolve entity names for non-default namespaces
-            String resolvedQuery = resolveEntityNames(queryText, ontology);
-            org.swrlapi.sqwrl.SQWRLResult sqwrlResult = queryEngine.runSQWRLQuery(queryName, resolvedQuery);
-            
+
             long executionTime = System.currentTimeMillis() - startTime;
             
             // Extract column names
@@ -1417,6 +1482,337 @@ public class SwrlEngineService {
         }
     }
     
+    private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+
+    private static final String WHY_NOT_SCOPE = "Checks one named individual as the root variable of the rule's first class or property atom; "
+            + "every other variable is enumerated from the asserted and derived facts, up to "
+            + RuleEvidence.CANDIDATE_LIMIT + " candidate bindings. Supported atoms: class, object property, data property and the built-ins "
+            + "greaterThan, lessThan, greaterThanOrEqual, lessThanOrEqual, equal, notEqual, add, subtract, multiply, divide, mod, contains, stringConcat.";
+
+    private record EvidenceBase(OWLOntology ontology, RuleEvidence.Facts facts, Map<SwrlRule, org.swrlapi.core.SWRLAPIRule> parsed,
+                                List<String> notes, org.swrlapi.core.SWRLAPIRule extra) {
+    }
+
+    private EvidenceBase prepareEvidence(String projectId, String draftUserId, SwrlRule extraRule) throws Exception {
+        OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
+        ensureNamespacePrefixes(projectId, ontology);
+        stripEmbeddedRules(ontology);
+        Set<OWLAxiom> asserted = InferredAxiomPresenter.assertionsOf(ontology);
+        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        engine.getSWRLRules().forEach(rule -> engine.deleteSWRLRule(rule.getRuleName()));
+
+        Map<SwrlRule, org.swrlapi.core.SWRLAPIRule> parsed = new LinkedHashMap<>();
+        List<String> notes = new ArrayList<>();
+        for (SwrlRule rule : ruleRepository.findByProjectIdAndEnabled(projectId, true)) {
+            try {
+                parsed.put(rule, engine.createSWRLRule(rule.getRuleName(), resolveEntityNames(rule.getRuleText(), ontology)));
+            } catch (SWRLParseException e) {
+                notes.add("Rule '" + rule.getRuleName() + "' was skipped because it could not be read: " + e.getMessage());
+            }
+        }
+        Set<OWLAxiom> inferred;
+        try {
+            inferred = executeWithTimeout(engine, projectId);
+        } catch (TimeoutException e) {
+            throw new IllegalStateException("Rule evaluation timed out after " + executionTimeoutSeconds + " seconds");
+        }
+        org.swrlapi.core.SWRLAPIRule extra = null;
+        if (extraRule != null) {
+            try {
+                extra = engine.createSWRLRule("why-not-" + UUID.randomUUID(), resolveEntityNames(extraRule.getRuleText(), ontology));
+            } catch (SWRLParseException e) {
+                throw new IllegalArgumentException("The rule could not be read: " + e.getMessage());
+            }
+        }
+        return new EvidenceBase(ontology, RuleEvidence.Facts.of(asserted, inferred), parsed, notes, extra);
+    }
+
+    private static IRI resolveIri(OWLOntology ontology, String text) {
+        String wanted = text.trim();
+        List<IRI> byShortForm = new ArrayList<>();
+        for (OWLEntity entity : ontology.getSignature(org.semanticweb.owlapi.model.parameters.Imports.INCLUDED)) {
+            if (entity.getIRI().toString().equals(wanted)) {
+                return entity.getIRI();
+            }
+            if (entity.getIRI().getShortForm().equals(wanted)) {
+                byShortForm.add(entity.getIRI());
+            }
+        }
+        return byShortForm.size() == 1 ? byShortForm.get(0) : IRI.create(wanted);
+    }
+
+    private static OWLLiteral literalFromText(String text) {
+        OWLDataFactory factory = org.semanticweb.owlapi.apibinding.OWLManager.getOWLDataFactory();
+        String trimmed = text.trim();
+        try {
+            new java.math.BigDecimal(trimmed);
+            return trimmed.matches("[+-]?\\d+")
+                    ? factory.getOWLLiteral(trimmed, org.semanticweb.owlapi.vocab.OWL2Datatype.XSD_INTEGER)
+                    : factory.getOWLLiteral(trimmed, org.semanticweb.owlapi.vocab.OWL2Datatype.XSD_DECIMAL);
+        } catch (NumberFormatException e) {
+            return factory.getOWLLiteral(text);
+        }
+    }
+
+    private static boolean seedTerm(Map<String, Object> seed, RuleEvidence.Term term, Object value) {
+        if (value == null) {
+            return true;
+        }
+        if (!term.isVariable()) {
+            return RuleEvidence.valuesEqual(term.constant(), value);
+        }
+        Object existing = seed.get(term.variable());
+        if (existing == null) {
+            seed.put(term.variable(), value);
+            return true;
+        }
+        return RuleEvidence.valuesEqual(existing, value);
+    }
+
+    public ExplainResponse explainConclusion(String projectId, ExplainRequest request, String draftUserId) throws Exception {
+        if (request == null || request.subject() == null || request.subject().isBlank()
+                || request.predicate() == null || request.predicate().isBlank()) {
+            throw new IllegalArgumentException("subject and predicate are required");
+        }
+        EvidenceBase base = prepareEvidence(projectId, draftUserId, null);
+        RuleEvidence.Facts facts = base.facts();
+        IRI subject = resolveIri(base.ontology(), request.subject());
+        boolean isType = RDF_TYPE.equals(request.predicate().trim()) || "rdf:type".equals(request.predicate().trim());
+        IRI predicate;
+        String kind;
+        IRI objectIri = null;
+        OWLLiteral literal = null;
+        if (isType) {
+            if (request.object() == null || request.object().isBlank()) {
+                throw new IllegalArgumentException("object (the class IRI) is required when predicate is rdf:type");
+            }
+            kind = "class";
+            predicate = resolveIri(base.ontology(), request.object());
+        } else {
+            predicate = resolveIri(base.ontology(), request.predicate());
+            if (request.object() != null && !request.object().isBlank()) {
+                kind = "object";
+                objectIri = resolveIri(base.ontology(), request.object());
+            } else {
+                kind = "data";
+                if (request.objectLiteral() != null) {
+                    literal = literalFromText(request.objectLiteral());
+                }
+            }
+        }
+
+        String conclusionText;
+        boolean present;
+        boolean asserted;
+        if ("class".equals(kind)) {
+            conclusionText = predicate.getShortForm() + "(" + subject.getShortForm() + ")";
+            present = facts.hasClass(predicate, subject);
+            asserted = facts.isClassFactAsserted(predicate, subject);
+        } else {
+            Object target = "object".equals(kind) ? objectIri : literal;
+            Map<IRI, List<Object[]>> source = "object".equals(kind) ? facts.objects : facts.data;
+            present = false;
+            asserted = false;
+            for (Object[] edge : source.getOrDefault(predicate, List.of())) {
+                if (edge[0].equals(subject) && (target == null || RuleEvidence.valuesEqual(edge[1], target))) {
+                    present = true;
+                    asserted |= (Boolean) edge[2];
+                }
+            }
+            conclusionText = predicate.getShortForm() + "(" + subject.getShortForm() + ", "
+                    + (target == null ? "?" : RuleEvidence.display(target)) + ")";
+        }
+
+        List<String> notes = new ArrayList<>(base.notes());
+        List<ExplainResponse.Justification> justifications = new ArrayList<>();
+        for (Map.Entry<SwrlRule, org.swrlapi.core.SWRLAPIRule> entry : base.parsed().entrySet()) {
+            SwrlRule rule = entry.getKey();
+            List<Map<String, Object>> seeds = new ArrayList<>();
+            for (SWRLAtom headAtom : entry.getValue().getHeadAtoms()) {
+                RuleEvidence.Step head;
+                try {
+                    head = RuleEvidence.parse(List.of(headAtom)).get(0);
+                } catch (RuleEvidence.Unsupported e) {
+                    continue;
+                }
+                if (head.isBuiltin() || !head.kind().equals(kind) || !head.predicate().equals(predicate)) {
+                    continue;
+                }
+                Map<String, Object> seed = new LinkedHashMap<>();
+                boolean ok = seedTerm(seed, head.args().get(0), subject);
+                if ("object".equals(kind)) {
+                    ok = ok && seedTerm(seed, head.args().get(1), objectIri);
+                } else if ("data".equals(kind)) {
+                    ok = ok && seedTerm(seed, head.args().get(1), literal);
+                }
+                if (ok) {
+                    seeds.add(seed);
+                }
+            }
+            if (seeds.isEmpty()) {
+                continue;
+            }
+            List<RuleEvidence.Step> steps;
+            try {
+                steps = RuleEvidence.parse(entry.getValue().getBodyAtoms());
+            } catch (RuleEvidence.Unsupported e) {
+                notes.add("Rule '" + rule.getRuleName() + "' not explained: unsupported " + e.getMessage());
+                continue;
+            }
+            Set<String> seen = new HashSet<>();
+            for (Map<String, Object> seed : seeds) {
+                RuleEvidence.Solver solver = new RuleEvidence.Solver(facts, steps, 100);
+                try {
+                    solver.run(seed);
+                } catch (RuleEvidence.Unsupported e) {
+                    notes.add("Rule '" + rule.getRuleName() + "' not explained: unsupported " + e.getMessage());
+                    continue;
+                }
+                for (Map<String, Object> binding : solver.solutions) {
+                    if (!seen.add(binding.toString())) {
+                        continue;
+                    }
+                    List<ExplainResponse.Premise> premises = new ArrayList<>();
+                    for (RuleEvidence.Step step : steps) {
+                        premises.add(new ExplainResponse.Premise(RuleEvidence.premiseKind(step, binding, facts),
+                                RuleEvidence.instantiate(step, binding)));
+                    }
+                    justifications.add(new ExplainResponse.Justification(rule.getRuleName(), rule.getRuleText(),
+                            shownBinding(binding), premises));
+                }
+                if (solver.limitHit) {
+                    notes.add("Rule '" + rule.getRuleName() + "': the search stopped after " + RuleEvidence.CANDIDATE_LIMIT
+                            + " candidate bindings, so more justifications may exist");
+                } else if (solver.solutions.size() >= 100) {
+                    notes.add("Rule '" + rule.getRuleName() + "': only the first 100 justifications are shown");
+                }
+            }
+        }
+
+        String status;
+        if (!justifications.isEmpty()) {
+            status = "explained";
+            if (asserted) {
+                notes.add("asserted fact: it is also stated directly in the ontology");
+            }
+        } else if (asserted) {
+            status = "origin_only";
+            notes.add("asserted fact");
+        } else if (present) {
+            status = "origin_only";
+            notes.add("Produced by OWL reasoning or a rule this explanation cannot evaluate");
+        } else {
+            status = "not_found";
+            notes.add("This is not an asserted fact and the engine does not derive it, so there is nothing to explain");
+        }
+        return new ExplainResponse(conclusionText, status, justifications, notes);
+    }
+
+    public WhyNotResponse whyNotFired(String projectId, String ruleId, WhyNotRequest request, String draftUserId) throws Exception {
+        if (request == null || request.individual() == null || request.individual().isBlank()) {
+            throw new IllegalArgumentException("individual is required");
+        }
+        SwrlRule rule = getRule(projectId, ruleId);
+        EvidenceBase base = prepareEvidence(projectId, draftUserId, rule);
+        IRI individual = resolveIri(base.ontology(), request.individual());
+        String name = individual.getShortForm();
+
+        List<WhyNotResponse.AtomReport> unsupportedReport = new ArrayList<>();
+        List<RuleEvidence.Step> steps = new ArrayList<>();
+        String unsupportedReason = null;
+        for (SWRLAtom atom : base.extra().getBodyAtoms()) {
+            try {
+                RuleEvidence.Step step = RuleEvidence.parse(List.of(atom)).get(0).withIndex(steps.size());
+                steps.add(step);
+                unsupportedReport.add(new WhyNotResponse.AtomReport(step.text(), "not_evaluated", "not checked"));
+            } catch (RuleEvidence.Unsupported e) {
+                String text = atom instanceof SWRLBuiltInAtom b ? "swrlb:" + b.getPredicate().getShortForm() + "(...)" : atom.toString();
+                unsupportedReport.add(new WhyNotResponse.AtomReport(text, "unsupported", "unsupported " + e.getMessage()));
+                if (unsupportedReason == null) {
+                    unsupportedReason = "unsupported " + e.getMessage();
+                }
+            }
+        }
+        if (unsupportedReason != null) {
+            return new WhyNotResponse(rule.getRuleName(), name, "unsupported",
+                    "This check cannot evaluate the rule: it uses " + unsupportedReason, Map.of(), unsupportedReport,
+                    WHY_NOT_SCOPE, base.notes());
+        }
+
+        String rootVariable = null;
+        for (RuleEvidence.Step step : steps) {
+            if (step.isBuiltin()) {
+                continue;
+            }
+            RuleEvidence.Term first = step.args().get(0);
+            RuleEvidence.Term second = step.args().size() > 1 ? step.args().get(1) : null;
+            if (first.isVariable()) {
+                rootVariable = first.variable();
+            } else if ("object".equals(step.kind()) && second != null && second.isVariable()) {
+                rootVariable = second.variable();
+            }
+            if (rootVariable != null) {
+                break;
+            }
+        }
+        if (rootVariable == null) {
+            return new WhyNotResponse(rule.getRuleName(), name, "unsupported",
+                    "This check needs a class or property atom with a variable that can stand for the individual, and this rule has none",
+                    Map.of(), unsupportedReport, WHY_NOT_SCOPE, base.notes());
+        }
+
+        RuleEvidence.Solver solver = new RuleEvidence.Solver(base.facts(), steps, 1);
+        try {
+            solver.run(Map.of(rootVariable, individual));
+        } catch (RuleEvidence.Unsupported e) {
+            return new WhyNotResponse(rule.getRuleName(), name, "unsupported",
+                    "This check cannot evaluate the rule: " + e.getMessage(), Map.of(), unsupportedReport,
+                    WHY_NOT_SCOPE, base.notes());
+        }
+
+        List<String> notes = new ArrayList<>(base.notes());
+        List<WhyNotResponse.AtomReport> atoms = new ArrayList<>();
+        if (!solver.solutions.isEmpty()) {
+            Map<String, Object> binding = solver.solutions.get(0);
+            for (RuleEvidence.Step step : steps) {
+                atoms.add(new WhyNotResponse.AtomReport(step.text(), "satisfied", RuleEvidence.instantiate(step, binding)));
+            }
+            return new WhyNotResponse(rule.getRuleName(), name, "fires",
+                    "The rule's conditions are all met for " + name, shownBinding(binding), atoms, WHY_NOT_SCOPE, notes);
+        }
+        RuleEvidence.Failure best = solver.best;
+        if (best == null) {
+            return new WhyNotResponse(rule.getRuleName(), name, "incomplete",
+                    "No complete match was found and no failing atom was recorded", Map.of(), unsupportedReport, WHY_NOT_SCOPE, notes);
+        }
+        for (RuleEvidence.Step step : steps) {
+            if (best.done()[step.index()]) {
+                atoms.add(new WhyNotResponse.AtomReport(step.text(), "satisfied", RuleEvidence.instantiate(step, best.binding())));
+            } else if (step.index() == best.stepIndex()) {
+                atoms.add(new WhyNotResponse.AtomReport(step.text(), "failed", best.detail()));
+            } else {
+                atoms.add(new WhyNotResponse.AtomReport(step.text(), "not_evaluated", "not reached"));
+            }
+        }
+        if (solver.deadEnds > 1) {
+            notes.add(solver.deadEnds + " different bindings were tried and none satisfied every atom; the closest one is shown");
+        }
+        String result = best.result();
+        String summary = best.detail();
+        if (solver.limitHit) {
+            result = "incomplete";
+            summary = "Stopped after " + RuleEvidence.CANDIDATE_LIMIT + " candidate bindings without finding a complete match; closest attempt: " + best.detail();
+        }
+        return new WhyNotResponse(rule.getRuleName(), name, result, summary, shownBinding(best.binding()), atoms,
+                WHY_NOT_SCOPE, notes);
+    }
+
+    private static Map<String, String> shownBinding(Map<String, Object> binding) {
+        Map<String, String> shown = new LinkedHashMap<>();
+        binding.forEach((variable, value) -> shown.put(variable, RuleEvidence.display(value)));
+        return shown;
+    }
+
     /**
      * Format a SQWRL result value to a string
      */

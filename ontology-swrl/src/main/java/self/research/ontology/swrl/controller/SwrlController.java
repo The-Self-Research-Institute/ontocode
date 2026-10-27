@@ -193,6 +193,54 @@ public class SwrlController {
         }
     }
 
+    @GetMapping(value = "/{projectId}/rules/owl", produces = "text/plain")
+    public ResponseEntity<?> getRulesAsOwl(@PathVariable String projectId,
+                                           @RequestParam(defaultValue = "false") boolean draft,
+                                           @RequestParam(required = false) String userId,
+                                           @RequestHeader(value = "X-Ontocode-Internal-Token", required = false) String token) {
+        if (!hasInternalToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(createErrorResponse("This endpoint is for internal services only"));
+        }
+        try {
+            SwrlEngineService.RulesExport export = swrlEngineService.exportEnabledRulesAsOwl(projectId, draft ? userId : null);
+            return ResponseEntity.ok()
+                    .contentType(org.springframework.http.MediaType.TEXT_PLAIN)
+                    .header("X-Ontocode-Skipped-Rules", skippedRulesHeader(export.skipped()))
+                    .header("X-Ontocode-Rules-Fingerprint", export.fingerprint())
+                    .body(export.text());
+        } catch (Exception e) {
+            logger.error("Failed to export the rules of project {} as OWL", projectId, e);
+            return ResponseEntity.status(500).body(createErrorResponse("Could not export the rules"));
+        }
+    }
+
+    static String skippedRulesHeader(List<SkippedRule> skipped) {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        mapper.getFactory().configure(com.fasterxml.jackson.core.JsonGenerator.Feature.ESCAPE_NON_ASCII, true);
+        int limit = 8 * 1024;
+        try {
+            String full = mapper.writeValueAsString(skipped);
+            if (full.length() <= limit) {
+                return full;
+            }
+            List<Object> kept = new java.util.ArrayList<>();
+            int shown = 0;
+            while (shown < skipped.size()) {
+                kept.add(skipped.get(shown));
+                String attempt = mapper.writeValueAsString(kept);
+                if (attempt.length() > limit - 200) {
+                    kept.remove(kept.size() - 1);
+                    break;
+                }
+                shown++;
+            }
+            kept.add(Map.of("ruleName", "...", "reason", (skipped.size() - shown) + " more skipped rules not listed"));
+            return mapper.writeValueAsString(kept);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return "[]";
+        }
+    }
+
     @GetMapping("/{projectId}/rules/{ruleId}")
     public ResponseEntity<?> getRule(
             @PathVariable String projectId,
@@ -609,6 +657,49 @@ public class SwrlController {
             logger.error("SQWRL query failed for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(createErrorResponse("SQWRL query failed: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{projectId}/explain")
+    public ResponseEntity<?> explainConclusion(
+            @PathVariable String projectId,
+            @RequestBody ExplainRequest request,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to explain on a private draft"));
+        }
+        try {
+            return ResponseEntity.ok(swrlEngineService.explainConclusion(projectId, request, draft ? userId : null));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Failed to explain conclusion for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(createErrorResponse("Explanation failed: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{projectId}/rules/{ruleId}/why-not")
+    public ResponseEntity<?> whyNotFired(
+            @PathVariable String projectId,
+            @PathVariable String ruleId,
+            @RequestBody WhyNotRequest request,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to check on a private draft"));
+        }
+        try {
+            return ResponseEntity.ok(swrlEngineService.whyNotFired(projectId, ruleId, request, draft ? userId : null));
+        } catch (IllegalArgumentException e) {
+            HttpStatus status = e.getMessage() != null && e.getMessage().startsWith("Rule not found")
+                ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+            return ResponseEntity.status(status).body(createErrorResponse(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Failed to check why rule {} did not fire for project: {}", ruleId, projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(createErrorResponse("Check failed: " + e.getMessage()));
         }
     }
 }
