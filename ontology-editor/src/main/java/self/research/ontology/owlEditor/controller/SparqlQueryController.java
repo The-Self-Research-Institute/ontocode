@@ -117,8 +117,9 @@ public class SparqlQueryController {
     }
 
     record SparqlHead(List<String> vars) {}
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
     record SparqlQueryResponse(String type, SparqlHead head, List<String> vars, List<Map<String, String>> results,
-                               List<Map<String, Map<String, String>>> bindings, long executionTime) {}
+                               List<Map<String, Map<String, String>>> bindings, long executionTime, Boolean truncated) {}
     record SparqlBooleanResponse(String type, @com.fasterxml.jackson.annotation.JsonProperty("boolean") boolean value,
                                  long executionTime) {}
     @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
@@ -177,8 +178,14 @@ public class SparqlQueryController {
                 bindings.add(binding);
             }
             long executionTime = System.currentTimeMillis() - startTime;
-            return ResponseEntity.ok(new SparqlQueryResponse("select", new SparqlHead(vars), vars, rows, bindings,
-                    executionTime));
+            ResponseEntity.BodyBuilder ok = ResponseEntity.ok();
+            if (select.truncated()) {
+                ok.header(TRUNCATED_HEADER, "true");
+            }
+            return ok.body(new SparqlQueryResponse("select", new SparqlHead(vars), vars, rows, bindings,
+                    executionTime, select.truncated() ? Boolean.TRUE : null));
+        } catch (self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
         } catch (Exception e) {
             return sparqlFailure(e);
         }

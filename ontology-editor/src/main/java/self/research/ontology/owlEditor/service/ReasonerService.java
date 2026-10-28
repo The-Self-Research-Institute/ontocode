@@ -42,6 +42,23 @@ public class ReasonerService {
     private final Set<CompletableFuture<OWLReasoner>> partialWarmupBuilds =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    private final Map<OWLReasoner, Long> reasonerBytes = java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+    private volatile self.research.ontology.common.admission.CacheAccount reasonerAccount =
+            RetainedMemory.detachedAccount("reasoners");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        this.reasonerAccount = ledger.cacheAccount("reasoners");
+    }
+
+    private OWLReasoner accounted(OWLReasoner reasoner, OWLOntology ontology) {
+        long bytes = RetainedMemory.reasonerBytes(ontology.getAxiomCount());
+        if (bytes > 0 && reasonerBytes.putIfAbsent(reasoner, bytes) == null) {
+            reasonerAccount.add(bytes);
+        }
+        return reasoner;
+    }
+
     // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
     // (each reasoner holds the full ontology + inference state in heap)
     private final Cache<String, CompletableFuture<OWLReasoner>> reasonerCache = Caffeine.newBuilder()
@@ -53,6 +70,10 @@ public class ReasonerService {
                 future.thenAccept(reasoner -> {
                     log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
                     try { reasoner.dispose(); } catch (Exception ignored) {}
+                    Long bytes = reasonerBytes.remove(reasoner);
+                    if (bytes != null) {
+                        reasonerAccount.remove(bytes);
+                    }
                 });
             }
         })
@@ -163,11 +184,11 @@ public class ReasonerService {
         try {
             reasonerBuildExecutor.execute(() -> {
                 try {
-                    future.complete(switch (warmup) {
+                    future.complete(accounted(switch (warmup) {
                         case ALL -> buildReasonerWithPrecompute(ontology, type);
                         case CLASS_HIERARCHY -> buildClassHierarchyReasoner(ontology, type);
                         case NONE -> createReasoner(ontology, type);
-                    });
+                    }, ontology));
                 } catch (Throwable t) {
                     future.completeExceptionally(t);
                 }

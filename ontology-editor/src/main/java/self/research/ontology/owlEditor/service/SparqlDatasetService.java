@@ -88,6 +88,20 @@ public class SparqlDatasetService {
 
     private static final String DRAFT_GRAPH_PREFIX = "http://ontocode.org/draft/";
 
+    @Autowired(required = false)
+    private HeavyWorkAdmission heavyWork = HeavyWorkAdmission.disabled();
+
+    @Autowired(required = false)
+    private SparqlResultLimits sparqlResultLimits = SparqlResultLimits.defaults();
+
+    private volatile self.research.ontology.common.admission.CacheAccount draftOntologyAccount =
+            RetainedMemory.detachedAccount("draftOntologies");
+
+    @Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        this.draftOntologyAccount = ledger.cacheAccount("draftOntologies");
+    }
+
     private final ConcurrentHashMap<String, AtomicLong> draftGraphWriteStamps = new ConcurrentHashMap<>();
 
     private final Cache<String, CompletableFuture<org.semanticweb.owlapi.model.OWLOntology>> draftOntologyCache = Caffeine.newBuilder()
@@ -1246,6 +1260,12 @@ public class SparqlDatasetService {
     }
 
     public SparqlUserQueryResult execUserQuery(String projectId, String sparqlQuery, int graphCap) {
+        try (HeavyWorkAdmission.Hold hold = heavyWork.admitSparql(SparqlQueryContext.getUserId())) {
+            return execUserQueryAdmitted(projectId, sparqlQuery, graphCap);
+        }
+    }
+
+    private SparqlUserQueryResult execUserQueryAdmitted(String projectId, String sparqlQuery, int graphCap) {
         SparqlQueryScope scope = resolveUserQueryScope(projectId);
         SparqlQueryGuard.Checked checked = SparqlQueryGuard.check(sparqlQuery, new LinkedHashSet<>(scope.graphs()));
         if (!scope.draft() && projectRepoCache != null && projectRepoCache.isEnabled()) {
@@ -1287,7 +1307,7 @@ public class SparqlDatasetService {
         try (RepositoryConnection raw = repository.getConnection()) {
             RepositoryConnection conn = checked.kind() == SparqlQueryGuard.Kind.SELECT
                     || checked.kind() == SparqlQueryGuard.Kind.ASK ? raw : TolerantRdfParsing.apply(raw);
-            SparqlUserQueryResult result = SparqlUserQueryRunner.run(conn, checked, visibleGraphs, graphCap);
+            SparqlUserQueryResult result = SparqlUserQueryRunner.run(conn, checked, visibleGraphs, graphCap, sparqlResultLimits);
             sparqlLog.info("[SPARQL_USER] {} project={} draft={} graphs={} time={}ms",
                     checked.kind(), scope.projectId(), scope.draft(), visibleGraphs.size(), elapsedMillis(start));
             return result;
@@ -1501,6 +1521,12 @@ public class SparqlDatasetService {
 
     public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId,
                                                                          long draftVersion) throws Exception {
+        return loadDraftAsOntology(projectId, userId, draftVersion,
+                self.research.ontology.common.admission.WorkKind.REASONING);
+    }
+
+    public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId,
+            long draftVersion, self.research.ontology.common.admission.WorkKind kind) throws Exception {
         String cacheKey = projectId + "::" + userId + "::" + draftVersion + "::" + getDraftWriteStamp(projectId, userId);
         CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> loading = new CompletableFuture<>();
         CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> existing =
@@ -1514,7 +1540,9 @@ public class SparqlDatasetService {
             }
         }
         try {
-            org.semanticweb.owlapi.model.OWLOntology ontology = readDraftAsOntology(projectId, userId);
+            org.semanticweb.owlapi.model.OWLOntology ontology = readDraftAsOntology(projectId, userId, kind);
+            RetainedMemory.retainUntilCollected(draftOntologyAccount, ontology,
+                    RetainedMemory.ontologyBytes(ontology.getAxiomCount()));
             loading.complete(ontology);
             return ontology;
         } catch (Exception e) {
@@ -1524,7 +1552,8 @@ public class SparqlDatasetService {
         }
     }
 
-    private org.semanticweb.owlapi.model.OWLOntology readDraftAsOntology(String projectId, String userId) throws Exception {
+    private org.semanticweb.owlapi.model.OWLOntology readDraftAsOntology(String projectId, String userId,
+            self.research.ontology.common.admission.WorkKind kind) throws Exception {
         if (!isDraftCopySessionReady(projectId, userId)) {
             throw new IllegalStateException("Draft copy for project " + projectId + " (user " + userId
                     + ") is not ready yet — the copy-on-switch background job hasn't finished.");
@@ -1540,14 +1569,16 @@ public class SparqlDatasetService {
                     + draftMaxTriples + " triples for in-process draft reasoning.");
         }
 
-        String draftContent = exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
-        org.semanticweb.owlapi.model.OWLOntologyManager manager =
-                org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
-        org.semanticweb.owlapi.model.OWLOntology ontology;
-        try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
-            ontology = manager.loadOntologyFromOntologyDocument(is);
+        try (HeavyWorkAdmission.Hold hold = heavyWork.admitLoad(userId, kind, tripleCount)) {
+            String draftContent = exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+            org.semanticweb.owlapi.model.OWLOntologyManager manager =
+                    org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+            org.semanticweb.owlapi.model.OWLOntology ontology;
+            try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
+                ontology = manager.loadOntologyFromOntologyDocument(is);
+            }
+            return ontology;
         }
-        return ontology;
     }
 
     public long countDraftTriples(String projectId, String userId) {
