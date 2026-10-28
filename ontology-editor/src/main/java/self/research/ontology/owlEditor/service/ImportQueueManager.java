@@ -50,6 +50,12 @@ public class ImportQueueManager {
     @Value("${ontocode.import.max-concurrent:1}")
     private int maxConcurrentImports;
 
+    @Value("${ontocode.capacity.import-queue.max-queued:${ontocode.import.max-queued:20}}")
+    private int maxQueued = 20;
+
+    @Value("${ontocode.capacity.import-queue.max-waiting-per-user:${ontocode.import.max-waiting-per-user:2}}")
+    private int maxWaitingPerUser = 2;
+
     private static final long RETRY_DELAY_MS = 10 * 1000;
     /** Never timeout an in-flight import earlier than this floor. */
     /** Allow headroom beyond the estimator because parse/write phases can vary. */
@@ -88,6 +94,8 @@ public class ImportQueueManager {
             log.warn("[Queue] Project {} is currently being processed", projectId);
             return activeImports.get(projectId);
         }
+
+        checkCapacity(projectId, ownerEmail);
 
         ImportOptions resolvedOptions = options != null ? options : ImportOptions.defaults();
         long fileSizeBytes = resolveFileSize(owlFile);
@@ -128,6 +136,41 @@ public class ImportQueueManager {
         broadcastQueueStats();
 
         return item;
+    }
+
+    public synchronized void checkCapacity(String projectId, String ownerEmail) {
+        if (findInQueue(projectId) != null || activeImports.containsKey(projectId)) {
+            return;
+        }
+        if (maxQueued > 0 && queue.size() >= maxQueued) {
+            log.warn("[Queue] Rejecting import for {}: queue is full ({} waiting)", projectId, queue.size());
+            throw new ImportQueueFullException("import_queue_full", 30,
+                    "The import queue is full right now. Please try again in a few minutes.");
+        }
+        if (maxWaitingPerUser > 0 && ownerEmail != null && !ownerEmail.isBlank()) {
+            long waiting = queue.stream().filter(i -> ownerEmail.equalsIgnoreCase(i.getOwnerEmail())).count();
+            if (waiting >= maxWaitingPerUser) {
+                log.warn("[Queue] Rejecting import for {}: user already has {} waiting", projectId, waiting);
+                throw new ImportQueueFullException("too_many_waiting_imports", 30,
+                        "You already have " + waiting + " imports waiting. Please wait for one to finish before adding another.");
+            }
+        }
+    }
+
+    public synchronized long oldestQueuedAgeMs() {
+        long now = Instant.now().toEpochMilli();
+        long oldest = 0;
+        for (ImportQueueItem item : queue) {
+            if (item.getQueuedAt() != null) {
+                oldest = Math.max(oldest, now - item.getQueuedAt().toEpochMilli());
+            }
+        }
+        return oldest;
+    }
+
+    public synchronized void configureLimits(int maxQueued, int maxWaitingPerUser) {
+        this.maxQueued = maxQueued;
+        this.maxWaitingPerUser = maxWaitingPerUser;
     }
 
     /**
@@ -358,6 +401,7 @@ public class ImportQueueManager {
                 .averageProcessingTimeMs(getAverageProcessingTime())
                 .queue(queuedProjects)
                 .activeProjectIds(new java.util.ArrayList<>(activeImports.keySet()))
+                .oldestQueuedAgeMs(oldestQueuedAgeMs())
                 .build();
     }
 

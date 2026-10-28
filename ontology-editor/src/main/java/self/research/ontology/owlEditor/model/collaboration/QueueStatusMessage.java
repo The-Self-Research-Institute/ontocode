@@ -29,6 +29,7 @@ public class QueueStatusMessage {
         private List<QueuedProject> queue;
         /** Project IDs currently being actively imported (not just queued). */
         private List<String> activeProjectIds;
+        private long oldestQueuedAgeMs;
     }
 
     @Data
