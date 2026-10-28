@@ -56,9 +56,11 @@ class DisabledRulesReasoningTest {
     }
 
     boolean aliceIsPerson(OWLOntology ontology) {
-        OWLReasoner reasoner = service.getReasoner(ontology, ReasonerType.HERMIT);
-        OWLNamedIndividual alice = df.getOWLNamedIndividual(IRI.create(NS + "alice"));
-        return reasoner.getTypes(alice, false).containsEntity(df.getOWLClass(IRI.create(NS + "Person")));
+        try (ReasonerLease lease = service.lease(ontology, ReasonerType.HERMIT)) {
+            OWLReasoner reasoner = lease.reasoner();
+            OWLNamedIndividual alice = df.getOWLNamedIndividual(IRI.create(NS + "alice"));
+            return reasoner.getTypes(alice, false).containsEntity(df.getOWLClass(IRI.create(NS + "Person")));
+        }
     }
 
     @Test
