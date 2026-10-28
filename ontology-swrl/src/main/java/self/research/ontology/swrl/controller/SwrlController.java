@@ -33,6 +33,18 @@ public class SwrlController {
     @Autowired
     private self.research.ontology.swrl.service.OntologyClientService ontologyClient;
 
+    @Autowired
+    private self.research.ontology.swrl.service.SqwrlResultStore sqwrlResults;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.swrl-execute.sqwrl-page-size:100}")
+    private int sqwrlPageSize = 100;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.swrl-execute.sqwrl-max-page-size:1000}")
+    private int sqwrlMaxPageSize = 1000;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.swrl-execute.sqwrl-max-page-bytes:8388608}")
+    private long sqwrlMaxPageBytes = 8L * 1024 * 1024;
+
     @org.springframework.beans.factory.annotation.Value("${ontocode.internal.token:ontocode-internal}")
     private String internalToken;
 
@@ -565,15 +577,42 @@ public class SwrlController {
                 projectId, queryText, queryName, maxResults);
             
             if (result.isSuccess()) {
-                return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "queryName", result.getQueryName(),
-                    "queryText", result.getQueryText(),
-                    "executionTimeMs", result.getExecutionTimeMs(),
-                    "rowCount", result.getRowCount(),
-                    "columnNames", result.getColumnNames() != null ? result.getColumnNames() : List.of(),
-                    "rows", result.getRows() != null ? result.getRows() : List.of()
-                ));
+                int pageSize = clampPageSize(request.get("pageSize") instanceof Number n ? n.intValue() : null);
+                List<String> columns = result.getColumnNames() != null ? result.getColumnNames() : List.of();
+                List<Map<String, String>> all = result.getRows() != null ? result.getRows() : List.of();
+                self.research.ontology.swrl.service.SqwrlResultStore.Meta meta = new self.research.ontology.swrl.service.SqwrlResultStore.Meta(
+                    result.getQueryName(), result.getQueryText(), result.getExecutionTimeMs(), result.getTotalRows(),
+                    result.isTotalRowsExact(), result.isTruncated(), result.getRowLimit(), result.isBytesCapped());
+                String owner = self.research.ontology.swrl.service.OwnerContext.current();
+                java.util.Optional<self.research.ontology.swrl.service.SqwrlResultStore.Entry> stored =
+                    sqwrlResults.put(projectId, owner, columns, all, meta);
+                Map<String, Object> body = new java.util.LinkedHashMap<>();
+                body.put("success", true);
+                body.put("queryName", result.getQueryName());
+                body.put("queryText", result.getQueryText());
+                body.put("executionTimeMs", result.getExecutionTimeMs());
+                body.put("columnNames", columns);
+                body.put("totalRows", result.getTotalRows());
+                body.put("totalRowsExact", result.isTotalRowsExact());
+                body.put("truncated", result.isTruncated());
+                body.put("rowLimit", result.getRowLimit());
+                body.put("bytesCapped", result.isBytesCapped());
+                if (stored.isPresent()) {
+                    self.research.ontology.swrl.service.SqwrlPager.Page page = self.research.ontology.swrl.service.SqwrlPager.page(
+                        stored.get(), null, null, false, 0, pageSize, sqwrlMaxPageBytes);
+                    body.put("rows", page.rows());
+                    body.put("rowCount", page.rows().size());
+                    body.put("runId", stored.get().id());
+                    body.put("pageSize", pageSize);
+                    body.put("storedRows", all.size());
+                    body.put("filteredRows", page.filteredRows());
+                    body.put("nextOffset", page.nextOffset());
+                    body.put("pageBytesCapped", page.pageBytesCapped());
+                } else {
+                    body.put("rows", all);
+                    body.put("rowCount", all.size());
+                }
+                return ResponseEntity.ok(body);
             } else {
                 return ResponseEntity.ok(Map.of(
                     "success", false,
@@ -590,6 +629,47 @@ public class SwrlController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(createErrorResponse("SQWRL query failed: " + e.getMessage()));
         }
+    }
+
+    private int clampPageSize(Integer requested) {
+        int max = Math.max(1, sqwrlMaxPageSize);
+        int size = requested != null && requested > 0 ? requested : sqwrlPageSize;
+        return Math.min(Math.max(1, size), max);
+    }
+
+    @GetMapping("/{projectId}/sqwrl/runs/{runId}/rows")
+    public ResponseEntity<?> sqwrlRows(
+            @PathVariable String projectId,
+            @PathVariable String runId,
+            @RequestParam(defaultValue = "0") int offset,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) String filter,
+            @RequestParam(required = false) String sort,
+            @RequestParam(defaultValue = "asc") String dir,
+            @RequestParam(defaultValue = "false") boolean export) {
+        java.util.Optional<self.research.ontology.swrl.service.SqwrlResultStore.Entry> found =
+            sqwrlResults.find(runId, projectId, self.research.ontology.swrl.service.OwnerContext.current());
+        if (found.isEmpty()) {
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("expired", true);
+            body.put("message", "This result has expired. Run the query again.");
+            return ResponseEntity.status(HttpStatus.GONE).body(body);
+        }
+        self.research.ontology.swrl.service.SqwrlResultStore.Entry entry = found.get();
+        int effective = export ? Math.max(1, entry.rows().size()) : clampPageSize(limit);
+        self.research.ontology.swrl.service.SqwrlPager.Page page = self.research.ontology.swrl.service.SqwrlPager.page(
+            entry, filter, sort, "desc".equalsIgnoreCase(dir), offset, effective, sqwrlMaxPageBytes);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("runId", runId);
+        body.put("columnNames", entry.columns());
+        body.put("rows", page.rows());
+        body.put("rowCount", page.rows().size());
+        body.put("offset", page.offset());
+        body.put("nextOffset", page.nextOffset());
+        body.put("filteredRows", page.filteredRows());
+        body.put("storedRows", entry.rows().size());
+        body.put("pageBytesCapped", page.pageBytesCapped());
+        return ResponseEntity.ok(body);
     }
 
     @PostMapping("/{projectId}/explain")

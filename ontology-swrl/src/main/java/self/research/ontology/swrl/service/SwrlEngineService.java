@@ -74,6 +74,15 @@ public class SwrlEngineService {
     @Value("${ontocode.capacity.swrl-execute.max-wait-ms:${swrl.execution.max-wait-ms:10000}}")
     private long maxWaitMs = 10000;
 
+    @Value("${ontocode.capacity.swrl-execute.sqwrl-max-rows:1000}")
+    private int sqwrlMaxRows = 1000;
+
+    @Value("${ontocode.capacity.swrl-execute.sqwrl-max-bytes:8388608}")
+    private long sqwrlMaxBytes = 8L * 1024 * 1024;
+
+    @Value("${ontocode.capacity.swrl-execute.sqwrl-count-limit:100000}")
+    private int sqwrlCountLimit = 100000;
+
     private volatile ExecutionGate executionGate;
 
     ExecutionGate gate() {
@@ -1120,7 +1129,8 @@ public class SwrlEngineService {
             queryName = "SQWRLQuery_" + System.currentTimeMillis();
         }
         
-        int limit = (maxResults != null && maxResults > 0) ? maxResults : 100;
+        int hardCap = Math.max(1, sqwrlMaxRows);
+        int limit = (maxResults != null && maxResults > 0) ? Math.min(maxResults, hardCap) : hardCap;
         
         try {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
@@ -1159,27 +1169,17 @@ public class SwrlEngineService {
                 columnNames.add(sqwrlResult.getColumnName(i));
             }
             
-            // Extract rows
-            List<Map<String, String>> rows = new ArrayList<>();
-            int rowIndex = 0;
-            while (sqwrlResult.next() && rowIndex < limit) {
-                Map<String, String> row = new LinkedHashMap<>();
-                for (int i = 0; i < columnCount; i++) {
-                    String colName = columnNames.get(i);
-                    try {
-                        org.swrlapi.sqwrl.values.SQWRLResultValue value = sqwrlResult.getValue(i);
-                        row.put(colName, formatSqwrlValue(value));
-                    } catch (Exception e) {
-                        row.put(colName, "(error)");
-                    }
-                }
-                rows.add(row);
-                rowIndex++;
-            }
-            
-            logger.info("SQWRL query returned {} rows in {}ms", rows.size(), executionTime);
-            
-            return new SqwrlQueryResult(true, queryName, queryText, executionTime, columnNames, rows, null);
+            SqwrlRead read = readSqwrlRows(sqwrlResult, columnNames, limit, sqwrlMaxBytes, Math.max(sqwrlCountLimit, limit), this::formatSqwrlValue);
+            List<Map<String, String>> rows = read.rows();
+            int total = read.total();
+            boolean exact = read.exact();
+            boolean bytesCapped = read.bytesCapped();
+
+            logger.info("SQWRL query returned {} of {} rows in {}ms", rows.size(), total, executionTime);
+
+            boolean truncated = total > rows.size();
+            return new SqwrlQueryResult(true, queryName, queryText, executionTime, columnNames, rows, null,
+                    total, exact, truncated, limit, bytesCapped);
             
         } catch (org.swrlapi.parser.SWRLParseException e) {
             logger.error("SQWRL parse error: {}", e.getMessage());
@@ -1200,6 +1200,51 @@ public class SwrlEngineService {
         }
     }
     
+    public record SqwrlRead(List<Map<String, String>> rows, int total, boolean exact, boolean bytesCapped) {
+    }
+
+    static SqwrlRead readSqwrlRows(org.swrlapi.sqwrl.SQWRLResult result, List<String> columnNames, int limit, long maxBytes,
+                                   int countLimit, java.util.function.Function<org.swrlapi.sqwrl.values.SQWRLResultValue, String> format)
+            throws org.swrlapi.sqwrl.exceptions.SQWRLException {
+        List<Map<String, String>> rows = new ArrayList<>();
+        long bytes = 0;
+        boolean bytesCapped = false;
+        int total = 0;
+        boolean exact = true;
+        int columnCount = columnNames.size();
+        while (result.next()) {
+            if (total >= countLimit) {
+                exact = false;
+                break;
+            }
+            total++;
+            if (rows.size() >= limit || bytesCapped) {
+                continue;
+            }
+            Map<String, String> row = new LinkedHashMap<>();
+            long rowBytes = 0;
+            for (int i = 0; i < columnCount; i++) {
+                String cell;
+                try {
+                    cell = format.apply(result.getValue(i));
+                } catch (Exception e) {
+                    cell = "(error)";
+                }
+                if (cell != null) {
+                    rowBytes += cell.length();
+                }
+                row.put(columnNames.get(i), cell);
+            }
+            if (bytes + rowBytes > maxBytes) {
+                bytesCapped = true;
+                continue;
+            }
+            bytes += rowBytes;
+            rows.add(row);
+        }
+        return new SqwrlRead(rows, total, exact, bytesCapped);
+    }
+
     private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
     private static final String WHY_NOT_SCOPE = "Checks one named individual as the root variable of the rule's first class or property atom; "
@@ -1594,6 +1639,24 @@ public class SwrlEngineService {
         private List<Map<String, String>> rows;
         private String errorMessage;
         
+        private int totalRows;
+        private boolean totalRowsExact = true;
+        private boolean truncated;
+        private int rowLimit;
+        private boolean bytesCapped;
+
+        public SqwrlQueryResult(boolean success, String queryName, String queryText,
+                               long executionTimeMs, List<String> columnNames,
+                               List<Map<String, String>> rows, String errorMessage,
+                               int totalRows, boolean totalRowsExact, boolean truncated, int rowLimit, boolean bytesCapped) {
+            this(success, queryName, queryText, executionTimeMs, columnNames, rows, errorMessage);
+            this.totalRows = totalRows;
+            this.totalRowsExact = totalRowsExact;
+            this.truncated = truncated;
+            this.rowLimit = rowLimit;
+            this.bytesCapped = bytesCapped;
+        }
+
         public SqwrlQueryResult(boolean success, String queryName, String queryText, 
                                long executionTimeMs, List<String> columnNames, 
                                List<Map<String, String>> rows, String errorMessage) {
@@ -1614,5 +1677,10 @@ public class SwrlEngineService {
         public List<Map<String, String>> getRows() { return rows; }
         public int getRowCount() { return rows != null ? rows.size() : 0; }
         public String getErrorMessage() { return errorMessage; }
+        public int getTotalRows() { return totalRows; }
+        public boolean isTotalRowsExact() { return totalRowsExact; }
+        public boolean isTruncated() { return truncated; }
+        public int getRowLimit() { return rowLimit; }
+        public boolean isBytesCapped() { return bytesCapped; }
     }
 }
