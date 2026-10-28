@@ -86,6 +86,15 @@ public class SparqlDatasetService {
     @Value("${ontocode.draft.max-triples:500000}")
     private long draftMaxTriples;
 
+    @Value("${ontocode.capacity.sparql.max-update-bytes:5242880}")
+    private long maxUpdateBytes;
+
+    @Value("${ontocode.capacity.sparql.max-update-quads:200000}")
+    private long maxUpdateQuads;
+
+    @Value("${ontocode.capacity.sparql.max-update-operations:100}")
+    private int maxUpdateOperations;
+
     private static final String DRAFT_GRAPH_PREFIX = "http://ontocode.org/draft/";
 
     @Autowired(required = false)
@@ -1443,7 +1452,7 @@ public class SparqlDatasetService {
                 + "INSERT { GRAPH <" + mainGraph + "> { ?s ?p ?o } } WHERE { GRAPH <" + draftGraph + "> { ?s ?p ?o } } ;\n"
                 + "CLEAR GRAPH <" + draftGraph + ">";
         long start = System.nanoTime();
-        execUpdate(projectId, mainGraph, sparql);
+        execUpdate(projectId, mainGraph, sparql, java.util.List.of(draftGraph));
         noteGraphWritten(draftGraph);
         publishDraftPrefixesToPublic(projectId, userId);
         evictDraftReadyCache(projectId, userId);
@@ -1721,6 +1730,15 @@ public class SparqlDatasetService {
     }
 
     private void execUpdate(String projectId, String targetGraphUri, String sparqlUpdate) {
+        execUpdate(projectId, targetGraphUri, sparqlUpdate, java.util.List.of());
+    }
+
+    private void execUpdate(String projectId, String targetGraphUri, String sparqlUpdate,
+                            java.util.Collection<String> extraGraphs) {
+        java.util.function.Supplier<java.util.Collection<String>> partitions = targetGraphUri.equals(getGraphUri(projectId))
+                ? () -> getPartitionGraphs(null, projectId, targetGraphUri)
+                : null;
+        String graphAwareUpdate = injectGraphContext(sparqlUpdate, targetGraphUri, extraGraphs, partitions);
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
         long totalStart = System.nanoTime();
@@ -1730,8 +1748,6 @@ public class SparqlDatasetService {
 
             log.info("[GRAPHDB] EXECUTING UPDATE project={} graph={} connTime={}ms", projectId, targetGraphUri, connMs);
             log.debug("[GRAPHDB] Update SPARQL: {}", sparqlUpdate);
-
-            String graphAwareUpdate = injectGraphContext(sparqlUpdate, targetGraphUri);
 
             // Explicitly manage transaction for immediate visibility
             boolean autoCommit = conn.isAutoCommit();
@@ -1807,112 +1823,18 @@ public class SparqlDatasetService {
         }
     }
 
-    /**
-     * Inject GRAPH/WITH context into SPARQL UPDATE
-     */
-    private static final java.util.regex.Pattern PROLOGUE_DECLARATION = java.util.regex.Pattern.compile(
-            "^\\s*((?:PREFIX\\s+[^\\s:<>]*:\\s*<[^>\\s]*>)|(?:BASE\\s*<[^>\\s]*>))", java.util.regex.Pattern.CASE_INSENSITIVE);
-
-    private String injectGraphContext(String sparql, String graphUri) {
-        // Extract PREFIX declarations
-        StringBuilder prefixes = new StringBuilder();
-        StringBuilder operations = new StringBuilder();
-
-        String[] lines = sparql.split("\\n");
-        for (String line : lines) {
-            String rest = line;
-            java.util.regex.Matcher declaration = PROLOGUE_DECLARATION.matcher(rest);
-            while (declaration.find()) {
-                prefixes.append(declaration.group(1)).append("\n");
-                rest = rest.substring(declaration.end());
-                declaration = PROLOGUE_DECLARATION.matcher(rest);
-            }
-            if (rest.trim().toUpperCase().startsWith("PREFIX")) {
-                prefixes.append(rest).append("\n");
-            } else if (!rest.trim().isEmpty()) {
-                operations.append(rest).append("\n");
-            }
-        }
-
-        String operationsStr = operations.toString().trim();
-
-        // Check if this is INSERT { ... } WHERE { ... } with Turtle syntax (contains blank nodes or semicolons within braces)
-        // Don't split by semicolon in this case as it's part of Turtle syntax
-        if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
-            if (SparqlText.hasKeyword(operationsStr, "USING")) {
-                operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
-                        "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
-                log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
-            } else if (!operationsStr.trim().toUpperCase().startsWith("WITH")) {
-                operationsStr = "WITH <" + graphUri + "> " + operationsStr;
-                log.info("[GRAPH-INJECT] Added WITH clause to INSERT...WHERE statement");
-            }
-            return prefixes.toString() + operationsStr;
-        }
-
-        // For other cases, split by semicolon and process each statement
-        // Split operations by semicolon - BUT only at top level, not inside {}
-        String[] statements = splitUpdateStatements(operationsStr);
-        StringBuilder result = new StringBuilder(prefixes);
-
-        log.info("[GRAPH-INJECT] Processing {} statements", statements.length);
-
-        for (int i = 0; i < statements.length; i++) {
-            String stmt = statements[i].trim();
-            if (stmt.isEmpty()) continue;
-
-            log.info("[GRAPH-INJECT] Statement {}: '{}'", i, stmt.substring(0, Math.min(100, stmt.length())));
-
-            // For INSERT DATA and DELETE DATA, wrap in GRAPH clause
-            if (stmt.matches("(?is)INSERT\\s+DATA\\s*\\{.*")) {
-                // Replace the opening brace to add GRAPH context
-                stmt = stmt.replaceFirst("(?is)(INSERT\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
-                // Add closing brace for GRAPH context before the final brace
-                stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
-                log.info("[GRAPH-INJECT] Matched INSERT DATA");
-            } else if (stmt.matches("(?is)DELETE\\s+DATA\\s*\\{.*")) {
-                // Replace the opening brace to add GRAPH context
-                stmt = stmt.replaceFirst("(?is)(DELETE\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
-                // Add closing brace for GRAPH context before the final brace
-                stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
-                log.info("[GRAPH-INJECT] Matched DELETE DATA");
-            }
-            // For DELETE { ... } WHERE { ... }, add WITH clause (or GRAPH if USING is present)
-            else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
-                if (SparqlText.hasKeyword(stmt, "USING")) {
-                    // Draft update: USING already present; wrap DELETE/INSERT templates with GRAPH
-                    // instead of WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
-                    stmt = stmt.replaceFirst("(?is)(DELETE\\s*\\{)(.*?)(\\})",
-                            "$1 GRAPH <" + graphUri + "> {$2} $3");
-                    stmt = stmt.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})(\\s*WHERE)",
-                            "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
-                    log.info("[GRAPH-INJECT] Injected GRAPH into DELETE/INSERT templates (USING present)");
-                } else {
-                    stmt = "WITH <" + graphUri + "> " + stmt;
-                    log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
-                }
-            } else if (stmt.matches("(?is)DELETE\\s+WHERE\\s*\\{.*\\}\\s*")) {
-                stmt = "WITH <" + graphUri + "> " + stmt.replaceFirst("(?is)DELETE\\s+WHERE\\s*\\{(.*)\\}\\s*$", "DELETE {$1} WHERE {$1}");
-            } else if (stmt.matches("(?is)INSERT\\s*\\{.*")) {
-                stmt = "WITH <" + graphUri + "> " + stmt;
-            } else {
-                log.info("[GRAPH-INJECT] No pattern matched for statement");
-            }
-
-            result.append(stmt);
-            if (i < statements.length - 1) {
-                result.append(" ;\n");
-            }
-        }
-
-        return result.toString();
+    private SparqlUpdateLimits updateLimits() {
+        return new SparqlUpdateLimits(maxUpdateBytes, maxUpdateQuads, maxUpdateOperations);
     }
 
-    /**
-     * Split UPDATE statements by semicolon, but only at top level (not inside braces)
-     */
-    private String[] splitUpdateStatements(String operations) {
-        return SparqlText.splitStatements(operations).toArray(new String[0]);
+    private String injectGraphContext(String sparql, String graphUri) {
+        return injectGraphContext(sparql, graphUri, java.util.List.of(), null);
+    }
+
+    private String injectGraphContext(String sparql, String graphUri, java.util.Collection<String> extraGraphs,
+                                      java.util.function.Supplier<java.util.Collection<String>> partitionGraphs) {
+        return SparqlUpdateScoper.scope(sparql, graphUri, extraGraphs, partitionGraphs, updateLimits(),
+                heavyWork, null);
     }
 
     /**
