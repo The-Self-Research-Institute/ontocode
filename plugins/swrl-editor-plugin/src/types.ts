@@ -108,7 +108,7 @@ export interface ExecutionResponse {
   inferredAxioms: InferredAxiom[];
   errorMessage: string | null;
   executedRuleNames?: string[]; // Names of rules that were actually executed
-  executionMode?: 'all' | 'selected'; // Indicates if all rules or selected rules were executed
+  executionMode?: 'all' | 'selected' | 'test'; // Indicates if all rules or selected rules were executed
   stamp?: { ontologyRevision: string; draftVersion: string; rulesFingerprint: string } | null;
   conclusionCount?: number;
   status?: string;

@@ -1354,7 +1354,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           Execution Summary
           {results.executionMode && (
             <span className="text-xs px-2 py-0.5 rounded-full" style={rt.chip}>
-              {results.executionMode === 'selected' ? 'Selected Rules' : 'All Rules'}
+              {results.executionMode === 'test' ? 'This rule only' : results.executionMode === 'selected' ? 'Selected Rules' : 'All Rules'}
             </span>
           )}
         </h3>
@@ -1372,10 +1372,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           </div>
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
             <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Rules Run</div>
-            <div className="text-lg font-bold" style={rt.value}>{results.totalRulesExecuted}</div>
+            <div className="text-lg font-bold" style={rt.value}>{results.totalRulesExecuted ?? results.executedRuleNames?.length ?? 0}</div>
           </div>
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
-            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Inferred</div>
+            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>{results.executionMode === 'test' ? 'New conclusions' : 'Inferred'}</div>
             <div className="text-lg font-bold" style={rt.value}>{results.inferredAxiomsCount}</div>
           </div>
         </div>
