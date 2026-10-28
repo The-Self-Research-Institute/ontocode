@@ -33,7 +33,25 @@ public final class RestRuleStage implements RuleStage {
     private static final String TOKEN_HEADER = "X-Ontocode-Internal-Token";
     private static final long STARTUP_WAIT_MS = 45_000L;
 
+    private static final ThreadLocal<String> BUSY_NOTE = new ThreadLocal<>();
+
     private volatile long downUntil;
+
+    public static String busyLimitation(int ruleCount) {
+        return "The rule engine is busy. " + ruleCount + " rule" + (ruleCount == 1 ? " was" : "s were") + " not run. Try again in a moment.";
+    }
+
+    public static String takeBusyLimitation() {
+        String note = BUSY_NOTE.get();
+        BUSY_NOTE.remove();
+        return note;
+    }
+
+    private static boolean isBusy(HttpResponse<String> response) {
+        int status = response.statusCode();
+        return (status == 429 || status == 503) && response.body() != null
+                && response.body().replaceAll("\\s", "").contains("\"busy\":true");
+    }
 
     private final String baseUrl;
     private final Duration timeout;
@@ -60,6 +78,7 @@ public final class RestRuleStage implements RuleStage {
 
     @Override
     public Optional<Set<OWLAxiom>> infer(OWLOntology ontology, Collection<SWRLRule> rules) {
+        BUSY_NOTE.remove();
         if (baseUrl.isEmpty() || System.currentTimeMillis() < downUntil) {
             return Optional.empty();
         }
@@ -87,9 +106,15 @@ public final class RestRuleStage implements RuleStage {
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             long startingUntil = System.currentTimeMillis() + STARTUP_WAIT_MS;
-            while ((response.statusCode() == 502 || response.statusCode() == 503) && System.currentTimeMillis() < startingUntil) {
+            while ((response.statusCode() == 502 || response.statusCode() == 503) && !isBusy(response)
+                    && System.currentTimeMillis() < startingUntil) {
                 Thread.sleep(3000);
                 response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            }
+            if (isBusy(response)) {
+                BUSY_NOTE.set(busyLimitation(rules.size()));
+                LOG.log(System.Logger.Level.INFO, "SWRL rule engine is busy (HTTP {0}), {1} rules not run", response.statusCode(), rules.size());
+                return Optional.empty();
             }
             if (response.statusCode() != 200) {
                 LOG.log(System.Logger.Level.WARNING, "SWRL rule engine answered HTTP {0}: {1}", response.statusCode(), abbreviate(response.body()));

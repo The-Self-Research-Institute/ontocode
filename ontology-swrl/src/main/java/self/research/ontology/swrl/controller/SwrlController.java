@@ -56,6 +56,26 @@ public class SwrlController {
                         + projectId + "/rules."));
     }
 
+    private ResponseEntity<?> busy(self.research.ontology.swrl.service.SwrlBusyException e) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("busy", true);
+        body.put("reason", e.getReason());
+        body.put("retryAfterSeconds", e.getRetryAfterSeconds());
+        body.put("message", e.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(e.getRetryAfterSeconds()))
+                .body(body);
+    }
+
+    @GetMapping("/internal/execution-stats")
+    public ResponseEntity<?> executionStats(
+            @RequestHeader(value = "X-Ontocode-Internal-Token", required = false) String token) {
+        if (!hasInternalToken(token)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(createErrorResponse("This endpoint is for internal services only"));
+        }
+        return ResponseEntity.ok(swrlEngineService.executionStats());
+    }
+
     private boolean hasInternalToken(String presented) {
         return presented != null && java.security.MessageDigest.isEqual(
                 presented.getBytes(java.nio.charset.StandardCharsets.UTF_8),
@@ -75,6 +95,8 @@ public class SwrlController {
         } catch (java.util.concurrent.TimeoutException e) {
             return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
                     .body(createErrorResponse("The rule engine timed out"));
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Inferring the rules of an ontology failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -338,6 +360,8 @@ public class SwrlController {
             
             return ResponseEntity.ok(response);
             
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Failed to execute rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -383,6 +407,8 @@ public class SwrlController {
             
             return ResponseEntity.ok(response);
             
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Failed to execute selected rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -405,6 +431,8 @@ public class SwrlController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
             
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Failed to test rule {} for project {}", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -555,6 +583,8 @@ public class SwrlController {
                 ));
             }
             
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("SQWRL query failed for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -575,6 +605,8 @@ public class SwrlController {
             return ResponseEntity.ok(swrlEngineService.explainConclusion(projectId, request, draft ? userId : null));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Failed to explain conclusion for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -598,6 +630,8 @@ public class SwrlController {
             HttpStatus status = e.getMessage() != null && e.getMessage().startsWith("Rule not found")
                 ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
             return ResponseEntity.status(status).body(createErrorResponse(e.getMessage()));
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Failed to check why rule {} did not fire for project: {}", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

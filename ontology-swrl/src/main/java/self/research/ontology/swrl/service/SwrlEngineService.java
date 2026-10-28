@@ -52,17 +52,57 @@ public class SwrlEngineService {
     @Value("${swrl.engine-cache-ttl-hours:24}")
     private int engineCacheTtlHours;
 
-    // ✅ FIXED: Thread-safe cache
-    private final Map<String, SWRLRuleEngine> engineCache = new ConcurrentHashMap<>();
-    
-    // ✅ FIXED: Track last access for cleanup
-    private final Map<String, Long> engineLastAccess = new ConcurrentHashMap<>();
+    private final EngineCache<SWRLRuleEngine> engineCache = new EngineCache<>(20, engine -> logger.debug("Disposed an evicted SWRL engine"));
+
+    @Value("${ontocode.capacity.swrl-execute.engine-cache-max-size:${swrl.engine.cache.max-size:20}}")
+    public void setEngineCacheMaxSize(int maxSize) {
+        engineCache.setMaxSize(maxSize);
+    }
+
+    @Value("${ontocode.capacity.swrl-execute.workers:${swrl.execution.workers:2}}")
+    private int executionWorkers = 2;
+
+    @Value("${ontocode.capacity.swrl-execute.queue:${swrl.execution.queue:10}}")
+    private int executionQueue = 10;
+
+    @Value("${ontocode.capacity.swrl-execute.per-owner-active:${swrl.execution.per-owner-active:1}}")
+    private int perOwnerActive = 1;
+
+    @Value("${ontocode.capacity.swrl-execute.per-owner-waiting:${swrl.execution.per-owner-waiting:1}}")
+    private int perOwnerWaiting = 1;
+
+    @Value("${ontocode.capacity.swrl-execute.max-wait-ms:${swrl.execution.max-wait-ms:10000}}")
+    private long maxWaitMs = 10000;
+
+    private volatile ExecutionGate executionGate;
+
+    ExecutionGate gate() {
+        ExecutionGate current = executionGate;
+        if (current == null) {
+            synchronized (this) {
+                if (executionGate == null) {
+                    executionGate = new ExecutionGate(executionWorkers, executionQueue, perOwnerActive, perOwnerWaiting, maxWaitMs);
+                }
+                current = executionGate;
+            }
+        }
+        return current;
+    }
+
+    public ExecutionGate.Stats executionStats() {
+        return gate().stats();
+    }
+
+    @jakarta.annotation.PreDestroy
+    void shutdownGate() {
+        ExecutionGate current = executionGate;
+        if (current != null) {
+            current.shutdown();
+        }
+    }
 
     // Stable namespace-to-prefix mapping per project (ensures consistent prefix names across calls)
     private final Map<String, Map<String, String>> projectNamespacePrefixes = new ConcurrentHashMap<>();
-
-    // ✅ FIXED: Executor for timeouts
-    private final ExecutorService executorService = Executors.newCachedThreadPool();
 
     /**
      * ✅ NEW: Cleanup stale engines periodically
@@ -70,20 +110,8 @@ public class SwrlEngineService {
     @Scheduled(fixedDelayString = "${swrl.cache-cleanup-interval-ms:3600000}") // Default: 1 hour
     public void cleanupStaleEngines() {
         long cutoffTime = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(engineCacheTtlHours);
-        
-        int removedCount = 0;
-        Iterator<Map.Entry<String, Long>> iterator = engineLastAccess.entrySet().iterator();
-        
-        while (iterator.hasNext()) {
-            Map.Entry<String, Long> entry = iterator.next();
-            if (entry.getValue() < cutoffTime) {
-                String projectId = entry.getKey();
-                engineCache.remove(projectId);
-                iterator.remove();
-                removedCount++;
-            }
-        }
-        
+        int removedCount = engineCache.evictOlderThan(cutoffTime);
+
         if (removedCount > 0) {
             logger.info("Cleaned up {} stale SWRL engines. Active engines: {}", 
                        removedCount, engineCache.size());
@@ -475,6 +503,8 @@ public class SwrlEngineService {
             
             return failure("timeout", "Execution timed out after " + executionTimeoutSeconds + " seconds");
                 
+        } catch (SwrlBusyException e) {
+            throw e;
         } catch (Exception e) {
             long totalDuration = System.currentTimeMillis() - startTime;
             if (e instanceof SWRLBuiltInException) {
@@ -587,6 +617,8 @@ public class SwrlEngineService {
             logger.error("Selected rules execution timed out for project: {}", projectId);
             return failure("timeout", "Execution timed out after " + executionTimeoutSeconds + " seconds");
                 
+        } catch (SwrlBusyException e) {
+            throw e;
         } catch (Exception e) {
             logger.error("Selected rules execution error for project {}", projectId, e);
             return new ExecutionResult(false, 0, 0, Collections.emptyList(),
@@ -668,7 +700,7 @@ public class SwrlEngineService {
     private Set<OWLAxiom> executeWithTimeout(SWRLRuleEngine engine, String projectId)
             throws TimeoutException, InterruptedException, ExecutionException {
 
-        Future<Set<OWLAxiom>> future = executorService.submit(() -> {
+        return gate().call(OwnerContext.current(), () -> {
             engine.infer();
 
             Set<OWLAxiom> inferredAxioms = engine.getInferredOWLAxioms();
@@ -693,15 +725,7 @@ public class SwrlEngineService {
                 allAxioms.size(), inferredAxioms.size(), injectedAxioms.size());
 
             return allAxioms;
-        });
-
-        try {
-            return future.get(executionTimeoutSeconds, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            logger.error("Rule execution timed out for project: {}", projectId);
-            throw e;
-        }
+        }, executionTimeoutSeconds);
     }
 
     /**
@@ -997,7 +1021,6 @@ public class SwrlEngineService {
     @CacheEvict(value = {"ruleEngines", "ontologies", "executionResults"}, key = "#projectId")
     public void clearCache(String projectId) {
         engineCache.remove(projectId);
-        engineLastAccess.remove(projectId);
         logger.info("Cleared cache for project: {}", projectId);
     }
 
@@ -1013,9 +1036,7 @@ public class SwrlEngineService {
     }
 
     private long getOldestEngineAge() {
-        if (engineLastAccess.isEmpty()) return 0;
-        long oldest = Collections.min(engineLastAccess.values());
-        return System.currentTimeMillis() - oldest;
+        return engineCache.oldestAgeMillis();
     }
 
     private String getApproximateMemoryUsage() {
@@ -1066,6 +1087,8 @@ public class SwrlEngineService {
             return new ExecutionResult(true, executionTime, inferredAxioms.size(),
                     formattedAxioms, null);
 
+        } catch (SwrlBusyException e) {
+            throw e;
         } catch (Exception e) {
             logger.error("Test execution failed for project {}", projectId, e);
             return new ExecutionResult(false, 0, 0, Collections.emptyList(),
@@ -1104,7 +1127,9 @@ public class SwrlEngineService {
             ensureNamespacePrefixes(projectId, ontology);
             
             final String runName = queryName;
-            Future<org.swrlapi.sqwrl.SQWRLResult> future = executorService.submit(() -> {
+            org.swrlapi.sqwrl.SQWRLResult sqwrlResult;
+            try {
+                sqwrlResult = gate().call(OwnerContext.current(), () -> {
                 OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
                 org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
 
@@ -1113,13 +1138,8 @@ public class SwrlEngineService {
                 // Execute the query - resolve entity names for non-default namespaces
                 String resolvedQuery = resolveEntityNames(queryText, ontology);
                 return queryEngine.runSQWRLQuery(runName, resolvedQuery);
-            });
-
-            org.swrlapi.sqwrl.SQWRLResult sqwrlResult;
-            try {
-                sqwrlResult = future.get(executionTimeoutSeconds, TimeUnit.SECONDS);
+                }, executionTimeoutSeconds);
             } catch (TimeoutException e) {
-                future.cancel(true);
                 logger.error("SQWRL query timed out for project: {}", projectId);
                 return new SqwrlQueryResult(false, queryName, queryText, 0, null, null,
                     "Query timed out after " + executionTimeoutSeconds + " seconds");
@@ -1171,6 +1191,8 @@ public class SwrlEngineService {
             return new SqwrlQueryResult(false, queryName, queryText, 0, null, null, 
                 "Query execution error: " + e.getMessage());
                 
+        } catch (SwrlBusyException e) {
+            throw e;
         } catch (Exception e) {
             logger.error("SQWRL query failed for project {}", projectId, e);
             return new SqwrlQueryResult(false, queryName, queryText, 0, null, null, 
