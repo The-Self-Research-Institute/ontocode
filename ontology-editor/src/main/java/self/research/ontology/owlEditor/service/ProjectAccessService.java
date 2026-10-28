@@ -99,4 +99,8 @@ public class ProjectAccessService {
         }
         return email != null && !email.isBlank() && email.equalsIgnoreCase(doc.getOwnerEmail());
     }
+
+    public boolean isProjectOwner(String projectId, String email) {
+        return isOwner(projectId, null, email);
+    }
 }

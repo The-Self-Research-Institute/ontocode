@@ -47,7 +47,7 @@ export interface OntologyChange {
   revertsChangeSetId?: string;
 }
 
-function resolveActor(): { userId: string; username: string } {
+export function resolveActor(): { userId: string; username: string } {
   return resolveMutationActor();
 }
 

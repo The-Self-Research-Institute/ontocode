@@ -51,18 +51,81 @@ public final class ExactReversal {
         return Optional.of(ExactDelta.of(change.getExactDeleted(), change.getExactInserted()));
     }
 
+    private static final String RULE_CHANGE = "ruleChange";
+    private static final String SWRL_VARIABLE = "http://www.w3.org/2003/11/swrl#Variable";
+
+    public static boolean isRuleChange(HistoryChange change) {
+        return RULE_CHANGE.equals(change.getOperationType());
+    }
+
+    private static final Set<String> IDEMPOTENT_TYPES = Set.of(SWRL_VARIABLE,
+            "http://www.w3.org/2002/07/owl#Class", "http://www.w3.org/2002/07/owl#ObjectProperty",
+            "http://www.w3.org/2002/07/owl#DatatypeProperty", "http://www.w3.org/2002/07/owl#AnnotationProperty",
+            "http://www.w3.org/2000/01/rdf-schema#Datatype", "http://www.w3.org/2002/07/owl#NamedIndividual");
+
+    private static boolean isVariableTyping(Statement statement) {
+        return statement.getSubject().isIRI() && RDF_TYPE.equals(statement.getPredicate().stringValue())
+                && IDEMPOTENT_TYPES.contains(statement.getObject().stringValue());
+    }
+
+    private static Model withoutVariables(Model model) {
+        Model kept = new org.eclipse.rdf4j.model.impl.LinkedHashModel();
+        model.stream().filter(statement -> !isVariableTyping(statement)).forEach(kept::add);
+        return kept;
+    }
+
+    public static Optional<ExactDelta> checkedDeltaOf(HistoryChange change) {
+        Optional<ExactDelta> delta = deltaOf(change);
+        if (delta.isEmpty() || !isRuleChange(change)) {
+            return delta;
+        }
+        return Optional.of(new ExactDelta(withoutVariables(delta.get().deleted()), withoutVariables(delta.get().inserted())));
+    }
+
+    private static String typing(Statement statement) {
+        return "<" + statement.getSubject().stringValue() + "> <" + RDF_TYPE + "> <" + statement.getObject().stringValue() + ">";
+    }
+
+    private static List<String> variableUpdates(ExactDelta delta, boolean undo) {
+        List<String> updates = new java.util.ArrayList<>();
+        Model create = undo ? delta.deleted() : delta.inserted();
+        Model drop = undo ? delta.inserted() : delta.deleted();
+        create.stream().filter(ExactReversal::isVariableTyping).forEach(statement ->
+                updates.add("INSERT DATA { " + typing(statement) + " }"));
+        drop.stream().filter(ExactReversal::isVariableTyping).forEach(statement -> {
+            String entity = "<" + statement.getSubject().stringValue() + ">";
+            updates.add("DELETE { " + typing(statement) + " } WHERE { " + typing(statement)
+                    + " FILTER NOT EXISTS { ?s ?p " + entity + " } FILTER NOT EXISTS { ?s " + entity + " ?o } "
+                    + "FILTER NOT EXISTS { " + entity + " ?q ?o FILTER(?q != <" + RDF_TYPE + ">) } }");
+        });
+        return updates;
+    }
+
     public static Plan plan(HistoryChange change, List<HistoryChange.SubChange> subChanges, boolean undo) {
         Set<String> handled = new HashSet<>();
         for (HistoryChange.SubChange sub : subChanges) {
             handled.add(sub.getId());
         }
         Optional<ExactDelta> delta = deltaOf(change);
+        List<String> variableUpdates = delta.isPresent() && isRuleChange(change)
+                ? variableUpdates(delta.get(), undo) : List.of();
+        if (!variableUpdates.isEmpty()) {
+            delta = checkedDeltaOf(change);
+        }
         if (delta.isEmpty()) {
             return new Plan(List.of(), List.of(), handled, List.of());
         }
         List<String> updates = new java.util.ArrayList<>();
         for (ExactDelta batch : DeltaBatches.split(delta.get(), Limit.DELTA_BATCH_TRIPLES.value())) {
-            updates.add(undo ? DeltaSparql.reverse(batch) : DeltaSparql.forward(batch));
+            if (!batch.isEmpty()) {
+                updates.add(undo ? DeltaSparql.reverse(batch) : DeltaSparql.forward(batch));
+            }
+        }
+        if (undo) {
+            updates.addAll(variableUpdates);
+        } else {
+            updates.addAll(0, variableUpdates.stream().filter(update -> update.startsWith("INSERT")).toList());
+            updates.addAll(variableUpdates.stream().filter(update -> !update.startsWith("INSERT")).toList());
         }
         List<RollbackAction> actions = new java.util.ArrayList<>();
         if (touchesOntologyHeader(delta.get())) {

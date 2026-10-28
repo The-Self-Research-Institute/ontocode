@@ -408,10 +408,11 @@ public class OntologyMergeService {
                 checkpointId = saveCheckpointAfter(importProjectId, checkpointId, outputPath);
             }
 
+            boolean storedFileUpdated = true;
             if (!isNewFile) {
                 // Only refresh metadata and reimport for "merge into existing" modes.
                 // For "save as new file", the auth upload + file-open flow handles this.
-                updateGridFsFile(importProjectId, targetFileName, outputPath);
+                storedFileUpdated = updateGridFsFile(importProjectId, targetFileName, outputPath);
                 if (!importService.trySubmitImport(importProjectId, outputPath)) {
                     result.setReimportSkipped(true);
                     log.warn("[MERGE] Project {} was already importing a file, so the merged file was not imported again; "
@@ -420,7 +421,8 @@ public class OntologyMergeService {
             }
 
             result.setSuccess(true);
-            result.setMessage("Merge completed successfully");
+            result.setMessage(storedFileUpdated ? "Merge completed successfully"
+                    : "Merge completed, but the stored project file could not be updated");
 
             if (historyService != null) {
                 String summary = mergeSummary(result);
@@ -477,12 +479,17 @@ public class OntologyMergeService {
         }
     }
 
-    void updateGridFsFile(String projectId, String fileName, Path mergedFilePath) {
+    static String authProjectId(String projectId) {
+        int sep = projectId.indexOf("--");
+        return sep > 0 ? projectId.substring(0, sep) : projectId;
+    }
+
+    boolean updateGridFsFile(String projectId, String fileName, Path mergedFilePath) {
         try {
             log.info("[MERGE] Updating GridFS file for project {} file {}", projectId, fileName);
 
             // Step 1: Get the file ID for the target file
-            String getFilesUrl = authServiceUrl + "/api/projects/" + projectId + "/files";
+            String getFilesUrl = authServiceUrl + "/api/projects/" + authProjectId(projectId) + "/files";
             ResponseEntity<Map<String, Object>> filesResponse = restTemplate.exchange(
                 getFilesUrl,
                 HttpMethod.GET,
@@ -492,14 +499,14 @@ public class OntologyMergeService {
 
             if (!filesResponse.getStatusCode().is2xxSuccessful() || filesResponse.getBody() == null) {
                 log.warn("[MERGE] Failed to get files for project {}: {}", projectId, filesResponse.getStatusCode());
-                return;
+                return false;
             }
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> files = (List<Map<String, Object>>) filesResponse.getBody().get("files");
             if (files == null) {
                 log.warn("[MERGE] No files found for project {}", projectId);
-                return;
+                return false;
             }
 
             // Find the file ID for the target filename
@@ -514,7 +521,7 @@ public class OntologyMergeService {
 
             if (targetFileId == null) {
                 log.warn("[MERGE] Target file {} not found in project {} files", fileName, projectId);
-                return;
+                return false;
             }
 
             log.info("[MERGE] Found target file ID: {} for file {}", targetFileId, fileName);
@@ -523,7 +530,7 @@ public class OntologyMergeService {
             // double heap and often fail silently, leaving GridFS with a stale/partial file
             // while the editor disk copy is correct). Auth upload already accepts streamed multipart.
             long fileSizeBytes = Files.size(mergedFilePath);
-            String updateFileUrl = authServiceUrl + "/api/projects/" + projectId + "/files";
+            String updateFileUrl = authServiceUrl + "/api/projects/" + authProjectId(projectId) + "/files";
 
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
             body.add("file", new FileSystemResource(mergedFilePath.toFile()) {
@@ -551,16 +558,19 @@ public class OntologyMergeService {
             if (updateResponse.getStatusCode().is2xxSuccessful()) {
                 log.info("[MERGE] Successfully updated GridFS file {} for project {} ({} MB)",
                         targetFileId, projectId, fileSizeBytes / (1024 * 1024));
+                return true;
             } else {
                 log.error("[MERGE] Failed to update GridFS file {} for project {}: {} — "
                         + "library/download via auth may serve a stale file; editor disk copy is authoritative",
                     targetFileId, projectId, updateResponse.getStatusCode());
+                return false;
             }
 
         } catch (Exception e) {
             log.error("[MERGE] Failed to update GridFS file for project {} file {}: {} — "
                     + "editor disk copy is still correct; re-upload from project library may import a stale GridFS object",
                 projectId, fileName, e.getMessage(), e);
+            return false;
         }
     }
 
@@ -1403,6 +1413,10 @@ public class OntologyMergeService {
      */
     private Set<OWLAxiom> getDefiningAxioms(OWLOntology ontology, IRI entityIRI) {
         Set<OWLAxiom> defining = new HashSet<>();
+        if (SwrlRuleKeys.isKey(entityIRI.toString())) {
+            defining.addAll(SwrlRuleKeys.rulesFor(ontology, entityIRI.toString()));
+            return defining;
+        }
 
         // Declaration axioms
         for (OWLDeclarationAxiom ax : ontology.getAxioms(AxiomType.DECLARATION)) {
@@ -1915,6 +1929,13 @@ public class OntologyMergeService {
                 touched.add(iri.toString());
             }
         }
+        Set<String> ruleKeys = new LinkedHashSet<>(SwrlRuleKeys.keysIn(baseline));
+        ruleKeys.addAll(SwrlRuleKeys.keysIn(ours));
+        for (String key : ruleKeys) {
+            if (!SwrlRuleKeys.rulesFor(baseline, key).equals(SwrlRuleKeys.rulesFor(ours, key))) {
+                touched.add(key);
+            }
+        }
         return touched;
     }
 
@@ -1932,7 +1953,12 @@ public class OntologyMergeService {
             case KEEP_TARGET -> {
                 // current main already has their version
             }
-            case MERGE -> addDefiningAxioms(ours, target, entityIRI, manager);
+            case MERGE -> {
+                if (SwrlRuleKeys.isKey(entityIRI.toString())) {
+                    removeDefiningAxioms(target, entityIRI, manager);
+                }
+                addDefiningAxioms(ours, target, entityIRI, manager);
+            }
             case RENAME_SOURCE -> {
                 String suffix = resolution.getRenameSuffix() != null
                         ? resolution.getRenameSuffix() : "_draft";

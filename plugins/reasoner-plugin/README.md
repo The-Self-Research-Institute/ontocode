@@ -14,7 +14,6 @@ A HermiT-inspired OWL reasoner plugin for OntoCode that provides advanced reason
 
 ### Reasoner Types
 - **HermiT**: Hypertableau-based reasoner (default)
-- **Pellet**: Complete and incremental reasoner
 - **FaCT++**: Fast classifier for expressive ontologies
 - **ELK**: Efficient reasoner for EL++ ontologies
 
@@ -32,7 +31,7 @@ A HermiT-inspired OWL reasoner plugin for OntoCode that provides advanced reason
 The plugin is automatically available in the OntoCode plugin marketplace.
 
 ### Configuration
-1. **Select Reasoner Type**: Choose between HermiT, Pellet, FaCT++, or ELK
+1. **Select Reasoner Type**: Choose between HermiT, FaCT++, or ELK
 2. **Set Timeout**: Configure maximum reasoning time (5-300 seconds)
 3. **Enable Options**:
    - Incremental Reasoning: Better performance for ontology updates
@@ -134,7 +133,7 @@ The plugin communicates with the backend reasoner service via REST API:
 {
   "projectId": "string",
   "ontologyIri": "string",
-  "reasonerType": "hermit" | "pellet" | "fact++" | "elk",
+  "reasonerType": "hermit" | "fact++" | "elk",
   "timeout": 30000,
   "useIncrementalReasoning": true
 }
@@ -181,7 +180,6 @@ The plugin communicates with the backend reasoner service via REST API:
 
 ### Reasoning Algorithms
 - **HermiT**: Hypertableau calculus
-- **Pellet**: Tableaux with absorption and caching
 - **FaCT++**: Optimized tableaux
 - **ELK**: Consequence-based reasoning
 

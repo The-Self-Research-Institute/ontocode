@@ -1,11 +1,13 @@
 package self.research.ontology.owlEditor.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.ImportQueueItem;
 import self.research.ontology.owlEditor.model.collaboration.QueueStatusMessage;
 import self.research.ontology.owlEditor.service.ImportQueueManager;
+import self.research.ontology.owlEditor.service.JobAccess;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -18,12 +20,20 @@ public class ImportQueueController {
 
     private final ImportQueueManager queueManager;
 
-    public ImportQueueController(ImportQueueManager queueManager) {
+    private final JobAccess jobAccess;
+
+    public ImportQueueController(ImportQueueManager queueManager, JobAccess jobAccess) {
         this.queueManager = queueManager;
+        this.jobAccess = jobAccess;
     }
 
     @GetMapping("/status/{projectId:.+}")
-    public ResponseEntity<Map<String, Object>> getQueueStatus(@PathVariable String projectId) {
+    public ResponseEntity<Map<String, Object>> getQueueStatus(@PathVariable String projectId,
+                                                              HttpServletRequest request) {
+        ResponseEntity<Map<String, Object>> refused = refuse(request, projectId);
+        if (refused != null) {
+            return refused;
+        }
         try {
             ImportQueueItem item = queueManager.getStatus(projectId);
 
@@ -72,7 +82,12 @@ public class ImportQueueController {
     }
 
     @GetMapping("/position/{projectId:.+}")
-    public ResponseEntity<Map<String, Object>> getQueuePosition(@PathVariable String projectId) {
+    public ResponseEntity<Map<String, Object>> getQueuePosition(@PathVariable String projectId,
+                                                                HttpServletRequest request) {
+        ResponseEntity<Map<String, Object>> refused = refuse(request, projectId);
+        if (refused != null) {
+            return refused;
+        }
         try {
             ImportQueueItem item = queueManager.getStatus(projectId);
 
@@ -116,5 +131,16 @@ public class ImportQueueController {
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Failed to get queue position: " + e.getMessage()));
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> refuse(HttpServletRequest request, String projectId) {
+        JobAccess.Verdict verdict = jobAccess.checkProject(request, projectId);
+        if (verdict.allowed()) {
+            return null;
+        }
+        if (verdict.status() == 401) {
+            return ResponseEntity.status(401).body(Map.of("error", "Authentication required"));
+        }
+        return ResponseEntity.status(404).body(Map.of("error", "Project not found"));
     }
 }

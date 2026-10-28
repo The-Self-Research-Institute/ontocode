@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
+import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.Arrays;
@@ -39,6 +40,7 @@ public class EditorIdentityConfig {
 
     @PostConstruct
     void configure() {
+        RequestActor.useDesktopIdentity(desktopMode);
         if (desktopMode) {
             if (desktopLaunchKey == null || desktopLaunchKey.isBlank()) {
                 log.warn("[Security] No desktop launch key was provided, so Code View AI only accepts signed-in "

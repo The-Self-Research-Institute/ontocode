@@ -156,7 +156,7 @@ Features:
 - **Consistency Checking**: Verify if the ontology is logically consistent
 - **Classification**: Compute class hierarchy and identify equivalent/unsatisfiable classes
 - **Realization**: Determine the most specific types for all individuals
-- **Multiple Reasoners**: Support for HermiT, Pellet, FaCT++, and ELK reasoners
+- **Multiple Reasoners**: Choose HermiT, ELK, JFact or the structural reasoner per run
 - **Incremental Reasoning**: Efficient handling of ontology changes
 - **Inferred Axioms**: View all axioms inferred by the reasoner
 - **Statistics**: Detailed metrics about the reasoning process

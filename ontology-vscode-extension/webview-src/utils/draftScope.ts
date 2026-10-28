@@ -22,3 +22,7 @@ export function draftBodyFields(): Record<string, string> {
   if (!isDraftScopeActive()) return {};
   return { draft: "true", userId: resolveMutationActor().userId || "" };
 }
+
+export function draftControlsVisible(syncMode: string, desktop: boolean): boolean {
+  return !desktop && syncMode === "private";
+}

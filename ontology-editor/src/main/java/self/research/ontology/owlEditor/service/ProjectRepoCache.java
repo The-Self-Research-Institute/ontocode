@@ -72,6 +72,18 @@ public class ProjectRepoCache {
     @Value("${ontocode.cache.memstore.no-cache-threshold:1500000}")
     private long noCacheThreshold;
 
+    private volatile self.research.ontology.common.admission.CacheAccount account =
+            RetainedMemory.detachedAccount("projectRepoMirror");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        this.account = ledger.cacheAccount("projectRepoMirror");
+    }
+
+    private static long mirrorBytes(Entry entry) {
+        return RetainedMemory.saturatingMultiply(entry.triples, RetainedMemory.BYTES_PER_MIRRORED_TRIPLE);
+    }
+
     private final Map<String, Entry> cache = new ConcurrentHashMap<>();
     private final Map<String, Object> loadLocks = new ConcurrentHashMap<>();
 
@@ -166,7 +178,11 @@ public class ProjectRepoCache {
                         return;
                     }
                     evictIfNeeded();
-                    cache.put(projectId, loaded);
+                    Entry replaced = cache.put(projectId, loaded);
+                    account.add(mirrorBytes(loaded));
+                    if (replaced != null) {
+                        account.remove(mirrorBytes(replaced));
+                    }
                     long ms = System.currentTimeMillis() - start;
                     loadMs.addAndGet(ms);
                     misses.incrementAndGet();
@@ -194,6 +210,7 @@ public class ProjectRepoCache {
         Entry removed = cache.remove(projectId);
         if (removed != null) {
             try { removed.repo.shutDown(); } catch (Exception ignore) {}
+            account.remove(mirrorBytes(removed));
             log.info("[MEMCACHE] Evicted project={}", projectId);
         }
         knownLargeProjects.remove(projectId);

@@ -1,21 +1,24 @@
 package self.research.ontology.common;
 
-import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryMXBean;
-import java.lang.management.MemoryUsage;
+import self.research.ontology.common.admission.CgroupAwareMemorySignals;
+import self.research.ontology.common.admission.MemorySignals;
 
 public final class ReasoningHeapMonitor {
 
+    private static final MemorySignals SIGNALS = new CgroupAwareMemorySignals();
+
     private ReasoningHeapMonitor() {}
 
+    public static MemorySignals signals() {
+        return SIGNALS;
+    }
+
     public static double usedRatio() {
-        MemoryMXBean bean = ManagementFactory.getMemoryMXBean();
-        MemoryUsage heap = bean.getHeapMemoryUsage();
-        long max = heap.getMax();
-        if (max <= 0) {
-            return 0;
-        }
-        return (double) heap.getUsed() / max;
+        return SIGNALS.heapUsedRatio().orElse(0);
+    }
+
+    public static double heapAfterGcRatio() {
+        return SIGNALS.heapAfterGcRatio().orElse(0);
     }
 
     public static double freeRatio() {
@@ -23,7 +26,6 @@ public final class ReasoningHeapMonitor {
     }
 
     public static long usedMb() {
-        MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
-        return heap.getUsed() / (1024 * 1024);
+        return SIGNALS.heapUsedBytes() / (1024 * 1024);
     }
 }

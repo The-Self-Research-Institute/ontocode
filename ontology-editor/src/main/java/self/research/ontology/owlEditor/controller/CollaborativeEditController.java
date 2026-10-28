@@ -64,7 +64,7 @@ public class CollaborativeEditController {
             if ("FREE".equalsIgnoreCase(plan) && !workspaceOwnershipService.isUserOwnerOfProject(userId, projectId)) {
                 log.warn("[WS-Auth] FREE plan user {} blocked from editing project {}", userId, projectId);
                 messagingTemplate.convertAndSendToUser(
-                    sessionId, "/queue/errors",
+                    errorRecipient(headerAccessor), "/queue/errors",
                     Map.of("error", "Your current plan is Free. Upgrade to Pro to edit ontologies.",
                            "requiresUpgrade", true)
                 );
@@ -124,7 +124,7 @@ public class CollaborativeEditController {
             if ("FREE".equalsIgnoreCase(plan) && !workspaceOwnershipService.isUserOwnerOfProject(userId, projectId)) {
                 log.warn("[WS-Auth] FREE plan user {} blocked from locking in project {}", userId, projectId);
                 messagingTemplate.convertAndSendToUser(
-                    sessionId, "/queue/errors",
+                    errorRecipient(headerAccessor), "/queue/errors",
                     Map.of("error", "Your current plan is Free. Upgrade to Pro to edit ontologies.",
                            "requiresUpgrade", true)
                 );
@@ -161,5 +161,9 @@ public class CollaborativeEditController {
         String destination = String.format("/queue/ontology/%s", projectId);
         messagingTemplate.convertAndSendToUser(userId, destination, message);
         log.debug("Sent private message to user {} for project {}", userId, projectId);
+    }
+
+    private static String errorRecipient(SimpMessageHeaderAccessor headerAccessor) {
+        return headerAccessor.getUser() != null ? headerAccessor.getUser().getName() : headerAccessor.getSessionId();
     }
 }

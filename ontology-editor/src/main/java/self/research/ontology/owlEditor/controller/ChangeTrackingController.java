@@ -198,15 +198,24 @@ public class ChangeTrackingController {
             List<HistoryChange> historyChanges = feed.changes();
             Map<String, HistorySyncService.ConflictMatch> conflicts = historySyncService.computeConflicts(historyChanges);
 
-            List<Map<String, Object>> changes = historyChanges.stream()
-                .map(change -> historyChangeToMap(change, conflicts))
-                .collect(Collectors.toList());
+            List<Map<String, Object>> changes = new ArrayList<>();
+            for (HistoryChange change : historyChanges) {
+                if (self.research.ontology.owlEditor.service.PrEntries.isMergedPrEntry(change)) {
+                    changes.addAll(self.research.ontology.owlEditor.service.PrFeedExpander.expand(
+                            change, historyChangeToMap(change, conflicts),
+                            prId -> historySyncService.publishedRows(projectId, prId),
+                            row -> historyChangeToMap(row, conflicts)));
+                    continue;
+                }
+                changes.addAll(self.research.ontology.owlEditor.service.MergeFeedExpander
+                        .expand(change, historyChangeToMap(change, conflicts)));
+            }
 
             return ResponseEntity.ok(Map.of(
                 "success", true,
                 "changes", changes,
                 "hasMore", feed.hasMore(),
-                "nextOffset", offset + changes.size()
+                "nextOffset", offset + historyChanges.size()
             ));
             
         } catch (Exception e) {
@@ -285,6 +294,9 @@ public class ChangeTrackingController {
         UndoAbility.Result undoAbility = UndoAbility.of(change);
         map.put("undoable", undoAbility.undoable());
         map.put("undoReason", undoAbility.reason());
+        if (self.research.ontology.owlEditor.service.PrEntries.isPublicationRecord(change)) {
+            map.put("setOnly", true);
+        }
         if (change.isReverted()) {
             Map<String, Object> auditInfo = resolveAuditInfo(change.getRevertedAuditId());
             map.put("revertedBy", auditInfo.get("revertedBy"));
@@ -347,6 +359,12 @@ public class ChangeTrackingController {
             ai.put("groupId", change.getAi().getGroupId());
             ai.put("summary", change.getAi().getSummary());
             map.put("ai", ai);
+        }
+        if (change.getMetadata() != null && change.getMetadata().get("toolSource") != null) {
+            map.put("toolSource", change.getMetadata().get("toolSource"));
+        }
+        if (change.getMetadata() != null && change.getMetadata().get("toolLabel") != null) {
+            map.put("toolLabel", change.getMetadata().get("toolLabel"));
         }
         if (change.getMetadata() != null && change.getMetadata().get("revertsChangeSetId") != null) {
             map.put("revertsChangeSetId", change.getMetadata().get("revertsChangeSetId"));
@@ -550,6 +568,10 @@ public class ChangeTrackingController {
         if (denied != null) {
             return denied;
         }
+        ResponseEntity<Map<String, Object>> mergedPr = RollbackRequestSupport.denyIfMergedPr(List.of(change));
+        if (mergedPr != null) {
+            return mergedPr;
+        }
         ChangeRollbackService.Result result = rollbackService.undoSubChange(projectId, change.getId(), subChangeId,
                 rollbackSupport.actor(httpRequest, request), dryRun);
         return RollbackRequestSupport.toBody(result, changeId, subChangeId);
@@ -568,6 +590,10 @@ public class ChangeTrackingController {
         if (denied != null) {
             return denied;
         }
+        ResponseEntity<Map<String, Object>> mergedPr = RollbackRequestSupport.denyIfMergedPr(List.of(change));
+        if (mergedPr != null) {
+            return mergedPr;
+        }
         ChangeRollbackService.Result result = rollbackService.undoEntry(projectId, change.getId(),
                 rollbackSupport.actor(httpRequest, request), dryRun);
         return RollbackRequestSupport.toBody(result, changeId, null);
@@ -584,7 +610,8 @@ public class ChangeTrackingController {
     ) {
         try {
             // Try to find in MongoDB synced changes first (has comments)
-            HistoryChange historyChange = historySyncService.getHistoryChange(changeId);
+            HistoryChange historyChange = historySyncService.getHistoryChange(
+                    self.research.ontology.owlEditor.service.MergeFeedExpander.baseId(changeId));
 
             if (historyChange != null) {
                 Map<String, HistorySyncService.ConflictMatch> conflicts = historySyncService.computeConflicts(
@@ -685,7 +712,8 @@ public class ChangeTrackingController {
             String text = request.get("text") != null ? request.get("text").toString() : null;
             ChangeRollbackService.Actor actor = rollbackSupport.actor(httpRequest, request);
 
-            boolean success = historySyncService.addComment(projectId, changeId, actor.userId(), actor.username(), text);
+            boolean success = historySyncService.addComment(projectId,
+                    self.research.ontology.owlEditor.service.MergeFeedExpander.baseId(changeId), actor.userId(), actor.username(), text);
             
             if (success) {
                 return ResponseEntity.ok(Map.of(

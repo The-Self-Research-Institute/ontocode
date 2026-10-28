@@ -297,43 +297,72 @@ class AssistantSwrlToolServiceTest {
         verify(restTemplate, never()).exchange(anyString(), any(), any(HttpEntity.class), eq(Map.class));
     }
 
-    @Test
-    void addRuleValidatesBeforeCreating() {
+    private RuleService ruleService;
+
+    private void wireRuleStore() {
+        ruleService = org.mockito.Mockito.mock(RuleService.class);
+        ReflectionTestUtils.setField(toolService, "ruleService", ruleService);
+        ReflectionTestUtils.setField(toolService, "lockRegistry", new ProjectWriteLockRegistry());
         when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
         when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+    }
 
-        Map<String, Object> validateBody = new HashMap<>();
-        validateBody.put("valid", true);
-        Map<String, Object> createBody = new HashMap<>();
-        createBody.put("ruleName", "rule1");
-
-        when(restTemplate.exchange(eq("http://127.0.0.1:18084/api/swrl/proj-1/validate"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
-                .thenReturn(new ResponseEntity<>(validateBody, HttpStatus.OK));
-        when(restTemplate.exchange(eq("http://127.0.0.1:18084/api/swrl/proj-1/rules"), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class)))
-                .thenReturn(new ResponseEntity<>(createBody, HttpStatus.CREATED));
+    @Test
+    void addRuleWritesThroughTheRuleServiceAndNeverCallsTheSwrlRuleEndpoint() throws Exception {
+        wireRuleStore();
+        when(ruleService.create(eq("proj-1"), eq(false), any(), any(), any(), any(ChangeOrigin.class)))
+                .thenReturn(Map.of("id", "abc", "ruleName", "rule1"));
 
         SwrlToolResult result = toolService.addRule("s1", "u@x.com", "Bearer t", "rule1", "Person(?p) -> Human(?p)");
 
         assertTrue(result.isOk());
         assertEquals("rule1", result.getData().get("ruleName"));
+        ArgumentCaptor<RuleService.RuleInput> input = ArgumentCaptor.forClass(RuleService.RuleInput.class);
+        ArgumentCaptor<ChangeOrigin> origin = ArgumentCaptor.forClass(ChangeOrigin.class);
+        verify(ruleService).create(eq("proj-1"), eq(false), any(), any(), input.capture(), origin.capture());
+        assertEquals("Person(?p) -> Human(?p)", input.getValue().ruleText());
+        assertEquals(ChangeOrigin.TOOL, origin.getValue().source());
+        verify(restTemplate, never()).exchange(anyString(), any(), any(HttpEntity.class), eq(Map.class));
     }
 
     @Test
-    void addRuleStopsAtInvalidRuleWithoutCallingCreate() {
-        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
-        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+    void addRuleInADraftSessionWritesToThatDraft() throws Exception {
+        wireRuleStore();
+        AssistantSessionDocument draftSession = activeSession();
+        draftSession.setDraft(true);
+        draftSession.setDraftUserId("u1");
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(draftSession));
+        when(ruleService.create(eq("proj-1"), eq(true), eq("u1"), any(), any(), any(ChangeOrigin.class)))
+                .thenReturn(Map.of("id", "abc", "ruleName", "rule1"));
 
-        Map<String, Object> validateBody = new HashMap<>();
-        validateBody.put("valid", false);
-        validateBody.put("errorMessage", "Unknown predicate 'Foo'");
-        mockExchange(new ResponseEntity<>(validateBody, HttpStatus.OK));
+        assertTrue(toolService.addRule("s1", "u@x.com", "Bearer t", "rule1", "A>B").isOk());
+    }
+
+    @Test
+    void addRuleReportsAnInvalidRuleWithItsFriendlyMessage() throws Exception {
+        wireRuleStore();
+        when(ruleService.create(anyString(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any(), any(), any(ChangeOrigin.class)))
+                .thenThrow(new RuleService.InvalidRuleException("Unknown predicate 'Foo'", java.util.List.of(), java.util.List.of()));
 
         SwrlToolResult result = toolService.addRule("s1", "u@x.com", "Bearer t", "rule1", "Foo(?p) -> Human(?p)");
 
         assertFalse(result.isOk());
         assertEquals("INVALID_RULE", result.getErrorCode());
         assertTrue(result.getMessage().contains("Unknown predicate"));
-        verify(restTemplate, never()).exchange(eq("http://127.0.0.1:18084/api/swrl/proj-1/rules"), any(), any(), eq(Map.class));
+    }
+
+    @Test
+    void addRuleReportsADuplicateNameAndAViewerIsRefused() throws Exception {
+        wireRuleStore();
+        when(ruleService.create(anyString(), org.mockito.ArgumentMatchers.anyBoolean(), any(), any(), any(), any(ChangeOrigin.class)))
+                .thenThrow(new RuleService.RuleNameTakenException("rule1"));
+        assertEquals("RULE_NAME_TAKEN", toolService.addRule("s1", "u@x.com", "Bearer t", "rule1", "A>B").getErrorCode());
+
+        RuleWriteAccess access = org.mockito.Mockito.mock(RuleWriteAccess.class);
+        when(access.decide(any(), any(), eq("proj-1"))).thenReturn(new RuleWriteAccess.Decision(false, "view-only"));
+        ReflectionTestUtils.setField(toolService, "ruleWriteAccess", access);
+        SwrlToolResult denied = toolService.addRule("s1", "u@x.com", "Bearer t", "rule1", "A>B");
+        assertEquals("RULE_WRITE_DENIED", denied.getErrorCode());
     }
 
     @Test

@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { runOperation } from './changeSetApi';
 import { ChangeSet, OperationTarget, RollbackEvent } from './types';
 import { cardDomId, ENTITY_CAP, flattensEntity, setSubtitle, undoneNote } from './groupChangeSets';
 import { setTarget } from './targets';
+import { mergedPrOf, prReversalOf } from './prReversal';
 import { formatTime } from './timeFormat';
 import ChangeSetEntityRow from './ChangeSetEntityRow';
 import ChangeSetPropertyRow from './ChangeSetPropertyRow';
@@ -21,15 +22,19 @@ interface Props {
 
 function useRealUndoCount(projectId: string, target: OperationTarget | null, enabled: boolean): number | undefined {
   const [count, setCount] = useState<number | undefined>(undefined);
+  const targetKey = target ? JSON.stringify(target) : '';
+  const targetRef = useRef(target);
+  targetRef.current = target;
   useEffect(() => {
     setCount(undefined);
-    if (!enabled || !target) return;
+    const current = targetRef.current;
+    if (!enabled || !current) return;
     let live = true;
-    runOperation(projectId, target, true).then(result => {
+    runOperation(projectId, current, true).then(result => {
       if (live && result.data?.applied) setCount(result.data.applied.length);
     });
     return () => { live = false; };
-  }, [projectId, target, enabled]);
+  }, [projectId, targetKey, enabled]);
   return count;
 }
 
@@ -72,6 +77,20 @@ function HeaderActions({ projectId, set, expanded, onUndo, onDetails }:
         </button>
       )}
       {redo && <button type="button" className="cs-btn" onClick={() => onUndo(redo)}>Redo</button>}
+      {prReversalOf(set) && (
+        <button type="button" className="cs-btn" onClick={() => window.dispatchEvent(new CustomEvent('ontology:reapply-pr', {
+          detail: { projectId, ...prReversalOf(set) }
+        }))}>Redo</button>
+      )}
+      {mergedPrOf(set) && (
+        <button type="button" className="cs-btn" onClick={() => {
+          const merged = mergedPrOf(set);
+          if (!merged) return;
+          window.dispatchEvent(new CustomEvent(merged.reverted ? 'ontology:reapply-pr' : 'ontology:revert-pr', {
+            detail: { projectId, prId: merged.prId, title: merged.title }
+          }));
+        }}>{mergedPrOf(set)?.reverted ? 'Redo' : 'Revert pull request'}</button>
+      )}
     </div>
   );
 }

@@ -463,7 +463,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
             description="Advanced OWL 2 DL reasoning with classification, consistency checking, explanations, and inferred hierarchies."
             icon={<Zap size={32} className="text-white" />}
             features={[
-              "HermiT, ELK, Pellet, Openllet, Structural support",
+              "HermiT, ELK, Structural support",
               "Full classification with inferred hierarchy",
               "Consistency checks with unsat explanations",
               "Auto-sync with ontology edits",

@@ -90,11 +90,21 @@ const PLUGINS = [
   {
     pluginId: 'reasoner-plugin',
     name: 'OWL Reasoner',
-    shortDescription: 'Advanced OWL 2 reasoning with HermiT, ELK, and Pellet',
-    description: 'Advanced OWL 2 reasoning plugin providing Protégé-style interface. Supports HermiT, ELK, Pellet, and Openllet reasoners. Features include consistency checking, classification, inferred hierarchy visualization, unsatisfiable class detection with explanations, and real-time synchronization with the ontology editor.',
+    shortDescription: 'Advanced OWL 2 reasoning with HermiT, ELK, and JFact',
+    description: 'Advanced OWL 2 reasoning plugin providing Protégé-style interface. Supports HermiT, ELK, JFact, and structural reasoners. Features include consistency checking, classification, inferred hierarchy visualization, unsatisfiable class detection with explanations, and real-time synchronization with the ontology editor.',
     version: '1.0.0',
     category: 'Reasoning',
-    keywords: ['reasoner', 'owl', 'hermit', 'elk', 'pellet', 'inference', 'consistency', 'classification'],
+    keywords: ['reasoner', 'owl', 'hermit', 'elk', 'jfact', 'inference', 'consistency', 'classification'],
+    featured: true
+  },
+  {
+    pluginId: 'spreadsheet-import-plugin',
+    name: 'Spreadsheet Import',
+    shortDescription: 'Import spreadsheet rows into the ontology with Cellfie-style rules',
+    description: 'Turn xlsx, xls and csv rows into classes, individuals and property values with transformation rules, preview the axioms, and import them as one undoable change.',
+    version: '1.0.0',
+    category: 'Import/Export',
+    keywords: ['spreadsheet', 'excel', 'csv', 'import', 'cellfie'],
     featured: true
   }
 ];

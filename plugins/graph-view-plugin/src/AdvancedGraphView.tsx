@@ -956,7 +956,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const fetchInferredGraphData = useCallback(async (apiBaseUrl: string, authToken: string | null) => {
     setInferredGraphStatus('loading');
     try {
-      const response = await fetch(`${apiBaseUrl}/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=OPENLLET`, {
+      const response = await fetch(`${apiBaseUrl}/api/ontology/${encodeURIComponent(projectId)}/reasoner/inferred-class-hierarchy?reasonerType=HERMIT`, {
         headers: authHeaders(authToken)
       });
       if (!response.ok) {
@@ -6960,6 +6960,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 nodeSize={settings.nodeSize}
                 selectedNodeIds={selectedNodes}
                 projectId={projectId}
+                draftMode={draftScope}
                 showGrid={showGrid}
                 physicsEnabled={settings.physics}
                 onNodeClick={(id) => {

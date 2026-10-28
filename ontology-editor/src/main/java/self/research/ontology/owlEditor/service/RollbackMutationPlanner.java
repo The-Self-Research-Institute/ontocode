@@ -19,6 +19,14 @@ public class RollbackMutationPlanner {
     static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
     static final String RDFS_SUBPROPERTYOF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
     static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    private static final java.util.Set<String> CHARACTERISTICS = java.util.Set.of(
+            "http://www.w3.org/2002/07/owl#FunctionalProperty",
+            "http://www.w3.org/2002/07/owl#InverseFunctionalProperty",
+            "http://www.w3.org/2002/07/owl#TransitiveProperty",
+            "http://www.w3.org/2002/07/owl#SymmetricProperty",
+            "http://www.w3.org/2002/07/owl#AsymmetricProperty",
+            "http://www.w3.org/2002/07/owl#ReflexiveProperty",
+            "http://www.w3.org/2002/07/owl#IrreflexiveProperty");
     static final String RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
     static final String RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
     static final String RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label";
@@ -185,7 +193,9 @@ public class RollbackMutationPlanner {
             case RDFS_SUBPROPERTYOF -> targetOp(add ? "addSubPropertyOf" : "deleteSubPropertyOf", entity, value);
             case RDFS_DOMAIN -> targetOp(add ? "addPropertyDomain" : "deletePropertyDomain", entity, value);
             case RDFS_RANGE -> targetOp(add ? "addPropertyRange" : "deletePropertyRange", entity, value);
-            case RDF_TYPE -> new MutationOp(add ? "addClassAssertion" : "removeClassAssertion", entity, null, null,
+            case RDF_TYPE -> CHARACTERISTICS.contains(value)
+                    ? targetOp(add ? "addCharacteristic" : "deleteCharacteristic", entity, value)
+                    : new MutationOp(add ? "addClassAssertion" : "removeClassAssertion", entity, null, null,
                     null, null, null, value, null, null, null, null, null, null, null);
             default -> annotationOp(entity, sc, add, value);
         };

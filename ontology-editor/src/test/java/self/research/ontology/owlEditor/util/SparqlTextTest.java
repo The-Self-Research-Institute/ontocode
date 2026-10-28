@@ -11,6 +11,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SparqlTextTest {
 
     @Test
+    void theGraphGoesOnTheOuterAskNotOnANestedSelect() {
+        String from = "FROM <urn:g>";
+        String nested = "ASK { { SELECT (COUNT(*) AS ?n) WHERE { SELECT DISTINCT ?s ?p ?o WHERE { ?s ?p ?o } } } FILTER(?n > 2) }";
+
+        String scoped = SparqlText.withAskDataset(nested, from);
+
+        assertEquals("ASK FROM <urn:g> WHERE { { SELECT (COUNT(*) AS ?n) WHERE { SELECT DISTINCT ?s ?p ?o WHERE { ?s ?p ?o } } } FILTER(?n > 2) }", scoped);
+        assertEquals("ASK FROM <urn:g> WHERE { ?s ?p ?o }", SparqlText.withAskDataset("ASK WHERE { ?s ?p ?o }", from));
+        assertEquals("PREFIX a: <urn:a#> ASK FROM <urn:g> WHERE { ?s ?p ?o }", SparqlText.withAskDataset("PREFIX a: <urn:a#> ASK { ?s ?p ?o }", from));
+    }
+
+    @Test
+    void anAddressContainingFromIsNotAFromClause() {
+        assertFalse(SparqlText.hasFromClause("ASK { <urn:Pizza_from_Italy> ?p ?o }"));
+        assertTrue(SparqlText.hasFromClause("ASK FROM <urn:g> { ?s ?p ?o }"));
+    }
+
+    @Test
     void findsAKeywordInTheQueryItself() {
         assertTrue(SparqlText.hasKeyword("SELECT ?s WHERE { ?s ?p ?o }", "WHERE"));
         assertTrue(SparqlText.hasKeyword("select ?s where { ?s ?p ?o }", "WHERE"));

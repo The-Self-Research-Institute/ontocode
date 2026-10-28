@@ -86,7 +86,30 @@ public class SparqlDatasetService {
     @Value("${ontocode.draft.max-triples:500000}")
     private long draftMaxTriples;
 
+    @Value("${ontocode.capacity.sparql.max-update-bytes:5242880}")
+    private long maxUpdateBytes;
+
+    @Value("${ontocode.capacity.sparql.max-update-quads:200000}")
+    private long maxUpdateQuads;
+
+    @Value("${ontocode.capacity.sparql.max-update-operations:100}")
+    private int maxUpdateOperations;
+
     private static final String DRAFT_GRAPH_PREFIX = "http://ontocode.org/draft/";
+
+    @Autowired(required = false)
+    private HeavyWorkAdmission heavyWork = HeavyWorkAdmission.disabled();
+
+    @Autowired(required = false)
+    private SparqlResultLimits sparqlResultLimits = SparqlResultLimits.defaults();
+
+    private volatile self.research.ontology.common.admission.CacheAccount draftOntologyAccount =
+            RetainedMemory.detachedAccount("draftOntologies");
+
+    @Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        this.draftOntologyAccount = ledger.cacheAccount("draftOntologies");
+    }
 
     private final ConcurrentHashMap<String, AtomicLong> draftGraphWriteStamps = new ConcurrentHashMap<>();
 
@@ -1018,13 +1041,8 @@ public class SparqlDatasetService {
         return execSelectGraphDB(projectId, sparqlQuery, includeInferred);
     }
 
-    /**
-     * Run a SELECT against the in-memory project repo. Returns {@code null} on
-     * cache miss / load failure so the caller can fall back to GraphDB.
-     */
-    private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
-        long start = System.nanoTime();
-        Repository memRepo = projectRepoCache.getOrLoad(projectId, new ProjectRepoCache.Loader() {
+    private ProjectRepoCache.Loader projectRepoLoader() {
+        return new ProjectRepoCache.Loader() {
             @Override public GraphQueryResult streamTriples(String pid) {
                 return execConstructAll(pid);
             }
@@ -1055,7 +1073,16 @@ public class SparqlDatasetService {
                     return -1L;
                 }
             }
-        });
+        };
+    }
+
+    /**
+     * Run a SELECT against the in-memory project repo. Returns {@code null} on
+     * cache miss / load failure so the caller can fall back to GraphDB.
+     */
+    private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
+        long start = System.nanoTime();
+        Repository memRepo = projectRepoCache.getOrLoad(projectId, projectRepoLoader());
         if (memRepo == null) {
             return null;
         }
@@ -1225,6 +1252,89 @@ public class SparqlDatasetService {
         }
     }
 
+    public SparqlQueryScope resolveUserQueryScope(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            throw new SparqlQueryRejectedException("A project is required to run a query.");
+        }
+        if (SparqlQueryContext.wantsDraft()) {
+            String userId = SparqlQueryContext.getUserId();
+            if (!isDraftCopySessionReady(projectId, userId)) {
+                throw new SparqlQueryRejectedException(
+                        "Your draft copy is not ready yet, so it cannot be queried. Wait for it to finish or switch to the public version.");
+            }
+            return SparqlQueryScope.draftScope(projectId, userId);
+        }
+        String base = getGraphUri(projectId);
+        return SparqlQueryScope.publicScope(projectId, base, getPartitionGraphs(null, projectId, base));
+    }
+
+    public SparqlUserQueryResult execUserQuery(String projectId, String sparqlQuery, int graphCap) {
+        return execUserQuery(projectId, sparqlQuery, graphCap, null);
+    }
+
+    public SparqlUserQueryResult execUserQuery(String projectId, String sparqlQuery, int graphCap,
+                                               SparqlResultLimits retain) {
+        try (HeavyWorkAdmission.Hold hold = heavyWork.admitSparql(SparqlQueryContext.getUserId())) {
+            return execUserQueryAdmitted(projectId, sparqlQuery, graphCap, retain);
+        }
+    }
+
+    private SparqlUserQueryResult execUserQueryAdmitted(String projectId, String sparqlQuery, int graphCap,
+                                                        SparqlResultLimits retain) {
+        SparqlQueryScope scope = resolveUserQueryScope(projectId);
+        SparqlQueryGuard.Checked checked = SparqlQueryGuard.check(sparqlQuery, new LinkedHashSet<>(scope.graphs()));
+        if (!scope.draft() && projectRepoCache != null && projectRepoCache.isEnabled()) {
+            Repository memRepo = null;
+            try {
+                memRepo = projectRepoCache.getOrLoad(projectId, projectRepoLoader());
+            } catch (Exception e) {
+                log.warn("[MEMCACHE] user query load failed for project={}: {}", projectId, e.getMessage());
+            }
+            if (memRepo != null) {
+                try {
+                    return execUserQueryInGraphs(memRepo, scope, List.of(getGraphUri(projectId)), checked, graphCap, retain);
+                } catch (SparqlQueryRejectedException e) {
+                    throw e;
+                } catch (Exception e) {
+                    log.warn("[MEMCACHE] user query failed for project={}, falling back to GraphDB: {}",
+                            projectId, e.getMessage());
+                }
+            }
+        }
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try {
+            return execUserQueryInGraphs(binding.repository(), scope, scope.graphs(), checked, graphCap, retain);
+        } catch (SparqlQueryRejectedException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[GRAPHDB] user query failed for project {}", projectId, e);
+            throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
+        }
+    }
+
+    public SparqlUserQueryResult execUserQueryInGraphs(Repository repository, SparqlQueryScope scope,
+                                                       List<String> visibleGraphs, SparqlQueryGuard.Checked checked,
+                                                       int graphCap) {
+        return execUserQueryInGraphs(repository, scope, visibleGraphs, checked, graphCap, null);
+    }
+
+    public SparqlUserQueryResult execUserQueryInGraphs(Repository repository, SparqlQueryScope scope,
+                                                       List<String> visibleGraphs, SparqlQueryGuard.Checked checked,
+                                                       int graphCap, SparqlResultLimits retain) {
+        if (visibleGraphs.isEmpty() || !new LinkedHashSet<>(scope.graphs()).containsAll(visibleGraphs)) {
+            throw new SparqlQueryRejectedException("The query scope does not match the project.");
+        }
+        long start = System.nanoTime();
+        try (RepositoryConnection raw = repository.getConnection()) {
+            RepositoryConnection conn = checked.kind() == SparqlQueryGuard.Kind.SELECT
+                    || checked.kind() == SparqlQueryGuard.Kind.ASK ? raw : TolerantRdfParsing.apply(raw);
+            SparqlUserQueryResult result = SparqlUserQueryRunner.run(conn, checked, visibleGraphs, graphCap, sparqlResultLimits, retain);
+            sparqlLog.info("[SPARQL_USER] {} project={} draft={} graphs={} time={}ms",
+                    checked.kind(), scope.projectId(), scope.draft(), visibleGraphs.size(), elapsedMillis(start));
+            return result;
+        }
+    }
+
     /**
      * Execute a SPARQL CONSTRUCT query
      */
@@ -1279,11 +1389,14 @@ public class SparqlDatasetService {
             // Inject FROM clause if not present.
             // ASK queries legally omit the WHERE keyword (ASK { } is valid SPARQL), so we
             // cannot rely on finding WHERE — fall back to injecting FROM before the opening brace.
-            if (!sparqlQuery.toUpperCase().contains("FROM")) {
+            if (!SparqlText.hasFromClause(sparqlQuery)) {
                 String fromClause = forceGraphUri != null
                         ? "FROM <" + forceGraphUri + ">"
                         : buildFromClause(conn, projectId);
-                if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
+                String scoped = SparqlText.withAskDataset(sparqlQuery, fromClause);
+                if (scoped != null) {
+                    sparqlQuery = scoped;
+                } else if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
                     sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE", fromClause + " WHERE");
                 } else {
                     // ASK { ... } without WHERE — insert FROM <graph> WHERE before the body brace
@@ -1351,7 +1464,7 @@ public class SparqlDatasetService {
                 + "INSERT { GRAPH <" + mainGraph + "> { ?s ?p ?o } } WHERE { GRAPH <" + draftGraph + "> { ?s ?p ?o } } ;\n"
                 + "CLEAR GRAPH <" + draftGraph + ">";
         long start = System.nanoTime();
-        execUpdate(projectId, mainGraph, sparql);
+        execUpdate(projectId, mainGraph, sparql, java.util.List.of(draftGraph));
         noteGraphWritten(draftGraph);
         publishDraftPrefixesToPublic(projectId, userId);
         evictDraftReadyCache(projectId, userId);
@@ -1373,6 +1486,25 @@ public class SparqlDatasetService {
         if (projectRepoCache != null) {
             projectRepoCache.evict(projectId);
         }
+    }
+
+    public int copyDraftGraph(String projectId, String fromUserKey, String toUserKey) {
+        String from = getDraftGraphUri(projectId, fromUserKey);
+        String to = getDraftGraphUri(projectId, toUserKey);
+        long start = System.nanoTime();
+        int copied;
+        try (RepositoryConnection conn = resolveBinding(projectId, false).repository().getConnection()) {
+            copied = GraphStatementOps.copy(conn, from, to);
+        } finally {
+            noteGraphWritten(to);
+        }
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
+        evictDraftReadyCache(projectId, toUserKey);
+        log.info("[DRAFT-COPY] Copied {} triples draft {} -> {} for project {} in {}ms",
+                copied, fromUserKey, toUserKey, projectId, elapsedMillis(start));
+        return copied;
     }
 
     public String exportDraftGraphContent(String projectId, String userId, RDFFormat rdfFormat) {
@@ -1410,6 +1542,12 @@ public class SparqlDatasetService {
 
     public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId,
                                                                          long draftVersion) throws Exception {
+        return loadDraftAsOntology(projectId, userId, draftVersion,
+                self.research.ontology.common.admission.WorkKind.REASONING);
+    }
+
+    public org.semanticweb.owlapi.model.OWLOntology loadDraftAsOntology(String projectId, String userId,
+            long draftVersion, self.research.ontology.common.admission.WorkKind kind) throws Exception {
         String cacheKey = projectId + "::" + userId + "::" + draftVersion + "::" + getDraftWriteStamp(projectId, userId);
         CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> loading = new CompletableFuture<>();
         CompletableFuture<org.semanticweb.owlapi.model.OWLOntology> existing =
@@ -1423,7 +1561,9 @@ public class SparqlDatasetService {
             }
         }
         try {
-            org.semanticweb.owlapi.model.OWLOntology ontology = readDraftAsOntology(projectId, userId);
+            org.semanticweb.owlapi.model.OWLOntology ontology = readDraftAsOntology(projectId, userId, kind);
+            RetainedMemory.retainUntilCollected(draftOntologyAccount, ontology,
+                    RetainedMemory.ontologyBytes(ontology.getAxiomCount()));
             loading.complete(ontology);
             return ontology;
         } catch (Exception e) {
@@ -1433,7 +1573,8 @@ public class SparqlDatasetService {
         }
     }
 
-    private org.semanticweb.owlapi.model.OWLOntology readDraftAsOntology(String projectId, String userId) throws Exception {
+    private org.semanticweb.owlapi.model.OWLOntology readDraftAsOntology(String projectId, String userId,
+            self.research.ontology.common.admission.WorkKind kind) throws Exception {
         if (!isDraftCopySessionReady(projectId, userId)) {
             throw new IllegalStateException("Draft copy for project " + projectId + " (user " + userId
                     + ") is not ready yet — the copy-on-switch background job hasn't finished.");
@@ -1449,14 +1590,16 @@ public class SparqlDatasetService {
                     + draftMaxTriples + " triples for in-process draft reasoning.");
         }
 
-        String draftContent = exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
-        org.semanticweb.owlapi.model.OWLOntologyManager manager =
-                org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
-        org.semanticweb.owlapi.model.OWLOntology ontology;
-        try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
-            ontology = manager.loadOntologyFromOntologyDocument(is);
+        try (HeavyWorkAdmission.Hold hold = heavyWork.admitLoad(userId, kind, tripleCount)) {
+            String draftContent = exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+            org.semanticweb.owlapi.model.OWLOntologyManager manager =
+                    org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+            org.semanticweb.owlapi.model.OWLOntology ontology;
+            try (InputStream is = new ByteArrayInputStream(draftContent.getBytes(StandardCharsets.UTF_8))) {
+                ontology = manager.loadOntologyFromOntologyDocument(is);
+            }
+            return ontology;
         }
-        return ontology;
     }
 
     public long countDraftTriples(String projectId, String userId) {
@@ -1599,6 +1742,15 @@ public class SparqlDatasetService {
     }
 
     private void execUpdate(String projectId, String targetGraphUri, String sparqlUpdate) {
+        execUpdate(projectId, targetGraphUri, sparqlUpdate, java.util.List.of());
+    }
+
+    private void execUpdate(String projectId, String targetGraphUri, String sparqlUpdate,
+                            java.util.Collection<String> extraGraphs) {
+        java.util.function.Supplier<java.util.Collection<String>> partitions = targetGraphUri.equals(getGraphUri(projectId))
+                ? () -> getPartitionGraphs(null, projectId, targetGraphUri)
+                : null;
+        String graphAwareUpdate = injectGraphContext(sparqlUpdate, targetGraphUri, extraGraphs, partitions);
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
         long totalStart = System.nanoTime();
@@ -1608,8 +1760,6 @@ public class SparqlDatasetService {
 
             log.info("[GRAPHDB] EXECUTING UPDATE project={} graph={} connTime={}ms", projectId, targetGraphUri, connMs);
             log.debug("[GRAPHDB] Update SPARQL: {}", sparqlUpdate);
-
-            String graphAwareUpdate = injectGraphContext(sparqlUpdate, targetGraphUri);
 
             // Explicitly manage transaction for immediate visibility
             boolean autoCommit = conn.isAutoCommit();
@@ -1685,102 +1835,18 @@ public class SparqlDatasetService {
         }
     }
 
-    /**
-     * Inject GRAPH/WITH context into SPARQL UPDATE
-     */
-    private String injectGraphContext(String sparql, String graphUri) {
-        // Extract PREFIX declarations
-        StringBuilder prefixes = new StringBuilder();
-        StringBuilder operations = new StringBuilder();
-
-        String[] lines = sparql.split("\\n");
-        for (String line : lines) {
-            if (line.trim().toUpperCase().startsWith("PREFIX")) {
-                prefixes.append(line).append("\n");
-            } else if (!line.trim().isEmpty()) {
-                operations.append(line).append("\n");
-            }
-        }
-
-        String operationsStr = operations.toString().trim();
-
-        // Check if this is INSERT { ... } WHERE { ... } with Turtle syntax (contains blank nodes or semicolons within braces)
-        // Don't split by semicolon in this case as it's part of Turtle syntax
-        if (operationsStr.matches("(?is)INSERT\\s*\\{.*WHERE.*")) {
-            if (SparqlText.hasKeyword(operationsStr, "USING")) {
-                operationsStr = operationsStr.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\}\\s*)(WHERE)",
-                        "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
-                log.info("[GRAPH-INJECT] Injected GRAPH into INSERT template (USING present)");
-            } else if (!operationsStr.trim().toUpperCase().startsWith("WITH")) {
-                operationsStr = "WITH <" + graphUri + "> " + operationsStr;
-                log.info("[GRAPH-INJECT] Added WITH clause to INSERT...WHERE statement");
-            }
-            return prefixes.toString() + operationsStr;
-        }
-
-        // For other cases, split by semicolon and process each statement
-        // Split operations by semicolon - BUT only at top level, not inside {}
-        String[] statements = splitUpdateStatements(operationsStr);
-        StringBuilder result = new StringBuilder(prefixes);
-
-        log.info("[GRAPH-INJECT] Processing {} statements", statements.length);
-
-        for (int i = 0; i < statements.length; i++) {
-            String stmt = statements[i].trim();
-            if (stmt.isEmpty()) continue;
-
-            log.info("[GRAPH-INJECT] Statement {}: '{}'", i, stmt.substring(0, Math.min(100, stmt.length())));
-
-            // For INSERT DATA and DELETE DATA, wrap in GRAPH clause
-            if (stmt.matches("(?is)INSERT\\s+DATA\\s*\\{.*")) {
-                // Replace the opening brace to add GRAPH context
-                stmt = stmt.replaceFirst("(?is)(INSERT\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
-                // Add closing brace for GRAPH context before the final brace
-                stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
-                log.info("[GRAPH-INJECT] Matched INSERT DATA");
-            } else if (stmt.matches("(?is)DELETE\\s+DATA\\s*\\{.*")) {
-                // Replace the opening brace to add GRAPH context
-                stmt = stmt.replaceFirst("(?is)(DELETE\\s+DATA\\s*\\{)", "$1 GRAPH <" + graphUri + "> {");
-                // Add closing brace for GRAPH context before the final brace
-                stmt = stmt.replaceFirst("(?is)(.*)(\\}\\s*)$", "$1 }$2");
-                log.info("[GRAPH-INJECT] Matched DELETE DATA");
-            }
-            // For DELETE { ... } WHERE { ... }, add WITH clause (or GRAPH if USING is present)
-            else if (stmt.matches("(?is)DELETE\\s*\\{.*") && !stmt.trim().toUpperCase().startsWith("WITH")) {
-                if (SparqlText.hasKeyword(stmt, "USING")) {
-                    // Draft update: USING already present; wrap DELETE/INSERT templates with GRAPH
-                    // instead of WITH to avoid the invalid WITH + USING combination (SPARQL 1.1 §3.1.3).
-                    stmt = stmt.replaceFirst("(?is)(DELETE\\s*\\{)(.*?)(\\})",
-                            "$1 GRAPH <" + graphUri + "> {$2} $3");
-                    stmt = stmt.replaceFirst("(?is)(INSERT(?!\\s+DATA)\\s*\\{)(.*?)(\\})(\\s*WHERE)",
-                            "$1 GRAPH <" + graphUri + "> {$2} } $3$4");
-                    log.info("[GRAPH-INJECT] Injected GRAPH into DELETE/INSERT templates (USING present)");
-                } else {
-                    stmt = "WITH <" + graphUri + "> " + stmt;
-                    log.info("[GRAPH-INJECT] Matched DELETE WHERE, added WITH clause");
-                }
-            } else if (stmt.matches("(?is)DELETE\\s+WHERE\\s*\\{.*\\}\\s*")) {
-                stmt = "WITH <" + graphUri + "> " + stmt.replaceFirst("(?is)DELETE\\s+WHERE\\s*\\{(.*)\\}\\s*$", "DELETE {$1} WHERE {$1}");
-            } else if (stmt.matches("(?is)INSERT\\s*\\{.*")) {
-                stmt = "WITH <" + graphUri + "> " + stmt;
-            } else {
-                log.info("[GRAPH-INJECT] No pattern matched for statement");
-            }
-
-            result.append(stmt);
-            if (i < statements.length - 1) {
-                result.append(" ;\n");
-            }
-        }
-
-        return result.toString();
+    private SparqlUpdateLimits updateLimits() {
+        return new SparqlUpdateLimits(maxUpdateBytes, maxUpdateQuads, maxUpdateOperations);
     }
 
-    /**
-     * Split UPDATE statements by semicolon, but only at top level (not inside braces)
-     */
-    private String[] splitUpdateStatements(String operations) {
-        return SparqlText.splitStatements(operations).toArray(new String[0]);
+    private String injectGraphContext(String sparql, String graphUri) {
+        return injectGraphContext(sparql, graphUri, java.util.List.of(), null);
+    }
+
+    private String injectGraphContext(String sparql, String graphUri, java.util.Collection<String> extraGraphs,
+                                      java.util.function.Supplier<java.util.Collection<String>> partitionGraphs) {
+        return SparqlUpdateScoper.scope(sparql, graphUri, extraGraphs, partitionGraphs, updateLimits(),
+                heavyWork, null);
     }
 
     /**

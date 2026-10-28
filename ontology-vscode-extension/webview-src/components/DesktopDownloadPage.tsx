@@ -46,7 +46,7 @@ const FEATURES = [
   "84,000+ class ontologies (GO-plus tested)",
   "Peer-to-peer sync via Syncthing — no cloud account needed",
   "OWLAPI-powered instant class navigation",
-  "All reasoners: HermiT, Openllet, ELK",
+  "All reasoners: HermiT, ELK",
   "SPARQL query interface",
   "Plugin marketplace support",
   "Free for personal use",

@@ -302,6 +302,8 @@ public class ProjectImportService {
         boolean submitted = false;
         try {
 
+        queueManager.checkCapacity(projectId, ownerEmail);
+
         // Write PROCESSING status synchronously BEFORE enqueueing so that any
         // status poll from the frontend sees PROCESSING instead of the stale
         // COMPLETED from the previous import.  This closes the race window

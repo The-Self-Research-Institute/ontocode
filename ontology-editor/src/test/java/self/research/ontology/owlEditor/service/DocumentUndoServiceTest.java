@@ -50,6 +50,10 @@ class DocumentUndoServiceTest {
     }
 
     private static HistoryChange rule(String operation, String before, String after) {
+        return document("fuzzyRule", operation, before, after);
+    }
+
+    private static HistoryChange document(String store, String operation, String before, String after) {
         HistoryChange change = new HistoryChange();
         change.setId("c1");
         change.setProjectId(P);
@@ -57,7 +61,7 @@ class DocumentUndoServiceTest {
         change.setOperationType(operation);
         change.setEntityIRI("urn:swrlrule:6acf64ae94e5320b04bb880a");
         change.setEntityLabel("Rule");
-        change.setDocumentStore("swrlRule");
+        change.setDocumentStore(store);
         change.setDocumentId("6acf64ae94e5320b04bb880a");
         change.setDocumentBefore(before);
         change.setDocumentAfter(after);
@@ -74,7 +78,7 @@ class DocumentUndoServiceTest {
         Result result = undo(rule("updateSwrlRule", BEFORE, AFTER));
 
         assertTrue(result.ok(), String.valueOf(result.skipped()));
-        verify(runner).run(eq(P), eq(RollbackAction.restoreDocument("swrlRule", "6acf64ae94e5320b04bb880a", BEFORE, AFTER)),
+        verify(runner).run(eq(P), eq(RollbackAction.restoreDocument("fuzzyRule", "6acf64ae94e5320b04bb880a", BEFORE, AFTER)),
                 eq(false), any());
         verify(historySync).setEntryReverted("c1", true, "audit-1");
     }
@@ -84,7 +88,7 @@ class DocumentUndoServiceTest {
         Result result = undo(rule("createSwrlRule", null, AFTER));
 
         assertTrue(result.ok(), String.valueOf(result.skipped()));
-        verify(runner).run(eq(P), eq(RollbackAction.restoreDocument("swrlRule", "6acf64ae94e5320b04bb880a", null, AFTER)),
+        verify(runner).run(eq(P), eq(RollbackAction.restoreDocument("fuzzyRule", "6acf64ae94e5320b04bb880a", null, AFTER)),
                 eq(false), any());
     }
 
@@ -121,7 +125,26 @@ class DocumentUndoServiceTest {
         Result result = service.redoUndo(P, "audit-0", ACTOR, false);
 
         assertTrue(result.ok(), String.valueOf(result.skipped()));
-        verify(runner).run(eq(P), eq(RollbackAction.restoreDocument("swrlRule", "6acf64ae94e5320b04bb880a", AFTER, BEFORE)),
+        verify(runner).run(eq(P), eq(RollbackAction.restoreDocument("fuzzyRule", "6acf64ae94e5320b04bb880a", AFTER, BEFORE)),
                 eq(false), any());
+    }
+
+    @Test
+    void anOldSavedRuleEditIsRefusedWithAPlainMessageAndNothingIsRewritten() {
+        Result result = undo(document("swrlRule", "updateSwrlRule", BEFORE, AFTER));
+
+        assertFalse(result.ok());
+        assertTrue(result.skipped().get(0).reason().equals(DocumentRollbackActions.SAVED_RULES_MOVED));
+        verify(runner, never()).run(anyString(), any(), anyBoolean(), any());
+        verify(historySync, never()).setEntryReverted(anyString(), anyBoolean(), anyString());
+    }
+
+    @Test
+    void anOldSavedRuleEditIsReportedAsNotUndoableInTheHistoryList() {
+        UndoAbility.Result ability = UndoAbility.of(document("swrlRule", "updateSwrlRule", BEFORE, AFTER));
+
+        assertFalse(ability.undoable());
+        assertTrue(ability.reason().equals("Saved rules moved into the ontology; undo from the rule list"));
+        assertTrue(UndoAbility.of(rule("updateSwrlRule", BEFORE, AFTER)).undoable());
     }
 }

@@ -17,6 +17,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.model.DLQueryJob;
 import self.research.ontology.owlEditor.service.EditorJobResultRetention;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
+import self.research.ontology.owlEditor.service.Limit;
 import self.research.ontology.owlEditor.service.MainGraphRevisionService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
@@ -96,6 +97,7 @@ class ReasonerControllerSnapshotTest {
 
         ReflectionTestUtils.setField(controller, "reasonerWorkerClient", workerClient);
         ReflectionTestUtils.setField(controller, "reasonerWorkerEnabled", true);
+        ReflectionTestUtils.setField(controller, "jobAccess", JobAccessTestSupport.desktopJobAccess());
         ReflectionTestUtils.setField(controller, "reasoningJobRelayService", relay);
         ReflectionTestUtils.setField(controller, "reasonerService", reasonerService);
         ReflectionTestUtils.setField(controller, "editorReasonerCache", cache);
@@ -159,13 +161,13 @@ class ReasonerControllerSnapshotTest {
     void completedSnapshotNestedUnderResultIsAlsoReturnedInline() {
         when(workerClient.submitJob(anyString(), anyString(), isNull(), isNull(), anyString(), isNull()))
                 .thenReturn(Map.of("success", true, "jobId", "job-1", "status", "COMPLETED",
-                        "result", Map.of("success", true, "consistent", false, "reasonerType", "Openllet")));
+                        "result", Map.of("success", true, "consistent", false, "reasonerType", "HermiT")));
 
-        Map<String, Object> body = snapshot("OPENLLET", null, false);
+        Map<String, Object> body = snapshot("HERMIT", null, false);
 
         assertEquals(false, body.get("async"));
         assertEquals(false, body.get("consistent"));
-        assertEquals("Openllet", body.get("reasonerType"));
+        assertEquals("HermiT", body.get("reasonerType"));
     }
 
     @Test
@@ -209,7 +211,7 @@ class ReasonerControllerSnapshotTest {
         job.put("stats", Map.of("individuals", 3));
         when(workerClient.getJob("job-3")).thenReturn(job);
 
-        Map<String, Object> body = controller.getReasonerJob("proj-1", "job-3").getBody();
+        Map<String, Object> body = controller.getReasonerJob("proj-1", "job-3", JobAccessTestSupport.desktopRequest()).getBody();
 
         assertEquals("COMPLETED", body.get("status"));
         @SuppressWarnings("unchecked")
@@ -256,11 +258,11 @@ class ReasonerControllerSnapshotTest {
         List<Map<String, Object>> unsatisfiable = (List<Map<String, Object>>) body.get("unsatisfiableClasses");
         assertEquals(NS + "RobotDog", unsatisfiable.get(0).get("iri"));
         assertTrue(body.containsKey("classChildren"));
-        verify(reasonerService, never()).getClassHierarchyReasoner(any(), eq(ReasonerType.OPENLLET));
+        verify(reasonerService, never()).getClassHierarchyReasoner(any(), eq(ReasonerType.FACTPLUSPLUS));
     }
 
     @Test
-    void hermitThatCannotHandleSwrlBuiltInsFallsBackToOpenllet() throws Exception {
+    void hermitLeavesOutSwrlBuiltInRulesInsteadOfFailing() throws Exception {
         OWLOntology draftOntology = smallOntology();
         OWLOntologyManager manager = draftOntology.getOWLOntologyManager();
         OWLDataFactory df = manager.getOWLDataFactory();
@@ -283,9 +285,9 @@ class ReasonerControllerSnapshotTest {
         Map<String, Object> body = snapshot("HERMIT", "user-1", true);
 
         assertEquals(true, body.get("success"));
-        assertEquals("Openllet", body.get("reasonerType"));
+        assertEquals("HermiT", body.get("reasonerType"));
         assertEquals("HERMIT", body.get("requestedReasoner"));
-        assertTrue(String.valueOf(body.get("downgradedWarning")).startsWith("HermiT could not be started"));
+        assertTrue(String.valueOf(body.get("downgradedWarning")).contains("built-in"), String.valueOf(body.get("downgradedWarning")));
         assertEquals(true, body.get("consistent"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> unsatisfiable = (List<Map<String, Object>>) body.get("unsatisfiableClasses");
@@ -354,5 +356,147 @@ class ReasonerControllerSnapshotTest {
         assertEquals(false, body.get("success"));
         assertNotNull(body.get("error"));
         assertNotNull(body.get("technicalDetail"));
+    }
+
+    private OWLOntology ontologyWithAMathsRule() throws Exception {
+        OWLOntology draftOntology = smallOntology();
+        OWLOntologyManager manager = draftOntology.getOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLClass dog = df.getOWLClass(IRI.create(NS + "Dog"));
+        OWLClass oldDog = df.getOWLClass(IRI.create(NS + "OldDog"));
+        org.semanticweb.owlapi.model.OWLDataProperty age = df.getOWLDataProperty(IRI.create(NS + "age"));
+        org.semanticweb.owlapi.model.SWRLVariable x = df.getSWRLVariable(IRI.create(NS + "x"));
+        org.semanticweb.owlapi.model.SWRLVariable a = df.getSWRLVariable(IRI.create(NS + "a"));
+        org.semanticweb.owlapi.model.SWRLVariable b = df.getSWRLVariable(IRI.create(NS + "b"));
+        manager.addAxiom(draftOntology, df.getSWRLRule(
+                java.util.Set.of(
+                        df.getSWRLClassAtom(dog, x),
+                        df.getSWRLDataPropertyAtom(age, x, a),
+                        df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#add"),
+                                List.of(b, a, df.getSWRLLiteralArgument(df.getOWLLiteral(1)))),
+                        df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#greaterThan"),
+                                List.of(b, df.getSWRLLiteralArgument(df.getOWLLiteral(10))))),
+                java.util.Set.of(df.getSWRLClassAtom(oldDog, x))));
+        return draftOntology;
+    }
+
+    private void stubDraftWithAMathsRule() throws Exception {
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.getDraftWriteStamp("proj-1", "user-1")).thenReturn(9L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> ontologyWithAMathsRule());
+    }
+
+    @Test
+    void aSnapshotBuiltWhileTheRuleEngineWasDownIsPartialAndIsNotKept() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        controller.useRuleStage((ontology, rules) -> {
+            calls.incrementAndGet();
+            return Optional.empty();
+        });
+        stubDraftWithAMathsRule();
+
+        Map<String, Object> first = snapshot("HERMIT", "user-1", true);
+        Map<String, Object> second = snapshot("HERMIT", "user-1", true);
+
+        assertEquals("partial", first.get("completion"));
+        assertTrue(String.valueOf(first.get("downgradedWarning")).contains("could not be reached"), String.valueOf(first.get("downgradedWarning")));
+        assertEquals(false, second.get("cached"));
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void aSnapshotWithEveryRuleAppliedIsCompleteKeptAndPreparedOncePerRun() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        controller.useRuleStage((ontology, rules) -> {
+            calls.incrementAndGet();
+            return Optional.of(java.util.Set.of());
+        });
+        stubDraftWithAMathsRule();
+
+        Map<String, Object> first = snapshot("HERMIT", "user-1", true);
+        Map<String, Object> second = snapshot("HERMIT", "user-1", true);
+
+        assertEquals("complete", first.get("completion"));
+        assertEquals(true, second.get("cached"));
+        assertEquals(1, calls.get());
+    }
+
+    @Test
+    void aSnapshotIsNotServedWhenTheRulesChangedUnderTheSameVersion() throws Exception {
+        controller.useRuleStage((ontology, rules) -> Optional.of(java.util.Set.of()));
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.getDraftWriteStamp("proj-1", "user-1")).thenReturn(9L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> ontologyWithAMathsRule());
+
+        snapshot("HERMIT", "user-1", true);
+        assertEquals(true, snapshot("HERMIT", "user-1", true).get("cached"));
+
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> smallOntology());
+        assertEquals(false, snapshot("HERMIT", "user-1", true).get("cached"));
+    }
+
+    @Test
+    void aSnapshotWithoutRulesStillHitsTheCache() throws Exception {
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenAnswer(inv -> smallOntology());
+
+        snapshot("HERMIT", "user-1", true);
+
+        assertEquals(true, snapshot("HERMIT", "user-1", true).get("cached"));
+    }
+
+    private static OWLOntology flatOntology(int axioms) throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLOntology ontology = manager.createOntology(IRI.create("http://example.org/big"));
+        OWLClass root = df.getOWLClass(IRI.create(NS + "Root"));
+        for (int i = 0; i < axioms; i++) {
+            manager.addAxiom(ontology, df.getOWLSubClassOfAxiom(df.getOWLClass(IRI.create(NS + "C" + i)), root));
+        }
+        return ontology;
+    }
+
+    private Map<String, Object> bigSnapshot(String type, OWLOntology ontology) throws Exception {
+        when(storageManager.getDraftGraphVersion("proj-1", "user-1")).thenReturn(4L);
+        when(datasetService.getDraftWriteStamp("proj-1", "user-1")).thenReturn(9L);
+        when(datasetService.loadDraftAsOntology("proj-1", "user-1", 4L)).thenReturn(ontology);
+        return snapshot(type, "user-1", true);
+    }
+
+    @Test
+    void explicitElkStaysElkAboveTheStructuralCutoff() throws Exception {
+        int[] before = Limit.resolve(Limit.Profile.STANDARD, Map.of());
+        Limit.install(Limit.resolve(Limit.Profile.STANDARD,
+                Map.of(Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS, 1_000, Limit.REASONER_ELK_ABOVE_AXIOMS, 100)));
+        try {
+            Map<String, Object> body = bigSnapshot("ELK", flatOntology(3_000));
+
+            assertEquals("ELK", body.get("reasonerType"), String.valueOf(body));
+            assertFalse(body.containsKey("downgradedWarning"));
+        } finally {
+            Limit.install(before);
+        }
+    }
+
+    @Test
+    void hermitAboveTheStructuralCutoffIsStillDowngraded() throws Exception {
+        Map<String, Object> body = bigSnapshot("HERMIT", flatOntology(150_000));
+
+        assertEquals("Structural", body.get("reasonerType"));
+        assertTrue(String.valueOf(body.get("downgradedWarning")).contains("structural"));
+    }
+
+    @Test
+    void elkAboveItsOwnBoundIsDowngradedWithANote() throws Exception {
+        int[] before = Limit.resolve(Limit.Profile.STANDARD, Map.of());
+        Limit.install(Limit.resolve(Limit.Profile.STANDARD, Map.of(Limit.REASONER_ELK_MAX_AXIOMS, 10_000)));
+        try {
+            Map<String, Object> body = bigSnapshot("ELK", flatOntology(12_000));
+
+            assertEquals("Structural", body.get("reasonerType"));
+            assertTrue(String.valueOf(body.get("downgradedWarning")).contains("structural"));
+        } finally {
+            Limit.install(before);
+        }
     }
 }

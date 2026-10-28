@@ -44,6 +44,7 @@ class DLQueryJobControllerTest {
         ReflectionTestUtils.setField(controller, "reasonerWorkerClient", workerClient);
         ReflectionTestUtils.setField(controller, "reasoningJobRelayService", relay);
         ReflectionTestUtils.setField(controller, "reasonerWorkerEnabled", true);
+        ReflectionTestUtils.setField(controller, "jobAccess", JobAccessTestSupport.desktopJobAccess());
         relay.rememberSubmittedJob("j1", "P1", "Person", "DL_QUERY", Map.of("status", "QUEUED", "queuePosition", 1));
     }
 
@@ -51,7 +52,7 @@ class DLQueryJobControllerTest {
     void jobTheWorkerNoLongerKnowsIsReportedAsFailed() {
         when(workerClient.getJob("j1")).thenReturn(Map.of("success", false, "error", "404 Not Found: [no body]"));
 
-        ResponseEntity<Map<String, Object>> response = controller.getJob("j1");
+        ResponseEntity<Map<String, Object>> response = controller.getJob("j1", JobAccessTestSupport.desktopRequest());
 
         assertEquals("FAILED", response.getBody().get("status"));
         assertEquals(DLQueryJobController.WORKER_LOST_JOB_MESSAGE, response.getBody().get("error"));
@@ -63,7 +64,7 @@ class DLQueryJobControllerTest {
         when(workerClient.getJob("j1")).thenReturn(Map.of("success", false,
                 "error", "The reasoning service is temporarily unavailable. Please try again in a minute."));
 
-        ResponseEntity<Map<String, Object>> response = controller.getJob("j1");
+        ResponseEntity<Map<String, Object>> response = controller.getJob("j1", JobAccessTestSupport.desktopRequest());
 
         assertEquals("QUEUED", response.getBody().get("status"));
         assertEquals(DLQueryJob.Status.QUEUED, relay.getJob("j1").getStatus());
@@ -74,6 +75,6 @@ class DLQueryJobControllerTest {
         Map<String, Object> remote = Map.of("jobId", "j1", "status", "PROCESSING");
         when(workerClient.getJob("j1")).thenReturn(remote);
 
-        assertEquals(remote, controller.getJob("j1").getBody());
+        assertEquals(remote, controller.getJob("j1", JobAccessTestSupport.desktopRequest()).getBody());
     }
 }

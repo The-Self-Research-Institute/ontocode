@@ -31,6 +31,10 @@ final class RollbackDescriptions {
                            List<HistoryChange> entries) {
         String verb = ChangeRollbackService.UNDO.equals(direction) ? "Undid" : "Redid";
         int count = applied.size();
+        String rule = ruleText(verb, direction, entries);
+        if (rule != null) {
+            return rule;
+        }
         if (ChangeRollbackService.CHANGESET.equals(level)) {
             return verb + " change set (" + count + " change" + (count == 1 ? "" : "s") + ")";
         }
@@ -53,6 +57,34 @@ final class RollbackDescriptions {
             return verb + " change to " + label;
         }
         return verb + " " + (count > 1 ? count + " changes" : "change");
+    }
+
+    static final String ARCHIVE_NOTE = "The old saved copy stays archived";
+
+    private static HistoryChange ruleEntry(List<HistoryChange> entries) {
+        if (entries.size() != 1) {
+            return null;
+        }
+        HistoryChange entry = entries.get(0);
+        return CodeViewHistoryRecorder.RULE_CHANGE.equals(entry.getOperationType()) ? entry : null;
+    }
+
+    private static String ruleText(String verb, String direction, List<HistoryChange> entries) {
+        HistoryChange entry = ruleEntry(entries);
+        if (entry == null || entry.getDescription() == null || entry.getDescription().isBlank()) {
+            return null;
+        }
+        String note = archiveNote(direction, entries);
+        return verb + ": " + entry.getDescription() + (note == null ? "" : ". " + note);
+    }
+
+    static String archiveNote(String direction, List<HistoryChange> entries) {
+        if (!ChangeRollbackService.UNDO.equals(direction)) {
+            return null;
+        }
+        boolean migrated = entries.stream().anyMatch(entry -> entry.getMetadata() != null
+                && RuleMigrationService.ORIGIN_SOURCE.equals(entry.getMetadata().get("toolSource")));
+        return migrated ? ARCHIVE_NOTE : null;
     }
 
     private static String joinNames(Set<String> names) {

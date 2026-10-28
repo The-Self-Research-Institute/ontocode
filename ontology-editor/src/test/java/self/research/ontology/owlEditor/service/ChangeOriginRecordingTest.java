@@ -59,6 +59,30 @@ class ChangeOriginRecordingTest {
     }
 
     @Test
+    void syncedEntriesKeepTheToolSourceAndLabel() {
+        HistoryChangeRepository repository = mock(HistoryChangeRepository.class);
+        when(repository.existsByProjectIdAndEditId(anyString(), anyString())).thenReturn(false);
+        HistorySyncService sync = new HistorySyncService(repository, mock(MongoTemplate.class), mock(OntologyHistoryService.class));
+        ChangeOrigin origin = ChangeOrigin.fromTool("swrl-rules", "Added from rule results: Age under 18");
+        Map<String, Object> data = new HashMap<>();
+        data.put("userId", "u@x.com");
+        data.put("username", "u@x.com");
+        data.put("operationType", "createClass");
+        data.put("changeSetId", origin.changeSetId());
+        data.put("source", origin.source());
+        data.put("toolSource", origin.toolSource());
+        data.put("toolLabel", origin.toolLabel());
+
+        sync.syncChange("p", "edit-1", data);
+
+        ArgumentCaptor<HistoryChange> saved = ArgumentCaptor.forClass(HistoryChange.class);
+        verify(repository).save(saved.capture());
+        assertEquals(ChangeOrigin.TOOL, saved.getValue().getSource());
+        assertEquals("swrl-rules", saved.getValue().getMetadata().get("toolSource"));
+        assertEquals("Added from rule results: Age under 18", saved.getValue().getMetadata().get("toolLabel"));
+    }
+
+    @Test
     void syncedTimestampsAreStoredAsUtcRegardlessOfServerTimezone() {
         HistoryChangeRepository repository = mock(HistoryChangeRepository.class);
         when(repository.existsByProjectIdAndEditId(anyString(), anyString())).thenReturn(false);

@@ -16,6 +16,10 @@ public class StringToReasonerTypeConverter implements Converter<String, Reasoner
                 return type;
             }
         }
-        throw new IllegalArgumentException("Unknown reasoner type: " + source);
+        try {
+            return ReasonerType.parse(value);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown reasoner type: " + source, e);
+        }
     }
 }

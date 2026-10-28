@@ -23,6 +23,9 @@ public interface HistoryChangeRepository extends MongoRepository<HistoryChange, 
     Optional<HistoryChange> findByProjectIdAndEditId(String projectId, String editId);
     
     Optional<HistoryChange> findByEditId(String editId);
+
+    @org.springframework.data.mongodb.repository.Query("{ 'projectId': ?0, 'metadata.importId': ?1 }")
+    List<HistoryChange> findByProjectIdAndImportId(String projectId, String importId);
     
     boolean existsByProjectIdAndEditId(String projectId, String editId);
     
@@ -36,4 +39,8 @@ public interface HistoryChangeRepository extends MongoRepository<HistoryChange, 
     List<HistoryChange> findByProjectIdAndEntityIRIOrderByTimestampDesc(String projectId, String entityIRI, Pageable pageable);
 
     List<HistoryChange> findByProjectId(String projectId, Pageable pageable);
+
+    List<HistoryChange> findByProjectIdAndPublishedPrId(String projectId, String publishedPrId);
+
+    List<HistoryChange> findByProjectIdAndDraftOrderByTimestampDesc(String projectId, boolean draft, Pageable pageable);
 }

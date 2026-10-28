@@ -114,7 +114,8 @@ import {
 } from "../services/reasoningJobWait";
 import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
-import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields } from "../utils/draftScope";
+import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields, draftControlsVisible } from "../utils/draftScope";
+import { isBuiltInPrefix } from "../utils/builtInPrefixes";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import codeViewCacheService from "../services/codeViewCacheService";
 import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
@@ -181,6 +182,7 @@ import {
 } from "./dialogs";
 import { useKeyboardShortcuts, DEFAULT_SHORTCUTS, KeyboardShortcut } from "../hooks/useKeyboardShortcuts";
 import { useDebouncedVisible } from "../hooks/useDebouncedVisible";
+import { usePullPending } from "../hooks/usePullPending";
 import { TabCountBadge } from "./dashboard-parts/TabCountBadge";
 import { useEntityPreferences } from "../contexts/EntityPreferencesContext";
 import { CodeHighlighter, type CodeHighlighterHandle } from "./CodeHighlighter";
@@ -214,7 +216,7 @@ import {
 import { lintOntologyContent, type LintIssue } from "../utils/ontologyLinter";
 import { buildEntityIri, isBulkChangeIri, labelForNewEntity } from "../utils/entityIri";
 import { requestChangeAssistantTab } from "../utils/changeAssistantNav";
-import { clearChildrenOf, keepPendingChildren } from "../utils/treeChildren";
+import { keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
 import { DRAFT_COPY_MAX_MISSING, DRAFT_COPY_MAX_WAIT_MS, ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
 import { useLastCallTimer } from "../hooks/useLastCallTimer";
@@ -261,6 +263,7 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
 import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
+import RevertPrDialog from "./RevertPrDialog";
 import PullPreviewDialog from "./PullPreviewDialog";
 
 const DRAFT_SAVE_DISABLED_HINT =
@@ -803,26 +806,6 @@ const TopMenuBar = ({
                     <button
                       onClick={() => {
                         setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Pellet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
-                        }`}
-                    >
-                      {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Openllet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
-                        }`}
-                    >
-                      {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
                         if (onSelectReasoner) onSelectReasoner('Structural');
                       }}
                       className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
@@ -1056,11 +1039,7 @@ const TopMenuBar = ({
 
       <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
         <UndoRunControls menu={undoMenu} />
-        {isDesktop() ? (
-          <span className="hidden sm:inline text-xs font-medium text-gray-500" title="Edits are kept in your private draft until you click Save">
-            Private (Draft)
-          </span>
-        ) : (
+        {isDesktop() ? null : (
           <>
             {autoDraftStatus === 'copying' && (
               <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
@@ -1318,6 +1297,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   const currentProjectIdRef = useRef(projectId);
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
   const reasonerRunIdRef = useRef(0);
+  const lastReasonerNoteRef = useRef("");
+  const announceReasonerNote = (results: any) => {
+    const note = results?.downgradedWarning;
+    if (typeof note !== "string" || !note.trim()) return;
+    const key = `${currentProjectIdRef.current}|${note}`;
+    if (lastReasonerNoteRef.current === key) return;
+    lastReasonerNoteRef.current = key;
+    showNotification(note, "warning");
+  };
 
   useEffect(() => {
     if (!projectId || projectId === prevProjectIdRef.current) return;
@@ -1528,6 +1516,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [draftCount, setDraftCount] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [syncMode, setSyncMode] = useState<"private" | "public">("public");
+  const pluginDraftMode = !isDesktop() && syncMode === "private";
   const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
   const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
   const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
@@ -1565,7 +1554,34 @@ const Dashboard: React.FC<DashboardProps> = ({
     });
   }
   const [showDraftPRPanel, setShowDraftPRPanel] = useState(false);
+  const [revertPr, setRevertPr] = useState<{ prId: string; title?: string } | null>(null);
+  const [reapplyPr, setReapplyPr] = useState<{ prId: string; title?: string } | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setReapplyPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:reapply-pr", open);
+    return () => window.removeEventListener("ontology:reapply-pr", open);
+  }, [projectId]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.prId && (!detail.projectId || detail.projectId === projectId)) {
+        setRevertPr({ prId: detail.prId, title: detail.title });
+      }
+    };
+    window.addEventListener("ontology:revert-pr", open);
+    return () => window.removeEventListener("ontology:revert-pr", open);
+  }, [projectId]);
   const [showPullPreview, setShowPullPreview] = useState(false);
+  const pullPending = usePullPending(
+    projectId || undefined,
+    resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+    syncMode === "private" && !!projectId,
+  );
   const [openPRCount, setOpenPRCount] = useState(0);
 
   const startDraftCopySession = useCallback((
@@ -1574,6 +1590,10 @@ const Dashboard: React.FC<DashboardProps> = ({
     options?: { showModal?: boolean; onReady?: () => void }
   ) => {
     if (!targetProjectId || !userId) { return; }
+    if (isDesktop()) {
+      options?.onReady?.();
+      return;
+    }
 
     let settled = false;
 
@@ -1683,8 +1703,9 @@ const Dashboard: React.FC<DashboardProps> = ({
     notificationService.success("Pull Complete", "Public changes were merged into your draft.");
     fetchData(projectId, false);
     announceMutationApplied(projectId, [{ type: "draftPull" }], undefined, true);
+    pullPending.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
-  }, [projectId]);
+  }, [projectId, pullPending.refresh]);
 
   const refreshOpenPRCount = useCallback(async () => {
     if (!projectId) return;
@@ -2728,7 +2749,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const HEAVY_REASONER_TRIPLE_LIMIT = 500_000;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
-    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > HEAVY_REASONER_TRIPLE_LIMIT)
       ? 'ELK'
       : normalizedSelectedReasoner;
@@ -2816,7 +2837,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
-    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
     const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
     if (inferredObjectPropertyLoadKeyRef.current === loadKey) return;
@@ -2883,7 +2904,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
-    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
     const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
     if (inferredDataPropertyLoadKeyRef.current === loadKey) return;
@@ -3214,6 +3235,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         : await fetchReasonerBundle(reasonerType, isStaleRun);
       if (isStaleRun()) return;
       setReasonerResults(results);
+      announceReasonerNote(results);
             console.log("[Dashboard] reasoner bundle:", results);
       console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
 
@@ -3430,8 +3452,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       const descriptions: Record<string, string> = {
         HermiT: "Hypertableau-based reasoner with full OWL 2 DL support - best for complex ontologies",
         ELK: "High-performance reasoner optimized for EL++ profile - best for large taxonomies",
-        Pellet: "Complete OWL DL reasoner with SWRL support",
-        Openllet: "Modern fork of Pellet with improved performance and OWL API 5 support",
         Structural: "Lightweight structural reasoner - fast but limited inference",
       };
 
@@ -3467,6 +3487,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
       setReasonerResults(results);
+      announceReasonerNote(results);
 
       if ((results as any)?.inconsistent === true) {
         markReasonerResultInconsistent(results, selectedReasoner, request.projectId);
@@ -4977,9 +4998,10 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSaveOntologyId = async () => {
     if (!projectId || !ontologyIriDraft.trim()) return;
     try {
-      await apiClient.put(`/api/ontology/ontology/id/${encodeProjectId(projectId)}`, {
-        ontologyIRI: ontologyIriDraft.trim(),
-        versionIRI: versionIriDraft.trim() || null,
+      await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/iri`), {
+        ontologyIri: ontologyIriDraft.trim(),
+        versionIri: versionIriDraft.trim(),
+        ...draftBodyFields(),
       });
       setIsEditingOntologyId(false);
       await apiClient
@@ -7304,7 +7326,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
   }, [showLoadingChoice, isExpectingFileReady, backgroundImportActive, projectId, pendingImportProjectId]);
 
   const loadChildren = useCallback(
-    async (nodeId: string, pendingChildren?: TreeNode[]) => {
+    async (nodeId: string, pendingChildren?: TreeNode[], force?: boolean) => {
       if (!projectId) return;
       try {
         console.log(`[loadChildren] Loading children for node: ${nodeId}`);
@@ -7329,7 +7351,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           return prev;
         });
 
-        if (alreadyLoaded) {
+        if (alreadyLoaded && !force) {
           console.log(`[loadChildren] ⚡ Children already loaded for node: ${nodeId}, skipping API call`);
           return;
         }
@@ -7341,7 +7363,19 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
           ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`
           : `/api/ontology/classes/children/${projectId}?parentIri=${encodeURIComponent(nodeId)}&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`;
 
-        const response = await apiClient.get<any>(endpoint);
+        let response = await apiClient.get<any>(endpoint);
+        const hierarchyBuilding = (res: any) =>
+          !!res &&
+          !Array.isArray(res) &&
+          (res.hierarchyReady === false || res.status === 202 || res.success === false || isOwlApiWarmingResponse(res));
+        for (let attempt = 0; attempt < 8 && hierarchyBuilding(response); attempt += 1) {
+          console.warn(`[loadChildren] Class hierarchy not ready for ${nodeId} (attempt ${attempt + 1}) — keeping current tree and retrying`);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          response = await apiClient.get<any>(endpoint);
+        }
+        if (hierarchyBuilding(response)) {
+          return;
+        }
 
         const children = Array.isArray(response)
           ? response
@@ -7354,9 +7388,10 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         const updateTree = (nodes: TreeNode[]): TreeNode[] =>
           nodes.map((n: TreeNode) => {
             if (n.id === nodeId) {
+              const loadedBefore = new Map((n.children || []).map((existing) => [existing.id, existing]));
               const mappedChildren = keepPendingChildren(children.map((c: TopLevelClass) => ({
                 ...c,
-                children: c.hasChildren ? [] : undefined,
+                children: loadedBefore.get(c.id)?.children?.length ? loadedBefore.get(c.id)!.children : c.hasChildren ? [] : undefined,
                 hasChildren: c.hasChildren,
                 subClassOfAxioms: [{ id: nodeId, type: "SubClassOf", definition: n.label }],
               })) as TreeNode[], pendingChildren);
@@ -8411,6 +8446,10 @@ const updateItemInState = useCallback(
       }
 
       scheduleRollbackRefresh(() => {
+        if (detail?.source !== "AI") {
+          refreshAfterBulkWriteRef.current("rollback");
+          return;
+        }
         if (detail?.entityIRI) {
           console.log("[Dashboard] 🔄 Refreshing entity details after rollback for:", detail.entityIRI);
           console.log("[Dashboard] 🔄 Entity type from event:", detail.entityType, "Current tab:", entitiesTab);
@@ -8809,6 +8848,20 @@ const updateItemInState = useCallback(
       console.error("[Dashboard] Failed to update draft count:", error);
     }
   }, [projectId, user?.userId, user?.email]);
+
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const onPrChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; ops?: string[] }>).detail;
+      if (detail?.projectId !== projectId || !detail.ops?.some((op) => op === "draftPrReverted" || op === "draftPrReapplied")) return;
+      refreshOpenPRCount();
+      void updateDraftCount();
+      fetchData(projectId, false, undefined, true);
+      window.dispatchEvent(new CustomEvent("ontologyChangesSaved", { detail: { projectId } }));
+    };
+    window.addEventListener("ontology:mutated", onPrChanged);
+    return () => window.removeEventListener("ontology:mutated", onPrChanged);
+  }, [projectId, refreshOpenPRCount, updateDraftCount, fetchData]);
 
   const silentRefreshMetadata = useCallback(async () => {
     if (!projectId) return;
@@ -10274,9 +10327,7 @@ const updateItemInState = useCallback(
 
         await new Promise((resolve) => setTimeout(resolve, 300));
 
-        setClassHierarchy((prev) => clearChildrenOf(prev, parentIri));
-
-        await loadChildren(parentIri, [newNode]);
+        await loadChildren(parentIri, [newNode], true);
 
         console.log("[handleAddClassInline] Refresh complete");
         showNotification(`Class "${name}" created successfully!`);
@@ -10548,8 +10599,7 @@ const updateItemInState = useCallback(
 
           if (type === "subclass") {
             await new Promise((resolve) => setTimeout(resolve, 300));
-            setClassHierarchy((prev) => clearChildrenOf(prev, parentIri));
-            await loadChildren(parentIri, [newNode]);
+            await loadChildren(parentIri, [newNode], true);
           }
         } else if (entitiesTab === "ObjectProperties") {
           parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
@@ -14593,7 +14643,7 @@ const updateItemInState = useCallback(
               <div className="flex-1 min-h-0">
                 <SparqlPluginComponent
                   projectId={projectId}
-                  draftMode={!isDesktop() && syncMode === "private"}
+                  draftMode={pluginDraftMode}
                   prefixes={(metadata as any)?.prefixes || []}
                   context={{
                     apiClient,
@@ -14644,7 +14694,7 @@ const updateItemInState = useCallback(
               context={{
                 projectId,
                 apiBaseUrl: getBaseUrl(),
-                draftMode: !isDesktop() && syncMode === "private",
+                draftMode: pluginDraftMode,
                 userId: graphActor.userId,
                 username: graphActor.username,
                 permissions: {
@@ -14688,7 +14738,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14721,7 +14771,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} draftMode={!isDesktop() && syncMode === "private"} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14760,7 +14810,7 @@ const updateItemInState = useCallback(
               context={{ apiClient }}
               userId={actor.userId}
               username={actor.username}
-              draftMode={!isDesktop() && syncMode === "private"}
+              draftMode={pluginDraftMode}
               onViewOnlyAction={isViewOnlyMember ? handleViewOnlyAction : undefined}
               onDraftRequired={!isDesktop() && isProjectDraftEditorRole && syncMode !== 'private'
                 ? () => setShowProPromptType('draftRequired')
@@ -14805,7 +14855,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14879,7 +14929,7 @@ const updateItemInState = useCallback(
             description="Advanced OWL 2 DL reasoning with classification, consistency checking, explanations, and inferred hierarchies."
             icon={<Zap size={32} className="text-white" />}
             features={[
-              "HermiT, ELK, Pellet, Openllet, Structural support",
+              "HermiT, ELK, Structural support",
               "Full classification with inferred hierarchy",
               "Consistency checks with unsat explanations",
               "Auto-sync with ontology edits",
@@ -14944,6 +14994,7 @@ const updateItemInState = useCallback(
                     <div className="flex items-center gap-2">
                       <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
                       <a
+                        data-testid="ontology-iri-value"
                         href={safeHref((metadata as any)?.ontologyIRI)}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -14964,7 +15015,7 @@ const updateItemInState = useCallback(
                     </div>
                     <div className="flex items-center gap-2">
                       <LinkIcon size={14} className="flex-shrink-0" style={{ color: "var(--success)" }} />
-                      <div className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
+                      <div data-testid="ontology-version-iri-value" className="text-xs break-all font-medium" style={{ color: "var(--text-primary)" }}>
                         {(metadata as any)?.versionIRI || "Not specified"}
                       </div>
                     </div>
@@ -15005,6 +15056,7 @@ const updateItemInState = useCallback(
                       return (
                         <div
                           key={key}
+                          data-testid="ontology-annotation-card"
                           className="border rounded-md transition-colors"
                           style={{ borderColor: "var(--border)" }}
                           onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--accent)")}
@@ -15214,6 +15266,8 @@ const updateItemInState = useCallback(
                               {prefixMappings.map((p, idx) => (
                                 <tr
                                   key={`${p.prefix}-${idx}`}
+                                  data-testid="prefix-row"
+                                  data-prefix={p.prefix}
                                   className="border-b"
                                   style={{ borderColor: "var(--border)" }}
                                   onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--hover-overlay)")}
@@ -15235,6 +15289,9 @@ const updateItemInState = useCallback(
                                       >
                                         <Edit2 size={12} />
                                       </button>
+                                      {isBuiltInPrefix(p.prefix, p.namespace) ? (
+                                        <span className="px-1 text-[10px] opacity-60" title="Standard prefix, always available">built-in</span>
+                                      ) : (
                                       <button
                                         onClick={isViewOnlyMember ? handleViewOnlyAction : () => handleDeletePrefix(p.prefix)}
                                         className="p-1 rounded text-[10px]"
@@ -15243,6 +15300,7 @@ const updateItemInState = useCallback(
                                       >
                                         <Trash2 size={12} />
                                       </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -17679,18 +17737,26 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   Public View
                 </span>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={() => setShowPullPreview(true)}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
                   style={{ borderColor: "var(--color-border)" }}
-                  title="Preview and pull latest public version into your draft"
+                  title={pullPending.pending
+                    ? "Public has new changes since your draft started. Pull them into your draft."
+                    : "Preview and pull latest public version into your draft"}
                 >
                   <Download size={12} />
                   <span className="hidden sm:inline">Pull</span>
+                  {pullPending.pending && (
+                    <span
+                      aria-label="Pull pending"
+                      className="inline-block w-2 h-2 rounded-full bg-amber-500"
+                    />
+                  )}
                 </button>
               )}
-              {syncMode === 'private' && projectId && (
+              {draftControlsVisible(syncMode, isDesktop()) && projectId && (
                 <button
                   onClick={handleDiscardDraft}
                   className="flex items-center gap-1 text-xs px-2 py-1 rounded border transition-colors"
@@ -18512,6 +18578,27 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           }
         }}
       />
+
+      {projectId && reapplyPr && (
+        <RevertPrDialog
+          mode="reapply"
+          projectId={projectId}
+          prId={reapplyPr.prId}
+          title={reapplyPr.title}
+          onClose={() => setReapplyPr(null)}
+          onDone={() => setReapplyPr(null)}
+        />
+      )}
+
+      {projectId && revertPr && (
+        <RevertPrDialog
+          projectId={projectId}
+          prId={revertPr.prId}
+          title={revertPr.title}
+          onClose={() => setRevertPr(null)}
+          onDone={() => setRevertPr(null)}
+        />
+      )}
 
       {projectId && (
         <DraftPRPanel

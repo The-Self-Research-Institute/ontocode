@@ -48,6 +48,18 @@ final class RollbackWorkSupport {
     private RollbackWorkSupport() {
     }
 
+    static final String PR_PUBLISHED = "prPublished";
+    static final String PR_REVERTED = "prReverted";
+
+    static boolean isUndoablePublication(HistoryChange entry) {
+        return PR_PUBLISHED.equals(entry.getOperationType());
+    }
+
+    static boolean isPublicationEntry(HistoryChange entry) {
+        String op = entry.getOperationType();
+        return PR_PUBLISHED.equals(op) || PR_REVERTED.equals(op);
+    }
+
     static boolean isRollbackEntry(HistoryChange entry) {
         String op = entry.getOperationType();
         return ChangeOrigin.ROLLBACK.equals(entry.getSource())

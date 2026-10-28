@@ -34,6 +34,24 @@ public class OntologyClientService {
     private final RestTemplate restTemplate;
     private final String editorServiceUrl;
 
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
+    @Value("${ontocode.capacity.swrl-execute.max-ontology-axioms:0}")
+    private long maxOntologyAxioms = 0;
+
+    @Value("${ontocode.capacity.swrl-execute.ontology-heap-fraction:" + OntologyBudget.DEFAULT_HEAP_FRACTION + "}")
+    private double ontologyHeapFraction = OntologyBudget.DEFAULT_HEAP_FRACTION;
+
+    @Value("${ontocode.capacity.swrl-execute.ontology-bytes-per-axiom:" + OntologyBudget.DEFAULT_BYTES_PER_AXIOM + "}")
+    private long ontologyBytesPerAxiom = OntologyBudget.DEFAULT_BYTES_PER_AXIOM;
+
+    @Value("${ontocode.capacity.swrl-execute.ontology-text-bytes-per-axiom:" + OntologyBudget.DEFAULT_TEXT_BYTES_PER_AXIOM + "}")
+    private long ontologyTextBytesPerAxiom = OntologyBudget.DEFAULT_TEXT_BYTES_PER_AXIOM;
+
+    @Value("${ontocode.capacity.swrl-execute.workers:${swrl.execution.workers:2}}")
+    private int executionWorkers = 2;
+
     public OntologyClientService(
             RestTemplateBuilder restTemplateBuilder,
             @Value("${ontology.editor.service.url}") String editorServiceUrl) {
@@ -93,19 +111,67 @@ public class OntologyClientService {
         return null;
     }
 
+    public record FetchedOntology(OWLOntology ontology, Long ontologyRevision, String draftVersion) {}
+
+    public record RuleAccess(boolean allowed, String reason) {
+    }
+
+    public RuleAccess canWriteRules(String projectId) {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        String authHeader = currentAuthorizationHeader();
+        if (authHeader != null) {
+            headers.set("Authorization", authHeader);
+        }
+        try {
+            ResponseEntity<java.util.Map> response = restTemplate.exchange("/api/ontology/{projectId}/rules-access",
+                    org.springframework.http.HttpMethod.GET, new org.springframework.http.HttpEntity<>(headers),
+                    java.util.Map.class, projectId);
+            java.util.Map<?, ?> body = response.getBody();
+            boolean allowed = body != null && Boolean.TRUE.equals(body.get("canWriteRules"));
+            Object reason = body != null ? body.get("reason") : null;
+            return new RuleAccess(allowed, reason != null ? String.valueOf(reason) : "You cannot change the rules of this project.");
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            if (e.getStatusCode().value() == 401 || e.getStatusCode().value() == 403) {
+                return new RuleAccess(false, "You do not have access to change the rules of this project.");
+            }
+            throw e;
+        }
+    }
+
+    long maxAxioms() {
+        return OntologyBudget.maxAxioms(maxOntologyAxioms, Runtime.getRuntime().maxMemory(), ontologyHeapFraction,
+                executionWorkers, ontologyBytesPerAxiom);
+    }
+
     public OWLOntology fetchOntology(String projectId) throws OWLOntologyCreationException {
-        logger.info("Fetching ontology for project: {}", projectId);
+        return fetchOntologyWithStamp(projectId, null).ontology();
+    }
+
+    public FetchedOntology fetchOntologyWithStamp(String projectId, String draftUserId) throws OWLOntologyCreationException {
+        logger.info("Fetching ontology for project: {}{}", projectId, draftUserId != null ? " (draft)" : "");
         long startTime = System.currentTimeMillis();
 
         try {
             String authHeader = currentAuthorizationHeader();
             // Stream ontology directly into OWL parser to avoid holding entire byte[] in heap
+            final Long[] revision = new Long[1];
+            final String[] draftVersion = new String[1];
+            boolean internalCall = authHeader == null && internalToken != null && !internalToken.isBlank();
+            String exportPath = internalCall
+                ? (draftUserId != null
+                    ? "/internal/reasoning/{projectId}/export.ttl?draft=true&userId={userId}"
+                    : "/internal/reasoning/{projectId}/export.ttl")
+                : (draftUserId != null
+                    ? "/api/ontology/export/{projectId}?draft=true&userId={userId}"
+                    : "/api/ontology/export/{projectId}");
             OWLOntology ontology = restTemplate.execute(
-                "/api/ontology/export/{projectId}",
+                exportPath,
                 org.springframework.http.HttpMethod.GET,
                 request -> {
                     if (authHeader != null) {
                         request.getHeaders().set("Authorization", authHeader);
+                    } else if (internalCall) {
+                        request.getHeaders().set("X-Ontocode-Internal-Token", internalToken);
                     }
                 },
                 response -> {
@@ -113,6 +179,20 @@ public class OntologyClientService {
                         throw new RuntimeException(
                             "Failed to fetch ontology: HTTP " + response.getStatusCode()
                         );
+                    }
+                    String revisionHeader = response.getHeaders().getFirst("X-Ontology-Revision");
+                    if (revisionHeader != null) {
+                        try {
+                            revision[0] = Long.valueOf(revisionHeader.trim());
+                        } catch (NumberFormatException ignored) {
+                            revision[0] = null;
+                        }
+                    }
+                    draftVersion[0] = response.getHeaders().getFirst("X-Ontology-Draft-Version");
+                    long axiomLimit = maxAxioms();
+                    long textLimit = OntologyBudget.maxTextBytes(axiomLimit, ontologyTextBytesPerAxiom);
+                    if (response.getHeaders().getContentLength() > textLimit) {
+                        throw new OntologyTooLargeException(axiomLimit);
                     }
                     OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                     // Mirror only the first DIAGNOSTIC_CAPTURE_LIMIT bytes into a small in-memory
@@ -123,8 +203,20 @@ public class OntologyClientService {
                     java.io.ByteArrayOutputStream headCapture =
                         new java.io.ByteArrayOutputStream(DIAGNOSTIC_CAPTURE_LIMIT);
                     try (InputStream raw = response.getBody();
-                         InputStream is = new BoundedTeeInputStream(raw, headCapture, DIAGNOSTIC_CAPTURE_LIMIT)) {
-                        return manager.loadOntologyFromOntologyDocument(is);
+                         CappedInputStream is = new CappedInputStream(
+                                 new BoundedTeeInputStream(raw, headCapture, DIAGNOSTIC_CAPTURE_LIMIT), textLimit)) {
+                        try {
+                            OWLOntology loaded = manager.loadOntologyFromOntologyDocument(is);
+                            if (loaded.getAxiomCount() > axiomLimit) {
+                                throw new OntologyTooLargeException(axiomLimit);
+                            }
+                            return loaded;
+                        } catch (OWLOntologyCreationException | RuntimeException e) {
+                            if (is.exceeded()) {
+                                throw new OntologyTooLargeException(axiomLimit);
+                            }
+                            throw e;
+                        }
                     } catch (OWLOntologyCreationException e) {
                         logger.error(
                             "OWL parse failure for project {}. First {} bytes of the exported document:\n{}",
@@ -134,12 +226,14 @@ public class OntologyClientService {
                         throw new RuntimeException("OWL parsing error", e);
                     }
                 },
-                projectId
+                draftUserId != null ? new Object[]{projectId, draftUserId} : new Object[]{projectId}
             );
 
             if (ontology == null) {
                 throw new RuntimeException("Failed to fetch ontology: null response");
             }
+
+            PlainLiteralNormalizer.apply(ontology);
 
             long loadTime = System.currentTimeMillis() - startTime;
             logger.info("Successfully loaded ontology for project {} in {}ms. " +
@@ -150,8 +244,11 @@ public class OntologyClientService {
                        ontology.getObjectPropertiesInSignature().size(),
                        ontology.getIndividualsInSignature().size());
             
-            return ontology;
+            return new FetchedOntology(ontology, revision[0], draftVersion[0]);
 
+        } catch (OntologyTooLargeException e) {
+            logger.warn("Refused to load the ontology for project {}: it is over the limit of {} axioms", projectId, e.getLimitAxioms());
+            throw e;
         } catch (RestClientException e) {
             logger.error("REST client error fetching ontology for project: {}", projectId, e);
             throw new OWLOntologyCreationException(
@@ -292,6 +389,47 @@ class BoundedTeeInputStream extends java.io.FilterInputStream {
         int n = super.read(b, off, len);
         if (n > 0 && capture.size() < limit) {
             capture.write(b, off, Math.min(n, limit - capture.size()));
+        }
+        return n;
+    }
+}
+
+class CappedInputStream extends java.io.FilterInputStream {
+    private final long limit;
+    private long read;
+    private boolean exceeded;
+
+    CappedInputStream(InputStream in, long limit) {
+        super(in);
+        this.limit = limit;
+    }
+
+    boolean exceeded() {
+        return exceeded;
+    }
+
+    private void count(long n) throws java.io.IOException {
+        read += n;
+        if (read > limit) {
+            exceeded = true;
+            throw new java.io.IOException("The ontology text is over the size limit");
+        }
+    }
+
+    @Override
+    public int read() throws java.io.IOException {
+        int b = super.read();
+        if (b != -1) {
+            count(1);
+        }
+        return b;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws java.io.IOException {
+        int n = super.read(b, off, len);
+        if (n > 0) {
+            count(n);
         }
         return n;
     }

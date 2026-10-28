@@ -90,13 +90,22 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
 
         try {
-            Claims verified = jwtVerifier.verify(authHeader);
-            String jwtEmail = verified.getSubject();
-            Object userIdClaim = verified.get("userId");
+            Claims claims = jwtVerifier.verify(authHeader);
+            String jwtEmail = claims.getSubject();
+            Object userIdClaim = claims.get("userId");
             String jwtUserId = userIdClaim == null || userIdClaim.toString().isBlank() ? null : userIdClaim.toString();
             request.setAttribute(VERIFIED_EMAIL_ATTRIBUTE, jwtEmail);
             if (jwtUserId != null) {
                 request.setAttribute(VERIFIED_USER_ID_ATTRIBUTE, jwtUserId);
+            }
+
+            String uploadOwner = uploadOwnerEmail(request, method, path);
+            if (uploadOwner != null && !uploadOwner.equalsIgnoreCase(jwtEmail)
+                    && !Boolean.TRUE.equals(claims.get("isAdmin", Boolean.class))) {
+                log.warn("Denied {} {} - {} tried to upload on behalf of {}", method, path, jwtEmail, uploadOwner);
+                writeError(response, HttpServletResponse.SC_FORBIDDEN,
+                        "{\"error\":\"You can only upload on your own behalf\"}");
+                return false;
             }
 
             String projectId = pathVariable(request, "projectId");
@@ -108,7 +117,8 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
                 projectId = jobProjectId;
             }
             for (String scoped : new String[]{projectId, jobProjectId}) {
-                if (scoped != null && lacksAccess(scoped, jwtUserId, jwtEmail)) {
+                if (scoped != null && lacksAccess(scoped, jwtUserId, jwtEmail)
+                        && !(scoped.equals(projectId) && isNewProjectUpload(uploadOwner, scoped))) {
                     log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, scoped);
                     writeError(response, HttpServletResponse.SC_FORBIDDEN,
                             "{\"error\":\"You do not have access to this project\"}");
@@ -148,6 +158,18 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
                 ? projectAccessService.hasProjectAccess(projectId, userId, email)
                 : projectAccessService.hasProjectAccess(projectId, email);
         return !hasAccess && (requireJwt || projectAccessService.projectExists(projectId));
+    }
+
+    private static String uploadOwnerEmail(HttpServletRequest request, String method, String path) {
+        if (!HttpMethod.POST.matches(method) || !path.contains("/api/ontology/upload/")) {
+            return null;
+        }
+        String owner = request.getParameter("ownerEmail");
+        return owner == null || owner.isBlank() ? null : owner.trim();
+    }
+
+    private boolean isNewProjectUpload(String uploadOwner, String projectId) {
+        return uploadOwner != null && !projectAccessService.projectExists(projectId);
     }
 
     private String assistantSessionProjectId(String path) {

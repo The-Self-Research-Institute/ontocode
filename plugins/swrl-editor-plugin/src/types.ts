@@ -1,13 +1,38 @@
 export interface SwrlRule {
   id: string;
-  projectId: string;
+  projectId?: string;
   ruleName: string;
   ruleText: string;
-  comment?: string;
-  category?: string;
+  comment?: string | null;
+  category?: string | null;
   enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
+  source?: string | null;
+  readOnly?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface UnmigratedRule {
+  id?: string;
+  ruleName: string;
+  ruleText?: string;
+  error?: string;
+}
+
+export interface RulesListResponse {
+  rules: SwrlRule[];
+  unmigrated?: UnmigratedRule[];
+}
+
+export interface RuleWriteErrorBody {
+  errors?: string[];
+  suggestions?: string[];
+  message?: string;
+}
+
+export interface ExportCheckResponse {
+  disabledRules: { id: string; ruleName: string }[];
+  warning?: string;
 }
 
 export interface PagedResponse<T> {
@@ -67,6 +92,12 @@ export interface InferredAxiom {
   axiomType: string;
   description: string;
   readable: string;
+  category?: 'conclusion' | 'structure';
+  subjectIri?: string | null;
+  predicateIri?: string | null;
+  objectIri?: string | null;
+  objectLiteral?: string | null;
+  literalDatatypeIri?: string | null;
 }
 
 export interface ExecutionResponse {
@@ -78,6 +109,29 @@ export interface ExecutionResponse {
   errorMessage: string | null;
   executedRuleNames?: string[]; // Names of rules that were actually executed
   executionMode?: 'all' | 'selected'; // Indicates if all rules or selected rules were executed
+  stamp?: { ontologyRevision: string; draftVersion: string; rulesFingerprint: string } | null;
+  conclusionCount?: number;
+  status?: string;
+  statusLabel?: string;
+  message?: string;
+  limitations?: string[];
+  consistencyStatement?: string;
+  rounds?: number;
+  snapshotId?: string;
+  engineVersions?: Record<string, string>;
+  structureCount?: number;
+  omittedTrivialCount?: number;
+  truncated?: boolean;
+  runId?: string;
+  counts?: { conclusions: number; structure: number; omittedTrivial?: number };
+}
+
+export interface AxiomsPageResponse {
+  axioms: InferredAxiom[];
+  total: number;
+  offset: number;
+  limit: number;
+  kind: string;
 }
 
 export interface PluginContext {
@@ -89,4 +143,24 @@ export interface SQWRLResult {
   columns: string[];
   rows: Record<string, any>[];
   executionTimeMs?: number;
+}
+
+export interface SqwrlQueryResponse {
+  success: boolean;
+  columnNames: string[];
+  rows: Record<string, any>[];
+  rowCount: number;
+  executionTimeMs: number;
+  errorMessage?: string;
+  totalRows?: number;
+  totalRowsExact?: boolean;
+  truncated?: boolean;
+  rowLimit?: number;
+  bytesCapped?: boolean;
+  runId?: string;
+  storedRows?: number;
+  filteredRows?: number;
+  pageSize?: number;
+  nextOffset?: number;
+  pageBytesCapped?: boolean;
 }

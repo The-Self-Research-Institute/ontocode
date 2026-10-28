@@ -128,11 +128,49 @@ describe("SWRL editor", () => {
     }));
     await act(async () => root.render(<SWRLEditor projectId="p1" />));
     await wait(100);
-    const count = () => urls.filter((url) => url.includes("/api/swrl/p1/rules") && !url.includes("/rules/")).length;
+    const count = () => urls.filter((url) => url.includes("/api/ontology/p1/rules") && !url.includes("/rules/")).length;
     const before = count();
     expect(before).toBeGreaterThan(0);
     window.dispatchEvent(new CustomEvent("ontologyRollback", { detail: { projectId: "p1" } }));
     await wait(700);
     expect(count()).toBeGreaterThan(before);
+  });
+  it("shows a renamed rule in the list and header and sends the new name", async () => {
+    const rule = { id: "r1", ruleName: "Old name", ruleText: "Patient(?p) -> Senior(?p)", comment: "", category: "", enabled: true };
+    const puts: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: any) => {
+      const u = String(url);
+      const reply = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+      if (init?.method === "PUT") {
+        const body = JSON.parse(init.body);
+        puts.push({ url: u, body });
+        return reply({ ...rule, ruleName: body.ruleName });
+      }
+      if (u.endsWith("/api/ontology/p1/rules")) return reply({ rules: [rule] });
+      return reply({});
+    }));
+    await act(async () => root.render(<SWRLEditor projectId="p1" />));
+    await wait(100);
+    const row = Array.from(host.querySelectorAll("span")).find((el) => el.textContent === "Old name") as HTMLElement;
+    await act(async () => row.click());
+    const edit = Array.from(host.querySelectorAll("button")).find((el) => el.textContent?.trim() === "Edit") as HTMLButtonElement;
+    await act(async () => edit.click());
+    const input = host.querySelector('input[placeholder="Enter rule name"]') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "New name");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const update = Array.from(host.querySelectorAll("button")).find((el) => el.textContent?.trim() === "Update") as HTMLButtonElement;
+    expect(update.disabled).toBe(false);
+    await act(async () => update.click());
+    await wait(50);
+    expect(puts.length).toBe(1);
+    expect(puts[0].url).toContain("/api/ontology/p1/rules/r1");
+    expect(puts[0].body.ruleName).toBe("New name");
+    const names = Array.from(host.querySelectorAll("span")).map((el) => el.textContent);
+    expect(names).toContain("New name");
+    expect(names).not.toContain("Old name");
+    expect((host.querySelector('input[placeholder="Enter rule name"]') as HTMLInputElement).value).toBe("New name");
   });
 });

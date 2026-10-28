@@ -39,6 +39,37 @@ public class OntologyHistoryService {
     @Lazy
     private ExactCoverService exactCoverService;
 
+    public java.util.List<String> draftChangeSetIds(String projectId, String userId) {
+        return historySyncService == null ? java.util.List.of() : historySyncService.draftChangeSetIds(projectId, userId);
+    }
+
+    public void tagPrPublishedRows(String projectId, java.util.List<String> changeSetIds, String prId,
+                                   String authorId, java.time.LocalDateTime since) {
+        if (historySyncService != null) {
+            historySyncService.tagRowsOfPr(projectId, changeSetIds, prId);
+            historySyncService.tagUnlinkedRows(projectId, authorId, since,
+                    java.time.LocalDateTime.now(java.time.ZoneOffset.UTC).plusSeconds(5), prId);
+        }
+    }
+
+    public void markChangeSetsPublished(String projectId, java.util.List<String> changeSetIds) {
+        if (historySyncService != null) {
+            historySyncService.markChangeSetsPublished(projectId, changeSetIds);
+        }
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId, java.util.Collection<String> keepChangeSetIds) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsDiscarded(projectId, userId, keepChangeSetIds);
+        }
+    }
+
+    public void markDraftHistoryDiscarded(String projectId, String userId) {
+        if (historySyncService != null) {
+            historySyncService.markDraftsDiscarded(projectId, userId);
+        }
+    }
+
     public Set<String> markDraftHistoryPublished(String projectId, String userId) {
         if (historySyncService == null) {
             return Set.of();
@@ -121,8 +152,11 @@ public class OntologyHistoryService {
                 changeData.put("changeSetId", origin.changeSetId());
                 changeData.put("source", origin.source());
                 if (origin.ai() != null) changeData.put("ai", origin.ai());
+                if (origin.toolSource() != null) changeData.put("toolSource", origin.toolSource());
+                if (origin.toolLabel() != null) changeData.put("toolLabel", origin.toolLabel());
                 if (origin.revertsChangeSetId() != null) changeData.put("revertsChangeSetId", origin.revertsChangeSetId());
                 if (origin.rollbackAuditId() != null) changeData.put("rollbackAuditId", origin.rollbackAuditId());
+                if (origin.batch() != null && !origin.batch().isEmpty()) changeData.put("batch", origin.batch());
                 if (origin.exact() != null) origin.exact().stamp(changeData, editId);
             }
 
@@ -185,6 +219,8 @@ public class OntologyHistoryService {
 
     private static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
     private static final String RDFS_SUBPROPERTYOF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
+    private static final String RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain";
+    private static final String RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range";
     private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
     private static final String OWL_DISJOINT_WITH = "http://www.w3.org/2002/07/owl#disjointWith";
 
@@ -199,8 +235,14 @@ public class OntologyHistoryService {
     public String recordGroupedMutations(String projectId, String userId, String username,
                                         List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> ops,
                                         boolean draft) {
+        return recordGroupedMutations(projectId, userId, username, ops, draft, ChangeOrigin.manual());
+    }
+
+    public String recordGroupedMutations(String projectId, String userId, String username,
+                                        List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> ops,
+                                        boolean draft, ChangeOrigin origin) {
         if (ops == null || ops.isEmpty()) { return null; }
-        ChangeOrigin origin = ChangeOrigin.manual();
+        if (origin == null) { origin = ChangeOrigin.manual(); }
         Map<String, List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp>> byIri = new LinkedHashMap<>();
         for (self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op : ops) {
             if (op.iri() == null) {
@@ -316,6 +358,15 @@ public class OntologyHistoryService {
             case "addSubPropertyOf", "deleteSubPropertyOf" -> {
                 sc.put("predicate", RDFS_SUBPROPERTYOF);
                 sc.put(addition ? "newValue" : "oldValue", op.target());
+            }
+            case "addPropertyDomain", "deletePropertyDomain", "addPropertyRange", "deletePropertyRange" -> {
+                String plain = op.target() != null && !op.target().isBlank() ? op.target() : op.value();
+                boolean restriction = op.restrictionType() != null && !op.restrictionType().isBlank();
+                if (restriction || plain == null || plain.isBlank()) {
+                    return null;
+                }
+                sc.put("predicate", type.endsWith("Domain") ? RDFS_DOMAIN : RDFS_RANGE);
+                sc.put(addition ? "newValue" : "oldValue", plain);
             }
             case "addClassAssertion", "removeClassAssertion" -> {
                 sc.put("predicate", RDF_TYPE);

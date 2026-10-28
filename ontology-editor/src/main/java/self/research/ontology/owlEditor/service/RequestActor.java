@@ -5,7 +5,16 @@ import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 public record RequestActor(String userId, String username) {
 
+    private static volatile boolean desktopIdentity;
+
+    public static void useDesktopIdentity(boolean enabled) {
+        desktopIdentity = enabled;
+    }
+
     public static RequestActor of(HttpServletRequest request, String userIdParam, String usernameParam) {
+        if (desktopIdentity) {
+            return new RequestActor(JwtIdentityExtractor.DESKTOP_USER, displayName(request, usernameParam));
+        }
         String verified = request == null ? null : JwtIdentityExtractor.extractEmail(request).orElse(null);
         String userId = verified != null ? verified : blank(userIdParam) ? "anonymous" : userIdParam;
         String username = displayName(request, usernameParam);
@@ -21,6 +30,9 @@ public record RequestActor(String userId, String username) {
     }
 
     public static String userIdOr(HttpServletRequest request, String given) {
+        if (desktopIdentity) {
+            return JwtIdentityExtractor.DESKTOP_USER;
+        }
         if (!blank(given) || request == null) {
             return given;
         }
@@ -36,6 +48,9 @@ public record RequestActor(String userId, String username) {
     }
 
     public static String recordedId(HttpServletRequest request, String given, boolean draft) {
+        if (desktopIdentity && !draft) {
+            return JwtIdentityExtractor.DESKTOP_USER;
+        }
         return draft || request == null ? given : JwtIdentityExtractor.extractEmail(request).orElse(given);
     }
 

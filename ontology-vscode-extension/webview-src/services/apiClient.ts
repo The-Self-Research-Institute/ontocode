@@ -5,6 +5,7 @@ import { isDesktop } from '../utils/desktop';
 import { resolveMutationUserId } from '../utils/mutationActor';
 import { isTrustedMessage } from '../utils/trustedMessage';
 import { postToSelf } from '../utils/selfMessage';
+import { announceOntologyHeaderWrite } from '../utils/ontologyHeaderWrite';
 
 // Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
@@ -428,7 +429,7 @@ class ApiClient {
       const resp = await this.axiosClient!.post(url, body, postConfig);
       data = resp.data as T;
     }
-    return data;
+    return announceOntologyHeaderWrite(url, data);
   }
 
   async put<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
@@ -439,7 +440,7 @@ class ApiClient {
       const resp = await this.axiosClient!.put(url, body, config);
       data = resp.data as T;
     }
-    return data;
+    return announceOntologyHeaderWrite(url, data);
   }
 
   async patch<T = any>(url: string, body?: any, config?: AxiosRequestConfig): Promise<T> {
@@ -465,7 +466,7 @@ class ApiClient {
       data = resp.data as T;
     }
     console.log(data, url);
-    return data;
+    return announceOntologyHeaderWrite(url, data);
   }
 }
 

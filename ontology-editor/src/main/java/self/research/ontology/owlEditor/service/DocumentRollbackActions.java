@@ -8,27 +8,26 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
 import org.springframework.web.client.RestTemplate;
-import self.research.ontology.common.security.InternalToken;
 
 @Slf4j
 @Component
 public class DocumentRollbackActions implements RollbackActionRunner {
 
+    public static final String SAVED_RULES_MOVED = "Saved rules moved into the ontology; undo from the rule list";
+
+    public static boolean isRetired(RollbackAction action) {
+        return action != null && DocumentStore.SWRL_RULE.key().equals(action.store());
+    }
+
     private final MongoTemplate mongoTemplate;
     private final String swrlServiceUrl;
-    private final String internalToken;
     private final RestTemplate restTemplate;
 
     public DocumentRollbackActions(MongoTemplate mongoTemplate,
-                                   @Value("${ontocode.swrl.service.url:http://localhost:8084}") String swrlServiceUrl,
-                                   @Value("${ontocode.internal.token:ontocode-internal}") String internalToken) {
+                                   @Value("${ontocode.swrl.service.url:http://localhost:8084}") String swrlServiceUrl) {
         this.mongoTemplate = mongoTemplate;
         this.swrlServiceUrl = swrlServiceUrl;
-        this.internalToken = internalToken;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(2_000);
         factory.setReadTimeout(4_000);
@@ -37,6 +36,9 @@ public class DocumentRollbackActions implements RollbackActionRunner {
 
     @Override
     public void run(String projectId, RollbackAction action, boolean draft, String draftOwner) {
+        if (isRetired(action)) {
+            throw new IllegalStateException(SAVED_RULES_MOVED);
+        }
         DocumentStore store = requireStore(action);
         Object id = identity(action);
         if (action.document() != null && !projectId.equals(Document.parse(action.document()).getString("projectId"))) {
@@ -48,13 +50,13 @@ public class DocumentRollbackActions implements RollbackActionRunner {
         } else {
             collection.replaceOne(Filters.eq("_id", id), Document.parse(action.document()), new ReplaceOptions().upsert(true));
         }
-        if (store == DocumentStore.SWRL_RULE) {
-            clearSwrlCache(projectId);
-        }
     }
 
     @Override
     public boolean holds(String projectId, RollbackAction action, boolean draft, String draftOwner) {
+        if (isRetired(action)) {
+            return false;
+        }
         DocumentStore store = DocumentStore.find(action.store());
         if (store == null) {
             return false;
@@ -88,16 +90,5 @@ public class DocumentRollbackActions implements RollbackActionRunner {
             throw new IllegalArgumentException("A document action needs a before or after state");
         }
         return Document.parse(json).get("_id");
-    }
-
-    private void clearSwrlCache(String projectId) {
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.set(InternalToken.HEADER, internalToken);
-            restTemplate.exchange(swrlServiceUrl + "/api/swrl/" + projectId + "/cache/clear", HttpMethod.POST,
-                    new HttpEntity<>(headers), String.class);
-        } catch (RuntimeException e) {
-            log.warn("[UNDO] Could not clear the SWRL engine cache for {}: {}", projectId, e.getMessage());
-        }
     }
 }

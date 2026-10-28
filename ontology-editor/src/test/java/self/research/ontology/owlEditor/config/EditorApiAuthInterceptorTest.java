@@ -234,6 +234,45 @@ class EditorApiAuthInterceptorTest {
                 new MockHttpServletResponse(), new Object()));
     }
 
+    private MockHttpServletRequest ownerUpload(String projectId, String ownerEmail, String tokenEmail, boolean admin) {
+        MockHttpServletRequest upload = new MockHttpServletRequest("POST", "/api/ontology/upload/" + projectId);
+        upload.setRemoteAddr("10.0.0.5");
+        upload.setParameter("ownerEmail", ownerEmail);
+        upload.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("projectId", projectId));
+        if (tokenEmail != null) {
+            upload.addHeader("Authorization", "Bearer "
+                    + Jwts.builder().subject(tokenEmail).claim("isAdmin", admin).signWith(key).compact());
+        }
+        return upload;
+    }
+
+    @Test
+    void ownerUploadWithoutATokenIsRefusedWhenJwtIsRequired() throws Exception {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(ownerUpload("p1", "a@x.com", null, false), response, new Object()));
+        assertEquals(401, response.getStatus());
+    }
+
+    @Test
+    void ownerUploadWithAForgedTokenIsRefused() throws Exception {
+        MockHttpServletRequest upload = ownerUpload("p1", "a@x.com", null, false);
+        upload.addHeader("Authorization", "Bearer "
+                + Jwts.builder().subject("a@x.com").signWith(Jwts.SIG.HS256.key().build()).compact());
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(upload, response, new Object()));
+        assertEquals(401, response.getStatus());
+    }
+
+    @Test
+    void ownerUploadOfANewProjectForTheTokenUserIsAllowed() throws Exception {
+        when(projectAccessService.projectExists("fresh")).thenReturn(false);
+
+        assertTrue(interceptor.preHandle(ownerUpload("fresh", "a@x.com", "A@x.com", false),
+                new MockHttpServletResponse(), new Object()));
+    }
+
     @Test
     void aJobOfAnotherProjectIsForbiddenEvenWhenThePathProjectIsTheCallers() throws Exception {
         when(jobProjectResolver.projectIdOf("/api/ontology/proj-mine/reasoner/jobs/j1"))
@@ -248,5 +287,41 @@ class EditorApiAuthInterceptorTest {
 
         assertFalse(allowed);
         assertEquals(403, response.getStatus());
+    }
+
+    @Test
+    void ownerUploadOnBehalfOfSomeoneElseIsForbidden() throws Exception {
+        when(projectAccessService.projectExists("fresh")).thenReturn(false);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(ownerUpload("fresh", "victim@x.com", "a@x.com", false), response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
+
+    @Test
+    void adminMayUploadOnBehalfOfSomeoneElse() throws Exception {
+        when(projectAccessService.projectExists("fresh")).thenReturn(false);
+
+        assertTrue(interceptor.preHandle(ownerUpload("fresh", "user@x.com", "admin@x.com", true),
+                new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
+    void ownerUploadIntoAnExistingProjectWithoutAccessIsForbidden() throws Exception {
+        when(projectAccessService.projectExists("taken")).thenReturn(true);
+        when(projectAccessService.hasProjectAccess("taken", "a@x.com")).thenReturn(false);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(ownerUpload("taken", "a@x.com", "a@x.com", false), response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
+
+    @Test
+    void desktopLoopbackOwnerUploadNeedsNoToken() throws Exception {
+        ReflectionTestUtils.setField(interceptor, "desktopMode", true);
+        MockHttpServletRequest upload = ownerUpload("p1", "a@x.com", null, false);
+        upload.setRemoteAddr("127.0.0.1");
+
+        assertTrue(interceptor.preHandle(upload, new MockHttpServletResponse(), new Object()));
     }
 }

@@ -47,6 +47,7 @@ class DLQueryDraftOwnerTest {
         controller = new DLQueryController();
         ReflectionTestUtils.setField(controller, "dlQueryService", dlQueryService);
         ReflectionTestUtils.setField(controller, "dlQueryQueueManager", queueManager);
+        ReflectionTestUtils.setField(controller, "jobAccess", JobAccessTestSupport.desktopJobAccess());
     }
 
     @AfterEach
@@ -77,7 +78,7 @@ class DLQueryDraftOwnerTest {
     void directDraftQueryNeverReadsAnotherUsersDraft() throws Exception {
         requestAsUserBForUserADraft();
 
-        controller.executeDLQuery("p1", query(), caller);
+        controller.executeDLQuery("p1", query(), caller, JobAccessTestSupport.desktopRequest());
 
         verify(dlQueryService).executeQuery(eq("p1"), eq("Location"), anyList(), eq("user-b"));
         verify(dlQueryService, never()).executeQuery(anyString(), anyString(), any(), eq("user-a"));
@@ -94,13 +95,13 @@ class DLQueryDraftOwnerTest {
         ReflectionTestUtils.setField(controller, "reasonerWorkerEnabled", true);
 
         requestAsUserBForUserADraft();
-        controller.executeDLQuery("p1", query(), caller);
+        controller.executeDLQuery("p1", query(), caller, JobAccessTestSupport.desktopRequest());
         verify(worker).submitJob(eq("DL_QUERY"), eq("p1"), eq("Location"), any(), isNull(), eq("user-b"));
         verify(worker, never()).submitJob(anyString(), anyString(), anyString(), any(), any(), eq("user-a"));
         verify(dlQueryService, never()).executeQuery(anyString(), anyString(), any(), any());
 
         SparqlQueryContext.clear();
-        controller.executeDLQuery("p1", query(), caller);
+        controller.executeDLQuery("p1", query(), caller, JobAccessTestSupport.desktopRequest());
         verify(worker).submitJob(eq("DL_QUERY"), eq("p1"), eq("Location"), any(), isNull(), isNull());
     }
 
@@ -111,7 +112,7 @@ class DLQueryDraftOwnerTest {
         when(queueManager.enqueue(anyString(), anyString(), any(), any(), any())).thenReturn(job);
         requestAsUserBForUserADraft();
 
-        controller.executeDLQuery("p1", query(), caller);
+        controller.executeDLQuery("p1", query(), caller, JobAccessTestSupport.desktopRequest());
 
         verify(queueManager).enqueue(eq("p1"), eq("Location"), anyList(), any(), eq("user-b"));
         verify(queueManager, never()).enqueue(anyString(), anyString(), any(), any(), eq("user-a"));

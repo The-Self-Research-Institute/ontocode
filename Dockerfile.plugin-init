@@ -106,7 +106,24 @@ COPY plugins/reasoner-plugin/ ./
 RUN npm run build
 
 # -----------------------------------------------------------------------------
-# Stage 7: Final runtime - Install plugins to MongoDB
+# Stage 7: Build spreadsheet-import-plugin
+# -----------------------------------------------------------------------------
+FROM node:21-alpine AS build-spreadsheet-import
+WORKDIR /build
+COPY plugins/spreadsheet-import-plugin/package*.json ./
+RUN --mount=type=cache,id=npm-spreadsheet-import,target=/root/.npm \
+    npm config set fetch-retries 30 && \
+    npm config set fetch-retry-mintimeout 30000 && \
+    npm config set fetch-retry-maxtimeout 600000 && \
+    npm config set fetch-timeout 600000 && \
+    npm config set maxsockets 3 && \
+    npm config set prefer-online true && \
+    npm install --prefer-online
+COPY plugins/spreadsheet-import-plugin/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 8: Final runtime - Install plugins to MongoDB
 # -----------------------------------------------------------------------------
 FROM node:21-alpine
 WORKDIR /app
@@ -135,6 +152,7 @@ COPY --from=build-graph-view /build/dist/index.js ./plugins/graph-view-plugin/di
 COPY --from=build-swrl-editor /build/dist/index.js ./plugins/swrl-editor-plugin/dist/index.js
 COPY --from=build-sparql-query /build/dist/index.js ./plugins/sparql-query-plugin/dist/index.js
 COPY --from=build-reasoner /build/dist/index.js ./plugins/reasoner-plugin/dist/index.js
+COPY --from=build-spreadsheet-import /build/dist/index.js ./plugins/spreadsheet-import-plugin/dist/index.js
 
 # Wait for MongoDB, then install plugins using unified script
 CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && echo 'Installing plugins...' && node manage-plugins.js install && echo 'Plugin initialization complete!'"]
