@@ -15,6 +15,7 @@ import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
 import self.research.ontology.owlEditor.service.JobAccess;
 import self.research.ontology.owlEditor.service.JobOwnerRegistry;
 import self.research.ontology.owlEditor.service.ProjectAccessService;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.service.RuleRunAccess;
 import self.research.ontology.owlEditor.service.RuleRunStore;
 
@@ -52,12 +53,14 @@ class WebSocketAuthChannelInterceptorTest {
         when(projects.hasProjectAccess(anyString(), anyString())).thenReturn(false);
         when(projects.hasProjectAccess(eq("p1"), eq("ann@x.org"))).thenReturn(true);
         when(projects.hasProjectAccess(eq("p1"), eq("bob@x.org"))).thenReturn(true);
+        when(projects.hasProjectAccess(eq("p1"), eq("u-ann"), eq("ann@x.org"))).thenReturn(true);
+        when(projects.hasProjectAccess(eq("p1"), eq("u-bob"), eq("bob@x.org"))).thenReturn(true);
         registry = new JobOwnerRegistry();
         runs = new RuleRunStore(Clock.systemUTC(), Duration.ofMinutes(15), 5, 50, 1000, 1000);
         groups = mock(AssistantEditGroupRepository.class);
         JobAccess jobAccess = new JobAccess(new RuleRunAccess(projects, false), registry, projects);
-        interceptor = new WebSocketAuthChannelInterceptor(jobAccess, projects, runs, groups);
-        ReflectionTestUtils.setField(interceptor, "jwtSecret", Encoders.BASE64.encode(key.getEncoded()));
+        interceptor = new WebSocketAuthChannelInterceptor(new JwtVerifier(Encoders.BASE64.encode(key.getEncoded())),
+                new ProjectAuthorization(projects, false), jobAccess, projects, runs, groups);
         ReflectionTestUtils.setField(interceptor, "requireJwt", true);
         ReflectionTestUtils.setField(interceptor, "desktopMode", false);
     }
@@ -109,6 +112,7 @@ class WebSocketAuthChannelInterceptorTest {
         assertEquals("PRO", attrs.get("plan"));
         assertEquals("u-ann", attrs.get("userId"));
         assertEquals("ann@x.org", attrs.get("username"));
+        assertEquals("ann@x.org", attrs.get("email"));
     }
 
     @Test
@@ -120,6 +124,17 @@ class WebSocketAuthChannelInterceptorTest {
 
         assertEquals("ann@x.org", StompHeaderAccessor.wrap(result).getUser().getName());
         assertEquals("FREE", attrs.get("plan"));
+    }
+
+    @Test
+    void tokenWithoutUserIdConnectsOnAMapThatRejectsNulls() {
+        Map<String, Object> attrs = new java.util.concurrent.ConcurrentHashMap<>();
+        String noUserId = Jwts.builder().subject("ann@x.org").signWith(key).compact();
+
+        assertNotNull(connect(attrs, "Bearer " + noUserId));
+
+        assertTrue(!attrs.containsKey("userId"));
+        assertEquals("ann@x.org", attrs.get("email"));
     }
 
     @Test
@@ -170,16 +185,13 @@ class WebSocketAuthChannelInterceptorTest {
     }
 
     @Test
-    void forgedTokenIsNotTrustedWhenJwtIsNotRequired() {
+    void forgedTokenIsRefusedEvenWhenJwtIsNotRequired() {
         ReflectionTestUtils.setField(interceptor, "requireJwt", false);
         Map<String, Object> attrs = new HashMap<>();
         String forged = Jwts.builder().subject("ann@x.org").claim("userId", "u-ann")
                 .signWith(Jwts.SIG.HS256.key().build()).compact();
 
-        Message<?> result = connect(attrs, "Bearer " + forged);
-
-        assertNotNull(result);
-        assertNull(StompHeaderAccessor.wrap(result).getUser());
+        assertThrows(MessageDeliveryException.class, () -> connect(attrs, "Bearer " + forged));
         assertTrue(attrs.isEmpty());
     }
 
@@ -289,13 +301,50 @@ class WebSocketAuthChannelInterceptorTest {
         assertTrue(subscribe(attrs, "/topic/ontology/p1"));
     }
 
-    @Test
-    void sendFramesAreNotTouched() {
+    private Message<?> send(Map<String, Object> attrs, String destination) {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SEND);
-        accessor.setDestination("/app/collab/p1/edit");
+        accessor.setDestination(destination);
+        accessor.setSessionAttributes(attrs);
         accessor.setLeaveMutable(true);
         Message<byte[]> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+        Message<?> result = interceptor.preSend(message, null);
+        assertEquals(message, result);
+        return result;
+    }
 
-        assertEquals(message, interceptor.preSend(message, null));
+    @Test
+    void sendFramesOfAProjectMemberAreNotTouched() {
+        send(connected("ann@x.org", "u-ann"), "/app/collab/p1/edit");
+    }
+
+    @Test
+    void sendingAnEditToAProjectNeedsAccessToIt() {
+        assertThrows(MessageDeliveryException.class, () -> send(connected("eve@x.org", "u-eve"), "/app/collab/p1/edit"));
+        assertThrows(MessageDeliveryException.class, () -> send(new HashMap<>(), "/app/collab/p1/edit"));
+    }
+
+    @Test
+    void aClientCannotPublishStraightToATopic() {
+        ReflectionTestUtils.setField(interceptor, "requireJwt", false);
+
+        assertThrows(MessageDeliveryException.class, () -> send(connected("ann@x.org", "u-ann"), "/topic/ontology/p1"));
+    }
+
+    @Test
+    void subscriptionPatternsThatCouldMatchOtherProjectsAreRefused() {
+        Map<String, Object> ann = connected("ann@x.org", "u-ann");
+
+        for (String topic : List.of("/topic/**", "/topic/*/p1", "/topic/ontology/*", "/topic/ontology/{id}", "/topic/?")) {
+            assertTrue(!subscribe(ann, topic), topic);
+        }
+    }
+
+    @Test
+    void sessionAttributesNotSetByAVerifiedConnectDoNotCountAsSignedIn() {
+        Map<String, Object> claimed = new HashMap<>();
+        claimed.put("userId", "u-ann");
+        claimed.put("email", "ann@x.org");
+
+        assertTrue(!subscribe(claimed, "/topic/ontology/p1"));
     }
 }

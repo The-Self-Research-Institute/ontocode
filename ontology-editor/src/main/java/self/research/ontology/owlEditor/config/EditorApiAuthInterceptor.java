@@ -13,6 +13,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.HandlerMapping;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
+import self.research.ontology.owlEditor.service.JobProjectResolver;
 import self.research.ontology.owlEditor.service.ProjectAccessService;
 
 import java.util.List;
@@ -33,18 +34,22 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
 
     private static final String ASSISTANT_SESSION_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/**";
     public static final String VERIFIED_EMAIL_ATTRIBUTE = "jwtEmail";
+    public static final String VERIFIED_USER_ID_ATTRIBUTE = "jwtUserId";
 
     private final ProjectAccessService projectAccessService;
     private final AssistantSessionRepository assistantSessionRepository;
+    private final JwtVerifier jwtVerifier;
+    private final JobProjectResolver jobProjectResolver;
 
     public EditorApiAuthInterceptor(ProjectAccessService projectAccessService,
-                                    AssistantSessionRepository assistantSessionRepository) {
+                                    AssistantSessionRepository assistantSessionRepository,
+                                    JwtVerifier jwtVerifier,
+                                    JobProjectResolver jobProjectResolver) {
         this.projectAccessService = projectAccessService;
         this.assistantSessionRepository = assistantSessionRepository;
+        this.jwtVerifier = jwtVerifier;
+        this.jobProjectResolver = jobProjectResolver;
     }
-
-    @Value("${jwt.secret:}")
-    private String jwtSecret;
 
     @Value("${ontocode.editor.require-jwt:false}")
     private boolean requireJwt;
@@ -55,7 +60,7 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        if (jwtSecret == null || jwtSecret.isBlank()) {
+        if (!jwtVerifier.configured()) {
             return true;
         }
 
@@ -85,9 +90,14 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
 
         try {
-            Claims claims = EditorJwtVerifier.verify(jwtSecret, authHeader.substring(7));
+            Claims claims = jwtVerifier.verify(authHeader);
             String jwtEmail = claims.getSubject();
+            Object userIdClaim = claims.get("userId");
+            String jwtUserId = userIdClaim == null || userIdClaim.toString().isBlank() ? null : userIdClaim.toString();
             request.setAttribute(VERIFIED_EMAIL_ATTRIBUTE, jwtEmail);
+            if (jwtUserId != null) {
+                request.setAttribute(VERIFIED_USER_ID_ATTRIBUTE, jwtUserId);
+            }
 
             String uploadOwner = uploadOwnerEmail(request, method, path);
             if (uploadOwner != null && !uploadOwner.equalsIgnoreCase(jwtEmail)
@@ -102,13 +112,18 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             if (projectId == null) {
                 projectId = assistantSessionProjectId(path);
             }
-            if (projectId != null && !projectAccessService.hasProjectAccess(projectId, jwtEmail)
-                    && !isNewProjectUpload(uploadOwner, projectId)
-                    && (requireJwt || projectAccessService.projectExists(projectId))) {
-                log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
-                writeError(response, HttpServletResponse.SC_FORBIDDEN,
-                        "{\"error\":\"You do not have access to this project\"}");
-                return false;
+            String jobProjectId = jobProjectResolver.projectIdOf(path).orElse(null);
+            if (projectId == null) {
+                projectId = jobProjectId;
+            }
+            for (String scoped : new String[]{projectId, jobProjectId}) {
+                if (scoped != null && lacksAccess(scoped, jwtUserId, jwtEmail)
+                        && !(scoped.equals(projectId) && isNewProjectUpload(uploadOwner, scoped))) {
+                    log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, scoped);
+                    writeError(response, HttpServletResponse.SC_FORBIDDEN,
+                            "{\"error\":\"You do not have access to this project\"}");
+                    return false;
+                }
             }
 
             return true;
@@ -136,6 +151,13 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
             }
         }
         return false;
+    }
+
+    private boolean lacksAccess(String projectId, String userId, String email) {
+        boolean hasAccess = userId != null
+                ? projectAccessService.hasProjectAccess(projectId, userId, email)
+                : projectAccessService.hasProjectAccess(projectId, email);
+        return !hasAccess && (requireJwt || projectAccessService.projectExists(projectId));
     }
 
     private static String uploadOwnerEmail(HttpServletRequest request, String method, String path) {

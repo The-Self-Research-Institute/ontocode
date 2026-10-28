@@ -4,6 +4,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.config.CallerIdentity;
+import self.research.ontology.owlEditor.config.CallerUserId;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.model.DraftChange;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.DraftPullRequest;
@@ -18,7 +21,6 @@ import self.research.ontology.owlEditor.service.PrSnapshotService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
-import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
 import java.util.HashMap;
 import java.util.List;
@@ -41,34 +43,34 @@ public class DraftController {
     private final DraftPullRequestRepository prRepository;
     private final WorkspaceOwnershipService ownershipService;
     private final DraftPublishMergeService draftPublishMergeService;
+    private final ProjectAuthorization authorization;
 
     public DraftController(DraftTrackingService draftTrackingService,
                            DraftCopyService draftCopyService,
                            ProjectMetadataService metadataService,
                            DraftPullRequestRepository prRepository,
                            WorkspaceOwnershipService ownershipService,
-                           DraftPublishMergeService draftPublishMergeService) {
+                           DraftPublishMergeService draftPublishMergeService,
+                           ProjectAuthorization authorization) {
         this.draftTrackingService = draftTrackingService;
         this.draftCopyService = draftCopyService;
         this.metadataService = metadataService;
         this.prRepository = prRepository;
         this.ownershipService = ownershipService;
         this.draftPublishMergeService = draftPublishMergeService;
+        this.authorization = authorization;
     }
     
-    /**
-     * Record draft mutations (doesn't apply to GraphDB yet)
-     * POST /api/ontology/{projectId}/drafts
-     */
     @PostMapping("/{projectId}/drafts")
     public ResponseEntity<Map<String, Object>> recordDrafts(
             @PathVariable String projectId,
-            @RequestBody DraftRequest request) {
+            @RequestBody DraftRequest request,
+            @CallerUserId String callerId) {
         try {
             log.info("[DRAFT API] Recording {} draft operations for project {}", 
                 request.ops().size(), projectId);
             
-            String userId = request.userId() != null ? request.userId() : "anonymous";
+            String userId = callerId != null ? callerId : request.userId() != null ? request.userId() : "anonymous";
             String username = request.username() != null ? request.username() : "Anonymous";
             String sessionId = request.sessionId() != null ? request.sessionId() : 
                 java.util.UUID.randomUUID().toString();
@@ -92,14 +94,10 @@ public class DraftController {
         }
     }
     
-    /**
-     * Get all unapplied drafts for a project
-     * GET /api/ontology/{projectId}/drafts
-     */
     @GetMapping("/{projectId}/drafts")
     public ResponseEntity<Map<String, Object>> getDrafts(
             @PathVariable String projectId,
-            @RequestParam(required = false) String userId) {
+            @CallerUserId String userId) {
         try {
             List<DraftChange> drafts = (userId != null && !userId.isBlank())
                     ? draftTrackingService.getUnappliedDraftsForUser(projectId, userId)
@@ -121,14 +119,10 @@ public class DraftController {
         }
     }
     
-    /**
-     * Get draft statistics
-     * GET /api/ontology/{projectId}/drafts/stats
-     */
     @GetMapping("/{projectId}/drafts/stats")
     public ResponseEntity<Map<String, Object>> getDraftStats(
             @PathVariable String projectId,
-            @RequestParam(required = false) String userId) {
+            @CallerUserId String userId) {
         try {
             Map<String, Object> stats = draftTrackingService.getDraftStatistics(projectId, userId);
             stats.put("success", true);
@@ -145,14 +139,10 @@ public class DraftController {
         }
     }
     
-    /**
-     * Preview publish conflicts before save.
-     * GET /api/ontology/{projectId}/drafts/publish-preview?userId=...
-     */
     @GetMapping("/{projectId}/drafts/publish-preview")
     public ResponseEntity<Map<String, Object>> publishPreview(
             @PathVariable String projectId,
-            @RequestParam String userId,
+            @CallerUserId String userId,
             @RequestParam(required = false, defaultValue = "true") boolean axiomDetail) {
         try {
             DraftPublishAnalysis analysis = analyzeForPreview(projectId, userId, axiomDetail);
@@ -174,7 +164,7 @@ public class DraftController {
     @GetMapping("/{projectId}/drafts/full-diff")
     public ResponseEntity<Map<String, Object>> fullDiff(
             @PathVariable String projectId,
-            @RequestParam String userId) {
+            @CallerUserId String userId) {
         try {
             return ResponseEntity.ok(draftPublishMergeService.analyzePublish(projectId, userId));
         } catch (Exception e) {
@@ -186,27 +176,15 @@ public class DraftController {
         }
     }
 
-    /**
-     * Apply drafts to GraphDB (called during save)
-     * POST /api/ontology/{projectId}/drafts/apply?userId=...&force=false
-     */
     @PostMapping("/{projectId}/drafts/apply")
     public ResponseEntity<Map<String, Object>> applyDrafts(
             @PathVariable String projectId,
-            @RequestParam(required = false) String userId,
+            @CallerUserId String userId,
             @RequestParam(required = false, defaultValue = "false") boolean force,
             @RequestParam(required = false, defaultValue = "false") boolean merge,
-            @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody,
-            jakarta.servlet.http.HttpServletRequest httpRequest) {
+            @RequestBody(required = false) Map<String, Map<String, String>> resolutionsBody) {
         try {
-            String publisher = JwtIdentityExtractor.extractUserId(httpRequest).orElse(null);
-            if (publisher == null || publisher.isBlank()) {
-                return ResponseEntity.status(401).body(Map.of(
-                        "success", false,
-                        "error", "Sign in again to publish your draft"
-                ));
-            }
-            if (!ownershipService.canPublishToProject(publisher, projectId)) {
+            if (!ownershipService.canPublishToProject(userId, projectId)) {
                 return ResponseEntity.status(403).body(Map.of(
                         "success", false,
                         "error", "Only project owners, admins, or editors can publish drafts. Raise a pull request instead.",
@@ -214,7 +192,7 @@ public class DraftController {
                 ));
             }
             log.info("[DRAFT API] Applying drafts for project {} user {} (force={}, merge={})",
-                    projectId, publisher, force, merge);
+                    projectId, userId, force, merge);
 
             Map<String, ConflictResolution> resolutions = null;
             if (merge && resolutionsBody != null && !resolutionsBody.isEmpty()) {
@@ -232,7 +210,7 @@ public class DraftController {
             }
 
             DraftTrackingService.ApplyDraftsResult result =
-                draftTrackingService.applyDrafts(projectId, publisher, force, merge, resolutions);
+                draftTrackingService.applyDrafts(projectId, userId, force, merge, resolutions);
 
             if (result.isConflictBlocked()) {
                 Map<String, Object> body = new HashMap<>();
@@ -263,14 +241,10 @@ public class DraftController {
         }
     }
 
-    /**
-     * Discard unapplied drafts
-     * DELETE /api/ontology/{projectId}/drafts?userId=...
-     */
     @DeleteMapping("/{projectId}/drafts")
     public ResponseEntity<Map<String, Object>> discardDrafts(
             @PathVariable String projectId,
-            @RequestParam(required = false) String userId) {
+            @CallerUserId String userId) {
         try {
             log.info("[DRAFT API] Discarding drafts for project {} user {}", projectId, userId);
 
@@ -300,10 +274,6 @@ public class DraftController {
         }
     }
     
-    /**
-     * Clear applied drafts (cleanup)
-     * DELETE /api/ontology/{projectId}/drafts/applied
-     */
     @DeleteMapping("/{projectId}/drafts/applied")
     public ResponseEntity<Map<String, Object>> clearAppliedDrafts(@PathVariable String projectId) {
         try {
@@ -326,20 +296,14 @@ public class DraftController {
         }
     }
     
-    /**
-     * Initiate a copy-on-switch draft copy for a user.
-     * POST /api/ontology/{projectId}/draft/copy
-     * Body: { "userId": "..." }
-     *
-     * Returns 409 if an import is in progress; 200 with tripleCount + mainRevisionAtCopy otherwise.
-     * The actual copy runs asynchronously — poll /draft/copy/status until READY.
-     */
     @PostMapping("/{projectId}/draft/copy")
     public ResponseEntity<Map<String, Object>> initiateDraftCopy(
             @PathVariable String projectId,
-            @RequestBody DraftCopyRequest request) {
+            @RequestBody DraftCopyRequest request,
+            @CallerUserId String callerId) {
         try {
-            DraftCopyService.InitiateResult result = draftCopyService.initiateCopy(projectId, request.userId());
+            DraftCopyService.InitiateResult result =
+                    draftCopyService.initiateCopy(projectId, callerId != null ? callerId : request.userId());
             if (!result.accepted()) {
                 return ResponseEntity.status(409).body(Map.of(
                         "success", false,
@@ -357,16 +321,10 @@ public class DraftController {
         }
     }
 
-    /**
-     * Poll the status of an in-progress draft copy.
-     * GET /api/ontology/{projectId}/draft/copy/status?userId=...
-     *
-     * Returns: { "status": "COPYING" | "READY" | "FAILED" | "NOT_FOUND" }
-     */
     @GetMapping("/{projectId}/draft/copy/status")
     public ResponseEntity<Map<String, Object>> getDraftCopyStatus(
             @PathVariable String projectId,
-            @RequestParam String userId) {
+            @CallerUserId String userId) {
         DraftCopyStatus status = draftCopyService.getStatus(projectId, userId);
         return ResponseEntity.ok(Map.of(
                 "projectId", projectId,
@@ -375,17 +333,12 @@ public class DraftController {
         ));
     }
 
-    /**
-     * Read project draft settings (requireDraftForMembers).
-     * GET /api/ontology/{projectId}/draft/settings?userId=...
-     */
     @org.springframework.web.bind.annotation.GetMapping("/{projectId}/draft/settings")
     public ResponseEntity<Map<String, Object>> getDraftSettings(
             @PathVariable String projectId,
-            @RequestParam(required = false) String userId) {
+            CallerIdentity caller) {
         boolean requireDraft = metadataService.isRequireDraftForMembers(projectId);
-        String ownerEmail = metadataService.getOwnerEmail(projectId).orElse(null);
-        boolean isOwner = userId != null && userId.equals(ownerEmail);
+        boolean isOwner = authorization.notOwnerOf(caller, projectId).isEmpty();
         return ResponseEntity.ok(Map.of(
                 "projectId", projectId,
                 "requireDraftForMembers", requireDraft,
@@ -393,17 +346,12 @@ public class DraftController {
         ));
     }
 
-    /**
-     * Update requireDraftForMembers — owner only (caller must validate ownership).
-     * PUT /api/ontology/{projectId}/draft/settings
-     * Body: { "userId": "...", "requireDraftForMembers": true }
-     */
     @org.springframework.web.bind.annotation.PutMapping("/{projectId}/draft/settings")
     public ResponseEntity<Map<String, Object>> updateDraftSettings(
             @PathVariable String projectId,
-            @RequestBody DraftSettingsRequest request) {
-        String ownerEmail = metadataService.getOwnerEmail(projectId).orElse(null);
-        if (ownerEmail == null || !ownerEmail.equals(request.userId())) {
+            @RequestBody DraftSettingsRequest request,
+            CallerIdentity caller) {
+        if (authorization.notOwnerOf(caller, projectId).isPresent()) {
             return ResponseEntity.status(403).body(Map.of(
                     "success", false,
                     "error", "Only the project owner can change draft settings"
@@ -411,25 +359,18 @@ public class DraftController {
         }
         metadataService.setRequireDraftForMembers(projectId, request.requireDraftForMembers());
         log.info("[DRAFT SETTINGS] requireDraftForMembers={} for project {} by {}",
-                request.requireDraftForMembers(), projectId, request.userId());
+                request.requireDraftForMembers(), projectId, caller.userIdOr(request.userId()));
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "requireDraftForMembers", request.requireDraftForMembers()
         ));
     }
 
-    // -----------------------------------------------------------------------
-    // Pull-from-public: analyse differences and apply resolution
-    // -----------------------------------------------------------------------
 
-    /**
-     * Analyse differences between a user's draft and the current public state.
-     * POST /api/ontology/{projectId}/pull-from-public/analyze
-     */
     @PostMapping("/{projectId}/pull-from-public/analyze")
     public ResponseEntity<Map<String, Object>> analyzePublicDiff(
             @PathVariable String projectId,
-            @RequestParam String userId) {
+            @CallerUserId String userId) {
         try {
             Map<String, Object> analysis = draftPublishMergeService.analyzePull(projectId, userId);
             Map<String, Object> response = new HashMap<>(analysis);
@@ -442,17 +383,10 @@ public class DraftController {
         }
     }
 
-    /**
-     * Merge public changes into the caller's draft. Entities changed only on the public side
-     * are copied in automatically; entities also touched in the draft are resolved per the
-     * caller's choices.
-     * POST /api/ontology/{projectId}/pull-from-public/apply
-     * Body: { "resolutions": { "<iri>": "keep_draft"|"take_public"|"merge"|"keep_both"|"skip" } }
-     */
     @PostMapping("/{projectId}/pull-from-public/apply")
     public ResponseEntity<Map<String, Object>> applyPublicPull(
             @PathVariable String projectId,
-            @RequestParam String userId,
+            @CallerUserId String userId,
             @RequestBody(required = false) Map<String, Object> body) {
         try {
             @SuppressWarnings("unchecked")
@@ -490,25 +424,15 @@ public class DraftController {
         }
     }
 
-    // ── Draft Pull Requests ───────────────────────────────────────────────────
 
-    /**
-     * Raise a PR from the caller's current draft changes.
-     * POST /api/ontology/{projectId}/draft-prs
-     * Body: { "userId": "...", "username": "...", "title": "...", "description": "..." }
-     */
     @PostMapping("/{projectId}/draft-prs")
     public ResponseEntity<Map<String, Object>> raisePullRequest(
             @PathVariable String projectId,
             @RequestBody RaisePRRequest request,
-            jakarta.servlet.http.HttpServletRequest httpRequest) {
+            @CallerUserId String callerId) {
         java.util.concurrent.locks.ReentrantLock raiseLock = null;
         try {
-            VerifiedUser.Result caller = VerifiedUser.resolve(httpRequest, request.userId());
-            if (caller.denial() != null) {
-                return caller.denial();
-            }
-            String userId = caller.userId();
+            String userId = callerId != null ? callerId : request.userId();
             if (userId == null || userId.isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of("success", false, "error", "userId is required"));
             }
@@ -631,22 +555,14 @@ public class DraftController {
         }
     }
 
-    /**
-     * Approve a PR — merges the author's draft into the public ontology.
-     * POST /api/ontology/{projectId}/draft-prs/{prId}/approve
-     */
     @PostMapping("/{projectId}/draft-prs/{prId}/approve")
     public ResponseEntity<Map<String, Object>> approvePullRequest(
             @PathVariable String projectId,
             @PathVariable String prId,
             @RequestBody ReviewPRRequest request,
-            jakarta.servlet.http.HttpServletRequest httpRequest) {
+            @CallerUserId String callerId) {
         try {
-            VerifiedUser.Result caller = VerifiedUser.resolve(httpRequest, request.reviewerId());
-            if (caller.denial() != null) {
-                return caller.denial();
-            }
-            String reviewerId = caller.userId();
+            String reviewerId = callerId != null ? callerId : request.reviewerId();
             if (!ownershipService.canPublishToProject(reviewerId, projectId)) {
                 return ResponseEntity.status(403).body(Map.of(
                         "success", false,
@@ -724,22 +640,14 @@ public class DraftController {
         }
     }
 
-    /**
-     * Reject a PR — leaves the author's draft intact (they can revise and re-raise).
-     * POST /api/ontology/{projectId}/draft-prs/{prId}/reject
-     */
     @PostMapping("/{projectId}/draft-prs/{prId}/reject")
     public ResponseEntity<Map<String, Object>> rejectPullRequest(
             @PathVariable String projectId,
             @PathVariable String prId,
             @RequestBody ReviewPRRequest request,
-            jakarta.servlet.http.HttpServletRequest httpRequest) {
+            @CallerUserId String callerId) {
         try {
-            VerifiedUser.Result caller = VerifiedUser.resolve(httpRequest, request.reviewerId());
-            if (caller.denial() != null) {
-                return caller.denial();
-            }
-            String reviewerId = caller.userId();
+            String reviewerId = callerId != null ? callerId : request.reviewerId();
             if (!ownershipService.canPublishToProject(reviewerId, projectId)) {
                 return ResponseEntity.status(403).body(Map.of(
                         "success", false,
@@ -816,7 +724,6 @@ public class DraftController {
         }
     }
 
-    // Request DTOs
 
     public record DraftCopyRequest(String userId) {}
 

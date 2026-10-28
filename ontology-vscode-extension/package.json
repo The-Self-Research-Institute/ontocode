@@ -247,8 +247,9 @@
         "ontocode.zotero.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Citation library API key",
-          "markdownDescription": "Citation library API key used for reference lookup"
+          "description": "Deprecated. The key is now kept in secure storage and any value here is moved there and cleared.",
+          "markdownDescription": "Deprecated. The key is now kept in secure storage and any value here is moved there and cleared.",
+          "deprecationMessage": "Use the OntoCode Studio citation settings instead. This value is migrated to secure storage."
         },
         "ontocode.zotero.userId": {
           "type": "string",

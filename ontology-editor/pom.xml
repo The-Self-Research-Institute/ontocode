@@ -19,6 +19,7 @@
     <properties>
         <java.version>21</java.version>
         <rdf4j.version>4.3.7</rdf4j.version>
+        <mongock.version>5.5.1</mongock.version>
         <jena.version>6.1.0</jena.version>
         <owlapi.version>5.5.0</owlapi.version>
         <git.commit>unknown</git.commit>
@@ -61,6 +62,18 @@
             <artifactId>spring-boot-starter-data-mongodb</artifactId>
         </dependency>
         
+        <!-- Startup data migrations (runs once per database, also on the desktop's local Mongo) -->
+        <dependency>
+            <groupId>io.mongock</groupId>
+            <artifactId>mongock-springboot-v3</artifactId>
+            <version>${mongock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.mongock</groupId>
+            <artifactId>mongodb-springdata-v4-driver</artifactId>
+            <version>${mongock.version}</version>
+        </dependency>
+
         <!-- Mail -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

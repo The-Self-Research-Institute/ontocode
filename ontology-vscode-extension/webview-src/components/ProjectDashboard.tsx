@@ -962,8 +962,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
       confirmText: "Remove",
       onConfirm: async () => {
         try {
-          console.log("[ProjectDashboard] Removing active member:", member.email);
-          await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${member.email}`);
+          await apiClient.delete(`/api/workspaces/${user?.workspaceId}/members/${encodeURIComponent(member.id)}`);
           showToast(`${member.username} has been removed from the workspace successfully.`, "success");
           await loadData();
         } catch (error: any) {

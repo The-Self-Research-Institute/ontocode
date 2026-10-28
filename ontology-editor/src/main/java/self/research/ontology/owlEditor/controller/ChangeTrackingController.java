@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -226,6 +227,20 @@ public class ChangeTrackingController {
         }
     }
     
+    private static String reviewerId(CallerIdentity caller, Map<String, String> body) {
+        if (caller.signedIn()) {
+            return caller.userIdOr(caller.email());
+        }
+        return body == null ? "system" : body.getOrDefault("userId", "system");
+    }
+
+    private static String reviewerName(CallerIdentity caller, Map<String, String> body) {
+        if (caller.email() != null && !caller.email().isBlank()) {
+            return caller.email();
+        }
+        return body == null ? "System" : body.getOrDefault("username", "System");
+    }
+
     private static Set<String> viewerIds(jakarta.servlet.http.HttpServletRequest request, String requestedUserId) {
         Set<String> ids = new LinkedHashSet<>();
         String verified = self.research.ontology.owlEditor.util.JwtIdentityExtractor.extractEmail(request).orElse(null);
@@ -450,13 +465,12 @@ public class ChangeTrackingController {
     public ResponseEntity<Map<String, Object>> approveChange(
             @PathVariable String projectId,
             @PathVariable String changeId,
-            @RequestBody(required = false) Map<String, String> request
+            @RequestBody(required = false) Map<String, String> request,
+            CallerIdentity caller
     ) {
         try {
-            String userId = request != null ? request.getOrDefault("userId", "system") : "system";
-            String username = request != null ? request.getOrDefault("username", "System") : "System";
-            
-            boolean success = historySyncService.approveChange(changeId, userId, username);
+            boolean success = historySyncService.approveChange(projectId, changeId, reviewerId(caller, request),
+                    reviewerName(caller, request));
             
             if (success) {
                 return ResponseEntity.ok(Map.of(
@@ -487,13 +501,12 @@ public class ChangeTrackingController {
     public ResponseEntity<Map<String, Object>> rejectChange(
             @PathVariable String projectId,
             @PathVariable String changeId,
-            @RequestBody(required = false) Map<String, String> request
+            @RequestBody(required = false) Map<String, String> request,
+            CallerIdentity caller
     ) {
         try {
-            String userId = request != null ? request.getOrDefault("userId", "system") : "system";
-            String username = request != null ? request.getOrDefault("username", "System") : "System";
-            
-            boolean success = historySyncService.rejectChange(changeId, userId, username);
+            boolean success = historySyncService.rejectChange(projectId, changeId, reviewerId(caller, request),
+                    reviewerName(caller, request));
             
             if (success) {
                 return ResponseEntity.ok(Map.of(
@@ -699,7 +712,7 @@ public class ChangeTrackingController {
             String text = request.get("text") != null ? request.get("text").toString() : null;
             ChangeRollbackService.Actor actor = rollbackSupport.actor(httpRequest, request);
 
-            boolean success = historySyncService.addComment(
+            boolean success = historySyncService.addComment(projectId,
                     self.research.ontology.owlEditor.service.MergeFeedExpander.baseId(changeId), actor.userId(), actor.username(), text);
             
             if (success) {
@@ -732,15 +745,15 @@ public class ChangeTrackingController {
     public ResponseEntity<Map<String, Object>> resolveConflict(
             @PathVariable String projectId,
             @PathVariable String changeId,
-            @RequestBody Map<String, String> request
+            @RequestBody Map<String, String> request,
+            CallerIdentity caller
     ) {
         try {
             String resolution = request.get("resolution");
-            String userId = request.getOrDefault("userId", "system");
-            String username = request.getOrDefault("username", "System");
             String mergedValue = request.get("mergedValue");
 
-            boolean success = historySyncService.resolveConflict(changeId, userId, username, resolution, mergedValue);
+            boolean success = historySyncService.resolveConflict(projectId, changeId, reviewerId(caller, request),
+                    reviewerName(caller, request), resolution, mergedValue);
             
             if (success) {
                 return ResponseEntity.ok(Map.of(

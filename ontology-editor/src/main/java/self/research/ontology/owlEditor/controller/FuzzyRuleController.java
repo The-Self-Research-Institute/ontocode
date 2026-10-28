@@ -91,6 +91,7 @@ public class FuzzyRuleController {
             HttpServletRequest httpRequest) {
         RequestActor actor = RequestActor.of(httpRequest, userId, username);
         return locks.exclusive(projectId, () -> ruleRepository.findById(ruleId)
+                .filter(entity -> projectId.equals(entity.getProjectId()))
                 .map(entity -> {
                     String oldDesc = describe(entity);
                     String before = snapshots.snapshot(entity);
@@ -116,6 +117,7 @@ public class FuzzyRuleController {
             HttpServletRequest httpRequest) {
         RequestActor actor = RequestActor.of(httpRequest, userId, username);
         return locks.<ResponseEntity<?>>exclusive(projectId, () -> ruleRepository.findById(ruleId)
+                .filter(entity -> projectId.equals(entity.getProjectId()))
                 .<ResponseEntity<?>>map(entity -> {
                     String oldDesc = describe(entity);
                     String before = snapshots.snapshot(entity);

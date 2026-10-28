@@ -181,6 +181,10 @@ public class SwrlEngineService {
         return validateAdmitted(projectId, ruleText, null, null);
     }
 
+    public ValidationResult validateRule(String projectId, String ruleText, String draftUserId) {
+        return validateAdmitted(projectId, ruleText, draftUserId, null);
+    }
+
     private ValidationResult validateAdmitted(String projectId, String ruleText, String draftUserId,
                                               org.swrlapi.core.SWRLAPIRule[] created) {
         try {
@@ -1155,13 +1159,16 @@ public class SwrlEngineService {
         String resolvedText = resolveEntityNames(ruleText, ontology);
         engine.createSWRLRule(testRuleName, resolvedText);
 
+        Set<OWLAxiom> assertedBefore = InferredAxiomPresenter.assertionsOf(ontology);
         Set<OWLAxiom> inferredAxioms = runInference(engine, projectId);
         long executionTime = System.currentTimeMillis() - startTime;
 
-        List<InferredAxiom> formattedAxioms = inferredAxioms.stream()
+        InferredAxiomPresenter.Presented presented = InferredAxiomPresenter.present(inferredAxioms, assertedBefore, maxInferredAxioms);
+        List<InferredAxiom> formattedAxioms = categorized(presented).stream()
+                .filter(item -> "conclusion".equals(item.getCategory()))
                 .limit(maxInferredAxioms)
-                .map(this::formatInferredAxiom)
                 .collect(Collectors.toList());
+        boolean truncated = presented.conclusionCount() > formattedAxioms.size();
 
         if (sample != null) {
             sample.stop(Timer.builder("swrl.test")
@@ -1169,8 +1176,14 @@ public class SwrlEngineService {
                     .register(meterRegistry));
         }
 
-        return new ExecutionResult(true, executionTime, inferredAxioms.size(),
+        ExecutionResult result = new ExecutionResult(true, executionTime, presented.conclusionCount(),
                 formattedAxioms, null);
+        result.setConclusionCount(presented.conclusionCount());
+        result.setStructureCount(0);
+        result.setOmittedTrivialCount(0);
+        result.setTruncated(truncated);
+        result.setExecutionMode("test");
+        return result;
     }
 
     public ExecutionResult testSingleRuleById(String projectId, String ruleId) throws Exception {
@@ -1195,7 +1208,10 @@ public class SwrlEngineService {
         if (found == null) {
             throw new IllegalArgumentException("Rule not found: " + ruleId);
         }
-        return runSingleRule(projectId, found.ruleText(), startTime);
+        ExecutionResult result = runSingleRule(projectId, found.ruleText(), startTime);
+        result.setExecutedRuleNames(List.of(found.name()));
+        result.setExecutedRuleIds(List.of(found.id()));
+        return result;
     }
 
     /**

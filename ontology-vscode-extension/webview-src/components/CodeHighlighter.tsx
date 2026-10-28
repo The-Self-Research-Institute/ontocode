@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect, useRef, useCallback, useImperative
 import { normalizeDoi as normalizeDoiUtil, isValidDoiFormat } from '../utils/doi';
 import type { EditorSelectionContext } from "./codeSelection";
 import { useCodeSelectionReporting, useUnsavedChangesReporting } from "./useCodeSelectionReporting";
+import { escapeHtml } from '../utils/escapeHtml';
 import { escapeRegex, markChangedRange, parseErrorLines, type ChangedLineRange } from "./codeHighlighterMarks";
 import { searchLines, searchResultWindow } from "./codeSearch";
 import {
@@ -979,7 +980,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       } else if (citationRemovalMode && isCitationLine) {
         lineNumberTitle = "Click to remove this citation";
       } else if (hasDOI) {
-        lineNumberTitle = `DOI: ${doi}`;
+        lineNumberTitle = `DOI: ${escapeHtml(doi ?? '')}`;
       }
 
       // Fold indicator: ▶ (collapsed) or ▼ (expanded) for foldable lines
@@ -993,7 +994,7 @@ export const CodeHighlighter = React.forwardRef<CodeHighlighterHandle, CodeHighl
       const lineNumberDisplay = isErrorLine ? `⚠${lineNumber}` : `${lineNumber}`;
 
       numberedLines.push(
-        `<div class="code-line${isCitationLine ? " citation-line" : ""}${hasDOI ? " doi-line" : ""}${isErrorLine ? " error-line" : ""}${isChangedLine ? " changed-line" : ""}" data-line="${index}" data-line-idx="${index}" data-is-citation="${isCitationLine}" data-has-doi="${hasDOI}" data-doi="${hasDOI ? doi : ""}" style="${combinedLineStyle};display:flex;align-items:center;min-height:20px;line-height:20px;padding:0;margin:0${citationModeHoverStyle};transition:background-color 1.5s ease-out">` +
+        `<div class="code-line${isCitationLine ? " citation-line" : ""}${hasDOI ? " doi-line" : ""}${isErrorLine ? " error-line" : ""}${isChangedLine ? " changed-line" : ""}" data-line="${index}" data-line-idx="${index}" data-is-citation="${isCitationLine}" data-has-doi="${hasDOI}" data-doi="${hasDOI ? escapeHtml(doi ?? "") : ""}" style="${combinedLineStyle};display:flex;align-items:center;min-height:20px;line-height:20px;padding:0;margin:0${citationModeHoverStyle};transition:background-color 1.5s ease-out">` +
           `<span style="color:${lineNumberColor};font-weight:${lineNumberWeight};font-size:${lineNumberSize};user-select:none;width:55px;min-width:55px;text-align:right;padding-right:4px;flex-shrink:0;cursor:${citationInsertionMode || citationRemovalMode ? "pointer" : "default"};opacity:0.9" class="line-number" data-line-idx="${index}" title="${isErrorLine ? "Syntax error on this line — click to navigate" : lineNumberTitle}">${lineNumberDisplay}</span>` +
           foldIndicatorHtml +
           `<span style="color:#d4d4d4;white-space:${wordWrap ? "pre-wrap" : "pre"};overflow-wrap:${wordWrap ? "anywhere" : "normal"};word-break:${wordWrap ? "break-word" : "normal"};flex:1;min-width:0;user-select:text;${citationModeCursor}" class="line-content" data-line-idx="${index}">${processedLine}</span>` +
@@ -2322,17 +2323,3 @@ function highlightOWL(lines: string[]): string {
 
   return result.join("\n");
 }
-
-// Fast HTML escaping using a map for better performance
-const htmlEscapeMap: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => htmlEscapeMap[char]);
-}
-

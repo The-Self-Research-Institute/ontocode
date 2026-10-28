@@ -538,16 +538,14 @@ export class CollaborationManager implements ICollaborationManager {
      * Subscribe to share notifications for the current user.
      * Receives instant notifications when files are shared with this user.
      */
-    subscribeToShareNotifications(userEmail: string): void {
+    subscribeToShareNotifications(): void {
         if (!this.client) {
             console.error('[CollaborationManager] ❌ Cannot subscribe to share notifications - no client');
             return;
         }
 
-        console.log(`[CollaborationManager] 📡 Subscribing to /topic/shares/${userEmail}`);
-
         const subscription = this.client.subscribe(
-            `/topic/shares/${userEmail}`,
+            '/user/queue/shares',
             (message: IMessage) => {
                 console.log('[CollaborationManager] 📨 Received share notification:', message.body);
                 try {
@@ -567,8 +565,7 @@ export class CollaborationManager implements ICollaborationManager {
             }
         );
 
-        this.subscriptions.set(`shares-${userEmail}`, subscription);
-        console.log(`[CollaborationManager] ✅ Subscribed to share notifications for: ${userEmail}`);
+        this.subscriptions.set('userShares', subscription);
     }
 
     private processPendingEdits(): void {

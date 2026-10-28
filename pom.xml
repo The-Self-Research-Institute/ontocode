@@ -31,10 +31,10 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Latest Spring Boot (December 2024) -->
-        <spring-boot.version>3.4.0</spring-boot.version>
+        <spring-boot.version>3.4.13</spring-boot.version>
 
         <!-- Latest Spring Cloud (compatible with Spring Boot 3.4.x) -->
-        <spring-cloud.version>2024.0.0</spring-cloud.version>
+        <spring-cloud.version>2024.0.3</spring-cloud.version>
 
         <!-- OWLAPI 5.5.0 for main services (Java 21 compatible) -->
         <owlapi.version>5.5.0</owlapi.version>
@@ -91,6 +91,11 @@
                 <version>${swrlapi.version}</version>
             </dependency>
 
+            <dependency>
+                <groupId>com.thoughtworks.xstream</groupId>
+                <artifactId>xstream</artifactId>
+                <version>1.4.21</version>
+            </dependency>
             <dependency>
                 <groupId>javax.xml.bind</groupId>
                 <artifactId>jaxb-api</artifactId>

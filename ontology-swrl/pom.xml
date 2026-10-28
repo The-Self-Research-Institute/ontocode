@@ -30,6 +30,17 @@
     <dependencies>
         <dependency>
             <groupId>self.research.ontology</groupId>
+            <artifactId>common-utils</artifactId>
+            <version>${project.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-distribution</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>self.research.ontology</groupId>
             <artifactId>common-models</artifactId>
             <version>${project.version}</version>
         </dependency>

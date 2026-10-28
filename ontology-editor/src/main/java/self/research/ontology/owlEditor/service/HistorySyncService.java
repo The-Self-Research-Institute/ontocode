@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -478,8 +479,12 @@ public class HistorySyncService {
         return change;
     }
 
-    public boolean approveChange(String changeId, String userId, String username) {
-        HistoryChange change = historyChangeRepository.findById(changeId).orElse(null);
+    private Optional<HistoryChange> findInProject(String projectId, String changeId) {
+        return historyChangeRepository.findById(changeId).filter(change -> projectId != null && projectId.equals(change.getProjectId()));
+    }
+
+    public boolean approveChange(String projectId, String changeId, String userId, String username) {
+        HistoryChange change = findInProject(projectId, changeId).orElse(null);
         if (change == null) {
             return false;
         }
@@ -493,8 +498,8 @@ public class HistorySyncService {
         return true;
     }
 
-    public boolean rejectChange(String changeId, String userId, String username) {
-        HistoryChange change = historyChangeRepository.findById(changeId).orElse(null);
+    public boolean rejectChange(String projectId, String changeId, String userId, String username) {
+        HistoryChange change = findInProject(projectId, changeId).orElse(null);
         if (change == null) {
             return false;
         }
@@ -508,12 +513,11 @@ public class HistorySyncService {
         return true;
     }
 
-    public boolean addComment(String changeId, String userId, String username, String text) {
-
-        HistoryChange change = historyChangeRepository.findById(changeId).orElse(null);
+    public boolean addComment(String projectId, String changeId, String userId, String username, String text) {
+        HistoryChange change = findInProject(projectId, changeId).orElse(null);
         if (change == null) {
-
-            change = historyChangeRepository.findByEditId(changeId).orElse(null);
+            change = historyChangeRepository.findByEditId(changeId)
+                    .filter(found -> projectId != null && projectId.equals(found.getProjectId())).orElse(null);
         }
         if (change == null) {
             log.warn("Change not found for comment: {}", changeId);
@@ -529,8 +533,8 @@ public class HistorySyncService {
         return true;
     }
 
-    public boolean resolveConflict(String changeId, String userId, String username, String resolution, String mergedValue) {
-        HistoryChange change = historyChangeRepository.findById(changeId).orElse(null);
+    public boolean resolveConflict(String projectId, String changeId, String userId, String username, String resolution, String mergedValue) {
+        HistoryChange change = findInProject(projectId, changeId).orElse(null);
         if (change == null) {
             return false;
         }

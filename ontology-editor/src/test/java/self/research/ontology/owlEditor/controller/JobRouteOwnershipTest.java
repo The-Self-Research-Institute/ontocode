@@ -9,6 +9,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.model.DLQueryJob;
 import self.research.ontology.owlEditor.model.ExportJob;
@@ -218,7 +219,8 @@ class JobRouteOwnershipTest {
         body.setExpression("Location");
         body.setQueryTypes(List.of("instances"));
 
-        controller.executeDLQuery("p1", body, as("bob@x.org", "u-bob"));
+        MockHttpServletRequest bobRequest = as("bob@x.org", "u-bob");
+        controller.executeDLQuery("p1", body, CallerIdentity.of(bobRequest), bobRequest);
 
         assertEquals(Optional.of("p1"), registry.find("w9").map(JobOwnerRegistry.Entry::projectId));
         assertTrue(registry.find("w9").orElseThrow().owners().contains("u-bob"));
@@ -231,7 +233,8 @@ class JobRouteOwnershipTest {
                 mock(OntologyHistoryService.class), mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class),
                 mock(SparqlDatasetService.class), mock(ProjectRepository.class), mock(OntologyPreparseService.class),
                 mock(ImportWorkerDispatcher.class), mock(MongoTemplate.class), exportJobs,
-                mock(CodeViewReimportPipeline.class), new ProjectWriteLockRegistry());
+                mock(CodeViewReimportPipeline.class), new ProjectWriteLockRegistry(),
+                mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class));
         ReflectionTestUtils.setField(controller, "jobAccess", jobAccess);
         ReflectionTestUtils.setField(controller, "exportScopeResolver", new ExportScopeResolver());
         return controller;

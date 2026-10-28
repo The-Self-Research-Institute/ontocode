@@ -117,6 +117,7 @@ public class SparqlQueryController {
             @PathVariable String queryId,
             @RequestBody SavedQueryRequest request) {
         return queryRepository.findById(queryId)
+                .filter(entity -> projectId.equals(entity.getProjectId()))
                 .map(entity -> {
                     entity.setName(request.name());
                     entity.setQueryText(request.queryText());
@@ -131,7 +132,7 @@ public class SparqlQueryController {
     public ResponseEntity<?> deleteQuery(
             @PathVariable String projectId,
             @PathVariable String queryId) {
-        if (queryRepository.existsById(queryId)) {
+        if (queryRepository.findById(queryId).filter(entity -> projectId.equals(entity.getProjectId())).isPresent()) {
             queryRepository.deleteById(queryId);
             return ResponseEntity.ok(Map.of("success", true));
         }
@@ -307,6 +308,10 @@ public class SparqlQueryController {
                                     jakarta.servlet.http.HttpServletRequest httpRequest) {
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
+        }
+        var updateVerdict = self.research.ontology.owlEditor.service.UserSparqlUpdateGuard.check(request.query());
+        if (!updateVerdict.allowed()) {
+            return ResponseEntity.badRequest().body(Map.of("error", updateVerdict.message()));
         }
         try {
         final String actorId = self.research.ontology.owlEditor.service.RequestActor.forScope(httpRequest, userId, draft);

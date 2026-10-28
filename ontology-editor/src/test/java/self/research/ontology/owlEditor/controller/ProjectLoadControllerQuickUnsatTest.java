@@ -111,7 +111,8 @@ class ProjectLoadControllerQuickUnsatTest {
                 mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class), datasetService,
                 mock(ProjectRepository.class), mock(OntologyPreparseService.class), mock(ImportWorkerDispatcher.class),
                 mock(MongoTemplate.class), mock(OntologyExportJobService.class), mock(CodeViewReimportPipeline.class),
-                new ProjectWriteLockRegistry());
+                new ProjectWriteLockRegistry(),
+                mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class));
     }
 
     @AfterEach

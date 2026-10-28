@@ -133,6 +133,24 @@ public class Workspace {
     }
 
     // Helper methods
+    public boolean canManageInvitationsByEmail(String email) {
+        WorkspaceMember member = getMemberByEmail(email);
+        return member != null && member.getStatus() == MemberStatus.ACTIVE
+                && (member.getRole() == WorkspaceRole.OWNER || member.getRole() == WorkspaceRole.ADMIN);
+    }
+
+    public boolean canManageInvitations(String userId) {
+        if (userId == null) {
+            return false;
+        }
+        if (userId.equals(ownerId)) {
+            return true;
+        }
+        WorkspaceMember member = getMember(userId);
+        return member != null && member.getStatus() == MemberStatus.ACTIVE
+                && (member.getRole() == WorkspaceRole.OWNER || member.getRole() == WorkspaceRole.ADMIN);
+    }
+
     public boolean isMember(String userId) {
         return members.stream().anyMatch(m -> m.getUserId() != null && m.getUserId().equals(userId));
     }

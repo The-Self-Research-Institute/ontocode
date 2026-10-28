@@ -200,10 +200,10 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     private String resolveProjectId(HttpServletRequest request, String path) {
         String projectId = resolveCodeAssistantProjectId(path).orElse(null);
         if (projectId == null || projectId.isBlank()) {
-            projectId = request.getParameter("projectId");
+            projectId = workspaceOwnershipService.resolveProjectIdFromRequestPath(path).orElse(null);
         }
         if (projectId == null || projectId.isBlank()) {
-            projectId = workspaceOwnershipService.resolveProjectIdFromRequestPath(path).orElse(null);
+            projectId = request.getParameter("projectId");
         }
         return projectId == null || projectId.isBlank() ? null : projectId;
     }

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Clock, Users, Loader2 } from 'lucide-react';
 import apiClient from '../services/apiClient';
 import { formatQueueWait } from '../utils/importStatusText';
+import { isTrustedMessage } from '../utils/trustedMessage';
 
 interface QueueStatus {
   projectId: string;
@@ -30,6 +31,7 @@ export const QueueStatusIndicator: React.FC<QueueStatusIndicatorProps> = ({
     }
 
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       if (message.type === 'queueStatusUpdate' && message.status?.projectId === projectId) {
         setQueueStatus(message.status);
@@ -182,6 +184,7 @@ export const GlobalQueueStats: React.FC<GlobalQueueStatsProps> = ({ visible = tr
     }
 
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       if (message.type === 'queueStats') {
         setStats(message.stats);

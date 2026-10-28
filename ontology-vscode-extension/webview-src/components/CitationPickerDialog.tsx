@@ -1,4 +1,3 @@
-// CitationPickerDialog.tsx
 import React, { useRef, useState, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import {
   normalizeDoi as normalizeDoiUtil,
@@ -29,6 +28,7 @@ import {
   validateDoiOnline,
   type DoiValidationResult,
 } from "../services/doiValidationService";
+import { isTrustedMessage } from '../utils/trustedMessage';
 
 function mergeFreshFirstPage<T extends { key: string }>(networkPage: T[], priorFull: T[]): T[] {
   const netKeys = new Set(networkPage.map((x) => x.key));
@@ -278,6 +278,7 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
     }, 15000);
 
     const messageHandler = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
 
       if (message.type === "zoteroLibraryData") {
@@ -421,7 +422,6 @@ const CitationPickerDialog: React.FC<CitationPickerDialogProps> = ({ isOpen, onC
   const onListScroll = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
-    // Trigger when within ~2 screens of the bottom for smooth paging.
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distanceToBottom < el.clientHeight * 2) {
       requestMoreFire();

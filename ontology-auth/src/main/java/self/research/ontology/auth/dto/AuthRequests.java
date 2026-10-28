@@ -32,6 +32,7 @@ public class AuthRequests {
 
     public static class SignupRequest {
         @NotBlank(message = "Username is required")
+        @Pattern(regexp = "^[^@]*$", message = "Username cannot contain '@'")
         private String username;
 
         @NotBlank(message = "Email is required")

@@ -1,6 +1,8 @@
 package self.research.ontology.owlEditor.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -425,20 +427,15 @@ public class GraphViewController {
 
     // ==================== WebSocket Message Handlers ====================
 
-    /**
-     * Handle node selection from graph view clients.
-     * Broadcasts to other viewers showing which node the user selected.
-     *
-     * STOMP: /app/graph/{projectId}/select
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/select")
     public void handleNodeSelection(
             @DestinationVariable String projectId,
-            @Payload Map<String, Object> payload
+            @Payload Map<String, Object> payload,
+            SimpMessageHeaderAccessor headerAccessor
     ) {
         try {
-            String userId = (String) payload.get("userId");
+            String userId = CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                    .userIdOr((String) payload.get("userId"));
             String username = (String) payload.get("username");
             String nodeId = (String) payload.get("nodeId");
             String userColor = (String) payload.get("userColor");
@@ -456,20 +453,15 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Handle cursor movement in graph view.
-     * Broadcasts cursor position to other viewers (debounced on client side).
-     *
-     * STOMP: /app/graph/{projectId}/cursor
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/cursor")
     public void handleCursorMove(
             @DestinationVariable String projectId,
-            @Payload Map<String, Object> payload
+            @Payload Map<String, Object> payload,
+            SimpMessageHeaderAccessor headerAccessor
     ) {
         try {
-            String userId = (String) payload.get("userId");
+            String userId = CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                    .userIdOr((String) payload.get("userId"));
             String username = (String) payload.get("username");
             String userColor = (String) payload.get("userColor");
 
@@ -493,20 +485,15 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Handle node expansion request (lazy loading).
-     * Fetches child nodes and broadcasts to all viewers.
-     *
-     * STOMP: /app/graph/{projectId}/expand
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/expand")
     public void handleNodeExpansion(
             @DestinationVariable String projectId,
-            @Payload Map<String, Object> payload
+            @Payload Map<String, Object> payload,
+            SimpMessageHeaderAccessor headerAccessor
     ) {
         try {
-            String userId = (String) payload.get("userId");
+            String userId = CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                    .userIdOr((String) payload.get("userId"));
             String username = (String) payload.get("username");
             String nodeId = (String) payload.get("nodeId");
 

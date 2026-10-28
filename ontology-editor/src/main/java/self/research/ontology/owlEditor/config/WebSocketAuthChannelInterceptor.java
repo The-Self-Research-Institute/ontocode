@@ -15,8 +15,10 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.repository.AssistantEditGroupRepository;
+import self.research.ontology.owlEditor.service.AccessDenial;
 import self.research.ontology.owlEditor.service.JobAccess;
 import self.research.ontology.owlEditor.service.ProjectAccessService;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.service.RuleRunStore;
 
 import java.security.Principal;
@@ -32,7 +34,6 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
     public static final String EMAIL_ATTRIBUTE = "email";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-
     private static final String PROJECT_TOPICS = "|ontology|presence|locks|graph|import|queue|cursor|";
     private static final String JOB_TOPICS = "|reasoning|dlquery|";
 
@@ -45,16 +46,12 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
 
     private enum Decision { ALLOW, DENY, UNKNOWN }
 
-    private record Session(String userId, String email) {
-    }
-
+    private final JwtVerifier jwtVerifier;
+    private final ProjectAuthorization authorization;
     private final JobAccess jobAccess;
     private final ProjectAccessService projectAccess;
     private final RuleRunStore runStore;
     private final AssistantEditGroupRepository editGroups;
-
-    @Value("${jwt.secret:}")
-    private String jwtSecret;
 
     @Value("${ontocode.editor.require-jwt:false}")
     private boolean requireJwt;
@@ -62,10 +59,14 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
-    public WebSocketAuthChannelInterceptor(JobAccess jobAccess,
+    public WebSocketAuthChannelInterceptor(JwtVerifier jwtVerifier,
+                                           ProjectAuthorization authorization,
+                                           JobAccess jobAccess,
                                            ProjectAccessService projectAccess,
                                            RuleRunStore runStore,
                                            AssistantEditGroupRepository editGroups) {
+        this.jwtVerifier = jwtVerifier;
+        this.authorization = authorization;
         this.jobAccess = jobAccess;
         this.projectAccess = projectAccess;
         this.runStore = runStore;
@@ -85,44 +86,40 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             connect(accessor);
             return rebuild ? MessageBuilder.createMessage(message.getPayload(), accessor.getMessageHeaders()) : message;
         }
-        if (StompCommand.SUBSCRIBE.equals(command) && enforcing()) {
+        if (StompCommand.SUBSCRIBE.equals(command)) {
             String destination = accessor.getDestination();
-            if (!allowSubscribe(destination, session(accessor))) {
+            if (!allowSubscribe(destination, accessor)) {
                 log.warn("[WS-Auth] Refused SUBSCRIBE to {} for session {}", destination, accessor.getSessionId());
                 return null;
             }
+        } else if (StompCommand.SEND.equals(command)) {
+            refuseIfDenied(sendDenial(accessor));
         }
         return message;
     }
 
-    private boolean enforcing() {
-        return !desktopMode && jwtSecret != null && !jwtSecret.isBlank();
+    private boolean desktop() {
+        return desktopMode || authorization.isDesktopMode();
     }
 
     private void connect(StompHeaderAccessor accessor) {
         String authHeader = accessor.getFirstNativeHeader("Authorization");
-        boolean hasBearer = authHeader != null && authHeader.startsWith("Bearer ");
-        if (!enforcing()) {
-            if (hasBearer) {
-                legacyAttributes(accessor, authHeader.substring(7));
-            }
-            return;
-        }
-        if (!hasBearer) {
-            if (requireJwt) {
+        if (!JwtVerifier.isBearer(authHeader)) {
+            if (requireJwt && !desktop()) {
                 throw new MessageDeliveryException("Authentication required");
             }
             return;
         }
+        if (!jwtVerifier.configured()) {
+            legacyAttributes(accessor, authHeader.substring("Bearer ".length()));
+            return;
+        }
         Claims claims;
         try {
-            claims = EditorJwtVerifier.verify(jwtSecret, authHeader.substring(7));
-        } catch (Exception e) {
-            log.debug("[WS-Auth] Rejected CONNECT token: {}", e.getMessage());
-            if (requireJwt) {
-                throw new MessageDeliveryException("Invalid or expired token");
-            }
-            return;
+            claims = jwtVerifier.verify(authHeader);
+        } catch (RuntimeException e) {
+            log.debug("[WS-Auth] Rejected CONNECT with an invalid token: {}", e.getMessage());
+            throw new MessageDeliveryException("Invalid or expired token");
         }
         String subject = claims.getSubject();
         String userId = text(claims.get("userId"));
@@ -130,7 +127,9 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         Map<String, Object> attrs = accessor.getSessionAttributes();
         if (attrs != null) {
             attrs.put("plan", plan != null ? plan : "FREE");
-            attrs.put("userId", userId);
+            if (userId != null) {
+                attrs.put("userId", userId);
+            }
             attrs.put("username", subject);
             attrs.put(EMAIL_ATTRIBUTE, subject);
             attrs.put(VERIFIED_ATTRIBUTE, Boolean.TRUE);
@@ -147,7 +146,7 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
     }
 
     private void legacyAttributes(StompHeaderAccessor accessor, String token) {
-        String[] parts = token.split("\\.");
+        String[] parts = token.trim().split("\\.");
         if (parts.length != 3) {
             return;
         }
@@ -156,7 +155,9 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             Map<String, Object> attrs = accessor.getSessionAttributes();
             if (attrs != null) {
                 attrs.put("plan", claims.has("plan") ? claims.get("plan").asText() : "FREE");
-                attrs.put("userId", claims.has("userId") ? claims.get("userId").asText() : null);
+                if (claims.hasNonNull("userId")) {
+                    attrs.put("userId", claims.get("userId").asText());
+                }
                 attrs.put("username", claims.has("sub") ? claims.get("sub").asText() : "anonymous");
             }
         } catch (Exception e) {
@@ -164,27 +165,32 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         }
     }
 
-    private static Optional<Session> session(StompHeaderAccessor accessor) {
+    private static boolean verified(StompHeaderAccessor accessor) {
         Map<String, Object> attrs = accessor.getSessionAttributes();
-        if (attrs == null || !Boolean.TRUE.equals(attrs.get(VERIFIED_ATTRIBUTE))) {
-            return Optional.empty();
-        }
-        Object userId = attrs.get("userId");
-        Object email = attrs.get(EMAIL_ATTRIBUTE);
-        String id = userId != null ? userId.toString() : null;
-        String mail = email != null ? email.toString() : null;
-        return Optional.of(new Session(id != null ? id : mail, mail));
+        return attrs != null && Boolean.TRUE.equals(attrs.get(VERIFIED_ATTRIBUTE));
     }
 
-    private boolean allowSubscribe(String destination, Optional<Session> session) {
-        if (session.isEmpty()) {
+    private static CallerIdentity callerOf(StompHeaderAccessor accessor) {
+        return verified(accessor)
+                ? CallerIdentity.ofSession(accessor.getSessionAttributes())
+                : new CallerIdentity(null, null);
+    }
+
+    private boolean allowSubscribe(String destination, StompHeaderAccessor accessor) {
+        if (StompDestinations.isPattern(destination)) {
+            return false;
+        }
+        if (desktop()) {
+            return true;
+        }
+        if (!verified(accessor)) {
             return !requireJwt;
         }
-        Decision decision = decide(destination, session.get());
+        Decision decision = decide(destination, callerOf(accessor));
         return decision == Decision.ALLOW || (decision == Decision.UNKNOWN && !requireJwt);
     }
 
-    private Decision decide(String destination, Session session) {
+    private Decision decide(String destination, CallerIdentity caller) {
         if (destination == null || destination.isBlank()) {
             return Decision.DENY;
         }
@@ -207,21 +213,21 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             return Decision.ALLOW;
         }
         if (PROJECT_TOPICS.contains("|" + kind + "|") && seg.length == 4) {
-            return projectTopic(id, session) ? Decision.ALLOW : Decision.DENY;
+            return projectTopic(id, caller) ? Decision.ALLOW : Decision.DENY;
         }
         if (JOB_TOPICS.contains("|" + kind + "|") && seg.length == 4) {
-            JobAccess.Caller caller = new JobAccess.Caller(session.userId(), session.email(), false);
-            return jobAccess.check(caller, null, id, null).allowed() ? Decision.ALLOW : Decision.DENY;
+            JobAccess.Caller jobCaller = new JobAccess.Caller(ownerKey(caller), caller.email(), false);
+            return jobAccess.check(jobCaller, null, id, null).allowed() ? Decision.ALLOW : Decision.DENY;
         }
         if ("run".equals(kind) && seg.length == 4) {
-            return run(id, session) ? Decision.ALLOW : Decision.DENY;
+            return run(id, caller) ? Decision.ALLOW : Decision.DENY;
         }
         if ("assistant".equals(kind)) {
-            return seg.length == 5 && "consistency-check".equals(id) && editGroup(seg[4], session)
+            return seg.length == 5 && "consistency-check".equals(id) && editGroup(seg[4], caller)
                     ? Decision.ALLOW : Decision.DENY;
         }
         if ("shares".equals(kind) && seg.length == 4) {
-            return session.email() != null && session.email().equalsIgnoreCase(id) ? Decision.ALLOW : Decision.DENY;
+            return caller.email() != null && caller.email().equalsIgnoreCase(id) ? Decision.ALLOW : Decision.DENY;
         }
         if ("workspace".equals(kind) && seg.length == 4) {
             return Decision.ALLOW;
@@ -229,24 +235,50 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         return Decision.UNKNOWN;
     }
 
-    private boolean projectTopic(String projectId, Session session) {
-        if (session.email() != null && projectAccess.hasProjectAccess(projectId, session.email())) {
+    private static String ownerKey(CallerIdentity caller) {
+        return caller.userId() != null ? caller.userId() : caller.email();
+    }
+
+    private boolean projectTopic(String projectId, CallerIdentity caller) {
+        if (authorization.noAccessTo(caller, projectId).isEmpty()) {
             return true;
         }
         return !requireJwt && !projectAccess.projectExists(projectId);
     }
 
-    private boolean run(String runId, Session session) {
+    private boolean run(String runId, CallerIdentity caller) {
         Optional<RuleRunStore.Run> run = runStore.find(runId);
-        return run.isPresent() && run.get().ownerId().equals(session.userId())
-                && session.email() != null && projectAccess.hasProjectAccess(run.get().projectId(), session.email());
+        return run.isPresent() && run.get().ownerId().equals(ownerKey(caller))
+                && authorization.noAccessTo(caller, run.get().projectId()).isEmpty();
     }
 
-    private boolean editGroup(String groupId, Session session) {
+    private boolean editGroup(String groupId, CallerIdentity caller) {
         return editGroups.findById(groupId)
-                .filter(group -> session.email() != null && session.email().equalsIgnoreCase(group.getUserEmail()))
+                .filter(group -> caller.email() != null && caller.email().equalsIgnoreCase(group.getUserEmail()))
                 .filter(group -> group.getProjectId() == null
-                        || projectAccess.hasProjectAccess(group.getProjectId(), session.email()))
+                        || authorization.noAccessTo(caller, group.getProjectId()).isEmpty())
                 .isPresent();
+    }
+
+    private Optional<AccessDenial> sendDenial(StompHeaderAccessor accessor) {
+        String destination = accessor.getDestination();
+        if (StompDestinations.isBrokerDestination(destination)) {
+            return Optional.of(AccessDenial.forbidden("Clients cannot publish to " + destination));
+        }
+        CallerIdentity caller = callerOf(accessor);
+        if (!requireJwt && !caller.signedIn()) {
+            return Optional.empty();
+        }
+        Optional<String> projectId = StompDestinations.projectIdOf(destination);
+        if (projectId.isEmpty()) {
+            return Optional.empty();
+        }
+        return authorization.noAccessTo(caller, projectId.get());
+    }
+
+    private static void refuseIfDenied(Optional<AccessDenial> denial) {
+        if (denial.isPresent()) {
+            throw new MessageDeliveryException(denial.get().message());
+        }
     }
 }

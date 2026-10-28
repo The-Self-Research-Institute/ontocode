@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Settings, CheckCircle, AlertCircle, Loader2, ExternalLink } from 'lucide-react';
 import { sci2CodeBrowserService } from '../services/sci2CodeBrowserService';
 import { isRealVSCode } from '../utils/desktop';
+import { isTrustedMessage } from '../utils/trustedMessage';
 
 declare global {
   interface Window {
@@ -27,12 +28,10 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [testError, setTestError] = useState('');
 
-  // Listen for VS Code extension replies (config data) — real VS Code only; desktop
-  // and the plain webapp both install a same-named window.vscode shim, so a bare
-  // truthiness check here would misclassify them and this listener would never fire.
   useEffect(() => {
     if (!isRealVSCode()) return;
     const handler = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const msg = event.data;
       if (msg?.type === 'zoteroConfigData' && msg.config) {
         setApiKey(msg.config.apiKey || '');

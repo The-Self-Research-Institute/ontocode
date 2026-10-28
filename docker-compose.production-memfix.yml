@@ -71,7 +71,7 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "3030:3030"
+      - "127.0.0.1:3030:3030"
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?FUSEKI_ADMIN_PASSWORD is required in production}
       JVM_ARGS: "-Xmx2560m -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
@@ -99,8 +99,10 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-true}
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:?ONTOCODE_INTERNAL_TOKEN is required in production}
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       BASE_URL: ${BASE_URL:-http://localhost:3000}
@@ -162,6 +164,7 @@ services:
     ports:
       - "80:80"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-true}
       SPRING_PROFILES_ACTIVE: docker
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       AUTH_SERVICE_URL: http://auth:8086
@@ -192,6 +195,7 @@ services:
     ports:
       - "127.0.0.1:8083:8083"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-true}
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
@@ -232,7 +236,7 @@ services:
       ONTOCODE_DLQUERY_SLOT_BUDGET: ${ONTOCODE_DLQUERY_SLOT_BUDGET:-2}
       ONTOCODE_REASONER_WORKER_ENABLED: ${ONTOCODE_REASONER_WORKER_ENABLED:-true}
       ONTOCODE_REASONER_WORKER_URL: http://reasoner-worker:8088
-      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:?ONTOCODE_INTERNAL_TOKEN is required in production}
       # Raise limit to support large biomedical ontologies (MONDO ~3.1M, GO ~3.5M) with ELK.
       # NOTE: on this instance size, reasoner-worker's heap (below) is sized for ontologies
       # in the ~500K-triple range. Ontologies near this ceiling need the t3-2xlarge overlay.
@@ -266,8 +270,9 @@ services:
     restart: unless-stopped
     user: root
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
     environment:
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:?ONTOCODE_INTERNAL_TOKEN is required in production}
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
@@ -300,11 +305,12 @@ services:
     container_name: ontocode-reasoner-worker
     restart: unless-stopped
     ports:
-      - "8088:8088"
+      - "127.0.0.1:8088:8088"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-true}
       MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
-      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:?ONTOCODE_INTERNAL_TOKEN is required in production}
       ONTOCODE_REASONING_MAX_CONCURRENT: ${ONTOCODE_REASONING_MAX_CONCURRENT:-2}
       ONTOCODE_REASONING_SLOT_BUDGET: ${ONTOCODE_REASONING_SLOT_BUDGET:-2}
       ONTOCODE_REASONING_IDLE_EVICTION_MINUTES: ${ONTOCODE_REASONING_IDLE_EVICTION_MINUTES:-15}
@@ -344,13 +350,14 @@ services:
     ports:
       - "8087:8087"
     environment:
+      ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-true}
       SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
       SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       ONTOCODE_REASONER_WORKER_URL: http://reasoner-worker:8088
       ONTOCODE_REASONER_WORKER_ENABLED: ${ONTOCODE_REASONER_WORKER_ENABLED:-true}
-      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
+      ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:?ONTOCODE_INTERNAL_TOKEN is required in production}
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC

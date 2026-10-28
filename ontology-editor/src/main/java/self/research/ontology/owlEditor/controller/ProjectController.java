@@ -1,15 +1,19 @@
 package self.research.ontology.owlEditor.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.document.ProjectShare;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.service.AccessDenial;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.service.ProjectShareService;
 import self.research.ontology.owlEditor.service.StorageManager;
 import self.research.ontology.owlEditor.service.GridFSFileService;
@@ -17,6 +21,7 @@ import self.research.ontology.owlEditor.service.GridFSFileService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,6 +45,7 @@ public class ProjectController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private self.research.ontology.owlEditor.service.PrSnapshotService prSnapshots;
     private final ChangeTrackingService changeTrackingService;
+    private final ProjectAuthorization authorization;
 
     public ProjectController(ProjectRepository projectRepository,
                              ProjectShareService shareService,
@@ -47,7 +53,8 @@ public class ProjectController {
                              GridFSFileService gridFsFileService,
                              SparqlDatasetService datasetService,
                              DraftTrackingService draftTrackingService,
-                             ChangeTrackingService changeTrackingService) {
+                             ChangeTrackingService changeTrackingService,
+                             ProjectAuthorization authorization) {
         this.projectRepository = projectRepository;
         this.shareService = shareService;
         this.storageManager = storageManager;
@@ -55,13 +62,21 @@ public class ProjectController {
         this.datasetService = datasetService;
         this.draftTrackingService = draftTrackingService;
         this.changeTrackingService = changeTrackingService;
+        this.authorization = authorization;
     }
 
     @GetMapping
-    public ResponseEntity<?> listProjects(@RequestParam(required = false) String userEmail,
-                                          @RequestParam(required = false) String parentProjectId) {
+    public ResponseEntity<?> listProjects(@RequestParam(name = "userEmail", required = false) String requestedEmail,
+                                          @RequestParam(required = false) String parentProjectId,
+                                          HttpServletRequest request) {
+        Optional<AccessDenial> denial = authorization.unauthenticated(request);
+        if (denial.isPresent()) {
+            return denial.get().toResponse();
+        }
+        CallerIdentity caller = CallerIdentity.of(request);
+        String userEmail = authorization.isDesktopMode() ? requestedEmail : caller.email();
         try {
-            log.info("[ProjectController] listProjects called with userEmail: {}, parentProjectId: {}", userEmail, parentProjectId);
+            log.info("[ProjectController] listProjects called for parentProjectId: {}", parentProjectId);
             List<ProjectDocument> allProjects = projectRepository.findAllByOrderByUpdatedAtDesc();
             log.info("[ProjectController] Total documents in database: {}", allProjects.size());
             
@@ -79,38 +94,21 @@ public class ProjectController {
                 log.info("[ProjectController] Files for project {}: {}", parentProjectId, allFiles.size());
             }
             
-            // If no userEmail provided, return all files (backward compatibility)
             if (userEmail == null || userEmail.isEmpty()) {
+                if (!authorization.isDesktopMode()) {
+                    return AccessDenial.unauthenticated().toResponse();
+                }
                 List<Map<String, Object>> projects = allFiles.stream()
                     .map(this::mapProjectToInfo)
                     .collect(Collectors.toList());
                 return ResponseEntity.ok(Map.of("success", true, "projects", projects));
             }
-            
+
             // Separate into myFiles and sharedFiles
             // Include files with matching ownerEmail OR files with null/empty ownerEmail (legacy files)
             List<Map<String, Object>> myFiles = allFiles.stream()
-                .filter(doc -> {
-                    String docOwner = doc.getOwnerEmail();
-                    // Match if owner matches user, OR if owner is null/empty (legacy files)
-                    boolean isOwner = userEmail.equals(docOwner);
-                    boolean isUnowned = (docOwner == null || docOwner.isEmpty());
-                    
-                    // If file is unowned, assign it to this user automatically (best-effort)
-                    if (isUnowned) {
-                        try {
-                            log.info("[ProjectController] Assigning unowned file {} to user {}", doc.getId(), userEmail);
-                            doc.setOwnerEmail(userEmail);
-                            projectRepository.save(doc);
-                        } catch (Exception e) {
-                            log.error("[ProjectController] Failed to assign owner to file {}: {}", doc.getId(), e.getMessage());
-                            // Continue anyway - don't fail the entire request
-                        }
-                        return true;
-                    }
-                    
-                    return isOwner;
-                })
+                .filter(doc -> doc.isOwnedBy(caller.userId(), userEmail)
+                        || (authorization.isDesktopMode() && claimIfUnowned(doc, userEmail)))
                 .map(doc -> {
                     Map<String, Object> info = mapProjectToInfo(doc);
                     // Add sharedWith info for files owned by user (best-effort)
@@ -164,6 +162,19 @@ public class ProjectController {
         }
     }
     
+    private boolean claimIfUnowned(ProjectDocument doc, String email) {
+        if (doc.getOwnerEmail() != null && !doc.getOwnerEmail().isEmpty()) {
+            return false;
+        }
+        try {
+            doc.setOwnerEmail(email);
+            projectRepository.save(doc);
+        } catch (Exception e) {
+            log.error("[ProjectController] Failed to assign owner to file {}: {}", doc.getId(), e.getMessage());
+        }
+        return true;
+    }
+
     private Map<String, Object> mapProjectToInfo(ProjectDocument doc) {
         Map<String, Object> projectInfo = new HashMap<>();
         projectInfo.put("id", doc.getId());
@@ -184,16 +195,16 @@ public class ProjectController {
     }
 
     @DeleteMapping("/{projectId:.+}")
-    public ResponseEntity<?> deleteProject(@PathVariable String projectId,
-                                           @RequestParam(required = false) String ownerEmail) {
+    public ResponseEntity<?> deleteProject(@PathVariable String projectId, HttpServletRequest request) {
         try {
             ProjectDocument doc = projectRepository.findById(projectId).orElse(null);
             if (doc == null) {
                 return ResponseEntity.status(404).body(Map.of("success", false, "error", "Project not found"));
             }
 
-            if (ownerEmail != null && doc.getOwnerEmail() != null && !doc.getOwnerEmail().equals(ownerEmail)) {
-                return ResponseEntity.status(403).body(Map.of("success", false, "error", "Access denied"));
+            Optional<AccessDenial> denial = authorization.notOwnerOf(request, projectId);
+            if (denial.isPresent()) {
+                return denial.get().toResponse();
             }
 
             // Clear GraphDB dataset (best-effort)
