@@ -134,7 +134,7 @@ public class IssueReportController {
     @GetMapping("/user/{email}")
     public ResponseEntity<List<IssueReport>> getUserIssueReports(@PathVariable String email,
                                                                  @CallerEmail String callerEmail) {
-        if (!callerEmail.equalsIgnoreCase(email)) {
+        if (callerEmail == null || !callerEmail.equalsIgnoreCase(email)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         try {

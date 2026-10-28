@@ -198,4 +198,12 @@ class IssueReportControllerTest {
         assertTrue((Boolean) response.getBody().get("success"));
         assertEquals("Demo", response.getBody().get("projectName"));
     }
+
+    @Test
+    void listingReportsWithoutAnIdentityIsRefusedInsteadOfFailing() {
+        ResponseEntity<List<IssueReport>> response = controller.getUserIssueReports("alice@example.com", null);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        verify(issueReportService, never()).getUserIssueReports(any());
+    }
 }
