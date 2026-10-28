@@ -6958,6 +6958,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 nodeSize={settings.nodeSize}
                 selectedNodeIds={selectedNodes}
                 projectId={projectId}
+                draftMode={draftScope}
                 showGrid={showGrid}
                 physicsEnabled={settings.physics}
                 onNodeClick={(id) => {
