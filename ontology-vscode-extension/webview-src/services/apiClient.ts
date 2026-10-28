@@ -80,7 +80,7 @@ function dispatchUploadProgress(projectId: string, progressEvent: { loaded: numb
 declare global {
   interface Window {
     vscode?: { postMessage: (message: any) => void };
-    API_BASE_URL: string;
+    API_BASE_URL?: string;
   }
 }
 

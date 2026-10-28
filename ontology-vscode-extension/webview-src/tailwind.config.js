@@ -10,6 +10,7 @@ export default {
     './utils/**/*.{ts,tsx}',
     './config/**/*.{ts,tsx}',
     './plugins/**/*.{ts,tsx}',
+    '../../plugins/*/src/**/*.{ts,tsx}',
   ],
   theme: { extend: {} },
   plugins: [],

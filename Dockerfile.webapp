@@ -18,6 +18,7 @@ RUN npm config set fetch-retries 10 && \
 
 # Copy webview source
 COPY ontology-vscode-extension/webview-src ./
+COPY plugins /plugins
 
 # Build production bundle (reads .env.production for VITE_CLOUD_GATEWAY_URL)
 RUN npm run build

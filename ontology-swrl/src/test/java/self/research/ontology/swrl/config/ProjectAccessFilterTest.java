@@ -163,4 +163,15 @@ class ProjectAccessFilterTest {
 
         verify(chain).doFilter(any(), any());
     }
+
+    @Test
+    void aBrowserPreflightWithoutAnAuthorizationHeaderIsPassedOn() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("OPTIONS", "/api/swrl/proj-1/rules");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, chain);
+
+        verify(chain).doFilter(any(), any());
+        assertEquals(HttpStatus.OK.value(), response.getStatus());
+    }
 }

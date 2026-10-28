@@ -13,7 +13,6 @@ public class StrictSecurityGuard {
                                @Value("${ontocode.internal.token:ontocode-internal}") String internalToken) {
         boolean enforced = strict && !desktopMode;
         StrictSecurity.require(enforced, jwtSecret != null && !jwtSecret.isBlank(), "jwt.secret must be set");
-        StrictSecurity.require(enforced, StrictSecurity.isCustomInternalToken(internalToken),
-                "ontocode.internal.token must not be the public default");
+        StrictSecurity.requireCustomInternalToken(enforced, internalToken);
     }
 }
