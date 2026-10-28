@@ -17,6 +17,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.admission.WorkKind;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
 import self.research.ontology.owlEditor.document.ProjectDocument;
@@ -52,6 +53,9 @@ public class DesktopOntologyLoader {
 
     @Autowired
     private ProjectOntologyCache cache;
+
+    @Autowired(required = false)
+    private HeavyWorkAdmission heavyWork = HeavyWorkAdmission.disabled();
 
     @Autowired
     private StorageManager storageManager;
@@ -509,17 +513,16 @@ public class DesktopOntologyLoader {
             return false;
         }
 
-        long fileSizeMb = owlFilePath.toFile().length() / (1024 * 1024);
-        Runtime rt = Runtime.getRuntime();
-        long maxHeapMb = rt.maxMemory() / (1024 * 1024);
-        long estimatedModelMb = Math.max(64, fileSizeMb * 3);
-        // Reserve for Spring Boot runtime + Fuseki client + other beans (~700MB observed).
-        // usedNow tells us the actual current usage so we don't evict live data.
-        long usedNowMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
-        long heapReserveMb = Math.max(768, usedNowMb + 256);
-        if (estimatedModelMb > maxHeapMb - heapReserveMb) {
-            log.info("[Desktop] File {} MB (~{} MB model) exceeds heap budget ({} MB heap) — using Fuseki SPARQL/snapshot for project {}",
-                fileSizeMb, estimatedModelMb, maxHeapMb, projectId);
+        long fileBytes = owlFilePath.toFile().length();
+        long fileSizeMb = fileBytes / (1024 * 1024);
+        long maxHeapMb = Runtime.getRuntime().maxMemory() / (1024 * 1024);
+        HeavyWorkAdmission.Hold hold;
+        try {
+            hold = heavyWork.admit("fastOpen:" + projectId, WorkKind.IMPORT_PARSE,
+                    heavyWork.estimates().importParse(fileBytes));
+        } catch (BusyException busy) {
+            log.info("[Desktop] File {} MB does not fit the memory budget right now ({}) - using Fuseki SPARQL/snapshot for project {}",
+                fileSizeMb, busy.getMessage(), projectId);
             if (hierarchyIndexService != null) {
                 hierarchyIndexService.scheduleBuild(projectId);
             }
@@ -578,6 +581,8 @@ public class DesktopOntologyLoader {
         } catch (Exception e) {
             log.warn("[Desktop] Failed to cache OWLAPI model for project {}: {}", projectId, e.getMessage());
             return false;
+        } finally {
+            hold.close();
         }
     }
 
