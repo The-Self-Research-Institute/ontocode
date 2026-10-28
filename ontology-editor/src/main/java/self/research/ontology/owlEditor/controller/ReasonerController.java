@@ -17,6 +17,12 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.common.rules.DisabledRules;
+import self.research.ontology.common.rules.OntologyRulesFingerprint;
+import self.research.ontology.common.rules.RuleExecution;
+import self.research.ontology.common.rules.RuleExecutionLimits;
+import self.research.ontology.common.rules.RuleExecutionResult;
+import self.research.ontology.owlEditor.service.RuleExecutionPresenter;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
@@ -28,7 +34,9 @@ import self.research.ontology.common.ReasoningSnapshot;
 import java.util.concurrent.atomic.AtomicReference;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.StorageManager;
+import self.research.ontology.common.ReasonerNodes;
 import self.research.ontology.common.ReasoningFriendlyErrors;
+import self.research.ontology.common.SwrlBuiltIns;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.springframework.beans.factory.annotation.Value;
@@ -80,10 +88,23 @@ public class ReasonerController {
     private ReasonerWorkerClient reasonerWorkerClient;
 
     @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleRunStore ruleRunStore;
+
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleRunAccess ruleRunAccess;
+
+    @Autowired(required = false)
     private ReasoningJobRelayService reasoningJobRelayService;
+
+    @Autowired
+    private self.research.ontology.owlEditor.service.JobAccess jobAccess;
 
     @Autowired(required = false)
     private StorageManager storageManager;
+
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.HeavyWorkAdmission heavyWork =
+            self.research.ontology.owlEditor.service.HeavyWorkAdmission.disabled();
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext owlApiContext;
@@ -101,6 +122,9 @@ public class ReasonerController {
     @Autowired(required = false)
     private MainGraphRevisionService mainGraphRevisionService;
 
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.OntologyVersionStamps ontologyVersionStamps;
+
     static final String SNAPSHOT_JOB_TYPE = "REASONER_SNAPSHOT";
 
     private static final Set<String> WORKER_JOB_KEYS = Set.of(
@@ -111,6 +135,7 @@ public class ReasonerController {
         final CompletableFuture<Map<String, Object>> result = new CompletableFuture<>();
         final AtomicReference<Future<?>> task = new AtomicReference<>();
         private final List<OWLReasoner> reasoners = new ArrayList<>();
+        volatile String rulesFingerprint = OntologyRulesFingerprint.NONE;
         private boolean stopped;
 
         synchronized void attach(OWLReasoner reasoner) {
@@ -153,6 +178,17 @@ public class ReasonerController {
      * Rejects oversized ontologies before attempting in-memory OWL API parsing.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
+        self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold[] held =
+                {self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold.NONE};
+        try {
+            return loadOntologyAdmitted(projectId, held);
+        } finally {
+            held[0].close();
+        }
+    }
+
+    private OWLOntology loadOntologyAdmitted(String projectId,
+            self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold[] held) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
         Optional<OWLOntology> cached = editorReasonerCache.getOntology(projectId);
@@ -214,7 +250,8 @@ public class ReasonerController {
                     tripleCount, maxReasonerTriples));
             }
             log.info("Ontology size check passed: {} triples (limit: {})", tripleCount, maxReasonerTriples);
-        } catch (IllegalArgumentException e) {
+            held[0] = heavyWork.admitLoad(null, self.research.ontology.common.admission.WorkKind.REASONING, tripleCount);
+        } catch (IllegalArgumentException | self.research.ontology.owlEditor.service.BusyException e) {
             throw e;
         } catch (Exception e) {
             log.warn("Could not check ontology size before reasoning (will proceed): {}", e.getMessage());
@@ -313,7 +350,7 @@ public class ReasonerController {
                 "error", e.getMessage()));
     }
 
-    private String submitHierarchyJob(String jobType, String projectId, String reasonerType) {
+    private String submitHierarchyJob(String jobType, String projectId, String reasonerType, HttpServletRequest request) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return null;
         }
@@ -326,6 +363,9 @@ public class ReasonerController {
             return null;
         }
         Object jobId = submitted.get("jobId");
+        if (jobId != null) {
+            jobAccess.register(request, String.valueOf(jobId), projectId);
+        }
         return jobId != null ? String.valueOf(jobId) : null;
     }
 
@@ -336,19 +376,38 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/jobs/{jobId}")
     public ResponseEntity<Map<String, Object>> getReasonerJob(
             @PathVariable String projectId,
-            @PathVariable String jobId
+            @PathVariable String jobId,
+            HttpServletRequest request
     ) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return ResponseEntity.status(404).body(Map.of(
                     "success", false, "error", "Reasoner worker is not enabled on this deployment"));
         }
+        java.util.Optional<self.research.ontology.owlEditor.service.JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
+        if (jobAccess.isRegistered(jobId) && !jobAccess.check(caller.get(), projectId, jobId, null).allowed()) {
+            return jobNotFound();
+        }
         Map<String, Object> job = reasonerWorkerClient.getJob(jobId);
         if (job == null) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
+            return jobNotFound();
+        }
+        if (job.get("jobId") == null && !jobAccess.isRegistered(jobId)) {
+            return jobNotFound();
+        }
+        Object recordProject = job.get("projectId");
+        if (!jobAccess.check(caller.get(), projectId, jobId, recordProject != null ? recordProject.toString() : null).allowed()) {
+            return jobNotFound();
         }
         Map<String, Object> response = new HashMap<>(withNestedSnapshotResult(job));
         response.put("projectId", projectId);
         return ResponseEntity.ok(response);
+    }
+
+    private static ResponseEntity<Map<String, Object>> jobNotFound() {
+        return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
     }
 
     static Map<String, Object> withNestedSnapshotResult(Map<String, Object> job) {
@@ -391,11 +450,11 @@ public class ReasonerController {
     ) {
         try {
             String requested = reasonerType.trim().toUpperCase(Locale.ROOT);
-            ReasonerType requestedType = ReasonerType.valueOf(requested);
+            ReasonerType requestedType = ReasonerType.parse(requested);
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
             if (!isDraft && reasonerWorkerEnabled && reasonerWorkerClient != null) {
-                ResponseEntity<Map<String, Object>> fromWorker = snapshotFromWorker(projectId, requested);
+                ResponseEntity<Map<String, Object>> fromWorker = snapshotFromWorker(projectId, requested, request);
                 if (fromWorker != null) {
                     return fromWorker;
                 }
@@ -409,7 +468,7 @@ public class ReasonerController {
         }
     }
 
-    private ResponseEntity<Map<String, Object>> snapshotFromWorker(String projectId, String requested) {
+    private ResponseEntity<Map<String, Object>> snapshotFromWorker(String projectId, String requested, HttpServletRequest request) {
         Map<String, Object> submitted = reasonerWorkerClient.submitJob(SNAPSHOT_JOB_TYPE, projectId, null, null, requested, null);
         if (Boolean.TRUE.equals(submitted.get("rateLimited"))) {
             throw new WorkerQueueFullException(String.valueOf(submitted.get("error")));
@@ -435,6 +494,7 @@ public class ReasonerController {
             body.put("error", ReasoningFriendlyErrors.forUser(String.valueOf(submitted.get("error"))));
             return ResponseEntity.ok(body);
         }
+        jobAccess.register(request, String.valueOf(jobId), projectId);
         if (reasoningJobRelayService != null) {
             reasoningJobRelayService.rememberSubmittedJob(String.valueOf(jobId), projectId, null, SNAPSHOT_JOB_TYPE, submitted);
         }
@@ -464,7 +524,17 @@ public class ReasonerController {
                         draftVersion + "." + draftWriteStamp)
                 : EditorReasonerCacheService.snapshotKey(projectId, requestedType.name(), revision);
 
-        Optional<Map<String, Object>> cached = editorReasonerCache.getSnapshot(cacheKey);
+        Optional<Map<String, Object>> cached = editorReasonerCache.getSnapshot(cacheKey, () -> {
+            try {
+                OWLOntology current = isDraft
+                        ? datasetService.loadDraftAsOntology(projectId, draftUserId, draftVersion)
+                        : loadOntology(projectId);
+                DisabledRules.strip(current);
+                return OntologyRulesFingerprint.of(current);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
         if (cached.isPresent()) {
             return ResponseEntity.ok(snapshotBody(projectId, cached.get(), true));
         }
@@ -496,7 +566,9 @@ public class ReasonerController {
                 try {
                     Map<String, Object> snapshot = computeSnapshot(projectId, requestedType, draftUserId,
                             draftVersion, revision, run);
-                    editorReasonerCache.putSnapshot(cacheKey, snapshot);
+                    if (!"partial".equals(snapshot.get("completion"))) {
+                        editorReasonerCache.putSnapshot(cacheKey, snapshot, run.rulesFingerprint);
+                    }
                     run.result.complete(snapshot);
                 } catch (Throwable t) {
                     run.result.completeExceptionally(t);
@@ -509,12 +581,25 @@ public class ReasonerController {
         return run;
     }
 
+    private self.research.ontology.common.PreparedOntology chained(OWLOntology ontology, String projectId) {
+        return SwrlBuiltIns.prepareChained(ontology, ruleStage,
+                input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519", projectId + ":" + ontology.getAxiomCount());
+    }
+
+    private self.research.ontology.common.RuleStage ruleStage = self.research.ontology.common.RestRuleStage.shared();
+
+    void useRuleStage(self.research.ontology.common.RuleStage stage) {
+        this.ruleStage = stage;
+    }
+
     private Map<String, Object> computeSnapshot(String projectId, ReasonerType requestedType, String draftUserId,
                                                 long draftVersion, long revision, LocalSnapshotRun run) throws Exception {
         boolean isDraft = draftUserId != null;
         OWLOntology ontology = isDraft
                 ? datasetService.loadDraftAsOntology(projectId, draftUserId, draftVersion)
                 : loadOntology(projectId);
+        DisabledRules.strip(ontology);
+        run.rulesFingerprint = OntologyRulesFingerprint.of(ontology);
 
         ReasonerType classType = requestedType;
         String downgradedWarning = null;
@@ -525,30 +610,49 @@ public class ReasonerController {
             downgradedWarning = String.format("This ontology has %,d axioms, so ELK was used instead of %s "
                     + "to keep reasoning fast.", axiomCount, requestedType.getDisplayName());
         }
-        if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && classType != ReasonerType.STRUCTURAL) {
+        int structuralAbove = requestedType == ReasonerType.ELK
+                ? Limit.REASONER_ELK_MAX_AXIOMS.value() : Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value();
+        if (axiomCount > structuralAbove && classType != ReasonerType.STRUCTURAL) {
             classType = ReasonerType.STRUCTURAL;
             downgradedWarning = String.format("This ontology has %,d axioms, so only the asserted (structural) "
                     + "hierarchy is shown instead of %s.", axiomCount, requestedType.getDisplayName());
         }
 
+        self.research.ontology.common.PreparedOntology prepared = classType == ReasonerType.HERMIT
+                ? chained(ontology, projectId) : null;
+        if (prepared != null && prepared.note() != null) {
+            downgradedWarning = downgradedWarning == null ? prepared.note() : downgradedWarning + " " + prepared.note();
+        }
+        boolean rulesComplete = prepared == null || prepared.complete();
+        OWLOntology classInput = prepared != null ? prepared.forHermit() : ontology;
+
         OWLReasoner classReasoner;
         try {
-            classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
+            classReasoner = reasonerService.getClassHierarchyReasoner(classInput, classType);
         } catch (RuntimeException e) {
             if (classType != ReasonerType.HERMIT || run.isStopped() || isStopFailure(e)) {
                 throw e;
             }
-            log.warn("HermiT could not be started for project {}; using Openllet instead", projectId, e);
-            classType = ReasonerType.OPENLLET;
+            log.warn("HermiT could not be started for project {}; using JFact instead", projectId, e);
+            classType = ReasonerType.FACTPLUSPLUS;
+            classInput = ontology;
             downgradedWarning = "HermiT could not be started for this ontology (" + rootMessage(e)
-                    + "), so Openllet was used instead.";
-            classReasoner = reasonerService.getClassHierarchyReasoner(ontology, classType);
+                    + "), so JFact was used instead.";
+            classReasoner = reasonerService.getClassHierarchyReasoner(classInput, classType);
         }
         run.attach(classReasoner);
-        ReasonerType propertyType = classType == ReasonerType.ELK ? ReasonerType.OPENLLET : classType;
+        ReasonerType propertyType = classType == ReasonerType.ELK ? ReasonerType.HERMIT : classType;
         OWLReasoner propertyReasoner = null;
+        OWLOntology propertyInput = ontology;
         if (propertyType != classType) {
-            propertyReasoner = reasonerService.getUnwarmedReasoner(ontology, propertyType);
+            self.research.ontology.common.PreparedOntology forProperty = prepared != null
+                    ? prepared : chained(ontology, projectId);
+            propertyInput = forProperty.forHermit();
+            rulesComplete = rulesComplete && forProperty.complete();
+            if (prepared == null && forProperty.note() != null) {
+                downgradedWarning = downgradedWarning == null ? forProperty.note() : downgradedWarning + " " + forProperty.note();
+            }
+            propertyReasoner = reasonerService.getUnwarmedReasoner(propertyInput, propertyType);
             run.attach(propertyReasoner);
         }
 
@@ -558,10 +662,13 @@ public class ReasonerController {
             snapshot.putAll(ReasoningSnapshot.build(ontology, classReasoner, propertyReasoner));
         } catch (RuntimeException e) {
             if (run.isStopped()) {
-                reasonerService.disposeReasoner(ontology, classType);
+                reasonerService.disposeReasoner(classInput, classType);
                 if (propertyReasoner != null) {
-                    reasonerService.disposeReasoner(ontology, propertyType);
+                    reasonerService.disposeReasoner(propertyInput, propertyType);
                 }
+            }
+            if (!run.isStopped() && downgradedWarning != null && downgradedWarning.contains("HermiT could not be started")) {
+                throw new IllegalStateException(downgradedWarning + " The JFact fallback also failed: " + rootMessage(e), e);
             }
             throw e;
         }
@@ -570,6 +677,7 @@ public class ReasonerController {
         snapshot.put("requestedReasoner", requestedType.name());
         snapshot.put("ontologyRevision", revision);
         snapshot.put("draft", isDraft);
+        snapshot.put("completion", rulesComplete ? "complete" : "partial");
         if (downgradedWarning != null) {
             snapshot.put("downgradedWarning", downgradedWarning);
         }
@@ -639,14 +747,20 @@ public class ReasonerController {
     @DeleteMapping("/{projectId}/reasoner/jobs/{jobId}")
     public ResponseEntity<Map<String, Object>> cancelReasonerJob(
             @PathVariable String projectId,
-            @PathVariable String jobId
+            @PathVariable String jobId,
+            HttpServletRequest request
     ) {
+        java.util.Optional<self.research.ontology.owlEditor.service.JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return ResponseEntity.ok(Map.of("success", true, "cancelled", false));
         }
         DLQueryJob relayed = reasoningJobRelayService != null ? reasoningJobRelayService.getJob(jobId) : null;
-        if (relayed != null && relayed.getProjectId() != null && !relayed.getProjectId().equals(projectId)) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
+        String relayedProject = relayed != null ? relayed.getProjectId() : null;
+        if (!jobAccess.check(caller.get(), projectId, jobId, relayedProject).allowed()) {
+            return jobNotFound();
         }
         Map<String, Object> result = reasonerWorkerClient.cancelJob(jobId);
         if (Boolean.TRUE.equals(result.get("cancelled")) && reasoningJobRelayService != null) {
@@ -698,20 +812,23 @@ public class ReasonerController {
     ) {
         try {
             OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
-            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
-           
-            if (effectiveType.equalsIgnoreCase("ELK")) {
-                effectiveType = "OPENLLET";
-            }
+            String effectiveType = reasonerType.equalsIgnoreCase("ELK") ? "HERMIT" : reasonerType;
             int axiomCount = ontology.getAxiomCount();
             if (axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value() && axiomCount <= Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value()
                     && !effectiveType.equalsIgnoreCase("ELK") && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 effectiveType = "ELK";
             }
-            if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+            boolean elkRequested = reasonerType.equalsIgnoreCase("ELK");
+            if (elkRequested && axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value()
+                    && axiomCount <= Limit.REASONER_ELK_MAX_AXIOMS.value()) {
+                effectiveType = "ELK";
+            }
+            int structuralAbove = elkRequested
+                    ? Limit.REASONER_ELK_MAX_AXIOMS.value() : Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value();
+            if (axiomCount > structuralAbove && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 effectiveType = "STRUCTURAL";
             }
-            ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(effectiveType);
 
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLClass owlClass = df.getOWLClass(IRI.create(classIri));
@@ -761,7 +878,7 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/inferred-class-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredClassHierarchy(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "OPENLLET") String reasonerType,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
             @RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request
@@ -769,7 +886,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -781,10 +898,7 @@ public class ReasonerController {
             OWLOntology ontology = isDraft
                     ? datasetService.loadDraftAsOntology(projectId, resolvedUserId, draftVersion)
                     : loadOntology(projectId);
-            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") ? "OPENLLET" : reasonerType;
-            if (effectiveType.equalsIgnoreCase("ELK")) {
-                effectiveType = "OPENLLET";
-            }
+            String effectiveType = reasonerType.equalsIgnoreCase("ELK") ? "HERMIT" : reasonerType;
 
             int axiomCount = ontology.getAxiomCount();
             // Medium ontologies (10k-100k): switch to ELK (fast EL reasoner, 10-100x faster than HermiT)
@@ -796,18 +910,26 @@ public class ReasonerController {
                 effectiveType = "ELK";
             }
             // Very large ontologies (>100k): STRUCTURAL is safest (no reasoning, just asserted)
-            if (axiomCount > Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value() && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
+            boolean elkRequested = reasonerType.equalsIgnoreCase("ELK");
+            if (elkRequested && axiomCount > Limit.REASONER_ELK_ABOVE_AXIOMS.value()
+                    && axiomCount <= Limit.REASONER_ELK_MAX_AXIOMS.value()) {
+                effectiveType = "ELK";
+            }
+            int structuralAbove = elkRequested
+                    ? Limit.REASONER_ELK_MAX_AXIOMS.value() : Limit.REASONER_STRUCTURAL_ABOVE_AXIOMS.value();
+            if (axiomCount > structuralAbove && !effectiveType.equalsIgnoreCase("STRUCTURAL")) {
                 log.warn("Very large ontology ({} axioms) — switching to STRUCTURAL for project {}", axiomCount, projectId);
                 effectiveType = "STRUCTURAL";
             }
 
-            ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(effectiveType);
 
             // Return cached hierarchy immediately if still fresh (Caffeine handles TTL)
+            String rulesFingerprint = OntologyRulesFingerprint.of(ontology);
             String cacheKey = isDraft
                     ? EditorReasonerCacheService.draftHierarchyKey(projectId, type, resolvedUserId,
-                            draftVersion + "." + draftWriteStamp)
-                    : projectId + "-" + type.name();
+                            draftVersion + "." + draftWriteStamp, rulesFingerprint)
+                    : EditorReasonerCacheService.hierarchyKey(projectId, type, rulesFingerprint);
             EditorReasonerCacheService.HierarchyCacheEntry cached =
                     editorReasonerCache.getHierarchy(cacheKey).orElse(null);
             if (cached != null) {
@@ -1029,7 +1151,7 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/inferred-object-property-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredObjectPropertyHierarchy(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "OPENLLET") String reasonerType,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
             @RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request
@@ -1037,7 +1159,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -1050,8 +1172,8 @@ public class ReasonerController {
             // ELK has no property hierarchy support — everything else (including HERMIT) is
             // used as requested so this reuses whatever reasoner is already classified for
             // this ontology instead of paying for a second, independent classification.
-            String effectiveType = reasonerType.equalsIgnoreCase("ELK") ? "OPENLLET" : reasonerType;
-            ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
+            String effectiveType = reasonerType.equalsIgnoreCase("ELK") ? "HERMIT" : reasonerType;
+            ReasonerType type = ReasonerType.parse(effectiveType);
 
             log.info("========== Object Property Hierarchy Request ==========");
             log.info("Project ID: {}", projectId);
@@ -1061,7 +1183,7 @@ public class ReasonerController {
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLObjectProperty topProperty = df.getOWLTopObjectProperty();
 
-            // Openllet's classify() runs full SAT-based classification, which can take many
+            // A full classify() runs SAT-based classification, which can take many
             // minutes on a huge ontology (e.g. FoodOn's 39k+ classes) — unlike class hierarchy,
             // this endpoint had no timeout at all and could hang the request indefinitely.
             // Bound it the same way, and fall back to asserted (non-inferred) properties on
@@ -1151,7 +1273,7 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/inferred-data-property-hierarchy")
     public ResponseEntity<Map<String, Object>> getInferredDataPropertyHierarchy(
             @PathVariable String projectId,
-            @RequestParam(defaultValue = "OPENLLET") String reasonerType,
+            @RequestParam(defaultValue = "HERMIT") String reasonerType,
             @RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request
@@ -1159,7 +1281,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -1169,10 +1291,9 @@ public class ReasonerController {
             OWLOntology ontology = isDraft
                     ? loadDraftOntology(projectId, resolvedUserId)
                     : loadOntology(projectId);
-            // HERMIT → OPENLLET (binary compat); ELK → OPENLLET (ELK has no property hierarchy support)
-            String effectiveType = reasonerType.equalsIgnoreCase("HERMIT") || reasonerType.equalsIgnoreCase("ELK")
-                    ? "OPENLLET" : reasonerType;
-            ReasonerType type = ReasonerType.valueOf(effectiveType.toUpperCase());
+            // ELK → HERMIT (ELK has no property hierarchy support)
+            String effectiveType = reasonerType.equalsIgnoreCase("ELK") ? "HERMIT" : reasonerType;
+            ReasonerType type = ReasonerType.parse(effectiveType);
             log.info("========== Data Property Hierarchy Request ==========");
             log.info("Project ID: {}", projectId);
             log.info("Ontology loaded - Total axioms: {}", ontology.getAxiomCount());
@@ -1286,11 +1407,8 @@ public class ReasonerController {
         List<Map<String, Object>> children = new ArrayList<>();
         
         for (Node<OWLObjectPropertyExpression> subPropNode : subPropsNodeSet) {
-            OWLObjectPropertyExpression representative = subPropNode.getRepresentativeElement();
-            if (representative.isAnonymous()) continue;
-            
-            OWLObjectProperty subProp = representative.asOWLObjectProperty();
-            if (subProp.isOWLBottomObjectProperty() || subProp.equals(property)) {
+            OWLObjectProperty subProp = ReasonerNodes.namedProperty(subPropNode).orElse(null);
+            if (subProp == null || subProp.isOWLBottomObjectProperty() || subProp.equals(property)) {
                 continue;
             }
             
@@ -1380,7 +1498,7 @@ public class ReasonerController {
     ) {
         try {
             OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(reasonerType);
 
             // Each getInferredTypes() call costs O(classCount) against HermiT's
             // InstanceManager — with hundreds of individuals over a large class
@@ -1438,7 +1556,7 @@ public class ReasonerController {
     ) {
         try {
             OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(reasonerType);
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLNamedIndividual individual = df.getOWLNamedIndividual(IRI.create(individualIri));
 
@@ -1542,7 +1660,7 @@ public class ReasonerController {
     public ResponseEntity<?> getInferredClassDetails(
             @PathVariable String projectId,
             @RequestParam String classIri,
-            @RequestParam(name = "reasonerType", defaultValue = "OPENLLET") ReasonerType type,
+            @RequestParam(name = "reasonerType", defaultValue = "HERMIT") ReasonerType type,
             @RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request) {
@@ -1597,7 +1715,7 @@ public class ReasonerController {
     public ResponseEntity<?> getInferredPropertyDetails(
             @PathVariable String projectId,
             @RequestParam String propertyIri,
-            @RequestParam(defaultValue = "OPENLLET") ReasonerType type,
+            @RequestParam(defaultValue = "HERMIT") ReasonerType type,
             @RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request) {
@@ -1694,7 +1812,7 @@ public class ReasonerController {
             OWLOntology ontology = (draft && resolvedUserId != null && !resolvedUserId.isBlank())
                     ? loadDraftOntology(projectId, resolvedUserId)
                     : loadOntology(projectId);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(reasonerType);
 
             Map<String, Object> stats = reasonerService.getReasonerStats(ontology, type);
             stats.put("success", !stats.containsKey("error"));
@@ -1706,6 +1824,122 @@ public class ReasonerController {
             log.error("Error getting reasoner stats", e);
             return ResponseEntity.ok(friendlyError(e));
         }
+    }
+
+    @PostMapping("/{projectId}/rules/execute")
+    public ResponseEntity<Map<String, Object>> executeRules(
+            @PathVariable String projectId,
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            HttpServletRequest request
+    ) {
+        long started = System.currentTimeMillis();
+        try {
+            String resolvedUserId = resolveUserId(projectId, userId, request);
+            boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
+            String draftUserId = isDraft ? resolvedUserId : null;
+            OWLOntology ontology = isDraft ? loadDraftOntology(projectId, draftUserId) : loadOntology(projectId);
+            DisabledRules.strip(ontology);
+            RuleExecutionResult result;
+            try (self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold hold =
+                         heavyWork.admitRuleExecute(resolvedUserId, ontology.getAxiomCount())) {
+                result = new RuleExecution(ruleStage,
+                        input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519")
+                        .run(ontology, projectId + ":" + ontology.getAxiomCount(), RuleExecutionLimits.defaults());
+            }
+
+            Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
+            List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
+            RuleExecutionPresenter.Full full = RuleExecutionPresenter.partition(derived, asserted);
+            String runId = storeRun(projectId, isDraft, request, full);
+            RuleExecutionPresenter.Presented presented = runId != null
+                    ? RuleExecutionPresenter.firstPage(full, RuleExecutionPresenter.FIRST_PAGE)
+                    : RuleExecutionPresenter.limited(full, RuleExecutionPresenter.MAX_INFERRED);
+            List<Map<String, Object>> axioms = new ArrayList<>();
+            for (OWLAxiom axiom : presented.ordered()) {
+                axioms.add(RuleExecutionPresenter.toJson(axiom, presented.conclusions().contains(axiom) ? "conclusion" : "structure"));
+            }
+
+            List<Map<String, String>> skipped = new ArrayList<>();
+            for (RuleExecutionResult.SkippedRule rule : result.skippedRules()) {
+                skipped.add(Map.of("ruleName", rule.ruleName(), "ruleId", rule.ruleId(), "reason", rule.reason()));
+            }
+            List<String> limitations = new ArrayList<>(result.limitations());
+            String message = result.message();
+            RuleExecutionResult.Status status = result.status();
+            String completion = switch (status) {
+                case COMPLETED -> "completed";
+                case PARTIAL_RULES_SKIPPED, PARTIAL_ENGINE_UNAVAILABLE, PARTIAL_LIMIT_REACHED -> "completed_with_warnings";
+                case FAILED -> "failed";
+                case INCONSISTENT -> "inconsistent";
+                case CANCELLED -> "cancelled";
+            };
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", status != RuleExecutionResult.Status.FAILED);
+            body.put("executionTimeMs", System.currentTimeMillis() - started);
+            body.put("inferredAxiomsCount", derived.size());
+            body.put("totalRulesExecuted", result.executedRules().size());
+            body.put("inferredAxioms", axioms);
+            body.put("errorMessage", status == RuleExecutionResult.Status.FAILED ? message : null);
+            body.put("executedRuleNames", result.executedRules());
+            body.put("executedRuleIds", result.executedRuleIds());
+            body.put("skippedRules", skipped);
+            body.put("completion", completion);
+            body.put("stamp", ontologyVersionStamps != null ? ontologyVersionStamps.current(projectId, isDraft, draftUserId) : null);
+            body.put("conclusionCount", presented.conclusionCount());
+            body.put("structureCount", presented.structureCount());
+            body.put("omittedTrivialCount", presented.omittedTrivial());
+            body.put("truncated", presented.truncated());
+            body.put("runId", runId);
+            body.put("counts", runCounts(full));
+            body.put("executionMode", "all");
+            body.put("status", status.name());
+            body.put("statusLabel", status.label());
+            body.put("message", message);
+            body.put("limitations", limitations);
+            body.put("engineVersions", result.engineVersions());
+            body.put("rounds", result.stopping() != null ? result.stopping().rounds() : 0);
+            body.put("consistencyStatement", result.consistencyStatement());
+            body.put("snapshotId", result.snapshotId());
+            return ResponseEntity.ok(body);
+        } catch (self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
+        } catch (Exception e) {
+            log.error("Error executing rules for project {}", projectId, e);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("success", false);
+            body.put("executionTimeMs", System.currentTimeMillis() - started);
+            body.put("inferredAxiomsCount", 0);
+            body.put("totalRulesExecuted", 0);
+            body.put("inferredAxioms", List.of());
+            body.put("errorMessage", ReasoningFriendlyErrors.forUser(e.getMessage()));
+            body.put("completion", "failed");
+            body.put("status", RuleExecutionResult.Status.FAILED.name());
+            body.put("statusLabel", RuleExecutionResult.Status.FAILED.label());
+            body.put("executionMode", "all");
+            return ResponseEntity.ok(body);
+        }
+    }
+
+    private String storeRun(String projectId, boolean isDraft, HttpServletRequest request, RuleExecutionPresenter.Full full) {
+        if (ruleRunStore == null || ruleRunAccess == null) {
+            return null;
+        }
+        Optional<String> owner = ruleRunAccess.identity(request);
+        return owner.map(id -> ruleRunStore.put(projectId, id, isDraft, full.conclusions(), full.structure())).orElse(null);
+    }
+
+    private static Map<String, Object> runCounts(RuleExecutionPresenter.Full full) {
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("conclusions", full.conclusions().size());
+        counts.put("structure", full.structure().size());
+        counts.put("omittedTrivial", full.omittedTrivial());
+        if (full.conclusions().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_CONCLUSIONS
+                || full.structure().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_STRUCTURE) {
+            counts.put("capped", true);
+        }
+        return counts;
     }
 
     private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {
@@ -1770,6 +2004,9 @@ public class ReasonerController {
     }
 
     private Map<String, Object> friendlyError(Exception e) {
+        if (e instanceof self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
+        }
         String msg = ReasoningFriendlyErrors.forUser(e.getMessage());
         Map<String, Object> body = new HashMap<>();
         body.put("success", false);

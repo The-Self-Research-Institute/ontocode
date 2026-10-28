@@ -37,6 +37,8 @@ public class SwrlRule {
     private boolean validated = false;
     private String validationError;
 
+    private LocalDateTime migratedAt;
+
     public SwrlRule() {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
@@ -175,5 +177,13 @@ public class SwrlRule {
 
     public void setValidationError(String validationError) {
         this.validationError = validationError;
+    }
+
+    public LocalDateTime getMigratedAt() {
+        return migratedAt;
+    }
+
+    public void setMigratedAt(LocalDateTime migratedAt) {
+        this.migratedAt = migratedAt;
     }
 }

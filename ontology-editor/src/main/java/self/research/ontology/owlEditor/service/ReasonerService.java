@@ -4,7 +4,6 @@ import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.reasoner.*;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
-import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import uk.ac.manchester.cs.jfact.JFactFactory;
@@ -12,6 +11,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.common.SwrlBuiltIns;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 
 /**
  * Service for ontology reasoning operations.
- * Supports multiple reasoners: HermiT, Pellet (Openllet), FaCT++, ELK, and Structural.
+ * Supports multiple reasoners: HermiT, FaCT++, ELK, and Structural.
  */
 @Service("owlEditorReasonerService")
 public class ReasonerService {
@@ -42,6 +42,23 @@ public class ReasonerService {
     private final Set<CompletableFuture<OWLReasoner>> partialWarmupBuilds =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    private final Map<OWLReasoner, Long> reasonerBytes = java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+    private volatile self.research.ontology.common.admission.CacheAccount reasonerAccount =
+            RetainedMemory.detachedAccount("reasoners");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        this.reasonerAccount = ledger.cacheAccount("reasoners");
+    }
+
+    private OWLReasoner accounted(OWLReasoner reasoner, OWLOntology ontology) {
+        long bytes = RetainedMemory.reasonerBytes(ontology.getAxiomCount());
+        if (bytes > 0 && reasonerBytes.putIfAbsent(reasoner, bytes) == null) {
+            reasonerAccount.add(bytes);
+        }
+        return reasoner;
+    }
+
     // Caffeine cache: max 5 reasoners, evict after 30 min idle, dispose on removal
     // (each reasoner holds the full ontology + inference state in heap)
     private final Cache<String, CompletableFuture<OWLReasoner>> reasonerCache = Caffeine.newBuilder()
@@ -53,6 +70,10 @@ public class ReasonerService {
                 future.thenAccept(reasoner -> {
                     log.info("[ReasonerCache] Disposing reasoner: {} (cause={})", key, cause);
                     try { reasoner.dispose(); } catch (Exception ignored) {}
+                    Long bytes = reasonerBytes.remove(reasoner);
+                    if (bytes != null) {
+                        reasonerAccount.remove(bytes);
+                    }
                 });
             }
         })
@@ -163,11 +184,11 @@ public class ReasonerService {
         try {
             reasonerBuildExecutor.execute(() -> {
                 try {
-                    future.complete(switch (warmup) {
+                    future.complete(accounted(switch (warmup) {
                         case ALL -> buildReasonerWithPrecompute(ontology, type);
                         case CLASS_HIERARCHY -> buildClassHierarchyReasoner(ontology, type);
                         case NONE -> createReasoner(ontology, type);
-                    });
+                    }, ontology));
                 } catch (Throwable t) {
                     future.completeExceptionally(t);
                 }
@@ -226,24 +247,32 @@ public class ReasonerService {
             type.getDisplayName(),
             ontology.getOntologyID().getOntologyIRI().orElse(null));
 
-        OWLReasonerConfiguration config = new SimpleConfiguration(reasonerOperationTimeoutMs);
+        OWLReasonerConfiguration config = configurationFor(type);
 
         try {
-            return getReasonerFactory(type).createReasoner(ontology, config);
+            self.research.ontology.common.rules.DisabledRules.strip(ontology);
+            OWLOntology target = type == ReasonerType.HERMIT ? SwrlBuiltIns.withoutBuiltInRules(ontology) : ontology;
+            return getReasonerFactory(type).createReasoner(target, config);
         } catch (Throwable e) {
             log.error("Failed to create {} reasoner", type, e);
             throw new RuntimeException(type.getDisplayName() + " reasoner could not be started: " + e.getMessage(), e);
         }
     }
 
+    private OWLReasonerConfiguration configurationFor(ReasonerType type) {
+        if (type != ReasonerType.HERMIT) {
+            return new SimpleConfiguration(reasonerOperationTimeoutMs);
+        }
+        org.semanticweb.HermiT.Configuration hermit = new org.semanticweb.HermiT.Configuration();
+        hermit.ignoreUnsupportedDatatypes = true;
+        hermit.individualTaskTimeout = reasonerOperationTimeoutMs;
+        return hermit;
+    }
+
     private OWLReasonerFactory getReasonerFactory(ReasonerType type) {
         switch (type) {
             case HERMIT:
                 return new ReasonerFactory();
-
-            case PELLET:
-            case OPENLLET:
-                return OpenlletReasonerFactory.getInstance();
 
             case FACTPLUSPLUS:
                 return new JFactFactory();
@@ -635,7 +664,7 @@ public class ReasonerService {
             // Incremental reasoning support is not directly available via OWLReasoner API
             stats.put("supportsIncrementalReasoning", false);
             stats.put("supportsDatatypeReasoning", type != ReasonerType.STRUCTURAL);
-            stats.put("supportsOWL2DL", type == ReasonerType.HERMIT || type == ReasonerType.PELLET);
+            stats.put("supportsOWL2DL", type == ReasonerType.HERMIT);
             
             // Inferred axioms estimate — getInferredAxioms() runs a per-class superclass and
             // instance query against the reasoner, which is O(classCount) work. Fine for a

@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -36,6 +37,18 @@ public class AssistantSwrlToolService {
     private final AssistantPluginInstallChecker pluginInstallChecker;
     private final RestTemplate restTemplate;
 
+    @Autowired(required = false)
+    private RuleService ruleService;
+
+    @Autowired(required = false)
+    private RuleMigrationService migrationService;
+
+    @Autowired(required = false)
+    private ProjectWriteLockRegistry lockRegistry;
+
+    @Autowired(required = false)
+    private RuleWriteAccess ruleWriteAccess;
+
     @Value("${ontology.swrl-service.url:http://127.0.0.1:18084}")
     private String swrlServiceUrl;
 
@@ -62,16 +75,39 @@ public class AssistantSwrlToolService {
                     .message("ruleName and ruleText must both be non-empty.").build();
         }
         return runTool(sessionId, userEmail, authorizationHeader, session -> {
-            Map<String, String> validateBody = Map.of("ruleText", ruleText);
-            Map<String, Object> validation = postToSwrl(
-                    "/api/swrl/" + session.getProjectId() + "/validate", validateBody, authorizationHeader);
-            if (Boolean.FALSE.equals(validation.get("valid"))) {
-                throw new SwrlCallException("INVALID_RULE",
-                        String.valueOf(validation.getOrDefault("errorMessage", "The rule text is not valid SWRL.")));
+            if (ruleService == null || lockRegistry == null) {
+                throw new SwrlCallException("SWRL_UNAVAILABLE", "The rule store is not available.");
             }
-
-            Map<String, String> createBody = Map.of("ruleName", ruleName, "ruleText", ruleText);
-            return postToSwrl("/api/swrl/" + session.getProjectId() + "/rules", createBody, authorizationHeader);
+            String projectId = session.getProjectId();
+            if (ruleWriteAccess != null) {
+                RuleWriteAccess.Decision decision = ruleWriteAccess.decide(authorizationHeader, null, projectId);
+                if (!decision.allowed()) {
+                    throw new SwrlCallException("RULE_WRITE_DENIED", decision.reason());
+                }
+            }
+            boolean draft = session.isDraft() && session.getDraftUserId() != null && !session.getDraftUserId().isBlank();
+            String draftUser = draft ? session.getDraftUserId() : null;
+            try {
+                if (migrationService != null) {
+                    migrationService.ensureMigrated(projectId);
+                }
+                ChangeOrigin origin = ChangeOrigin.fromTool("assistant-swrl", "Rule added by the assistant");
+                Map<String, Object> view = lockRegistry.runExclusive(projectId, () -> ruleService.create(projectId,
+                        draft, draftUser, "Assistant", new RuleService.RuleInput(ruleName, ruleText, null, null, null),
+                        origin));
+                return new HashMap<>(view);
+            } catch (RuleService.InvalidRuleException e) {
+                throw new SwrlCallException("INVALID_RULE", e.getMessage());
+            } catch (RuleService.RuleNameTakenException e) {
+                throw new SwrlCallException("RULE_NAME_TAKEN", e.getMessage());
+            } catch (SwrlRuleClient.UnavailableException e) {
+                throw new SwrlCallException("SWRL_UNAVAILABLE", e.getMessage());
+            } catch (SwrlCallException e) {
+                throw e;
+            } catch (Exception e) {
+                log.warn("[Assistant] could not save the rule for project {}: {}", projectId, e.getMessage());
+                throw new SwrlCallException("SWRL_ERROR", "The rule could not be saved.");
+            }
         });
     }
 

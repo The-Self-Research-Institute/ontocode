@@ -53,6 +53,9 @@ public class DLQueryService {
     private final long maxReasonerTriples;
     private final ProjectImportService importService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private HeavyWorkAdmission heavyWork = HeavyWorkAdmission.disabled();
+
     public DLQueryService(GridFsTemplate gridfs,
                           SparqlDatasetService datasetService,
                           @Value("${ontocode.reasoner.max-triples:5000000}") long maxReasonerTriples,
@@ -63,10 +66,10 @@ public class DLQueryService {
         this.importService = importService;
         OWLReasonerFactory factory = null;
         try {
-            factory = openllet.owlapi.OpenlletReasonerFactory.getInstance();
-            log.info("DLQueryService initialized with Openllet reasoner");
+            factory = new org.semanticweb.HermiT.ReasonerFactory();
+            log.info("DLQueryService initialized with HermiT reasoner");
         } catch (Exception e) {
-            log.warn("Openllet not available for DL Query: {}", e.getMessage());
+            log.warn("HermiT not available for DL Query: {}", e.getMessage());
         }
         this.reasonerFactory = factory;
     }
@@ -94,6 +97,10 @@ public class DLQueryService {
                         "error", "Failed to parse class expression: " + expression,
                         "hint", "Check Manchester OWL syntax. Examples: 'Person', 'Person and hasAge some integer'"
                 );
+            }
+
+            if (resolvedTypes.stream().anyMatch(t -> t.equalsIgnoreCase("instances") || t.equalsIgnoreCase("directinstances"))) {
+                reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
             }
 
             Map<String, Object> results = new HashMap<>();
@@ -124,6 +131,10 @@ public class DLQueryService {
             response.put("queryType", resolvedTypes);
             response.put("results", results);
             response.put("executionTime", duration);
+            if (session.note() != null) {
+                response.put("downgradedWarning", session.note());
+            }
+            response.put("completion", session.complete() ? "complete" : "partial");
             log.info("DL Query completed for project {} in {}ms", projectId, duration);
             return response;
         }
@@ -131,6 +142,7 @@ public class DLQueryService {
 
     public OWLOntology loadOntologyForParse(String projectId) throws Exception {
         LoadedOntology loaded = loadOntology(projectId, null);
+        loaded.hold().close();
         return loaded.ontology();
     }
 
@@ -175,12 +187,43 @@ public class DLQueryService {
             throw new IllegalStateException("No DL reasoner available on this server");
         }
         LoadedOntology loaded = loadOntology(projectId, draftUserId);
-        OWLReasoner reasoner = reasonerFactory.createReasoner(loaded.ontology());
+        try {
+            return buildSession(projectId, loaded);
+        } catch (Exception | Error e) {
+            loaded.hold().close();
+            throw e;
+        }
+    }
 
-        return new QuerySession(loaded.manager(), loaded.ontology(), reasoner);
+    private QuerySession buildSession(String projectId, LoadedOntology loaded) {
+        self.research.ontology.common.rules.DisabledRules.strip(loaded.ontology());
+        org.semanticweb.HermiT.Configuration hermitConfig = new org.semanticweb.HermiT.Configuration();
+        hermitConfig.ignoreUnsupportedDatatypes = true;
+        self.research.ontology.common.PreparedOntology prepared = self.research.ontology.common.SwrlBuiltIns
+                .prepareChained(loaded.ontology(), self.research.ontology.common.RestRuleStage.shared(),
+                        input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519", projectId + ":" + loaded.ontology().getAxiomCount());
+        OWLReasoner reasoner = reasonerFactory.createReasoner(prepared.forHermit(), hermitConfig);
+
+        return new QuerySession(loaded.manager(), loaded.ontology(), reasoner, prepared.note(), prepared.complete(),
+                loaded.hold());
     }
 
     private LoadedOntology loadOntology(String projectId, String draftUserId) throws Exception {
+        HeavyWorkAdmission.Hold[] held = {HeavyWorkAdmission.Hold.NONE};
+        boolean loaded = false;
+        try {
+            LoadedOntology result = loadOntologyAdmitted(projectId, draftUserId, held);
+            loaded = true;
+            return new LoadedOntology(result.manager(), result.ontology(), held[0]);
+        } finally {
+            if (!loaded) {
+                held[0].close();
+            }
+        }
+    }
+
+    private LoadedOntology loadOntologyAdmitted(String projectId, String draftUserId,
+                                                HeavyWorkAdmission.Hold[] held) throws Exception {
 
         importService.syncProjectToFuseki(projectId);
         try {
@@ -190,10 +233,13 @@ public class DLQueryService {
                         "This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.");
             }
             log.info("DL Query size check passed for {}: {} triples", projectId, tripleCount);
-        } catch (IllegalArgumentException e) {
+            held[0] = heavyWork.admitLoad(draftUserId, self.research.ontology.common.admission.WorkKind.DL_QUERY,
+                    tripleCount);
+        } catch (IllegalArgumentException | BusyException e) {
             throw e;
         } catch (Exception e) {
             log.warn("Could not check ontology size before DL Query (will proceed): {}", e.getMessage());
+            held[0] = heavyWork.admitLoad(draftUserId, self.research.ontology.common.admission.WorkKind.DL_QUERY, 0);
         }
 
         Path tempFile = null;
@@ -355,17 +401,36 @@ public class DLQueryService {
         return entity.getIRI().getShortForm();
     }
 
-    private record LoadedOntology(OWLOntologyManager manager, OWLOntology ontology) {}
+    private record LoadedOntology(OWLOntologyManager manager, OWLOntology ontology, HeavyWorkAdmission.Hold hold) {
+        LoadedOntology(OWLOntologyManager manager, OWLOntology ontology) {
+            this(manager, ontology, HeavyWorkAdmission.Hold.NONE);
+        }
+    }
 
     private static final class QuerySession implements AutoCloseable {
         private final OWLOntologyManager manager;
         private final OWLOntology ontology;
         private final OWLReasoner reasoner;
+        private final String note;
+        private final boolean complete;
+        private final HeavyWorkAdmission.Hold hold;
 
-        private QuerySession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner) {
+        private QuerySession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner, String note, boolean complete,
+                             HeavyWorkAdmission.Hold hold) {
+            this.hold = hold;
             this.manager = manager;
             this.ontology = ontology;
             this.reasoner = reasoner;
+            this.note = note;
+            this.complete = complete;
+        }
+
+        boolean complete() {
+            return complete;
+        }
+
+        String note() {
+            return note;
         }
 
         OWLOntology ontology() {
@@ -388,6 +453,7 @@ public class DLQueryService {
             } catch (Exception e) {
                 log.debug("Ontology remove failed: {}", e.getMessage());
             }
+            hold.close();
         }
     }
 }

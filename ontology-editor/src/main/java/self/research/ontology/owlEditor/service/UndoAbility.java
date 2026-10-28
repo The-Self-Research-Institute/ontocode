@@ -37,6 +37,10 @@ public final class UndoAbility {
             return new Result(true, null);
         }
         Kind kind = RollbackMutationPlanner.kindOf(change);
+        if (kind == Kind.DOCUMENT && PLANNER.planUndo(change, RollbackMutationPlanner.active(change)).actions().stream()
+                .anyMatch(DocumentRollbackActions::isRetired)) {
+            return new Result(false, DocumentRollbackActions.SAVED_RULES_MOVED);
+        }
         if (kind == Kind.EXACT || kind == Kind.DOCUMENT || kind == Kind.MERGE) {
             return new Result(true, null);
         }

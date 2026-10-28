@@ -1,6 +1,5 @@
 package self.research.ontology.reasoner.service;
 
-import openllet.owlapi.OpenlletReasonerFactory;
 import org.semanticweb.HermiT.ReasonerFactory;
 import org.semanticweb.elk.owlapi.ElkReasonerFactory;
 import org.semanticweb.owlapi.model.OWLOntology;
@@ -10,6 +9,7 @@ import org.semanticweb.owlapi.reasoner.SimpleConfiguration;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import self.research.ontology.common.SwrlBuiltIns;
 import uk.ac.manchester.cs.jfact.JFactFactory;
 
 final class EphemeralReasonerFactory {
@@ -20,16 +20,15 @@ final class EphemeralReasonerFactory {
 
     static OWLReasoner create(OWLOntology ontology, ReasonerType type, long timeoutMs) {
         OWLReasonerConfiguration config = new SimpleConfiguration(timeoutMs);
-        ReasonerType effective = type != null ? type : ReasonerType.OPENLLET;
+        ReasonerType effective = type != null ? type : ReasonerType.HERMIT;
         try {
             return switch (effective) {
                 case HERMIT -> {
                     org.semanticweb.HermiT.Configuration hermitConfig = new org.semanticweb.HermiT.Configuration();
                     hermitConfig.ignoreUnsupportedDatatypes = true;
                     hermitConfig.individualTaskTimeout = timeoutMs;
-                    yield new ReasonerFactory().createReasoner(ontology, hermitConfig);
+                    yield new ReasonerFactory().createReasoner(SwrlBuiltIns.withoutBuiltInRules(ontology), hermitConfig);
                 }
-                case PELLET, OPENLLET -> OpenlletReasonerFactory.getInstance().createReasoner(ontology, config);
                 case FACTPLUSPLUS -> new JFactFactory().createReasoner(ontology, config);
                 case ELK -> new ElkReasonerFactory().createReasoner(ontology, config);
                 case STRUCTURAL -> new StructuralReasonerFactory().createReasoner(ontology, config);

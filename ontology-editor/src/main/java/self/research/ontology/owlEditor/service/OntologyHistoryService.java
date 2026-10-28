@@ -152,8 +152,11 @@ public class OntologyHistoryService {
                 changeData.put("changeSetId", origin.changeSetId());
                 changeData.put("source", origin.source());
                 if (origin.ai() != null) changeData.put("ai", origin.ai());
+                if (origin.toolSource() != null) changeData.put("toolSource", origin.toolSource());
+                if (origin.toolLabel() != null) changeData.put("toolLabel", origin.toolLabel());
                 if (origin.revertsChangeSetId() != null) changeData.put("revertsChangeSetId", origin.revertsChangeSetId());
                 if (origin.rollbackAuditId() != null) changeData.put("rollbackAuditId", origin.rollbackAuditId());
+                if (origin.batch() != null && !origin.batch().isEmpty()) changeData.put("batch", origin.batch());
                 if (origin.exact() != null) origin.exact().stamp(changeData, editId);
             }
 
@@ -232,8 +235,14 @@ public class OntologyHistoryService {
     public String recordGroupedMutations(String projectId, String userId, String username,
                                         List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> ops,
                                         boolean draft) {
+        return recordGroupedMutations(projectId, userId, username, ops, draft, ChangeOrigin.manual());
+    }
+
+    public String recordGroupedMutations(String projectId, String userId, String username,
+                                        List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp> ops,
+                                        boolean draft, ChangeOrigin origin) {
         if (ops == null || ops.isEmpty()) { return null; }
-        ChangeOrigin origin = ChangeOrigin.manual();
+        if (origin == null) { origin = ChangeOrigin.manual(); }
         Map<String, List<self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp>> byIri = new LinkedHashMap<>();
         for (self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp op : ops) {
             if (op.iri() == null) {

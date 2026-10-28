@@ -50,6 +50,7 @@ interface DLQueryResponse {
   executionTime?: number;
   executionTimeMs?: number;
   error?: string;
+  downgradedWarning?: string;
 }
 
 interface DLQueryJobUpdate {
@@ -95,7 +96,7 @@ const friendlyDlQueryError = (raw?: string): string => {
   if (lower.includes('too large') || lower.includes('out of memory') || lower.includes('triples')) {
     return 'This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.';
   }
-  if (lower.includes('openllet') || lower.includes('pellet') || lower.includes('reasoner')) {
+  if (lower.includes('hermit') || lower.includes('reasoner')) {
     return 'Could not run this query on the current ontology. Check for inconsistent class or individual types, then try again.';
   }
   return raw;
@@ -444,6 +445,7 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           queryType: (resultPayload?.queryType as string[]) || selectedTypes,
           results: (resultPayload?.results ?? jobUpdate.result) as DLQueryResponse['results'],
           executionTime: jobUpdate.executionTimeMs ?? (resultPayload?.executionTime as number),
+          downgradedWarning: (resultPayload?.downgradedWarning as string) || undefined,
         };
         setResults(response);
         return;
@@ -814,6 +816,13 @@ export const DLQueryPanel: React.FC<DLQueryPanelProps> = ({
           </div>
         )}
         
+        {results?.downgradedWarning && (
+          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+            <AlertCircle size={18} className="text-amber-600 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-amber-800">{results.downgradedWarning}</p>
+          </div>
+        )}
+
         {/* Results Section */}
         <div className="flex-1 bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden flex flex-col">
           <div className="p-3 border-b border-gray-100 flex items-center justify-between bg-gray-50">

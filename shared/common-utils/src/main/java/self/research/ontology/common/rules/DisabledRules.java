@@ -1,0 +1,53 @@
+package self.research.ontology.common.rules;
+
+import org.semanticweb.owlapi.model.AxiomType;
+import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLAnnotation;
+import org.semanticweb.owlapi.model.OWLAxiom;
+import org.semanticweb.owlapi.model.OWLLiteral;
+import org.semanticweb.owlapi.model.OWLOntology;
+import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.SWRLRule;
+
+import java.util.List;
+
+public final class DisabledRules {
+
+    public static final String NAMESPACE = "http://ontocode.org/ns#";
+    public static final IRI ENABLED = IRI.create(NAMESPACE + "enabled");
+    public static final IRI CATEGORY = IRI.create(NAMESPACE + "category");
+    public static final IRI RULE_ID = IRI.create(NAMESPACE + "ruleId");
+
+    private DisabledRules() {
+    }
+
+    public static boolean isDisabled(OWLAxiom axiom) {
+        if (!(axiom instanceof SWRLRule)) {
+            return false;
+        }
+        for (OWLAnnotation annotation : axiom.annotationsAsList()) {
+            if (ENABLED.equals(annotation.getProperty().getIRI()) && annotation.getValue() instanceof OWLLiteral literal) {
+                String text = literal.getLiteral().trim();
+                return "false".equalsIgnoreCase(text) || "0".equals(text);
+            }
+        }
+        return false;
+    }
+
+    public static int strip(OWLOntology ontology) {
+        if (ontology == null) {
+            return 0;
+        }
+        OWLOntologyManager manager = ontology.getOWLOntologyManager();
+        int removed = 0;
+        List<OWLOntology> closure = ontology.importsClosure().toList();
+        for (OWLOntology member : closure) {
+            List<SWRLRule> disabled = member.axioms(AxiomType.SWRL_RULE).filter(DisabledRules::isDisabled).toList();
+            if (!disabled.isEmpty()) {
+                manager.removeAxioms(member, disabled.stream());
+                removed += disabled.size();
+            }
+        }
+        return removed;
+    }
+}

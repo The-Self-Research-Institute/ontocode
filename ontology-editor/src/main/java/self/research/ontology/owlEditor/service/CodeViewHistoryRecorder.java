@@ -72,6 +72,10 @@ final class CodeViewHistoryRecorder {
         if (added.isEmpty() && removed.isEmpty()) {
             return false;
         }
+        if (actor.origin().ruleNote() != null) {
+            recordRule(actor, actor.origin().ruleNote());
+            return true;
+        }
 
         int namedChangeCount = (int) (added.stream().filter(this::isNamedTriple).count()
                 + removed.stream().filter(this::isNamedTriple).count());
@@ -108,6 +112,14 @@ final class CodeViewHistoryRecorder {
                     + (structuralChanges == 1 ? "" : "s"), "Restrictions, unions, rules or other axioms without a name");
         }
         return true;
+    }
+
+    static final String RULE_CHANGE = "ruleChange";
+
+    private void recordRule(Actor actor, ChangeOrigin.RuleNote note) {
+        historyService.recordEdit(actor.projectId(), actor.userId(), actor.username(), RULE_CHANGE, null, note.name(),
+                null, null, note.description(), null, null, actor.draft(), actor.origin());
+        recordSummaryDraft(actor, "structuralGraphEdit", note.name(), note.description());
     }
 
     private void recordSummaryDraft(Actor actor, String opType, String label, String value) {
@@ -349,9 +361,12 @@ final class CodeViewHistoryRecorder {
         return extractLocalName(subChange.get("predicate")) + (value != null ? ("=" + value) : "");
     }
 
+    private static final String SWRL_VARIABLE = "http://www.w3.org/2003/11/swrl#Variable";
+
     private boolean isNamedTriple(Statement st) {
         return st.getSubject() instanceof IRI
-                && !(st.getObject() instanceof org.eclipse.rdf4j.model.BNode);
+                && !(st.getObject() instanceof org.eclipse.rdf4j.model.BNode)
+                && !(st.getPredicate().equals(RDF.TYPE) && SWRL_VARIABLE.equals(st.getObject().stringValue()));
     }
 
     private String extractLocalName(String iri) {

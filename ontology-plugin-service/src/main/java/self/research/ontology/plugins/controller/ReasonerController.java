@@ -378,7 +378,7 @@ public class ReasonerController {
                 "errorType", "INVALID_REASONER_TYPE",
                 "projectId", projectId,
                 "technicalDetail", technicalDetail,
-                "suggestion", "Select a supported reasoner (HermiT, Openllet/Pellet, ELK, FaCT++, or Structural) and try again."
+                "suggestion", "Select a supported reasoner (HermiT, ELK, FaCT++, or Structural) and try again."
             ));
         }
         if (e instanceof ClassNotFoundException
@@ -748,9 +748,10 @@ public class ReasonerController {
 
             OWLOntology ontology = loadOntology(projectId, userId);
             try {
-                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+                ReasonerType type = ReasonerType.parse(reasonerType);
 
                 long startTime = System.currentTimeMillis();
+                reasonerService.beginRuleScope();
                 boolean isConsistent = reasonerService.isConsistent(ontology, type);
                 long duration = System.currentTimeMillis() - startTime;
 
@@ -759,6 +760,7 @@ public class ReasonerController {
                 result.put("reasonerType", type.getDisplayName());
                 result.put("durationMs", duration);
                 result.put("projectId", projectId);
+                noteLeftOutRules(result, type);
 
                 if (!isConsistent) {
                     Set<OWLClass> unsatisfiable = reasonerService.getUnsatisfiableClasses(ontology, type);
@@ -773,6 +775,7 @@ public class ReasonerController {
 
                 return ResponseEntity.ok(result);
             } finally {
+                reasonerService.endRuleScope();
                 endDraftUse(ontology);
             }
 
@@ -789,7 +792,7 @@ public class ReasonerController {
             ontology = ontologyContent != null && !ontologyContent.isBlank()
                     ? loadOntologyFromContent(ontologyContent)
                     : loadWhatIfOntology(projectId, whatIfKey);
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(reasonerType);
 
             long startTime = System.currentTimeMillis();
             boolean isConsistent = reasonerService.isConsistent(ontology, type);
@@ -888,7 +891,7 @@ public class ReasonerController {
             log.info("Classifying ontology for project: {} with {}", projectId, reasonerType);
 
             // Pre-validate reasoner type
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(reasonerType);
 
             // Pre-load ontology on the request thread so errors surface immediately
             OWLOntology ontology = loadOntology(projectId, userId);
@@ -1054,7 +1057,7 @@ public class ReasonerController {
 
             OWLOntology ontology = loadOntology(projectId, userId);
             try {
-                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+                ReasonerType type = ReasonerType.parse(reasonerType);
 
                 long startTime = System.currentTimeMillis();
                 reasonerService.realize(ontology, type);
@@ -1108,7 +1111,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             return submitExplainInconsistencyToWorker(projectId, requestedReasonerType, mode, maxJustifications);
         }
 
-        ReasonerType requestedType = ReasonerType.valueOf(requestedReasonerType.toUpperCase());
+        ReasonerType requestedType = ReasonerType.parse(requestedReasonerType);
         ReasonerType type = (requestedType == ReasonerType.ELK || requestedType == ReasonerType.STRUCTURAL)
             ? ReasonerType.HERMIT
             : requestedType;
@@ -1160,7 +1163,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             String literalValue = request.get("literalValue");
 
             String requestedReasonerType = request.getOrDefault("reasonerType", "HERMIT");
-            ReasonerType requestedType = ReasonerType.valueOf(requestedReasonerType.toUpperCase());
+            ReasonerType requestedType = ReasonerType.parse(requestedReasonerType);
             ReasonerType type = (requestedType == ReasonerType.ELK || requestedType == ReasonerType.STRUCTURAL)
                 ? ReasonerType.HERMIT
                 : requestedType;
@@ -1272,9 +1275,10 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
 
             OWLOntology ontology = loadOntology(projectId, userId);
             try {
-                ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+                ReasonerType type = ReasonerType.parse(reasonerType);
 
                 long startTime = System.currentTimeMillis();
+                reasonerService.beginRuleScope();
                 Set<OWLAxiom> inferredAxioms = reasonerService.getInferredAxioms(ontology, type);
                 long duration = System.currentTimeMillis() - startTime;
 
@@ -1298,14 +1302,26 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
                 result.put("axioms", axiomsList);
                 result.put("totalInferredAxioms", inferredAxioms.size());
                 result.put("durationMs", duration);
+                noteLeftOutRules(result, type);
 
                 return ResponseEntity.ok(result);
             } finally {
+                reasonerService.endRuleScope();
                 endDraftUse(ontology);
             }
 
         } catch (Exception e) {
             return reasoningFailure(e, projectId, "getting inferred axioms");
+        }
+    }
+
+    private void noteLeftOutRules(Map<String, Object> result, ReasonerType type) {
+        if (type != ReasonerType.HERMIT) {
+            return;
+        }
+        String note = reasonerService.ruleNote();
+        if (note != null) {
+            result.put("downgradedWarning", note);
         }
     }
 
@@ -1320,7 +1336,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             @RequestParam(required = false) String userId
     ) {
         try {
-            ReasonerType type = ReasonerType.valueOf(reasonerType.toUpperCase());
+            ReasonerType type = ReasonerType.parse(reasonerType);
             if (workerAvailable() && (userId == null || userId.isBlank())) {
                 Map<String, Object> worker = reasonerWorkerClient.submit("REASONER_SNAPSHOT", projectId, type.name());
                 if (Boolean.TRUE.equals(worker.get("rateLimited"))) {
@@ -1422,7 +1438,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
         }
         stats.put("supportsIncrementalReasoning", false);
         stats.put("supportsDatatypeReasoning", requested != ReasonerType.STRUCTURAL);
-        stats.put("supportsOWL2DL", requested == ReasonerType.HERMIT || requested == ReasonerType.PELLET);
+        stats.put("supportsOWL2DL", requested == ReasonerType.HERMIT);
         if (snapshot.get("downgradedWarning") != null) {
             stats.put("downgradedWarning", snapshot.get("downgradedWarning"));
         }
@@ -1446,7 +1462,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     ) {
         try {
             if (reasonerType != null && !reasonerType.isBlank()) {
-                reasonerService.disposeReasoner(projectId, ReasonerType.valueOf(reasonerType.toUpperCase()));
+                reasonerService.disposeReasoner(projectId, ReasonerType.parse(reasonerType));
             } else {
                 for (ReasonerType type : ReasonerType.values()) {
                     reasonerService.disposeReasoner(projectId, type);

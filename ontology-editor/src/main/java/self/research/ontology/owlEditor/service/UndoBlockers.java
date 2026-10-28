@@ -142,6 +142,17 @@ public class UndoBlockers {
     }
 
     private static String describe(HistoryChange change) {
+        if (change.getMetadata() != null && change.getMetadata().get("importId") != null
+                && change.getDescription() != null && !change.getDescription().isBlank()) {
+            return change.getUsername() == null || change.getUsername().isBlank() ? change.getDescription()
+                    : change.getDescription() + " (" + change.getUsername() + ")";
+        }
+        if (CodeViewHistoryRecorder.RULE_CHANGE.equals(change.getOperationType()) && change.getEntityLabel() != null
+                && !change.getEntityLabel().isBlank()) {
+            String rule = "rule \"" + change.getEntityLabel() + "\"";
+            return change.getUsername() == null || change.getUsername().isBlank() ? rule
+                    : rule + " (" + change.getUsername() + ")";
+        }
         String label = change.getEntityLabel() != null && !change.getEntityLabel().isBlank() ? change.getEntityLabel()
                 : change.getOperationType() == null ? "a change" : change.getOperationType();
         return change.getUsername() == null || change.getUsername().isBlank() ? label : label + " (" + change.getUsername() + ")";

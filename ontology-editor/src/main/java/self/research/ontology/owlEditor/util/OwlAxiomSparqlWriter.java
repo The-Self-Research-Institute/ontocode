@@ -9,6 +9,7 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.SWRLRule;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -68,6 +69,9 @@ public final class OwlAxiomSparqlWriter {
         if (axioms == null || axioms.isEmpty()) {
             return "";
         }
+        if (axioms.stream().anyMatch(a -> a instanceof SWRLRule)) {
+            throw new IllegalArgumentException("SWRL rules contain blank nodes and must be deleted with toDeleteWhere");
+        }
 
         OWLOntologyManager tempManager = OWLManager.createOWLOntologyManager();
         OWLOntology tempOntology = tempManager.createOntology(
@@ -102,6 +106,17 @@ public static String toDeleteWhere(Set<? extends OWLAxiom> axioms) throws Except
     if (axioms == null || axioms.isEmpty()) {
         return "";
     }
+    if (axioms.stream().anyMatch(a -> a instanceof SWRLRule)) {
+        StringBuilder all = new StringBuilder();
+        for (OWLAxiom axiom : axioms) {
+            if (axiom instanceof SWRLRule rule) {
+                all.append(all.length() == 0 ? "" : ";\n").append(toDeleteRule(rule));
+            } else {
+                all.append(all.length() == 0 ? "" : ";\n").append(toDeleteWhere(Set.of(axiom)));
+            }
+        }
+        return all.toString();
+    }
 
     OWLOntologyManager tempManager = OWLManager.createOWLOntologyManager();
     OWLOntology tempOntology = tempManager.createOntology(
@@ -133,6 +148,51 @@ public static String toDeleteWhere(Set<? extends OWLAxiom> axioms) throws Except
 
     String patternStr = pattern.toString();
     return PREFIXES + "DELETE {\n" + patternStr + "}\nWHERE {\n" + patternStr + "}";
+}
+
+public static String toDeleteRule(SWRLRule rule) throws Exception {
+    OWLOntologyManager tempManager = OWLManager.createOWLOntologyManager();
+    OWLOntology tempOntology = tempManager.createOntology(
+            IRI.create("urn:ontocode:axiom-del:" + UUID.randomUUID()));
+    tempManager.addAxioms(tempOntology, Set.of(rule));
+
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    tempManager.saveOntology(tempOntology, new RDFXMLDocumentFormat(), out);
+    var model = Rio.parse(new ByteArrayInputStream(out.toByteArray()), "", RDFFormat.RDFXML);
+
+    java.util.Map<String, String> bNodeVars = new java.util.HashMap<>();
+    StringBuilder pattern = new StringBuilder();
+    String impVar = null;
+    org.eclipse.rdf4j.model.Resource impNode = null;
+    for (var st : model) {
+        if (st.getSubject() instanceof org.eclipse.rdf4j.model.BNode
+                && st.getPredicate().stringValue().equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+                && st.getObject().stringValue().equals("http://www.w3.org/2003/11/swrl#Imp")) {
+            impNode = st.getSubject();
+        }
+    }
+    java.util.Set<String> impPredicates = new java.util.LinkedHashSet<>();
+    for (var st : model) {
+        if (!(st.getSubject() instanceof org.eclipse.rdf4j.model.BNode)) {
+            continue;
+        }
+        String subject = toSparqlPatternTerm(st.getSubject(), bNodeVars);
+        if (st.getSubject().equals(impNode)) {
+            impVar = subject;
+            impPredicates.add("<" + st.getPredicate().stringValue() + ">");
+        }
+        pattern.append("  ").append(subject).append(" ")
+                .append(toSparqlPatternTerm(st.getPredicate(), bNodeVars)).append(" ")
+                .append(toSparqlPatternTerm(st.getObject(), bNodeVars)).append(" .\n");
+    }
+    if (impVar == null) {
+        throw new IllegalStateException("The rule could not be serialised as a swrl:Imp");
+    }
+    String guard = "  FILTER NOT EXISTS { " + impVar + " ?guardP ?guardO . FILTER(?guardP NOT IN ("
+            + String.join(", ", impPredicates) + ")) }\n"
+            + "  FILTER NOT EXISTS { ?ruleAnnotationNode owl:annotatedSource " + impVar + " }\n";
+    String patternStr = pattern.toString();
+    return PREFIXES + "DELETE {\n" + patternStr + "}\nWHERE {\n" + patternStr + guard + "}";
 }
 
 /** Like toSparqlTerm, but renders blank nodes as SPARQL variables so the same pattern

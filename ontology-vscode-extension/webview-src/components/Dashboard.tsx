@@ -802,26 +802,6 @@ const TopMenuBar = ({
                     <button
                       onClick={() => {
                         setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Pellet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Pellet' ? 'bg-blue-50 font-semibold' : ''
-                        }`}
-                    >
-                      {selectedReasoner === 'Pellet' ? '• ' : '  '}Pellet
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
-                        if (onSelectReasoner) onSelectReasoner('Openllet');
-                      }}
-                      className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Openllet' ? 'bg-blue-50 font-semibold' : ''
-                        }`}
-                    >
-                      {selectedReasoner === 'Openllet' ? '• ' : '  '}Openllet 2.6.5
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOpenMenu(null);
                         if (onSelectReasoner) onSelectReasoner('Structural');
                       }}
                       className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-100 ${selectedReasoner === 'Structural' ? 'bg-blue-50 font-semibold' : ''
@@ -1313,6 +1293,15 @@ const Dashboard: React.FC<DashboardProps> = ({
   const currentProjectIdRef = useRef(projectId);
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
   const reasonerRunIdRef = useRef(0);
+  const lastReasonerNoteRef = useRef("");
+  const announceReasonerNote = (results: any) => {
+    const note = results?.downgradedWarning;
+    if (typeof note !== "string" || !note.trim()) return;
+    const key = `${currentProjectIdRef.current}|${note}`;
+    if (lastReasonerNoteRef.current === key) return;
+    lastReasonerNoteRef.current = key;
+    showNotification(note, "warning");
+  };
 
   useEffect(() => {
     if (!projectId || projectId === prevProjectIdRef.current) return;
@@ -2756,7 +2745,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const HEAVY_REASONER_TRIPLE_LIMIT = 500_000;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
-    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > HEAVY_REASONER_TRIPLE_LIMIT)
       ? 'ELK'
       : normalizedSelectedReasoner;
@@ -2844,7 +2833,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
-    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
     const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
     if (inferredObjectPropertyLoadKeyRef.current === loadKey) return;
@@ -2911,7 +2900,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isStale = () => currentProjectIdRef.current !== startedProjectId || reasonerRunIdRef.current !== startedRunId;
     const ontologyTripleCount = (metadata as any)?.tripleCount ?? 0;
     const normalizedSelectedReasoner = normalizeReasonerType(selectedReasoner);
-    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT' || normalizedSelectedReasoner === 'PELLET';
+    const isHeavyReasoner = normalizedSelectedReasoner === 'HERMIT';
     const effectiveReasoner = (isHeavyReasoner && ontologyTripleCount > 500_000) ? 'ELK' : normalizedSelectedReasoner;
     const loadKey = `${startedProjectId}::${effectiveReasoner}::${startedRunId}`;
     if (inferredDataPropertyLoadKeyRef.current === loadKey) return;
@@ -3242,6 +3231,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         : await fetchReasonerBundle(reasonerType, isStaleRun);
       if (isStaleRun()) return;
       setReasonerResults(results);
+      announceReasonerNote(results);
             console.log("[Dashboard] reasoner bundle:", results);
       console.log("[Dashboard] FIRST inferred class item:", JSON.stringify((results as any)?.classHierarchy?.[0], null, 2));
 
@@ -3458,8 +3448,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       const descriptions: Record<string, string> = {
         HermiT: "Hypertableau-based reasoner with full OWL 2 DL support - best for complex ontologies",
         ELK: "High-performance reasoner optimized for EL++ profile - best for large taxonomies",
-        Pellet: "Complete OWL DL reasoner with SWRL support",
-        Openllet: "Modern fork of Pellet with improved performance and OWL API 5 support",
         Structural: "Lightweight structural reasoner - fast but limited inference",
       };
 
@@ -3495,6 +3483,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
       setReasonerResults(results);
+      announceReasonerNote(results);
 
       if ((results as any)?.inconsistent === true) {
         markReasonerResultInconsistent(results, selectedReasoner, request.projectId);
@@ -14777,7 +14766,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -14968,7 +14957,7 @@ const updateItemInState = useCallback(
             description="Advanced OWL 2 DL reasoning with classification, consistency checking, explanations, and inferred hierarchies."
             icon={<Zap size={32} className="text-white" />}
             features={[
-              "HermiT, ELK, Pellet, Openllet, Structural support",
+              "HermiT, ELK, Structural support",
               "Full classification with inferred hierarchy",
               "Consistency checks with unsat explanations",
               "Auto-sync with ontology edits",

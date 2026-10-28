@@ -73,16 +73,27 @@ class DocumentRollbackActionsTest {
     }
 
     @Test
-    void executionCountersDoNotCountAsAChange() {
+    void executionCountersOfAFuzzyRuleDocumentStillCountAsAChange() {
         String ran = "{\"_id\":{\"$oid\":\"6acf64ae94e5320b04bb880a\"},\"projectId\":\"p\",\"name\":\"new\",\"executionCount\":3}";
         when(found.first()).thenReturn(Document.parse(ran));
+
+        assertFalse(actions.holds("p", restore(OLD, NEW), false, null));
+    }
+
+    @Test
+    void theOldSavedRuleDocumentsAreNeverRewrittenAndNeverHold() {
         MongoTemplate template = mock(MongoTemplate.class);
         when(template.getCollection("swrl_rules")).thenReturn(collection);
         DocumentRollbackActions swrl = new DocumentRollbackActions(template, "http://localhost:1");
+        RollbackAction action = RollbackAction.restoreDocument("swrlRule", "6acf64ae94e5320b04bb880a", OLD, NEW);
 
-        assertTrue(swrl.holds("p", RollbackAction.restoreDocument("swrlRule", "6acf64ae94e5320b04bb880a", OLD, NEW), false, null));
-        when(found.first()).thenReturn(Document.parse(ran));
-        assertFalse(actions.holds("p", restore(OLD, NEW), false, null));
+        assertFalse(swrl.holds("p", action, false, null));
+        IllegalStateException refused = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> swrl.run("p", action, false, null));
+        org.junit.jupiter.api.Assertions.assertEquals("Saved rules moved into the ontology; undo from the rule list",
+                refused.getMessage());
+        verify(collection, never()).replaceOne(any(Bson.class), any(Document.class), any(ReplaceOptions.class));
+        verify(collection, never()).deleteOne(any(Bson.class));
     }
 
     @Test

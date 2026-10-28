@@ -6,8 +6,6 @@ import java.util.Locale;
 
 public enum ReasonerType {
     HERMIT("HermiT"),
-    PELLET("Pellet"),
-    OPENLLET("Openllet"),
     FACTPLUSPLUS("FaCT++"),
     ELK("ELK"),
     STRUCTURAL("Structural");
@@ -24,14 +22,18 @@ public enum ReasonerType {
 
     public static ReasonerType fromRequest(String raw) {
         if (raw == null || raw.isBlank()) {
-            return OPENLLET;
+            return HERMIT;
+        }
+        String name = raw.trim().toUpperCase(Locale.ROOT);
+        if (name.equals("OPENLLET") || name.equals("PELLET")) {
+            return HERMIT;
         }
         try {
-            return valueOf(raw.trim().toUpperCase(Locale.ROOT));
+            return valueOf(name);
         } catch (IllegalArgumentException e) {
             LoggerFactory.getLogger(ReasonerType.class)
-                    .warn("Unknown reasoner type '{}', falling back to OPENLLET", raw);
-            return OPENLLET;
+                    .warn("Unknown reasoner type '{}', falling back to HERMIT", raw);
+            return HERMIT;
         }
     }
 }

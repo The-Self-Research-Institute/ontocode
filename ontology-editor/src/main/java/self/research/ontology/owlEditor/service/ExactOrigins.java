@@ -16,11 +16,27 @@ final class ExactOrigins {
     }
 
     static ChangeOrigin manualWithDelta(Model oldModel, Model newModel) {
-        ChangeOrigin origin = ChangeOrigin.manual();
+        return withDelta(ChangeOrigin.manual(), oldModel, newModel);
+    }
+
+    static ChangeOrigin withDelta(ChangeOrigin origin, Model oldModel, Model newModel) {
         try {
             return deltaBetween(oldModel, newModel).map(delta -> origin.withExact(new ExactCarrier(delta))).orElse(origin);
         } catch (RuntimeException e) {
             log.warn("[UNDO] Could not work out the exact change for the history: {}", e.getMessage());
+            return origin;
+        }
+    }
+
+    static ChangeOrigin withRuleDelta(ChangeOrigin origin, Model oldModel, Model newModel) {
+        try {
+            if (!DeltaSparql.isRenderable(oldModel) || !DeltaSparql.isRenderable(newModel)) {
+                return origin;
+            }
+            ExactDelta delta = ExactDelta.between(CanonicalGraph.canonicalise(oldModel), CanonicalGraph.canonicalise(newModel));
+            return delta.isEmpty() || delta.isTooLarge() ? origin : origin.withExact(new ExactCarrier(delta));
+        } catch (RuntimeException e) {
+            log.warn("[UNDO] Could not work out the exact change of the rule for the history: {}", e.getMessage());
             return origin;
         }
     }
