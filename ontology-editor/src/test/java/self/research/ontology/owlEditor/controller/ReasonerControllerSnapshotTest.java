@@ -97,6 +97,7 @@ class ReasonerControllerSnapshotTest {
 
         ReflectionTestUtils.setField(controller, "reasonerWorkerClient", workerClient);
         ReflectionTestUtils.setField(controller, "reasonerWorkerEnabled", true);
+        ReflectionTestUtils.setField(controller, "jobAccess", JobAccessTestSupport.desktopJobAccess());
         ReflectionTestUtils.setField(controller, "reasoningJobRelayService", relay);
         ReflectionTestUtils.setField(controller, "reasonerService", reasonerService);
         ReflectionTestUtils.setField(controller, "editorReasonerCache", cache);
@@ -210,7 +211,7 @@ class ReasonerControllerSnapshotTest {
         job.put("stats", Map.of("individuals", 3));
         when(workerClient.getJob("job-3")).thenReturn(job);
 
-        Map<String, Object> body = controller.getReasonerJob("proj-1", "job-3").getBody();
+        Map<String, Object> body = controller.getReasonerJob("proj-1", "job-3", JobAccessTestSupport.desktopRequest()).getBody();
 
         assertEquals("COMPLETED", body.get("status"));
         @SuppressWarnings("unchecked")

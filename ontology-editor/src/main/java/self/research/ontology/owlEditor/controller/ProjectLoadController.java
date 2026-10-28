@@ -952,6 +952,9 @@ public class ProjectLoadController {
     @org.springframework.beans.factory.annotation.Autowired
     private self.research.ontology.owlEditor.service.ExportScopeResolver exportScopeResolver;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private self.research.ontology.owlEditor.service.JobAccess jobAccess;
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private self.research.ontology.owlEditor.service.OntologyVersionStamps exportStampSource;
 
@@ -1034,6 +1037,7 @@ public class ProjectLoadController {
                 return ResponseEntity.status(scope.status()).body(Map.of("success", false, "error", scope.error()));
             }
             self.research.ontology.owlEditor.model.ExportJob job = exportJobService.submit(projectId, format, scope.contentScope());
+            jobAccess.register(request, job.getJobId(), projectId);
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "jobId", job.getJobId(),
@@ -1046,9 +1050,23 @@ public class ProjectLoadController {
         }
     }
 
+    private ResponseEntity<Map<String, Object>> exportJobRefusal(jakarta.servlet.http.HttpServletRequest request) {
+        if (jobAccess.caller(request).isPresent()) {
+            return null;
+        }
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("success", false, "error", "Authentication required"));
+    }
+
     @GetMapping("/export-async/status/{jobId}")
-    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable String jobId) {
+    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable String jobId,
+                                                               jakarta.servlet.http.HttpServletRequest request) {
+        var unauthorized = exportJobRefusal(request);
+        if (unauthorized != null) {
+            return unauthorized;
+        }
         return exportJobService.getStatus(jobId)
+                .filter(job -> jobAccess.check(request, null, jobId, job.getProjectId()).allowed())
                 .map(job -> {
                     Map<String, Object> data = new java.util.LinkedHashMap<>();
                     data.put("success", true);
@@ -1063,8 +1081,14 @@ public class ProjectLoadController {
     }
 
     @GetMapping("/export-async/download/{jobId}")
-    public ResponseEntity<?> downloadExportJobResult(@PathVariable String jobId) {
-        Optional<self.research.ontology.owlEditor.model.ExportJob> jobOpt = exportJobService.getStatus(jobId);
+    public ResponseEntity<?> downloadExportJobResult(@PathVariable String jobId,
+                                                     jakarta.servlet.http.HttpServletRequest request) {
+        var unauthorized = exportJobRefusal(request);
+        if (unauthorized != null) {
+            return unauthorized;
+        }
+        Optional<self.research.ontology.owlEditor.model.ExportJob> jobOpt = exportJobService.getStatus(jobId)
+                .filter(job -> jobAccess.check(request, null, jobId, job.getProjectId()).allowed());
         if (jobOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("success", false, "error", "Export job not found. It may have expired — please retry the export."));

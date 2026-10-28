@@ -96,6 +96,9 @@ public class ReasonerController {
     @Autowired(required = false)
     private ReasoningJobRelayService reasoningJobRelayService;
 
+    @Autowired
+    private self.research.ontology.owlEditor.service.JobAccess jobAccess;
+
     @Autowired(required = false)
     private StorageManager storageManager;
 
@@ -331,7 +334,7 @@ public class ReasonerController {
                 "error", e.getMessage()));
     }
 
-    private String submitHierarchyJob(String jobType, String projectId, String reasonerType) {
+    private String submitHierarchyJob(String jobType, String projectId, String reasonerType, HttpServletRequest request) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return null;
         }
@@ -344,6 +347,9 @@ public class ReasonerController {
             return null;
         }
         Object jobId = submitted.get("jobId");
+        if (jobId != null) {
+            jobAccess.register(request, String.valueOf(jobId), projectId);
+        }
         return jobId != null ? String.valueOf(jobId) : null;
     }
 
@@ -354,19 +360,38 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/jobs/{jobId}")
     public ResponseEntity<Map<String, Object>> getReasonerJob(
             @PathVariable String projectId,
-            @PathVariable String jobId
+            @PathVariable String jobId,
+            HttpServletRequest request
     ) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return ResponseEntity.status(404).body(Map.of(
                     "success", false, "error", "Reasoner worker is not enabled on this deployment"));
         }
+        java.util.Optional<self.research.ontology.owlEditor.service.JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
+        if (jobAccess.isRegistered(jobId) && !jobAccess.check(caller.get(), projectId, jobId, null).allowed()) {
+            return jobNotFound();
+        }
         Map<String, Object> job = reasonerWorkerClient.getJob(jobId);
         if (job == null) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
+            return jobNotFound();
+        }
+        if (job.get("jobId") == null && !jobAccess.isRegistered(jobId)) {
+            return jobNotFound();
+        }
+        Object recordProject = job.get("projectId");
+        if (!jobAccess.check(caller.get(), projectId, jobId, recordProject != null ? recordProject.toString() : null).allowed()) {
+            return jobNotFound();
         }
         Map<String, Object> response = new HashMap<>(withNestedSnapshotResult(job));
         response.put("projectId", projectId);
         return ResponseEntity.ok(response);
+    }
+
+    private static ResponseEntity<Map<String, Object>> jobNotFound() {
+        return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
     }
 
     static Map<String, Object> withNestedSnapshotResult(Map<String, Object> job) {
@@ -413,7 +438,7 @@ public class ReasonerController {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
             if (!isDraft && reasonerWorkerEnabled && reasonerWorkerClient != null) {
-                ResponseEntity<Map<String, Object>> fromWorker = snapshotFromWorker(projectId, requested);
+                ResponseEntity<Map<String, Object>> fromWorker = snapshotFromWorker(projectId, requested, request);
                 if (fromWorker != null) {
                     return fromWorker;
                 }
@@ -427,7 +452,7 @@ public class ReasonerController {
         }
     }
 
-    private ResponseEntity<Map<String, Object>> snapshotFromWorker(String projectId, String requested) {
+    private ResponseEntity<Map<String, Object>> snapshotFromWorker(String projectId, String requested, HttpServletRequest request) {
         Map<String, Object> submitted = reasonerWorkerClient.submitJob(SNAPSHOT_JOB_TYPE, projectId, null, null, requested, null);
         if (Boolean.TRUE.equals(submitted.get("rateLimited"))) {
             throw new WorkerQueueFullException(String.valueOf(submitted.get("error")));
@@ -453,6 +478,7 @@ public class ReasonerController {
             body.put("error", ReasoningFriendlyErrors.forUser(String.valueOf(submitted.get("error"))));
             return ResponseEntity.ok(body);
         }
+        jobAccess.register(request, String.valueOf(jobId), projectId);
         if (reasoningJobRelayService != null) {
             reasoningJobRelayService.rememberSubmittedJob(String.valueOf(jobId), projectId, null, SNAPSHOT_JOB_TYPE, submitted);
         }
@@ -705,14 +731,20 @@ public class ReasonerController {
     @DeleteMapping("/{projectId}/reasoner/jobs/{jobId}")
     public ResponseEntity<Map<String, Object>> cancelReasonerJob(
             @PathVariable String projectId,
-            @PathVariable String jobId
+            @PathVariable String jobId,
+            HttpServletRequest request
     ) {
+        java.util.Optional<self.research.ontology.owlEditor.service.JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return ResponseEntity.ok(Map.of("success", true, "cancelled", false));
         }
         DLQueryJob relayed = reasoningJobRelayService != null ? reasoningJobRelayService.getJob(jobId) : null;
-        if (relayed != null && relayed.getProjectId() != null && !relayed.getProjectId().equals(projectId)) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
+        String relayedProject = relayed != null ? relayed.getProjectId() : null;
+        if (!jobAccess.check(caller.get(), projectId, jobId, relayedProject).allowed()) {
+            return jobNotFound();
         }
         Map<String, Object> result = reasonerWorkerClient.cancelJob(jobId);
         if (Boolean.TRUE.equals(result.get("cancelled")) && reasoningJobRelayService != null) {
@@ -838,7 +870,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -1111,7 +1143,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -1233,7 +1265,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
