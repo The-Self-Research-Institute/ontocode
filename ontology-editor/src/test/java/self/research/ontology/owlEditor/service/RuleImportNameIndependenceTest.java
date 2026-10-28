@@ -78,20 +78,22 @@ class RuleImportNameIndependenceTest {
 
     Set<String> inferred(RuleHistoryHarness h) {
         OWLOntology ontology = h.store.ontology(RuleHistoryHarness.MAIN);
-        OWLReasoner hermit = reasoner.getReasoner(ontology, ReasonerType.HERMIT);
-        Set<String> results = new TreeSet<>();
-        for (String who : List.of("alice", "bob", "carol", "dan", "erin", "fay")) {
-            OWLNamedIndividual individual = OWLManager.getOWLDataFactory().getOWLNamedIndividual(IRI.create(NS + who));
-            for (OWLClass type : hermit.getTypes(individual, false).entities().toList()) {
-                if (!type.isOWLThing()) {
-                    results.add(who + " is " + type.getIRI().getShortForm());
+        try (ReasonerLease lease = reasoner.lease(ontology, ReasonerType.HERMIT)) {
+            OWLReasoner hermit = lease.reasoner();
+            Set<String> results = new TreeSet<>();
+            for (String who : List.of("alice", "bob", "carol", "dan", "erin", "fay")) {
+                OWLNamedIndividual individual = OWLManager.getOWLDataFactory().getOWLNamedIndividual(IRI.create(NS + who));
+                for (OWLClass type : hermit.getTypes(individual, false).entities().toList()) {
+                    if (!type.isOWLThing()) {
+                        results.add(who + " is " + type.getIRI().getShortForm());
+                    }
                 }
+                hermit.getObjectPropertyValues(individual, OWLManager.getOWLDataFactory()
+                        .getOWLObjectProperty(IRI.create(NS + "hasGrandparent"))).entities()
+                        .forEach(value -> results.add(who + " has grandparent " + value.getIRI().getShortForm()));
             }
-            hermit.getObjectPropertyValues(individual, OWLManager.getOWLDataFactory()
-                    .getOWLObjectProperty(IRI.create(NS + "hasGrandparent"))).entities()
-                    .forEach(value -> results.add(who + " has grandparent " + value.getIRI().getShortForm()));
+            return results;
         }
-        return results;
     }
 
     @Test

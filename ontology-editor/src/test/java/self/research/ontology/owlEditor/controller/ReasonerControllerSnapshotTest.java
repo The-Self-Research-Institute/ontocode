@@ -19,6 +19,7 @@ import self.research.ontology.owlEditor.service.EditorJobResultRetention;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.Limit;
 import self.research.ontology.owlEditor.service.MainGraphRevisionService;
+import self.research.ontology.owlEditor.service.ReasonerLease;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
@@ -72,10 +73,10 @@ class ReasonerControllerSnapshotTest {
         reasonerService = spy(new ReasonerService());
         ReflectionTestUtils.setField(reasonerService, "reasonerOperationTimeoutMs", 30_000L);
         doAnswer(inv -> {
-            OWLReasoner reasoner = (OWLReasoner) inv.callRealMethod();
-            classReasonersHandedOut.add(reasoner);
-            return reasoner;
-        }).when(reasonerService).getClassHierarchyReasoner(any(), any());
+            ReasonerLease lease = (ReasonerLease) inv.callRealMethod();
+            classReasonersHandedOut.add(lease.reasoner());
+            return lease;
+        }).when(reasonerService).leaseClassHierarchy(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
         cache = new EditorReasonerCacheService(reasonerService);
         ReflectionTestUtils.setField(cache, "maxOntologies", 2);
         ReflectionTestUtils.setField(cache, "maxHierarchies", 8);
@@ -258,7 +259,7 @@ class ReasonerControllerSnapshotTest {
         List<Map<String, Object>> unsatisfiable = (List<Map<String, Object>>) body.get("unsatisfiableClasses");
         assertEquals(NS + "RobotDog", unsatisfiable.get(0).get("iri"));
         assertTrue(body.containsKey("classChildren"));
-        verify(reasonerService, never()).getClassHierarchyReasoner(any(), eq(ReasonerType.FACTPLUSPLUS));
+        verify(reasonerService, never()).leaseClassHierarchy(any(), eq(ReasonerType.FACTPLUSPLUS), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     @Test
@@ -305,13 +306,13 @@ class ReasonerControllerSnapshotTest {
         Map<String, Object> repeat = snapshot("HERMIT", "user-1", true);
 
         assertEquals(true, repeat.get("cached"));
-        verify(reasonerService, times(1)).getClassHierarchyReasoner(any(), any());
+        verify(reasonerService, times(1)).leaseClassHierarchy(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
 
         cache.invalidateDraft("proj-1", "user-1");
         Map<String, Object> afterWrite = snapshot("HERMIT", "user-1", true);
 
         assertEquals(false, afterWrite.get("cached"));
-        verify(reasonerService, times(2)).getClassHierarchyReasoner(any(), any());
+        verify(reasonerService, times(2)).leaseClassHierarchy(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
         assertEquals(2, classReasonersHandedOut.size());
         assertSame(classReasonersHandedOut.get(0), classReasonersHandedOut.get(1));
     }
