@@ -16,6 +16,9 @@ import java.util.stream.Stream;
 public final class TieredSnapshotStores implements SnapshotStoreFactory {
 
     public static final long MEMORY_BELOW_TRIPLES = 100_000L;
+    static final String ROOT_PREFIX = "ontocode-inference-";
+    private static final String OWNER_FILE = ".owner";
+    private static final long ORPHAN_GRACE_MS = 3_600_000L;
 
     private final long memoryBelow;
     private final Path root;
@@ -25,9 +28,57 @@ public final class TieredSnapshotStores implements SnapshotStoreFactory {
     }
 
     public TieredSnapshotStores(long memoryBelow) {
+        this(memoryBelow, Path.of(System.getProperty("java.io.tmpdir")));
+    }
+
+    TieredSnapshotStores(long memoryBelow, Path tempBase) {
         this.memoryBelow = memoryBelow;
-        this.root = Path.of(System.getProperty("java.io.tmpdir"), "ontocode-inference-" + UUID.randomUUID());
+        sweepOrphans(tempBase);
+        this.root = tempBase.resolve(ROOT_PREFIX + UUID.randomUUID());
         Runtime.getRuntime().addShutdownHook(new Thread(() -> delete(root)));
+    }
+
+    static int sweepOrphans(Path tempBase) {
+        int removed = 0;
+        try (Stream<Path> children = Files.list(tempBase)) {
+            for (Path dir : (Iterable<Path>) children.filter(p -> p.getFileName().toString().startsWith(ROOT_PREFIX))::iterator) {
+                if (Files.isDirectory(dir) && !ownerAlive(dir)) {
+                    delete(dir);
+                    removed++;
+                }
+            }
+        } catch (IOException | RuntimeException ignored) {
+            return removed;
+        }
+        return removed;
+    }
+
+    private static boolean ownerAlive(Path dir) {
+        try {
+            String[] parts = Files.readString(dir.resolve(OWNER_FILE)).trim().split(":");
+            ProcessHandle handle = ProcessHandle.of(Long.parseLong(parts[0])).orElse(null);
+            if (handle == null || !handle.isAlive()) {
+                return false;
+            }
+            long started = Long.parseLong(parts[1]);
+            return handle.info().startInstant().map(i -> i.toEpochMilli() == started).orElse(true);
+        } catch (IOException | RuntimeException e) {
+            try {
+                return System.currentTimeMillis() - Files.getLastModifiedTime(dir).toMillis() < ORPHAN_GRACE_MS;
+            } catch (IOException io) {
+                return true;
+            }
+        }
+    }
+
+    private void markOwner() throws IOException {
+        Files.createDirectories(root);
+        Path marker = root.resolve(OWNER_FILE);
+        if (!Files.exists(marker)) {
+            ProcessHandle self = ProcessHandle.current();
+            long started = self.info().startInstant().map(i -> i.toEpochMilli()).orElse(0L);
+            Files.writeString(marker, self.pid() + ":" + started);
+        }
     }
 
     @Override
@@ -44,6 +95,7 @@ public final class TieredSnapshotStores implements SnapshotStoreFactory {
 
     private SailRepository nativeRepository() {
         try {
+            markOwner();
             Path dir = Files.createDirectories(root.resolve(UUID.randomUUID().toString()));
             return new SailRepository(new NativeStore(dir.toFile(), "spoc,posc,cspo") {
                 @Override
