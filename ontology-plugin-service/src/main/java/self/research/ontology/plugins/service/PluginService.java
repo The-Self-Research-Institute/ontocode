@@ -7,7 +7,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.plugins.dto.PluginDTO;
 import self.research.ontology.plugins.dto.PluginVersionDTO;
@@ -89,7 +88,6 @@ public class PluginService {
                 PluginPermissions.isAdmin(authentication));
     }
 
-    @Transactional
     public PluginDTO publishPlugin(PublishPluginRequest request, MultipartFile vsixFile, String authorEmail, boolean admin) {
         pluginRepository.findByPluginId(request.getPluginId())
                 .filter(existing -> !admin && existing.getAuthorEmail() != null
@@ -97,6 +95,11 @@ public class PluginService {
                 .ifPresent(existing -> {
                     throw new PluginOwnershipException(request.getPluginId());
                 });
+        String uploadedFileId = null;
+        Plugin previousPlugin = null;
+        PluginVersion previousVersion = null;
+        boolean versionWritten = false;
+        boolean pluginWritten = false;
         try {
             log.info("Publishing plugin: {} version: {}", request.getPluginId(), request.getVersion());
 
@@ -107,7 +110,7 @@ public class PluginService {
                 .fileSize(vsixFile.getSize())
                 .build();
 
-            String fileId = storageService.uploadPlugin(
+            String fileId = uploadedFileId = storageService.uploadPlugin(
                 vsixFile.getInputStream(),
                 vsixFile.getOriginalFilename(),
                 vsixFile.getContentType(),
@@ -123,6 +126,9 @@ public class PluginService {
                     .deprecated(false)
                     .build());
 
+            if (plugin.getId() != null) {
+                previousPlugin = plugin.toBuilder().build();
+            }
             plugin.setName(request.getName());
             plugin.setDescription(request.getDescription());
             plugin.setAuthorEmail(authorEmail);
@@ -137,6 +143,7 @@ public class PluginService {
             plugin.setUpdatedAt(LocalDateTime.now());
 
             pluginRepository.save(plugin);
+            pluginWritten = true;
 
             PluginVersion version = versionRepository.findByPluginIdAndVersion(request.getPluginId(), request.getVersion())
                 .orElse(PluginVersion.builder()
@@ -146,6 +153,9 @@ public class PluginService {
                     .publishedAt(LocalDateTime.now())
                     .build());
 
+            if (version.getId() != null) {
+                previousVersion = version.toBuilder().build();
+            }
             version.setChangelog(request.getChangelog());
             version.setVsixFileId(fileId);
             version.setFileSize(vsixFile.getSize());
@@ -155,13 +165,49 @@ public class PluginService {
             version.setDeprecated(false);
 
             versionRepository.save(version);
+            versionWritten = true;
 
             log.info("Plugin published successfully: {} version: {}", request.getPluginId(), request.getVersion());
             return toDTO(plugin);
 
         } catch (Exception e) {
             log.error("Failed to publish plugin: {}", request.getPluginId(), e);
+            undoPublish(request, uploadedFileId, pluginWritten, previousPlugin, versionWritten, previousVersion);
             throw new PluginPublishException("Failed to publish plugin", e);
+        }
+    }
+
+    private void undoPublish(PublishPluginRequest request, String uploadedFileId, boolean pluginWritten,
+                             Plugin previousPlugin, boolean versionWritten, PluginVersion previousVersion) {
+        if (versionWritten) {
+            attempt(() -> {
+                if (previousVersion != null) {
+                    versionRepository.save(previousVersion);
+                } else {
+                    versionRepository.findByPluginIdAndVersion(request.getPluginId(), request.getVersion())
+                            .ifPresent(versionRepository::delete);
+                }
+            });
+        }
+        if (pluginWritten) {
+            attempt(() -> {
+                if (previousPlugin != null) {
+                    pluginRepository.save(previousPlugin);
+                } else {
+                    pluginRepository.findByPluginId(request.getPluginId()).ifPresent(pluginRepository::delete);
+                }
+            });
+        }
+        if (uploadedFileId != null) {
+            attempt(() -> storageService.deletePlugin(uploadedFileId));
+        }
+    }
+
+    private void attempt(Runnable step) {
+        try {
+            step.run();
+        } catch (RuntimeException e) {
+            log.error("Cleanup after a failed plugin publish did not finish", e);
         }
     }
 
