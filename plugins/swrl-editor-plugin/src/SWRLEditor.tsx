@@ -2094,18 +2094,34 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       return;
     }
 
-    const validate = async () => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const validate = async (attempt: number) => {
       try {
         const res = await apiClient.post<SwrlValidationResult>(
           withDraft(`/api/swrl/${projectId}/validate`, draftMode),
           { ruleText: debouncedRuleText }
         );
-        setValidationResult(res);
-      } catch (e) {
-        setValidationResult({ valid: false, errorMessage: 'Validation failed' });
+        if (!cancelled) setValidationResult(res);
+      } catch (e: any) {
+        if (cancelled) return;
+        if (e?.status === 429 && attempt < 3) {
+          setValidationResult({ valid: false, errorMessage: 'The rule engine is busy. Checking again in a moment.' });
+          timer = setTimeout(() => { void validate(attempt + 1); }, 3000);
+          return;
+        }
+        setValidationResult({
+          valid: false,
+          errorMessage: e?.status === 429 ? 'The rule engine is busy. Try again in a moment.' : 'Validation failed'
+        });
       }
     };
-    validate();
+    void validate(0);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [debouncedRuleText, projectId, isEditing, draftMode]);
 
   const filteredRules = useMemo(() => {
