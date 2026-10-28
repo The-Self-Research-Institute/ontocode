@@ -397,8 +397,11 @@ public final class RuleExecution {
     private static boolean onlyAsserted(OWLOntology ontology, OWLEntity entity) {
         boolean isClass = entity instanceof OWLClass;
         return ontology.referencingAxioms(entity).allMatch(axiom -> {
+            if (axiom instanceof OWLObjectPropertyAssertionAxiom a) {
+                return a.getProperty() instanceof OWLObjectProperty;
+            }
             if (axiom instanceof OWLDeclarationAxiom || axiom instanceof OWLAnnotationAssertionAxiom
-                    || axiom instanceof OWLObjectPropertyAssertionAxiom || axiom instanceof OWLDataPropertyAssertionAxiom) {
+                    || axiom instanceof OWLDataPropertyAssertionAxiom) {
                 return true;
             }
             if (axiom instanceof OWLClassAssertionAxiom a) {
