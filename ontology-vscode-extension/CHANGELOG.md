@@ -2,6 +2,13 @@
 
 All notable changes to OntoCode Studio are listed here, newest first. The same notes appear in the app under What's new.
 
+## [1.2.8] - 2026-10-28
+
+**Undo and Redo**
+
+- Undo and Redo — Edit > Redo now shows its shortcuts: Ctrl+Y or Ctrl+Shift+Z on Windows and Linux, and Cmd+Shift+Z on a Mac. Undo is Ctrl+Z, or Cmd+Z on a Mac.
+- Undo and Redo — Ctrl+Z and Edit > Undo undo the changes you made in the current session straight away. If the next change to undo was made in an earlier session, OntoCode asks "This change was made in an earlier session. Undo it anyway?" and only undoes it if you choose Undo. Undoing from the Change Assistant is unchanged.
+
 ## [1.2.7] - 2026-10-26
 
 **macOS desktop app**
