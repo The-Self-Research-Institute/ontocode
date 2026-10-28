@@ -60,6 +60,11 @@ public final class SparqlUserQueryRunner {
 
     public static SparqlUserQueryResult run(RepositoryConnection conn, SparqlQueryGuard.Checked checked,
                                             Collection<String> graphs, int graphCap) {
+        return run(conn, checked, graphs, graphCap, SparqlResultLimits.defaults());
+    }
+
+    public static SparqlUserQueryResult run(RepositoryConnection conn, SparqlQueryGuard.Checked checked,
+                                            Collection<String> graphs, int graphCap, SparqlResultLimits limits) {
         SimpleDataset dataset = dataset(graphs);
         switch (checked.kind()) {
             case SELECT: {
@@ -67,7 +72,7 @@ public final class SparqlUserQueryRunner {
                 q.setDataset(dataset);
                 q.setIncludeInferred(false);
                 q.setMaxExecutionTime(QUERY_TIMEOUT_SECONDS);
-                return selectOf(q);
+                return selectOf(q, limits);
             }
             case ASK: {
                 BooleanQuery q = conn.prepareBooleanQuery(checked.text());
@@ -77,28 +82,35 @@ public final class SparqlUserQueryRunner {
                 return new SparqlUserQueryResult.Ask(q.evaluate());
             }
             case CONSTRUCT:
-                return constructOf(conn, checked.text(), dataset, graphCap);
+                return constructOf(conn, checked.text(), dataset, graphCap, limits);
             case DESCRIBE:
-                return describe(conn, checked, graphs, dataset, graphCap);
+                return describe(conn, checked, graphs, dataset, graphCap, limits);
             default:
                 throw new SparqlQueryRejectedException("Unsupported query form.");
         }
     }
 
-    private static SparqlUserQueryResult selectOf(TupleQuery q) {
+    private static SparqlUserQueryResult selectOf(TupleQuery q, SparqlResultLimits limits) {
         List<BindingSet> rows = new ArrayList<>();
         List<String> vars = new ArrayList<>();
+        SparqlResultLimits.Counter counter = limits.counter();
+        boolean truncated = false;
         try (TupleQueryResult rs = q.evaluate()) {
             vars.addAll(rs.getBindingNames());
             while (rs.hasNext()) {
-                rows.add(rs.next());
+                BindingSet row = rs.next();
+                if (!counter.tryAdd(row)) {
+                    truncated = true;
+                    break;
+                }
+                rows.add(row);
             }
         }
-        return new SparqlUserQueryResult.Select(vars, rows);
+        return new SparqlUserQueryResult.Select(vars, rows, truncated);
     }
 
     private static SparqlUserQueryResult.Graph constructOf(RepositoryConnection conn, String text,
-                                                           SimpleDataset dataset, int cap) {
+                                                           SimpleDataset dataset, int cap, SparqlResultLimits limits) {
         GraphQuery q = conn.prepareGraphQuery(text);
         q.setDataset(dataset);
         q.setIncludeInferred(false);
@@ -106,11 +118,16 @@ public final class SparqlUserQueryRunner {
         Set<Statement> out = new LinkedHashSet<>();
         Map<String, String> namespaces = new LinkedHashMap<>();
         boolean truncated = false;
+        SparqlResultLimits.Counter counter = limits.counter();
         try (GraphQueryResult rs = q.evaluate()) {
             namespaces.putAll(rs.getNamespaces());
             while (rs.hasNext()) {
                 Statement st = rs.next();
                 if (out.size() >= cap && !out.contains(st)) {
+                    truncated = true;
+                    break;
+                }
+                if (!out.contains(st) && !counter.tryAdd(st)) {
                     truncated = true;
                     break;
                 }
@@ -121,7 +138,8 @@ public final class SparqlUserQueryRunner {
     }
 
     private static SparqlUserQueryResult.Graph describe(RepositoryConnection conn, SparqlQueryGuard.Checked checked,
-                                                        Collection<String> graphs, SimpleDataset dataset, int cap) {
+                                                        Collection<String> graphs, SimpleDataset dataset, int cap,
+                                                        SparqlResultLimits limits) {
         DescribeShape shape = new DescribeShape();
         checked.parsed().getTupleExpr().visit(shape);
         shape.resolve();
@@ -175,7 +193,7 @@ public final class SparqlUserQueryRunner {
         Map<String, String> namespaces = new LinkedHashMap<>();
         for (int i = 0; i < iris.size() && !truncated; i += DESCRIBE_BATCH) {
             List<IRI> batch = iris.subList(i, Math.min(iris.size(), i + DESCRIBE_BATCH));
-            SparqlUserQueryResult.Graph part = constructOf(conn, describeConstruct(batch), dataset, cap - out.size() + 1);
+            SparqlUserQueryResult.Graph part = constructOf(conn, describeConstruct(batch), dataset, cap - out.size() + 1, limits);
             for (Statement st : part.statements()) {
                 if (out.size() >= cap && !out.contains(st)) {
                     truncated = true;

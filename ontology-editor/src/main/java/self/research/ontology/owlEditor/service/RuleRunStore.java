@@ -3,6 +3,8 @@ package self.research.ontology.owlEditor.service;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.admission.CacheAccount;
+import self.research.ontology.common.admission.ReservationLedger;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -36,6 +38,12 @@ public class RuleRunStore {
     private final int structureCap;
     private final int axiomBudget;
     private final Map<String, Run> runs = new LinkedHashMap<>();
+    private volatile CacheAccount account = RetainedMemory.detachedAccount("ruleRuns");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(ReservationLedger ledger) {
+        this.account = ledger.cacheAccount("ruleRuns");
+    }
 
     @Autowired
     public RuleRunStore() {
@@ -69,7 +77,11 @@ public class RuleRunStore {
         evictOldest(r -> true, total - 1);
         evictUntilFits(keptConclusions.size() + keptStructure.size());
         String id = UUID.randomUUID().toString();
-        runs.put(id, new Run(id, projectId, ownerId, draft, clock.instant(), keptConclusions, keptStructure, capped));
+        Run run = new Run(id, projectId, ownerId, draft, clock.instant(), keptConclusions, keptStructure, capped);
+        runs.put(id, run);
+        RetainedMemory.retainUntilCollected(account, run,
+                RetainedMemory.saturatingMultiply(keptConclusions.size() + keptStructure.size(),
+                        RetainedMemory.BYTES_PER_RULE_RUN_AXIOM));
         return id;
     }
 

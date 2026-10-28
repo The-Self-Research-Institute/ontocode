@@ -100,6 +100,10 @@ public class ReasonerController {
     private StorageManager storageManager;
 
     @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.HeavyWorkAdmission heavyWork =
+            self.research.ontology.owlEditor.service.HeavyWorkAdmission.disabled();
+
+    @Autowired(required = false)
     private self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext owlApiContext;
 
     @Value("${ontocode.reasoner-worker.enabled:false}")
@@ -171,6 +175,17 @@ public class ReasonerController {
      * Rejects oversized ontologies before attempting in-memory OWL API parsing.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
+        self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold[] held =
+                {self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold.NONE};
+        try {
+            return loadOntologyAdmitted(projectId, held);
+        } finally {
+            held[0].close();
+        }
+    }
+
+    private OWLOntology loadOntologyAdmitted(String projectId,
+            self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold[] held) throws Exception {
         log.info("Loading ontology for project: {}", projectId);
 
         Optional<OWLOntology> cached = editorReasonerCache.getOntology(projectId);
@@ -232,7 +247,8 @@ public class ReasonerController {
                     tripleCount, maxReasonerTriples));
             }
             log.info("Ontology size check passed: {} triples (limit: {})", tripleCount, maxReasonerTriples);
-        } catch (IllegalArgumentException e) {
+            held[0] = heavyWork.admitLoad(null, self.research.ontology.common.admission.WorkKind.REASONING, tripleCount);
+        } catch (IllegalArgumentException | self.research.ontology.owlEditor.service.BusyException e) {
             throw e;
         } catch (Exception e) {
             log.warn("Could not check ontology size before reasoning (will proceed): {}", e.getMessage());
@@ -1792,9 +1808,13 @@ public class ReasonerController {
             String draftUserId = isDraft ? resolvedUserId : null;
             OWLOntology ontology = isDraft ? loadDraftOntology(projectId, draftUserId) : loadOntology(projectId);
             DisabledRules.strip(ontology);
-            RuleExecutionResult result = new RuleExecution(ruleStage,
-                    input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519")
-                    .run(ontology, projectId + ":" + ontology.getAxiomCount(), RuleExecutionLimits.defaults());
+            RuleExecutionResult result;
+            try (self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold hold =
+                         heavyWork.admitRuleExecute(resolvedUserId, ontology.getAxiomCount())) {
+                result = new RuleExecution(ruleStage,
+                        input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519")
+                        .run(ontology, projectId + ":" + ontology.getAxiomCount(), RuleExecutionLimits.defaults());
+            }
 
             Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
             List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
@@ -1851,6 +1871,8 @@ public class ReasonerController {
             body.put("consistencyStatement", result.consistencyStatement());
             body.put("snapshotId", result.snapshotId());
             return ResponseEntity.ok(body);
+        } catch (self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
         } catch (Exception e) {
             log.error("Error executing rules for project {}", projectId, e);
             Map<String, Object> body = new LinkedHashMap<>();
@@ -1950,6 +1972,9 @@ public class ReasonerController {
     }
 
     private Map<String, Object> friendlyError(Exception e) {
+        if (e instanceof self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
+        }
         String msg = ReasoningFriendlyErrors.forUser(e.getMessage());
         Map<String, Object> body = new HashMap<>();
         body.put("success", false);
