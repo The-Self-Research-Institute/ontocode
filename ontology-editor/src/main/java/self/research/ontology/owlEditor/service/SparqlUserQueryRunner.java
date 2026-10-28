@@ -18,6 +18,7 @@ import org.eclipse.rdf4j.query.algebra.ProjectionElem;
 import org.eclipse.rdf4j.query.algebra.ValueConstant;
 import org.eclipse.rdf4j.query.algebra.helpers.AbstractQueryModelVisitor;
 import org.eclipse.rdf4j.query.impl.SimpleDataset;
+import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 import self.research.ontology.owlEditor.util.SparqlText;
 
@@ -47,6 +48,14 @@ public final class SparqlUserQueryRunner {
             dataset.addNamedGraph(iri);
         }
         return dataset;
+    }
+
+    public static SparqlUserQueryResult execute(Repository repository, Collection<String> authorizedGraphs,
+                                                String queryText, int graphCap) {
+        SparqlQueryGuard.Checked checked = SparqlQueryGuard.check(queryText, new LinkedHashSet<>(authorizedGraphs));
+        try (RepositoryConnection conn = repository.getConnection()) {
+            return run(conn, checked, authorizedGraphs, graphCap);
+        }
     }
 
     public static SparqlUserQueryResult run(RepositoryConnection conn, SparqlQueryGuard.Checked checked,
