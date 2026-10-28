@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { computeEntityIriPreview } from '../../utils/entityIri';
 import { IriPreviewField } from './IriPreviewField';
 import { CreateButton } from './CreateButton';
+import { isDesktop } from '../../utils/desktop';
 
 interface AddClassDialogProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
   existingIris = [],
 }) => {
   const [name, setName] = useState('');
+  const desktop = isDesktop();
 
   if (!isOpen) return null;
 
@@ -101,12 +103,14 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
             Tip: Keep names short and descriptive. You can edit descriptions and relationships after creation.
           </p>
           <div className={`flex items-center gap-2 rounded-md px-3 py-2 text-xs font-medium border ${
-            syncMode === 'public'
+            !desktop && syncMode === 'public'
               ? 'bg-green-50 border-green-200 text-green-800'
               : 'bg-gray-50 border-gray-200 text-gray-600'
           }`}>
-            <span className={`inline-block h-2 w-2 rounded-full flex-shrink-0 ${syncMode === 'public' ? 'bg-green-500' : 'bg-gray-400'}`} />
-            {syncMode === 'public'
+            <span className={`inline-block h-2 w-2 rounded-full flex-shrink-0 ${!desktop && syncMode === 'public' ? 'bg-green-500' : 'bg-gray-400'}`} />
+            {desktop
+              ? 'Local Mode — Changes will be applied to your local ontology.'
+              : syncMode === 'public'
               ? 'Public Live — class will be applied to the shared ontology immediately.'
               : 'Private Draft — class will be saved to your draft until you publish.'}
           </div>

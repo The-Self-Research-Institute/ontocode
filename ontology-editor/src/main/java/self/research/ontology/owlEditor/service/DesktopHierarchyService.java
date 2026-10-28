@@ -178,7 +178,7 @@ public class DesktopHierarchyService {
         return result;
     }
 
-    private Map<String, Object> buildClassDetails(OWLOntology ont, OWLReasoner reasoner, String classIri) {
+    Map<String, Object> buildClassDetails(OWLOntology ont, OWLReasoner reasoner, String classIri) {
         long start = System.currentTimeMillis();
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         OWLClass cls = df.getOWLClass(IRI.create(classIri));
@@ -398,29 +398,27 @@ public class DesktopHierarchyService {
         while (!queue.isEmpty() && ancestorSteps < maxAncestorSteps) {
             OWLClass current = queue.poll();
             ancestorSteps++;
+            boolean isAncestor = !current.equals(cls);
             ont.subClassAxiomsForSubClass(current).forEach(ax -> {
                 OWLClassExpression superCe = ax.getSuperClass();
                 if (superCe.isAnonymous()) {
-                    String superKey = superCe.toString();
-                    String ancestorKey = current.getIRI() + "|" + superKey;
-                    if (seenAncestorKeys.add(ancestorKey)) {
-                        Map<String, String> entry = new LinkedHashMap<>();
-                        entry.put("id", superKey);
-                        entry.put("type", "SubClassOf");
-                        entry.put("ancestorIri", current.getIRI().toString());
-                        entry.put("navigable", "false");
-                        String manchester = classExpressionToManchester(ont, superCe);
-                        entry.put("manchester", manchester);
-                        entry.put("definition", manchester);
-                        anonymousAncestorAxioms.add(entry);
-                    }
+                    addAnonymousAncestor(ont, current, superCe, seenAncestorKeys, anonymousAncestorAxioms);
                 } else if (!superCe.isOWLThing() && !superCe.isOWLNothing()) {
                     OWLClass superNamed = superCe.asOWLClass();
+                    if (isAncestor && !superNamed.equals(cls)) {
+                        addNamedAncestor(ont, current, superNamed, seenAncestorKeys, anonymousAncestorAxioms);
+                    }
                     if (visited.add(superNamed)) {
                         queue.add(superNamed);
                     }
                 }
             });
+            if (isAncestor) {
+                ont.equivalentClassesAxioms(current)
+                        .flatMap(ax -> ax.classExpressions())
+                        .filter(OWLClassExpression::isAnonymous)
+                        .forEach(ce -> addAnonymousAncestor(ont, current, ce, seenAncestorKeys, anonymousAncestorAxioms));
+            }
         }
         details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
 
@@ -770,6 +768,38 @@ public class DesktopHierarchyService {
         m.put("label", getLabel(ont, owner.getIRI()));
         m.put("context", context);
         return m;
+    }
+
+    private void addAnonymousAncestor(OWLOntology ont, OWLClass ancestor, OWLClassExpression superCe,
+                                      Set<String> seenKeys, List<Map<String, String>> out) {
+        String superKey = superCe.toString();
+        if (!seenKeys.add(ancestor.getIRI() + "|" + superKey)) {
+            return;
+        }
+        Map<String, String> entry = new LinkedHashMap<>();
+        entry.put("id", superKey);
+        entry.put("type", "SubClassOf");
+        entry.put("ancestorIri", ancestor.getIRI().toString());
+        entry.put("navigable", "false");
+        String manchester = classExpressionToManchester(ont, superCe);
+        entry.put("manchester", manchester);
+        entry.put("definition", manchester);
+        out.add(entry);
+    }
+
+    private void addNamedAncestor(OWLOntology ont, OWLClass ancestor, OWLClass superNamed,
+                                  Set<String> seenKeys, List<Map<String, String>> out) {
+        String superIri = superNamed.getIRI().toString();
+        if (!seenKeys.add(ancestor.getIRI() + "|" + superIri)) {
+            return;
+        }
+        Map<String, String> entry = new LinkedHashMap<>();
+        entry.put("id", superIri);
+        entry.put("type", "SubClassOf");
+        entry.put("ancestorIri", ancestor.getIRI().toString());
+        entry.put("navigable", "true");
+        entry.put("definition", getLabel(ont, superNamed.getIRI()));
+        out.add(entry);
     }
 
     private Map<String, String> labeledEntry(OWLOntology ont, OWLObjectProperty prop) {
