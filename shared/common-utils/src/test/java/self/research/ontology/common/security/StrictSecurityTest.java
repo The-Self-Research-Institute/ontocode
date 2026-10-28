@@ -23,4 +23,13 @@ class StrictSecurityTest {
         assertFalse(StrictSecurity.isCustomInternalToken(null));
         assertTrue(StrictSecurity.isCustomInternalToken("a-long-random-secret"));
     }
+
+    @Test
+    void strictModeWithThePublicTokenStopsStartupWithAPlainMessage() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> StrictSecurity.requireCustomInternalToken(true, "ontocode-internal"));
+        assertTrue(e.getMessage().contains("ONTOCODE_INTERNAL_TOKEN"));
+        assertDoesNotThrow(() -> StrictSecurity.requireCustomInternalToken(true, "a-long-random-secret"));
+        assertDoesNotThrow(() -> StrictSecurity.requireCustomInternalToken(false, "ontocode-internal"));
+    }
 }

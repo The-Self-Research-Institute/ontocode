@@ -9,7 +9,6 @@ public class StrictSecurityGuard {
 
     public StrictSecurityGuard(@Value("${ontocode.security.strict:false}") boolean strict,
                                @Value("${ontocode.internal.token:ontocode-internal}") String internalToken) {
-        StrictSecurity.require(strict, StrictSecurity.isCustomInternalToken(internalToken),
-                "ontocode.internal.token must not be the public default");
+        StrictSecurity.requireCustomInternalToken(strict, internalToken);
     }
 }
