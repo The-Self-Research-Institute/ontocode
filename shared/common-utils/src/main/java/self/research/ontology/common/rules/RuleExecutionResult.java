@@ -11,6 +11,7 @@ public record RuleExecutionResult(
         OWLOntology working,
         List<DerivedFact> derived,
         List<String> executedRules,
+        List<String> executedRuleIds,
         int engineRules,
         int translatedRules,
         List<SkippedRule> skippedRules,
@@ -19,6 +20,13 @@ public record RuleExecutionResult(
         Map<String, String> engineVersions,
         Stopping stopping,
         String message) {
+
+    public RuleExecutionResult(Status status, OWLOntology working, List<DerivedFact> derived, List<String> executedRules,
+                               int engineRules, int translatedRules, List<SkippedRule> skippedRules, List<String> limitations,
+                               String snapshotId, Map<String, String> engineVersions, Stopping stopping, String message) {
+        this(status, working, derived, executedRules, executedRules, engineRules, translatedRules, skippedRules, limitations,
+                snapshotId, engineVersions, stopping, message);
+    }
 
     public enum Status {
         COMPLETED("Completed within the supported profile"),
@@ -55,7 +63,10 @@ public record RuleExecutionResult(
     public record DerivedFact(OWLAxiom axiom, Origin origin, int round) {
     }
 
-    public record SkippedRule(String ruleId, String reason) {
+    public record SkippedRule(String ruleName, String ruleId, String reason) {
+        public SkippedRule(String ruleId, String reason) {
+            this(ruleId, ruleId, reason);
+        }
     }
 
     public record Stopping(int rounds, int maxRounds, long elapsedMillis, long maxMillis, Limit limit, boolean converged) {

@@ -1018,13 +1018,8 @@ public class SparqlDatasetService {
         return execSelectGraphDB(projectId, sparqlQuery, includeInferred);
     }
 
-    /**
-     * Run a SELECT against the in-memory project repo. Returns {@code null} on
-     * cache miss / load failure so the caller can fall back to GraphDB.
-     */
-    private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
-        long start = System.nanoTime();
-        Repository memRepo = projectRepoCache.getOrLoad(projectId, new ProjectRepoCache.Loader() {
+    private ProjectRepoCache.Loader projectRepoLoader() {
+        return new ProjectRepoCache.Loader() {
             @Override public GraphQueryResult streamTriples(String pid) {
                 return execConstructAll(pid);
             }
@@ -1055,7 +1050,16 @@ public class SparqlDatasetService {
                     return -1L;
                 }
             }
-        });
+        };
+    }
+
+    /**
+     * Run a SELECT against the in-memory project repo. Returns {@code null} on
+     * cache miss / load failure so the caller can fall back to GraphDB.
+     */
+    private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
+        long start = System.nanoTime();
+        Repository memRepo = projectRepoCache.getOrLoad(projectId, projectRepoLoader());
         if (memRepo == null) {
             return null;
         }
@@ -1222,6 +1226,71 @@ public class SparqlDatasetService {
         } catch (Exception e) {
             log.error("[GRAPHDB] capped SELECT failed for project {}", projectId, e);
             throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
+        }
+    }
+
+    public SparqlQueryScope resolveUserQueryScope(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            throw new SparqlQueryRejectedException("A project is required to run a query.");
+        }
+        if (SparqlQueryContext.wantsDraft()) {
+            String userId = SparqlQueryContext.getUserId();
+            if (!isDraftCopySessionReady(projectId, userId)) {
+                throw new SparqlQueryRejectedException(
+                        "Your draft copy is not ready yet, so it cannot be queried. Wait for it to finish or switch to the public version.");
+            }
+            return SparqlQueryScope.draftScope(projectId, userId);
+        }
+        String base = getGraphUri(projectId);
+        return SparqlQueryScope.publicScope(projectId, base, getPartitionGraphs(null, projectId, base));
+    }
+
+    public SparqlUserQueryResult execUserQuery(String projectId, String sparqlQuery, int graphCap) {
+        SparqlQueryScope scope = resolveUserQueryScope(projectId);
+        SparqlQueryGuard.Checked checked = SparqlQueryGuard.check(sparqlQuery, new LinkedHashSet<>(scope.graphs()));
+        if (!scope.draft() && projectRepoCache != null && projectRepoCache.isEnabled()) {
+            Repository memRepo = null;
+            try {
+                memRepo = projectRepoCache.getOrLoad(projectId, projectRepoLoader());
+            } catch (Exception e) {
+                log.warn("[MEMCACHE] user query load failed for project={}: {}", projectId, e.getMessage());
+            }
+            if (memRepo != null) {
+                try {
+                    return execUserQueryInGraphs(memRepo, scope, List.of(getGraphUri(projectId)), checked, graphCap);
+                } catch (SparqlQueryRejectedException e) {
+                    throw e;
+                } catch (Exception e) {
+                    log.warn("[MEMCACHE] user query failed for project={}, falling back to GraphDB: {}",
+                            projectId, e.getMessage());
+                }
+            }
+        }
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        try {
+            return execUserQueryInGraphs(binding.repository(), scope, scope.graphs(), checked, graphCap);
+        } catch (SparqlQueryRejectedException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[GRAPHDB] user query failed for project {}", projectId, e);
+            throw new RuntimeException(e.getMessage() != null ? e.getMessage() : "SPARQL query execution failed", e);
+        }
+    }
+
+    public SparqlUserQueryResult execUserQueryInGraphs(Repository repository, SparqlQueryScope scope,
+                                                       List<String> visibleGraphs, SparqlQueryGuard.Checked checked,
+                                                       int graphCap) {
+        if (visibleGraphs.isEmpty() || !new LinkedHashSet<>(scope.graphs()).containsAll(visibleGraphs)) {
+            throw new SparqlQueryRejectedException("The query scope does not match the project.");
+        }
+        long start = System.nanoTime();
+        try (RepositoryConnection raw = repository.getConnection()) {
+            RepositoryConnection conn = checked.kind() == SparqlQueryGuard.Kind.SELECT
+                    || checked.kind() == SparqlQueryGuard.Kind.ASK ? raw : TolerantRdfParsing.apply(raw);
+            SparqlUserQueryResult result = SparqlUserQueryRunner.run(conn, checked, visibleGraphs, graphCap);
+            sparqlLog.info("[SPARQL_USER] {} project={} draft={} graphs={} time={}ms",
+                    checked.kind(), scope.projectId(), scope.draft(), visibleGraphs.size(), elapsedMillis(start));
+            return result;
         }
     }
 

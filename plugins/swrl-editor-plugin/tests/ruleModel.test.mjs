@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule } from '../src/ruleModel.ts';
+import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE } from '../src/ruleModel.ts';
 
 const DEMO = [
   ['Senior', 'Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)', true],
@@ -277,4 +277,69 @@ test('rename result replaces the rule in the list and selection', () => {
   const c = applySavedRule(rules, '1', { id: '1', ruleName: 'A2' }, { ...form, ruleText: 'new', enabled: false });
   assert.equal(c.saved.ruleText, 'new');
   assert.equal(c.saved.enabled, false);
+});
+
+test('isPagedRun needs a run id and counts', () => {
+  assert.equal(isPagedRun(null), false);
+  assert.equal(isPagedRun({ runId: 'r1' }), false);
+  assert.equal(isPagedRun({ counts: { conclusions: 1, structure: 2 } }), false);
+  assert.equal(isPagedRun({ runId: 'r1', counts: { conclusions: 1, structure: 2 } }), true);
+});
+
+test('derivedSummary uses separators and singular or plural', () => {
+  assert.equal(derivedSummary({ conclusions: 4, structure: 7599 }), '7,603 derived: 4 rule conclusions, 7,599 structure');
+  assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 derived: 1 rule conclusion, 0 structure');
+  assert.equal(derivedSummary({ conclusions: 2, structure: 3, omittedTrivial: 1 }), '5 derived: 2 rule conclusions, 3 structure (1 trivial same-individual fact hidden)');
+  assert.equal(derivedSummary({ conclusions: 2, structure: 3, omittedTrivial: 12 }).endsWith('(12 trivial same-individual facts hidden)'), true);
+  assert.equal(formatCount(1234567), '1,234,567');
+});
+
+test('page math and range text', () => {
+  assert.equal(nextOffset(0, 120), 50);
+  assert.equal(nextOffset(100, 120), null);
+  assert.equal(nextOffset(50, 100), null);
+  assert.equal(previousOffset(0), null);
+  assert.equal(previousOffset(50), 0);
+  assert.equal(previousOffset(30), 0);
+  assert.equal(pageStart(999, 120), 100);
+  assert.equal(pageStart(10, 0), 0);
+  assert.equal(pageRangeText(50, 50, 7599), 'Showing 51-100 of 7,599');
+  assert.equal(pageRangeText(7550, 49, 7599), 'Showing 7,551-7,599 of 7,599');
+  assert.equal(pageRangeText(0, 0, 0), 'No results');
+});
+
+test('page request path carries paging, kind, query and draft', () => {
+  assert.equal(
+    axiomsPagePath('p 1', 'run/1', { offset: 50, limit: 50, kind: 'structure', query: '  ' }, false),
+    '/api/ontology/p%201/rules/execute/run%2F1/axioms?offset=50&limit=50&kind=structure'
+  );
+  assert.equal(
+    axiomsPagePath('p1', 'r1', { offset: 0, limit: 50, kind: 'conclusions', query: 'Adult x' }, true),
+    '/api/ontology/p1/rules/execute/r1/axioms?offset=0&limit=50&kind=conclusions&q=Adult+x&draft=true'
+  );
+  assert.equal(pageCacheKey('r1', 'conclusions', 'a', 50), 'r1|conclusions|a|50');
+});
+
+test('selection survives across pages and toggles', () => {
+  const a = { description: 'A' };
+  const b = { description: 'B' };
+  const c = { description: 'C' };
+  let sel = new Map();
+  sel = toggleSelection(sel, a);
+  sel = addToSelection(sel, [b, c]);
+  assert.deepEqual([...sel.keys()], ['A', 'B', 'C']);
+  assert.equal(allSelected(sel, [a, b]), true);
+  assert.equal(allSelected(sel, [a, { description: 'D' }]), false);
+  assert.equal(allSelected(sel, []), false);
+  const next = toggleSelection(sel, a);
+  assert.equal(next.has('A'), false);
+  assert.equal(sel.has('A'), true);
+});
+
+test('a 410 maps to the expired message', () => {
+  assert.equal(isExpiredRunError({ status: 410 }), true);
+  assert.equal(isExpiredRunError({ status: 500 }), false);
+  assert.equal(pageErrorMessage({ status: 410 }), EXPIRED_RUN_MESSAGE);
+  assert.equal(pageErrorMessage({ message: 'boom' }), 'Could not load this page: boom');
+  assert.equal(pageErrorMessage({}), 'Could not load this page. Try again.');
 });

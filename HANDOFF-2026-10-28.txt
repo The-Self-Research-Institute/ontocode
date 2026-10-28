@@ -1,0 +1,36 @@
+OntoCode handoff, written 28 Oct 2026 (use this to continue from another account or session)
+
+WHERE THINGS LIVE
+- Repo worktree: D:\wt-openllet, branch feature/remove-openllet. Main repo checkout: D:\ontod\ontocode (branch feature/change_undo_redo, has unrelated user files: drawio files, demo-files, etc. Do not stage those).
+- Changelog fix: D:\wt-develop-fix, commit 2c5411e9 on top of origin/develop (branch wip/changelog-root-2c5411e9). Not pushed. Root CHANGELOG.md is an exact copy of ontology-vscode-extension/CHANGELOG.md plus a .gitignore exception. The link uses HEAD = main, so it only works after develop reaches main.
+- Dev deploy copy: D:\wt-dev2 (clean copy of commit 5a758352, with .env.deploy). Deploy command (run in WSL from a clean tree): bash scripts/deploy-coretopia-release.sh --mode dev --changes editor,plugin,reasoner-worker,swrl,plugin-init,web --platform web --remote-build. The sync now deletes removed source files (c79e1a0b); DEPLOY_RSYNC_DRY=1 previews. After every dev deploy restart the gateway (scratchpad restart_gateway.sh does: docker restart ontocode-gateway and wait for healthy).
+- Scratchpad (scripts, plans): C:\Users\prane\AppData\Local\Temp\claude\d--ontod-ontocode\fe6e31ec-5008-42e9-bc94-539fbf79bee9\scratchpad. Dev check scripts there: rules-e2e.mjs (passes 11/0/1 on dev), rules-bench.mjs, rules-names-probe.mjs. Run with Git Bash: cd /d/ontod/ontocode && set -a && source ./.env.deploy >/dev/null 2>&1; set +a; node <script>. Never print .env.deploy values.
+- Plans: C:\Users\prane\.claude\plans\golden-wobbling-barto.md (copy saved next to this file as PLAN-copy.txt). Published plan pages: SWRL usability https://claude.ai/artifact/T8Gx9CPJvUKJurER6X8jKf ; rule import https://claude.ai/artifact/1JNK92yWg2wMWzpiZQ5zuY ; SPARQL and inference https://claude.ai/artifact/5W4JQ1KaMhfnMjT4cjBGh9 (version 3, includes review corrections).
+
+COMMITS ON feature/remove-openllet (local only, NOT PUSHED: GitHub asks for sign-in; run `git push origin feature/remove-openllet` from D:\wt-openllet after signing in; never force-push)
+- 4f322517 Openllet exclusion; 18218507 compose; 04f9f427 main code; 8011800d saved-rules fetch fix
+- c79e1a0b deploy script stale-file cleanup, heap-dump pruning, SWRL memory on dev, notices
+- 5a758352 rules stored in the ontology as swrl:Imp, migration, one-undo import with Excel, rename fix, readable Results screen, undo/redo
+- Side branch wip/sparql-inference-* holds the uncommitted work in progress described below.
+No co-author line on any commit (user rule). Dev only, prod untouched.
+
+DEPLOYED ON DEV: commit 5a758352 (editor, plugin service, worker, swrl, plugin bundle, web). NOT on dev: everything below.
+
+WORK IN PROGRESS (uncommitted when this note was written; saved on the wip side branch)
+1) Loop speed-up and rule names (shared/common-utils RuleExecution.java owlFacts skip heuristics, ruleName/executedRuleIds, RuleExecutionResult, tests RuleFactsEquivalenceTest etc; ontology-editor ReasonerController names). Needs: common-utils tests, install, benchmark, full editor suite. Agent was running the benchmark/suite. Equivalence test passed earlier (2 tests).
+2) SPARQL isolation and query dispatch backend (ontology-editor): Jena guard (reject FROM/FROM NAMED, SERVICE, update, java: functions, unauthorized GRAPH), fixed dataset per request, SELECT additive bindings, ASK/CONSTRUCT/DESCRIBE, cap before serialization with truncation header. Code was being written; Maven in the editor must wait until the finish agent is done (flag file scratchpad\editor_build_free.flag is what that agent polls for; create it when the loop/names editor suite is finished).
+3) Plugin screens done and tested (committed in WIP): sparql-query-plugin (graph/ASK/typed literals, queryForm.ts, bindingFormat.ts, exportColumns.ts), swrl-editor-plugin Execute paging (ruleModel.ts helpers, SWRLEditor.tsx), graph-view sparqlAsk.ts (draftMode arg; WebGLGraphView.tsx callers lines ~570 and ~595 still need to pass draft flag).
+
+STILL TO BUILD
+- Editor paging endpoint: Execute response gets runId and counts {conclusions, structure, omittedTrivial}; GET /api/ontology/{p}/rules/execute/{runId}/axioms?offset&limit&kind&q&draft (410 when expired); runId must be scoped to project and user and checked on every request.
+- Inference snapshots (plan Part 3 with Revision 3 corrections): immutable scoped snapshots, identity = project + scope + immutable revisions + enabled rule semantics + engine versions/config + profile + limits; materialization profile documented and tested; temporary in-memory store per query; 409 Run the reasoner first; toggle Asserted only / Include inferred in the SPARQL tab. THE USER'S REVIEW MESSAGE WAS CUT OFF in point 4 ("Do not claim explicit-IRI-only behavior simply because sameAs triples are omitted: HermiT may already use ..."): ask the user for the rest before building the equality part.
+- WebGLGraphView draft flag, tripleCount semantics (returned count; optional total), unlabelled rules show 'Rule xxxxxxxx' (done in the loop/names work, verify).
+- Then: full test suites (editor, swrl, worker, plugin service, common-utils, web), scripts/check-no-openllet.sh, dev deploy from a clean tree, gateway restart, dev check script extended for SPARQL, browser check (needs user OK on QA accounts qa_owner/qa_member).
+
+OPEN QUESTIONS FOR THE USER
+- Push (needs their GitHub sign-in). QA accounts verification for browser checks. Install Protege for side-by-side comparison (no answer yet). Remainder of the cut-off review message. Whether to merge develop into main so the CHANGELOG link works.
+- Also on their side: revoke the exposed GitHub token and rotate the Stripe key (from earlier), delete D:\desktop-openllet-test, D:\vt.log leftover. stash@{0} in the worktree kept until the user says drop.
+
+TEST STATUS LAST KNOWN: editor 2269 pass (before SPARQL work), swrl 88, worker 98, plugin service 31, common-utils 65 (2 skipped), web client 781 pass (1 skipped), plugin node tests 64.
+
+USER RULES (also in memory): no code comments; no co-author line; never force-push; fetch before push; dev only; restart gateway after dev deploys; stage by path; plan before big builds (publish plan artifact); never echo .env.deploy; keep unrelated user files untouched.

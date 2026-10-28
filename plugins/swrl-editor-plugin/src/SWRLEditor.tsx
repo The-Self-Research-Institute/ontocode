@@ -11,8 +11,9 @@ import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
 import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
 import { rt, btn } from './resultsTheme';
-import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom } from './types';
-import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView } from './ruleModel';
+import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
+import type { AxiomKind } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
 
@@ -722,6 +723,7 @@ interface ResultsPanelProps {
   results: ExecutionResponse | null;
   isExecuting: boolean;
   onAdd?: (axioms: InferredAxiom[]) => Promise<{ ok: boolean; message: string }>;
+  onRerun?: () => void;
 }
 
 
@@ -1030,7 +1032,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
   );
 };
 
-const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, draftMode = false }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, draftMode = false }) => {
   const [explained, setExplained] = useState<InferredAxiom | null>(null);
   const toggleWhy = (ax: InferredAxiom) => setExplained(prev => (prev === ax ? null : ax));
   const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
@@ -1041,15 +1043,81 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const [showWarning, setShowWarning] = useState(false);
   const [scopeChoice, setScopeChoice] = useState<'conclusions' | 'structure' | 'all' | null>(null);
   const [visibleLimit, setVisibleLimit] = useState(100);
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [selectedMap, setSelectedMap] = useState<Map<string, InferredAxiom>>(new Map());
+  const selectedKeys = useMemo(() => new Set(selectedMap.keys()), [selectedMap]);
+
+  const paged = isPagedRun(results);
+  const runId = results?.runId ?? '';
+  const [tabChoice, setTabChoice] = useState<AxiomKind | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [pageCache, setPageCache] = useState<Record<string, AxiomsPageResponse>>({});
+  const [pageLoading, setPageLoading] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [expired, setExpired] = useState(false);
+  const lastShownRef = useRef<AxiomsPageResponse | null>(null);
+  const pagedKind: AxiomKind = tabChoice ?? ((results?.counts?.conclusions ?? 0) > 0 || (results?.counts?.structure ?? 0) === 0 ? 'conclusions' : 'structure');
+  const pageKey = pageCacheKey(runId, pagedKind, debouncedQuery.trim(), offset);
+  const pageCached = pageCache[pageKey] !== undefined;
+
+  useEffect(() => {
+    setTabChoice(null);
+    setOffset(0);
+    setPageCache({});
+    setPageError(null);
+    setExpired(false);
+    setSelectedMap(new Map());
+    lastShownRef.current = null;
+  }, [runId]);
+
+  useEffect(() => {
+    if (!paged) return;
+    const t = setTimeout(() => {
+      setDebouncedQuery(prev => {
+        if (prev.trim() === searchFilter.trim()) return prev;
+        setOffset(0);
+        return searchFilter;
+      });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchFilter, paged]);
+
+  useEffect(() => {
+    if (!paged || expired) return;
+    if (pageCached) {
+      setPageError(null);
+      return;
+    }
+    let cancelled = false;
+    setPageLoading(true);
+    setPageError(null);
+    apiClient
+      .get<AxiomsPageResponse>(axiomsPagePath(projectId, runId, { offset, limit: RESULTS_PAGE_SIZE, kind: pagedKind, query: debouncedQuery }, draftMode))
+      .then(res => {
+        if (cancelled) return;
+        const page: AxiomsPageResponse = { ...res, axioms: Array.isArray(res?.axioms) ? res.axioms : [], total: typeof res?.total === 'number' ? res.total : 0 };
+        setPageCache(prev => ({ ...prev, [pageKey]: page }));
+      })
+      .catch(e => {
+        if (cancelled) return;
+        if (isExpiredRunError(e)) setExpired(true);
+        else setPageError(pageErrorMessage(e));
+      })
+      .finally(() => {
+        if (!cancelled) setPageLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [paged, expired, pageKey, pageCached]);
+
+  const currentPage = pageCache[pageKey] ?? lastShownRef.current;
+  if (pageCache[pageKey]) lastShownRef.current = pageCache[pageKey];
+  const pageAxioms: InferredAxiom[] = currentPage?.axioms ?? [];
+  const pageTotal = currentPage?.total ?? 0;
 
   const toggleSelected = (key: string) => {
-    setSelectedKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    const ax = pageAxioms.find(a => a.description === key) ?? results?.inferredAxioms.find(a => a.description === key);
+    if (!ax) return;
+    setSelectedMap(prev => toggleSelection(prev, ax));
   };
 
   const toggleGroup = (type: string) => {
@@ -1084,11 +1152,11 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const conclusionTotal = results.inferredAxioms.filter(ax => ax.category === 'conclusion').length;
   const structureTotal = results.inferredAxioms.filter(ax => ax.category === 'structure').length;
   const scope = scopeChoice ?? (conclusionTotal > 0 ? 'conclusions' : 'all');
-  const inScope = results.inferredAxioms.filter(ax => {
+  const inScope = paged ? pageAxioms : results.inferredAxioms.filter(ax => {
     if (!ax.category || scope === 'all') return true;
     return scope === 'conclusions' ? ax.category === 'conclusion' : ax.category === 'structure';
   });
-  const matchedAxioms = searchFilter.trim()
+  const matchedAxioms = paged ? pageAxioms : searchFilter.trim()
     ? inScope.filter(ax => {
         const searchLower = searchFilter.toLowerCase();
         const readable = (ax.readable || ax.description || '').toLowerCase();
@@ -1101,17 +1169,14 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     : inScope;
   const filteredAxioms = matchedAxioms.slice(0, visibleLimit);
   const matchedConclusions = matchedAxioms.filter(ax => ax.category === 'conclusion');
-  const selectedConclusions = results.inferredAxioms.filter(ax => ax.category === 'conclusion' && selectedKeys.has(ax.description));
+  const selectedConclusions = Array.from(selectedMap.values());
   const selectedCount = selectedConclusions.length;
-  const allShownSelected = matchedConclusions.length > 0 && matchedConclusions.every(ax => selectedKeys.has(ax.description));
-  const selectAllShown = () => {
-    setSelectedKeys(prev => {
-      const next = new Set(prev);
-      matchedConclusions.forEach(ax => next.add(ax.description));
-      return next;
-    });
-  };
-  const clearSelection = () => setSelectedKeys(new Set());
+  const allShownSelected = allSelected(selectedMap, matchedConclusions);
+  const selectAllShown = () => setSelectedMap(prev => addToSelection(prev, matchedConclusions));
+  const clearSelection = () => setSelectedMap(new Map());
+  const showList = showInferredAxioms && !expired;
+  const pagerPrev = previousOffset(offset);
+  const pagerNext = nextOffset(offset, pageTotal);
 
   const groupedAxioms = groupAxiomsByType(filteredAxioms);
   
@@ -1289,7 +1354,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                 <span>📚</span>
                 All Inferred Axioms
                 <span className="text-sm font-normal" style={rt.label}>
-                  ({matchedAxioms.length} matching{matchedAxioms.length > filteredAxioms.length ? `, showing ${filteredAxioms.length}` : ''}, {groupedAxioms.size} types)
+                  ({paged ? formatCount(pageTotal) : matchedAxioms.length} matching{matchedAxioms.length > filteredAxioms.length ? `, showing ${filteredAxioms.length}` : ''}, {groupedAxioms.size} types)
                 </span>
               </h3>
               <div className="flex items-center gap-3">
@@ -1360,10 +1425,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               </div>
               {searchFilter && (
                 <div className="mt-2 text-xs" style={rt.label}>
-                  Found {matchedAxioms.length} axioms matching "{searchFilter}"
+                  Found {paged ? formatCount(pageTotal) : matchedAxioms.length} axioms matching "{searchFilter}"
                 </div>
               )}
-              {onAdd && matchedConclusions.length > 0 && (
+              {onAdd && (matchedConclusions.length > 0 || (paged && selectedCount > 0)) && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                   {addState.phase === 'idle' || addState.phase === 'done' || addState.phase === 'error' ? (
                     <>
@@ -1372,14 +1437,14 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                         disabled={allShownSelected}
                         className="px-3 py-1.5 rounded-lg" style={btn(allShownSelected)}
                       >
-                        Select all shown ({matchedConclusions.length})
+                        {paged ? 'Select all on this page' : 'Select all shown'} ({matchedConclusions.length})
                       </button>
                       <button
                         onClick={clearSelection}
                         disabled={selectedCount === 0}
                         className="px-3 py-1.5 rounded-lg" style={btn(selectedCount === 0)}
                       >
-                        Clear
+                        {paged ? 'Clear selection' : 'Clear'}
                       </button>
                       <span style={rt.value}>{selectedCount} selected</span>
                       <button
@@ -1399,7 +1464,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                         onClick={async () => {
                           setAddState({ phase: 'busy' });
                           const outcome = await onAdd(selectedConclusions);
-                          if (outcome.ok) setSelectedKeys(new Set());
+                          if (outcome.ok) setSelectedMap(new Map());
                           setAddState({ phase: outcome.ok ? 'done' : 'error', message: outcome.message });
                         }}
                         className="px-3 py-1.5 rounded-lg font-medium" style={rt.buttonPrimary}
@@ -1416,7 +1481,23 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                   )}
                 </div>
               )}
-              {conclusionTotal + structureTotal > 0 && results.conclusionCount !== undefined && (
+              {paged && results.counts && (
+                <div className="mt-3 space-y-2 text-xs">
+                  <div style={rt.value}>{derivedSummary(results.counts)}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {([['conclusions', `Rule conclusions (${formatCount(results.counts.conclusions)})`], ['structure', `Structure (${formatCount(results.counts.structure)})`]] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        onClick={() => { setTabChoice(key); setOffset(0); }}
+                        className="px-3 py-1 rounded-full" style={pagedKind === key ? rt.chipOn : rt.button}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!paged && conclusionTotal + structureTotal > 0 && results.conclusionCount !== undefined && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                   {([['conclusions', `Rule conclusions (${results.conclusionCount})`], ['structure', `Ontology structure (${results.structureCount ?? structureTotal})`], ['all', 'Everything']] as const).map(([key, label]) => (
                     <button
@@ -1435,7 +1516,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           )}
           </div>
 
-          {showInferredAxioms && viewMode === 'grouped' && (
+          {showList && viewMode === 'grouped' && (
             <div className="max-h-[70vh] overflow-y-auto">
               {Array.from(groupedAxioms.entries()).map(([type, items]) => {
                 const style = getAxiomTypeStyle(type);
@@ -1477,7 +1558,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             </div>
           )}
 
-          {showInferredAxioms && viewMode === 'table' && (
+          {showList && viewMode === 'table' && (
             <div className="max-h-[70vh] overflow-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0" style={rt.panelHeader}>
@@ -1540,6 +1621,25 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             </div>
           )}
 
+          {expired && (
+            <div className="p-4 flex flex-wrap items-center gap-3 text-sm" style={rt.bannerWarning}>
+              <span>{EXPIRED_RUN_MESSAGE}</span>
+              {onRerun && (
+                <button onClick={onRerun} className="px-3 py-1.5 rounded-lg font-medium" style={rt.buttonPrimary}>Run again</button>
+              )}
+            </div>
+          )}
+
+          {showList && paged && (
+            <div className="p-3 flex flex-wrap items-center justify-center gap-3 text-xs" style={rt.divider}>
+              <button onClick={() => pagerPrev !== null && setOffset(pagerPrev)} disabled={pagerPrev === null} className="px-3 py-1.5 rounded-lg" style={btn(pagerPrev === null)}>Previous</button>
+              <span style={rt.value}>{pageRangeText(offset, pageAxioms.length, pageTotal)}</span>
+              <button onClick={() => pagerNext !== null && setOffset(pagerNext)} disabled={pagerNext === null} className="px-3 py-1.5 rounded-lg" style={btn(pagerNext === null)}>Next</button>
+              {pageLoading && <span style={rt.label}>Loading...</span>}
+              {pageError && <span style={rt.value}>{pageError}</span>}
+            </div>
+          )}
+
           {showInferredAxioms && matchedAxioms.length > filteredAxioms.length && (
             <div className="p-3 text-center" style={rt.divider}>
               <button onClick={() => setVisibleLimit(visibleLimit + 100)} className="px-4 py-1.5 text-sm rounded-lg" style={rt.button}>
@@ -1548,7 +1648,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             </div>
           )}
 
-          {showInferredAxioms && viewMode === 'raw' && (
+          {showList && viewMode === 'raw' && (
             <div className="max-h-[70vh] overflow-y-auto">
               {filteredAxioms.map((ax, i) => {
                 const style = getAxiomTypeStyle(ax.axiomType);
@@ -2736,7 +2836,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               )}
             </div>
           ) : activePanel === 'results' ? (
-            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} />
+            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} />
           ) : activePanel === 'query' ? (
             <SQWRLQueryPanel projectId={projectId} context={context!} draftMode={draftMode} />
           ) : (

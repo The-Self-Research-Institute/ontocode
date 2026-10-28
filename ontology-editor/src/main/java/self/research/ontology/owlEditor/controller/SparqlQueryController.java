@@ -1,7 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
 import org.eclipse.rdf4j.query.BindingSet;
-import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.model.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -17,7 +16,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 import self.research.ontology.owlEditor.repository.SparqlQueryRepository;
+import org.eclipse.rdf4j.rio.RDFFormat;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.SparqlGraphSerializer;
+import self.research.ontology.owlEditor.service.SparqlUserQueryResult;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.util.TripleStoreErrors;
 
@@ -29,13 +31,16 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/sparql")
-@CrossOrigin
+@CrossOrigin(exposedHeaders = SparqlQueryController.TRUNCATED_HEADER)
 public class SparqlQueryController {
 
     private final SparqlDatasetService datasetService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SparqlQueryRepository queryRepository;
     private final OntologyMutationService mutationService;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.sparql.graph-result-cap:100000}")
+    private int graphResultCap = 100000;
 
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.owlapi-first:false}")
     private boolean desktopOwlApiFirst;
@@ -109,29 +114,62 @@ public class SparqlQueryController {
     }
 
     record SparqlHead(List<String> vars) {}
-    record SparqlQueryResponse(SparqlHead head, List<Map<String, String>> results, long executionTime) {}
+    record SparqlQueryResponse(String type, SparqlHead head, List<String> vars, List<Map<String, String>> results,
+                               List<Map<String, Map<String, String>>> bindings, long executionTime) {}
+    record SparqlBooleanResponse(String type, @com.fasterxml.jackson.annotation.JsonProperty("boolean") boolean value,
+                                 long executionTime) {}
+    record SparqlGraphResponse(String type, String format, String content, long tripleCount, boolean truncated,
+                               long executionTime) {}
+
+    public static final String TRUNCATED_HEADER = "X-Ontocode-Truncated";
 
     @PostMapping("/query/{projectId}")
     public ResponseEntity<?> query(@PathVariable String projectId,
-                                   @RequestBody SparqlRequest request) {
+                                   @RequestBody SparqlRequest request,
+                                   @org.springframework.web.bind.annotation.RequestHeader(value = "Accept", required = false) String accept) {
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
         }
         long startTime = System.currentTimeMillis();
         try {
-            TupleQueryResult rs = datasetService.execSelect(projectId, request.query());
-            List<String> vars = rs.getBindingNames();
+            RDFFormat format = request.format() != null && !request.format().isBlank()
+                    ? SparqlGraphSerializer.formatByName(request.format())
+                    : SparqlGraphSerializer.formatByAccept(accept);
+            SparqlUserQueryResult result = datasetService.execUserQuery(projectId, request.query(), graphResultCap);
+            if (result instanceof SparqlUserQueryResult.Ask ask) {
+                return ResponseEntity.ok(new SparqlBooleanResponse("boolean", ask.value(),
+                        System.currentTimeMillis() - startTime));
+            }
+            if (result instanceof SparqlUserQueryResult.Graph graph) {
+                String content = SparqlGraphSerializer.serialize(graph.statements(), graph.namespaces(), format);
+                SparqlGraphResponse body = new SparqlGraphResponse("graph", SparqlGraphSerializer.formatName(format),
+                        content, graph.statements().size(), graph.truncated(), System.currentTimeMillis() - startTime);
+                ResponseEntity.BodyBuilder ok = ResponseEntity.ok();
+                if (graph.truncated()) {
+                    ok.header(TRUNCATED_HEADER, "true");
+                }
+                return ok.body(body);
+            }
+            SparqlUserQueryResult.Select select = (SparqlUserQueryResult.Select) result;
+            List<String> vars = select.vars();
             List<Map<String, String>> rows = new ArrayList<>();
-            while (rs.hasNext()) {
-                BindingSet sol = rs.next();
+            List<Map<String, Map<String, String>>> bindings = new ArrayList<>();
+            for (BindingSet sol : select.rows()) {
                 Map<String, String> row = new LinkedHashMap<>();
+                Map<String, Map<String, String>> binding = new LinkedHashMap<>();
                 for (String var : vars) {
-                    row.put(var, toValue(sol.hasBinding(var) ? sol.getValue(var) : null));
+                    Value value = sol.hasBinding(var) ? sol.getValue(var) : null;
+                    row.put(var, toValue(value));
+                    if (value != null) {
+                        binding.put(var, toBinding(value));
+                    }
                 }
                 rows.add(row);
+                bindings.add(binding);
             }
             long executionTime = System.currentTimeMillis() - startTime;
-            return ResponseEntity.ok(new SparqlQueryResponse(new SparqlHead(vars), rows, executionTime));
+            return ResponseEntity.ok(new SparqlQueryResponse("select", new SparqlHead(vars), vars, rows, bindings,
+                    executionTime));
         } catch (Exception e) {
             return sparqlFailure(e);
         }
@@ -172,6 +210,27 @@ public class SparqlQueryController {
         }
     }
 
+    static Map<String, String> toBinding(Value node) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (node.isIRI()) {
+            out.put("type", "uri");
+            out.put("value", node.stringValue());
+        } else if (node.isBNode()) {
+            out.put("type", "bnode");
+            out.put("value", ((org.eclipse.rdf4j.model.BNode) node).getID());
+        } else {
+            org.eclipse.rdf4j.model.Literal lit = (org.eclipse.rdf4j.model.Literal) node;
+            out.put("type", "literal");
+            out.put("value", lit.getLabel());
+            if (lit.getLanguage().isPresent()) {
+                out.put("xml:lang", lit.getLanguage().get());
+            } else if (!org.eclipse.rdf4j.model.vocabulary.XSD.STRING.equals(lit.getDatatype())) {
+                out.put("datatype", lit.getDatatype().stringValue());
+            }
+        }
+        return out;
+    }
+
     private String toValue(Value node) {
         if (node == null) {
             return null;
@@ -185,7 +244,15 @@ public class SparqlQueryController {
         return node.toString();
     }
 
-    public record SparqlRequest(String query) {}
+    public record SparqlRequest(String query, String format) {
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public SparqlRequest {
+        }
+
+        public SparqlRequest(String query) {
+            this(query, null);
+        }
+    }
 
     public record SavedQueryRequest(String name, String queryText) {}
 }

@@ -1800,7 +1800,7 @@ public class ReasonerController {
 
             List<Map<String, String>> skipped = new ArrayList<>();
             for (RuleExecutionResult.SkippedRule rule : result.skippedRules()) {
-                skipped.add(Map.of("ruleName", rule.ruleId(), "reason", rule.reason()));
+                skipped.add(Map.of("ruleName", rule.ruleName(), "ruleId", rule.ruleId(), "reason", rule.reason()));
             }
             List<String> limitations = new ArrayList<>(result.limitations());
             String message = result.message();
@@ -1821,6 +1821,7 @@ public class ReasonerController {
             body.put("inferredAxioms", axioms);
             body.put("errorMessage", status == RuleExecutionResult.Status.FAILED ? message : null);
             body.put("executedRuleNames", result.executedRules());
+            body.put("executedRuleIds", result.executedRuleIds());
             body.put("skippedRules", skipped);
             body.put("completion", completion);
             body.put("stamp", ontologyVersionStamps != null ? ontologyVersionStamps.current(projectId, isDraft, draftUserId) : null);
