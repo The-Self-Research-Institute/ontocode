@@ -60,6 +60,7 @@ class SqwrlAdmissionTest {
     void theSlotIsReleasedAfterATimeout() throws Exception {
         TriageHarness harness = new TriageHarness();
         ReflectionTestUtils.setField(harness.service, "executionTimeoutSeconds", 1);
+        ReflectionTestUtils.setField(harness.service, "fetchAllowanceSeconds", 0);
         ExecutionGate gate = slowGate(1, 1, 3000);
         ReflectionTestUtils.setField(harness.service, "executionGate", gate);
 
@@ -72,8 +73,14 @@ class SqwrlAdmissionTest {
     @Test
     void concurrentCallsBeyondTheWorkersAndQueueGetTheBusyRefusalAndTheGateDrains() throws Exception {
         TriageHarness harness = new TriageHarness();
+        assertTrue(harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "warm", null).isSuccess());
         ExecutionGate gate = slowGate(1, 1, 1500);
         ReflectionTestUtils.setField(harness.service, "executionGate", gate);
+        java.util.concurrent.ConcurrentLinkedQueue<org.semanticweb.owlapi.model.OWLOntology> ready = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        for (int i = 0; i < 6; i++) {
+            ready.add(harness.fresh());
+        }
+        org.mockito.Mockito.when(harness.client.fetchOntology(org.mockito.ArgumentMatchers.anyString())).thenAnswer(invocation -> ready.poll());
         int callers = 6;
         ExecutorService callersPool = Executors.newFixedThreadPool(callers);
         CountDownLatch go = new CountDownLatch(1);

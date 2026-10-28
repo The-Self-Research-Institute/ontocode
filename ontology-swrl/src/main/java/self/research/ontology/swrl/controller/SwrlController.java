@@ -135,6 +135,8 @@ public class SwrlController {
             ValidationResult result = swrlEngineService.validateRule(projectId, ruleText);
             return ResponseEntity.ok(result);
             
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Validation error for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -162,6 +164,8 @@ public class SwrlController {
         }
         try {
             return ResponseEntity.ok(swrlEngineService.parseRule(projectId, ruleText, draft ? userId : null));
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
         } catch (Exception e) {
             logger.error("Failed to parse a rule for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

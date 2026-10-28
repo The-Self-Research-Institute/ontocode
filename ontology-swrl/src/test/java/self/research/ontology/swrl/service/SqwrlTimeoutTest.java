@@ -15,6 +15,7 @@ class SqwrlTimeoutTest {
     void aSqwrlQueryThatRunsPastTheLimitFailsWithAClearMessage() throws Exception {
         TriageHarness harness = new TriageHarness();
         ReflectionTestUtils.setField(harness.service, "executionTimeoutSeconds", 1);
+        ReflectionTestUtils.setField(harness.service, "fetchAllowanceSeconds", 0);
         long[] waited = new long[1];
         ExecutionGate slow = new ExecutionGate(2, 10, 1, 1, 10000) {
             @Override

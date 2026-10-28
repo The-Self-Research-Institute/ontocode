@@ -37,6 +37,21 @@ public class OntologyClientService {
     @Value("${ontocode.internal.token:ontocode-internal}")
     private String internalToken;
 
+    @Value("${ontocode.capacity.swrl-execute.max-ontology-axioms:0}")
+    private long maxOntologyAxioms = 0;
+
+    @Value("${ontocode.capacity.swrl-execute.ontology-heap-fraction:" + OntologyBudget.DEFAULT_HEAP_FRACTION + "}")
+    private double ontologyHeapFraction = OntologyBudget.DEFAULT_HEAP_FRACTION;
+
+    @Value("${ontocode.capacity.swrl-execute.ontology-bytes-per-axiom:" + OntologyBudget.DEFAULT_BYTES_PER_AXIOM + "}")
+    private long ontologyBytesPerAxiom = OntologyBudget.DEFAULT_BYTES_PER_AXIOM;
+
+    @Value("${ontocode.capacity.swrl-execute.ontology-text-bytes-per-axiom:" + OntologyBudget.DEFAULT_TEXT_BYTES_PER_AXIOM + "}")
+    private long ontologyTextBytesPerAxiom = OntologyBudget.DEFAULT_TEXT_BYTES_PER_AXIOM;
+
+    @Value("${ontocode.capacity.swrl-execute.workers:${swrl.execution.workers:2}}")
+    private int executionWorkers = 2;
+
     public OntologyClientService(
             RestTemplateBuilder restTemplateBuilder,
             @Value("${ontology.editor.service.url}") String editorServiceUrl) {
@@ -123,6 +138,11 @@ public class OntologyClientService {
         }
     }
 
+    long maxAxioms() {
+        return OntologyBudget.maxAxioms(maxOntologyAxioms, Runtime.getRuntime().maxMemory(), ontologyHeapFraction,
+                executionWorkers, ontologyBytesPerAxiom);
+    }
+
     public OWLOntology fetchOntology(String projectId) throws OWLOntologyCreationException {
         return fetchOntologyWithStamp(projectId, null).ontology();
     }
@@ -169,6 +189,11 @@ public class OntologyClientService {
                         }
                     }
                     draftVersion[0] = response.getHeaders().getFirst("X-Ontology-Draft-Version");
+                    long axiomLimit = maxAxioms();
+                    long textLimit = OntologyBudget.maxTextBytes(axiomLimit, ontologyTextBytesPerAxiom);
+                    if (response.getHeaders().getContentLength() > textLimit) {
+                        throw new OntologyTooLargeException(axiomLimit);
+                    }
                     OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
                     // Mirror only the first DIAGNOSTIC_CAPTURE_LIMIT bytes into a small in-memory
                     // buffer as the parser reads, so a parse failure can log what the editor
@@ -178,8 +203,20 @@ public class OntologyClientService {
                     java.io.ByteArrayOutputStream headCapture =
                         new java.io.ByteArrayOutputStream(DIAGNOSTIC_CAPTURE_LIMIT);
                     try (InputStream raw = response.getBody();
-                         InputStream is = new BoundedTeeInputStream(raw, headCapture, DIAGNOSTIC_CAPTURE_LIMIT)) {
-                        return manager.loadOntologyFromOntologyDocument(is);
+                         CappedInputStream is = new CappedInputStream(
+                                 new BoundedTeeInputStream(raw, headCapture, DIAGNOSTIC_CAPTURE_LIMIT), textLimit)) {
+                        try {
+                            OWLOntology loaded = manager.loadOntologyFromOntologyDocument(is);
+                            if (loaded.getAxiomCount() > axiomLimit) {
+                                throw new OntologyTooLargeException(axiomLimit);
+                            }
+                            return loaded;
+                        } catch (OWLOntologyCreationException | RuntimeException e) {
+                            if (is.exceeded()) {
+                                throw new OntologyTooLargeException(axiomLimit);
+                            }
+                            throw e;
+                        }
                     } catch (OWLOntologyCreationException e) {
                         logger.error(
                             "OWL parse failure for project {}. First {} bytes of the exported document:\n{}",
@@ -209,6 +246,9 @@ public class OntologyClientService {
             
             return new FetchedOntology(ontology, revision[0], draftVersion[0]);
 
+        } catch (OntologyTooLargeException e) {
+            logger.warn("Refused to load the ontology for project {}: it is over the limit of {} axioms", projectId, e.getLimitAxioms());
+            throw e;
         } catch (RestClientException e) {
             logger.error("REST client error fetching ontology for project: {}", projectId, e);
             throw new OWLOntologyCreationException(
@@ -349,6 +389,47 @@ class BoundedTeeInputStream extends java.io.FilterInputStream {
         int n = super.read(b, off, len);
         if (n > 0 && capture.size() < limit) {
             capture.write(b, off, Math.min(n, limit - capture.size()));
+        }
+        return n;
+    }
+}
+
+class CappedInputStream extends java.io.FilterInputStream {
+    private final long limit;
+    private long read;
+    private boolean exceeded;
+
+    CappedInputStream(InputStream in, long limit) {
+        super(in);
+        this.limit = limit;
+    }
+
+    boolean exceeded() {
+        return exceeded;
+    }
+
+    private void count(long n) throws java.io.IOException {
+        read += n;
+        if (read > limit) {
+            exceeded = true;
+            throw new java.io.IOException("The ontology text is over the size limit");
+        }
+    }
+
+    @Override
+    public int read() throws java.io.IOException {
+        int b = super.read();
+        if (b != -1) {
+            count(1);
+        }
+        return b;
+    }
+
+    @Override
+    public int read(byte[] b, int off, int len) throws java.io.IOException {
+        int n = super.read(b, off, len);
+        if (n > 0) {
+            count(n);
         }
         return n;
     }

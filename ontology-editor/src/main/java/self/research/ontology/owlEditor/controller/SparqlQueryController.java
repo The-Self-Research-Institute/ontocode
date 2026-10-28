@@ -17,7 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 import self.research.ontology.owlEditor.repository.SparqlQueryRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
+import self.research.ontology.owlEditor.service.HeavyWorkAdmission;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
+import self.research.ontology.owlEditor.service.SparqlQueryContext;
+import self.research.ontology.owlEditor.service.SparqlRunPager;
+import self.research.ontology.owlEditor.service.SparqlRunStore;
 import self.research.ontology.owlEditor.service.SparqlGraphSerializer;
 import self.research.ontology.owlEditor.service.SparqlUserQueryResult;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
@@ -41,6 +45,24 @@ public class SparqlQueryController {
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private InferredQueryHandler inferredQueryHandler;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SparqlRunStore runStore;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.sparql-run-page-size:100}")
+    private int runPageSize = 100;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.sparql-run-max-page-size:1000}")
+    private int runMaxPageSize = 1000;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.sparql-run-max-page-bytes:8388608}")
+    private long runMaxPageBytes = 8L * 1024 * 1024;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.sparql-run-export-rows:25000}")
+    private int runExportRows = 25_000;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.sparql-run-export-bytes:16777216}")
+    private long runExportBytes = 16L * 1024 * 1024;
 
     @org.springframework.beans.factory.annotation.Value("${ontocode.sparql.graph-result-cap:100000}")
     private int graphResultCap = 100000;
@@ -126,6 +148,15 @@ public class SparqlQueryController {
     record SparqlGraphResponse(String type, String format, String content, long tripleCount, Long totalTriples,
                                boolean truncated, long executionTime) {}
 
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    record SparqlPagedResponse(String type, SparqlHead head, List<String> vars, List<Map<String, String>> results,
+                               List<Map<String, Map<String, String>>> bindings, Long executionTime, Boolean truncated,
+                               String runId, long totalRows, boolean totalRowsExact, int rowLimit, boolean bytesCapped,
+                               int pageSize, int rowCount, int offset, int nextOffset, int filteredRows,
+                               int storedRows, boolean pageBytesCapped) {}
+
+    static final String EXPIRED_RUN = "This result has expired. Run the query again.";
+
     public static final String TRUNCATED_HEADER = "X-Ontocode-Truncated";
 
     @PostMapping("/query/{projectId}")
@@ -144,7 +175,10 @@ public class SparqlQueryController {
             RDFFormat format = request.format() != null && !request.format().isBlank()
                     ? SparqlGraphSerializer.formatByName(request.format())
                     : SparqlGraphSerializer.formatByAccept(accept);
-            SparqlUserQueryResult result = datasetService.execUserQuery(projectId, request.query(), graphResultCap);
+            boolean paged = request.pageSize() != null && runStore != null;
+            SparqlUserQueryResult result = paged
+                    ? datasetService.execUserQuery(projectId, request.query(), graphResultCap, runStore.retention())
+                    : datasetService.execUserQuery(projectId, request.query(), graphResultCap);
             if (result instanceof SparqlUserQueryResult.Ask ask) {
                 return ResponseEntity.ok(new SparqlBooleanResponse("boolean", ask.value(),
                         System.currentTimeMillis() - startTime));
@@ -161,6 +195,14 @@ public class SparqlQueryController {
                 return ok.body(body);
             }
             SparqlUserQueryResult.Select select = (SparqlUserQueryResult.Select) result;
+            if (paged) {
+                long executionMs = System.currentTimeMillis() - startTime;
+                SparqlRunStore.Entry entry = runStore.put(projectId, runOwner(), select.vars(), select.rows(),
+                        select.totalRows(), select.truncated(), executionMs);
+                int size = clampPageSize(request.pageSize());
+                SparqlRunPager.Page page = SparqlRunPager.page(entry, null, null, false, 0, size, runMaxPageBytes);
+                return runResponse(entry, page, size, executionMs);
+            }
             List<String> vars = select.vars();
             List<Map<String, String>> rows = new ArrayList<>();
             List<Map<String, Map<String, String>>> bindings = new ArrayList<>();
@@ -189,6 +231,71 @@ public class SparqlQueryController {
         } catch (Exception e) {
             return sparqlFailure(e);
         }
+    }
+
+    private String runOwner() {
+        return HeavyWorkAdmission.ownerKey(SparqlQueryContext.getUserId());
+    }
+
+    private int clampPageSize(Integer requested) {
+        int max = Math.max(1, runMaxPageSize);
+        int size = requested != null && requested > 0 ? requested : runPageSize;
+        return Math.min(Math.max(1, size), max);
+    }
+
+    private ResponseEntity<?> runResponse(SparqlRunStore.Entry entry, SparqlRunPager.Page page, int pageSize,
+                                          Long executionMs) {
+        List<String> vars = entry.vars();
+        List<Map<String, String>> rows = new ArrayList<>(page.rows().size());
+        List<Map<String, Map<String, String>>> bindings = new ArrayList<>(page.rows().size());
+        for (String[] cells : page.rows()) {
+            Map<String, String> row = new LinkedHashMap<>();
+            Map<String, Map<String, String>> binding = new LinkedHashMap<>();
+            for (int i = 0; i < vars.size(); i++) {
+                Value value = SparqlRunStore.decode(cells[i]);
+                row.put(vars.get(i), toValue(value));
+                if (value != null) {
+                    binding.put(vars.get(i), toBinding(value));
+                }
+            }
+            rows.add(row);
+            bindings.add(binding);
+        }
+        SparqlRunStore.Meta meta = entry.meta();
+        SparqlPagedResponse body = new SparqlPagedResponse("select", new SparqlHead(vars), vars, rows, bindings,
+                executionMs, meta.truncated() ? Boolean.TRUE : null, entry.id(), meta.totalRows(),
+                meta.totalRowsExact(), meta.rowLimit(), meta.bytesCapped(), pageSize, rows.size(), page.offset(),
+                page.nextOffset(), page.filteredRows(), entry.rows().length, page.pageBytesCapped());
+        ResponseEntity.BodyBuilder ok = ResponseEntity.ok();
+        if (meta.truncated()) {
+            ok.header(TRUNCATED_HEADER, "true");
+        }
+        return ok.body(body);
+    }
+
+    @GetMapping("/{projectId}/runs/{runId}/rows")
+    public ResponseEntity<?> runRows(@PathVariable String projectId,
+                                     @PathVariable String runId,
+                                     @RequestParam(defaultValue = "0") int offset,
+                                     @RequestParam(required = false) Integer limit,
+                                     @RequestParam(required = false) String filter,
+                                     @RequestParam(required = false) String sort,
+                                     @RequestParam(defaultValue = "asc") String dir,
+                                     @RequestParam(defaultValue = "false") boolean export) {
+        java.util.Optional<SparqlRunStore.Entry> found = runStore == null
+                ? java.util.Optional.empty() : runStore.find(runId, projectId, runOwner());
+        if (found.isEmpty()) {
+            Map<String, Object> gone = new LinkedHashMap<>();
+            gone.put("expired", true);
+            gone.put("message", EXPIRED_RUN);
+            return ResponseEntity.status(410).body(gone);
+        }
+        SparqlRunStore.Entry entry = found.get();
+        int size = export ? Math.max(1, Math.min(runExportRows, entry.rows().length)) : clampPageSize(limit);
+        long bytes = export ? runExportBytes : runMaxPageBytes;
+        SparqlRunPager.Page page = SparqlRunPager.page(entry, filter, sort, "desc".equalsIgnoreCase(dir), offset,
+                size, bytes);
+        return runResponse(entry, page, size, null);
     }
 
     @PostMapping("/update/{projectId}")
@@ -264,9 +371,14 @@ public class SparqlQueryController {
         return node.toString();
     }
 
-    public record SparqlRequest(String query, String format, Boolean includeInferred, Boolean refresh) {
+    public record SparqlRequest(String query, String format, Boolean includeInferred, Boolean refresh,
+                                Integer pageSize) {
         @com.fasterxml.jackson.annotation.JsonCreator
         public SparqlRequest {
+        }
+
+        public SparqlRequest(String query, String format, Boolean includeInferred, Boolean refresh) {
+            this(query, format, includeInferred, refresh, null);
         }
 
         public SparqlRequest(String query, String format) {
