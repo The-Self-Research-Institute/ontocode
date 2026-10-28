@@ -221,6 +221,10 @@ public class SparqlQueryController {
         );
         messagingTemplate.convertAndSend("/topic/ontology/" + projectId, sparqlUpdateNotification);
         return ResponseEntity.ok(Map.of("success", true));
+        } catch (self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
+        } catch (self.research.ontology.owlEditor.service.SparqlUpdateTooLargeException large) {
+            return ResponseEntity.status(413).body(Map.of("error", large.getMessage()));
         } catch (Exception e) {
             return sparqlFailure(e);
         }
