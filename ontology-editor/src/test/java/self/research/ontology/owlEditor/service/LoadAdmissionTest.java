@@ -11,6 +11,9 @@ import self.research.ontology.common.admission.WorkKind;
 import self.research.ontology.owlEditor.model.DraftCopyStatus;
 import self.research.ontology.owlEditor.model.DraftSession;
 import self.research.ontology.owlEditor.repository.DraftSessionRepository;
+import self.research.ontology.owlEditor.service.infer.InferenceCapacity;
+import self.research.ontology.owlEditor.service.infer.InferenceException;
+import self.research.ontology.owlEditor.service.infer.LedgerInferenceAdmission;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -117,12 +120,32 @@ class LoadAdmissionTest {
 
     @Test
     void inferenceAdmissionUsesTheInferenceBuildKind() {
-        try (HeavyWorkAdmission.Hold hold = new InferenceAdmission(admission).admit("user-1", 100_000)) {
+        try (var permit = new LedgerInferenceAdmission(admission, new InferenceCapacity()).admit("user-1", 100_000)) {
             Map<String, Long> byKind = new java.util.HashMap<>();
             ledger.capacityReport().kinds().forEach(k -> byKind.put(k.kind(), k.reservedBytes()));
             assertEquals(100_000L * Estimates.DEFAULT_ESTIMATED_BYTES_PER_TRIPLE_LOAD, byKind.get("INFERENCE_BUILD"));
-            assertEquals(hold.bytes(), byKind.get("INFERENCE_BUILD"));
         }
+        assertEquals(0, ledger.reservedBytes());
+    }
+
+    @Test
+    void inferenceAdmissionWithoutAnEstimateReservesForTheConfiguredSizeLimit() {
+        InferenceCapacity capacity = new InferenceCapacity();
+        try (var permit = new LedgerInferenceAdmission(admission, capacity).admit("user-1", 0)) {
+            Map<String, Long> byKind = new java.util.HashMap<>();
+            ledger.capacityReport().kinds().forEach(k -> byKind.put(k.kind(), k.reservedBytes()));
+            assertEquals((long) capacity.maxAssertedTriples() * Estimates.DEFAULT_ESTIMATED_BYTES_PER_TRIPLE_LOAD,
+                    byKind.get("INFERENCE_BUILD"));
+        }
+        assertEquals(0, ledger.reservedBytes());
+    }
+
+    @Test
+    void aRefusedInferenceBuildBecomesTheInferenceBusyAnswer() {
+        signals.afterGc = 900 * FakeMemorySignals.MIB;
+        InferenceException busy = assertThrows(InferenceException.class,
+                () -> new LedgerInferenceAdmission(admission, new InferenceCapacity()).admit("user-1", 1_000));
+        assertEquals(InferenceException.BUSY, busy.reason());
         assertEquals(0, ledger.reservedBytes());
     }
 }

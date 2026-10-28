@@ -44,7 +44,7 @@ code{background:#f6f8fa;padding:0 .25rem}
 <tr><td>ONTOCODE_REASONER_MAX_TRIPLES (worker and editor)</td><td>5,000,000</td><td>1,000,000</td><td>At about 300 bytes per triple in OWLAPI and 2 to 4 times that for HermiT, one 5M-triple job cannot fit a 2 GiB worker heap; 1M is about 0.3 to 1.2 GiB</td></tr>
 <tr><td>ONTOCODE_REASONING_MAX_QUEUED_PER_PROJECT (worker)</td><td>5 (code default)</td><td>3</td><td>Heavy lane runs one job at a time on a 2 GiB heap; a shorter queue refuses early instead of piling up</td></tr>
 <tr><td>SERVER_TOMCAT_THREADS_MAX (editor)</td><td>300 (application.properties)</td><td>100</td><td>Spring relaxed binding maps the env var onto <code>server.tomcat.threads.max</code>, no code change needed; fewer threads bound concurrent uploads and requests against a 2.5 GiB heap</td></tr>
-<tr><td>ONTOCODE_WORKER_AUTH_ENABLED (worker and editor)</td><td>not set</td><td>true</td><td>The property is added by another change with default false; the internal token is already passed to editor, worker, swrl and plugin-service</td></tr>
+<tr><td>ONTOCODE_WORKER_AUTH_ENABLED (worker and editor)</td><td>not set</td><td>removed</td><td>The worker already checks the internal token on all its API routes; no switch is needed. The token itself is passed to editor, worker, swrl and plugin-service</td></tr>
 <tr><td>Header totals</td><td>stale</td><td>14,336 MiB</td><td>Recomputed from the services above</td></tr>
 <tr><td>ONTOCODE_UPLOAD_*</td><td>default</td><td>default</td><td>Left alone as asked</td></tr>
 </table>

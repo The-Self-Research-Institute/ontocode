@@ -77,6 +77,10 @@ public class HeavyWorkAdmission {
         return estimates;
     }
 
+    public boolean hasCapacityFor(long estimateBytes) {
+        return ledger == null || ledger.availableBytes() >= Math.max(MIN_ESTIMATE_BYTES, estimateBytes);
+    }
+
     public Hold admit(String userId, WorkKind kind, long estimateBytes) {
         if (ledger == null) {
             return Hold.NONE;
