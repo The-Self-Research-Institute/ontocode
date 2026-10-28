@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
+import self.research.ontology.common.disk.DiskSpaceGate;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -38,18 +40,31 @@ final class MergeCheckpointStore {
     void restoreTo(String projectId, String checkpointId, boolean undo, Path target) throws IOException {
         Path source = fileOf(projectId, checkpointId, undo ? "before" : "after");
         Path temp = target.resolveSibling(target.getFileName() + ".restore");
-        try (InputStream in = new GZIPInputStream(Files.newInputStream(source))) {
-            Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
+        try {
+            try (InputStream in = new GZIPInputStream(Files.newInputStream(source))) {
+                Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temp);
         }
-        Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
     }
 
     private void save(String projectId, String checkpointId, String side, Path source) throws IOException {
         Path file = fileOf(projectId, checkpointId, side);
         Files.createDirectories(file.getParent());
-        try (InputStream in = Files.newInputStream(source);
-             OutputStream out = new GZIPOutputStream(Files.newOutputStream(file))) {
-            in.transferTo(out);
+        DiskSpaceGate.defaults().requireFree(file.getParent(), Files.size(source));
+        boolean written = false;
+        try {
+            try (InputStream in = Files.newInputStream(source);
+                 OutputStream out = new GZIPOutputStream(Files.newOutputStream(file))) {
+                in.transferTo(out);
+            }
+            written = true;
+        } finally {
+            if (!written) {
+                Files.deleteIfExists(file);
+            }
         }
         enforceCap(projectId, checkpointId);
     }

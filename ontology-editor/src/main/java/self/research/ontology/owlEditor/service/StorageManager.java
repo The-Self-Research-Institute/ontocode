@@ -42,6 +42,10 @@ public class StorageManager {
         return dir;
     }
 
+    public Path projectsRoot() {
+        return projectsRoot;
+    }
+
     public Path projectDir(String projectId) {
         return singleSegmentUnder(projectsRoot, projectId, "project id");
     }

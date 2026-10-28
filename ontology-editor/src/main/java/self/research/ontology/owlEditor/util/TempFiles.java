@@ -16,7 +16,17 @@ public final class TempFiles {
     }
 
     public static Path saveUpload(MultipartFile upload, String prefix, String suffix) throws IOException {
-        Path file = Files.createTempFile(prefix, suffix);
+        return saveUpload(upload, null, prefix, suffix);
+    }
+
+    public static Path saveUpload(MultipartFile upload, Path directory, String prefix, String suffix) throws IOException {
+        Path file;
+        if (directory == null) {
+            file = Files.createTempFile(prefix, suffix);
+        } else {
+            Files.createDirectories(directory);
+            file = Files.createTempFile(directory, prefix, suffix);
+        }
         try {
             upload.transferTo(file.toFile());
         } catch (IOException | RuntimeException e) {

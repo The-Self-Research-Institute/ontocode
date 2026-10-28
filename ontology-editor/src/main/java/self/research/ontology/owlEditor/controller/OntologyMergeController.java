@@ -11,6 +11,10 @@ import org.springframework.web.multipart.MultipartFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import self.research.ontology.owlEditor.model.merge.*;
+import self.research.ontology.common.disk.DiskSpaceGate;
+import self.research.ontology.common.disk.InsufficientDiskSpaceException;
+import self.research.ontology.owlEditor.service.BusyException;
+import self.research.ontology.owlEditor.service.MergeInputTooLargeException;
 import self.research.ontology.owlEditor.service.DraftMergeTooLargeException;
 import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.OntologyMergeService;
@@ -46,6 +50,22 @@ public class OntologyMergeController {
                                    MergeTargetResolver targetResolver) {
         this.mergeService = mergeService;
         this.targetResolver = targetResolver;
+    }
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.data.dir:./data}")
+    private String dataDir;
+
+    private Path saveSource(MultipartFile file) throws java.io.IOException {
+        Path dir = dataDir == null ? null : Path.of(dataDir).toAbsolutePath().normalize().resolve("tmp");
+        if (dir != null) {
+            DiskSpaceGate.defaults().requireFree(dir, file.getSize() * 3);
+        }
+        return TempFiles.saveUpload(file, dir, "merge-source-", ".owl");
+    }
+
+    private ResponseEntity<?> inputTooLarge(MergeInputTooLargeException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("error", e.getMessage(), "limitBytes", e.limitBytes()));
     }
 
     private String effectiveUserId(HttpServletRequest request, String userId, boolean draft) {
@@ -92,7 +112,7 @@ public class OntologyMergeController {
                         .body(Map.of("error", "No file uploaded"));
             }
             
-            tempFile = TempFiles.saveUpload(file, "merge-source-", ".owl");
+            tempFile = saveSource(file);
             
             // Analyze for conflicts
             String effectiveTargetProjectId = targetResolver.resolve(projectId, targetProjectId, targetFileName);
@@ -112,6 +132,10 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (BusyException | InsufficientDiskSpaceException e) {
+            throw e;
+        } catch (MergeInputTooLargeException e) {
+            return inputTooLarge(e);
         } catch (OWLOntologyCreationException e) {
             log.error("[MERGE] Error loading ontologies", e);
             String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
@@ -160,7 +184,7 @@ public class OntologyMergeController {
         
         Path tempFile = null;
         try {
-            tempFile = TempFiles.saveUpload(file, "merge-source-", ".owl");
+            tempFile = saveSource(file);
             
             // Create merge options
             MergeOptions options = new MergeOptions();
@@ -202,6 +226,10 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (BusyException | InsufficientDiskSpaceException e) {
+            throw e;
+        } catch (MergeInputTooLargeException e) {
+            return inputTooLarge(e);
         } catch (DraftNotReadyException | DraftMergeTooLargeException e) {
             return draftMergeRefusal(e);
         } catch (StackOverflowError soe) {
@@ -240,7 +268,7 @@ public class OntologyMergeController {
         
         Path tempFile = null;
         try {
-            tempFile = TempFiles.saveUpload(file, "merge-source-", ".owl");
+            tempFile = saveSource(file);
             
             // Execute merge with resolutions
             long startTime = System.currentTimeMillis();
@@ -262,6 +290,10 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (BusyException | InsufficientDiskSpaceException e) {
+            throw e;
+        } catch (MergeInputTooLargeException e) {
+            return inputTooLarge(e);
         } catch (StackOverflowError soe) {
             log.error("[MERGE] Stack overflow during merge-with-resolutions — ontology may be too large or circular", soe);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
