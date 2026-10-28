@@ -144,6 +144,8 @@ public class DLQueryController {
             response.put("query", request.getExpression());
             return ResponseEntity.accepted().body(response);
 
+        } catch (self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
         } catch (Exception e) {
             log.error("DL Query enqueue error for project {}: {}", projectId, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of(

@@ -103,6 +103,23 @@ public final class JenaQueryGuard {
         return kind;
     }
 
+    public static void checkUpdatePattern(Element where, Set<String> authorizedGraphs) {
+        if (where == null) {
+            return;
+        }
+        Set<String> allowed = authorizedGraphs.stream().map(SparqlQueryGuard::normalizeIri).collect(Collectors.toSet());
+        new Walk(allowed).element(where);
+        Op algebra;
+        try {
+            algebra = Algebra.compile(where);
+        } catch (RuntimeException | Error e) {
+            throw new SparqlQueryRejectedException(
+                    "The update could not be parsed: " + SparqlQueryGuard.firstLine(e.getMessage()));
+        }
+        AlgebraCheck check = new AlgebraCheck(allowed);
+        Walker.walk(algebra, check, check.exprs);
+    }
+
     private static boolean isUpdate(String text) {
         try {
             UpdateFactory.create(text, Syntax.syntaxSPARQL_11);

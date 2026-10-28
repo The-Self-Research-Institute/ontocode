@@ -6,6 +6,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.ReasoningHeapMonitor;
+import self.research.ontology.common.admission.CacheAccount;
+import self.research.ontology.common.admission.ReservationLedger;
 import self.research.ontology.common.rules.OntologyRulesFingerprint;
 
 import java.time.Duration;
@@ -45,8 +47,19 @@ public class EditorReasonerCacheService {
     private final LinkedHashMap<String, CachedHierarchy> hierarchies = new LinkedHashMap<>();
     private final LinkedHashMap<String, CachedSnapshot> snapshots = new LinkedHashMap<>();
 
+    private volatile CacheAccount ontologyAccount = RetainedMemory.detachedAccount("editorOntologies");
+    private volatile CacheAccount hierarchyAccount = RetainedMemory.detachedAccount("editorHierarchies");
+    private volatile CacheAccount snapshotAccount = RetainedMemory.detachedAccount("editorSnapshots");
+
     public EditorReasonerCacheService(ReasonerService reasonerService) {
         this.reasonerService = reasonerService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(ReservationLedger ledger) {
+        this.ontologyAccount = ledger.cacheAccount("editorOntologies");
+        this.hierarchyAccount = ledger.cacheAccount("editorHierarchies");
+        this.snapshotAccount = ledger.cacheAccount("editorSnapshots");
     }
 
     public record HierarchyCacheEntry(List<Map<String, Object>> hierarchy, String reasonerType) {}
@@ -125,6 +138,7 @@ public class EditorReasonerCacheService {
                 snapshots.remove(oldest);
                 log.info("[EditorReasonerCache] LRU evicted snapshot {}", oldest);
             }
+            RetainedMemory.retainUntilCollected(snapshotAccount, snapshot, RetainedMemory.nodeBytes(snapshot));
             snapshots.put(cacheKey, new CachedSnapshot(snapshot,
                     rulesFingerprint == null ? OntologyRulesFingerprint.NONE : rulesFingerprint, Instant.now()));
         }
@@ -162,6 +176,11 @@ public class EditorReasonerCacheService {
 
     public void putOntology(String projectId, OWLOntology ontology, long version) {
         synchronized (ontologies) {
+            CachedOntology previous = ontologies.get(projectId);
+            if (previous == null || previous.ontology() != ontology) {
+                RetainedMemory.retainUntilCollected(ontologyAccount, ontology,
+                        RetainedMemory.ontologyBytes(ontology.getAxiomCount()));
+            }
             ontologies.put(projectId, new CachedOntology(ontology, version, Instant.now()));
             log.debug("[EditorReasonerCache] Cached ontology {} ({} projects, heap {}% used)",
                     projectId, ontologies.size(), Math.round(ReasoningHeapMonitor.usedRatio() * 100));
@@ -191,6 +210,10 @@ public class EditorReasonerCacheService {
 
     public void putHierarchy(String cacheKey, HierarchyCacheEntry entry) {
         synchronized (hierarchies) {
+            CachedHierarchy previous = hierarchies.get(cacheKey);
+            if (previous == null || previous.entry() != entry) {
+                RetainedMemory.retainUntilCollected(hierarchyAccount, entry, RetainedMemory.nodeBytes(entry.hierarchy()));
+            }
             if (isHeapComfortable() && hierarchies.size() < maxHierarchies) {
                 hierarchies.put(cacheKey, new CachedHierarchy(entry, Instant.now()));
                 return;

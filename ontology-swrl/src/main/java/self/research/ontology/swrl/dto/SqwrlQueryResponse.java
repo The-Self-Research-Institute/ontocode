@@ -16,6 +16,51 @@ public class SqwrlQueryResponse {
     private List<String> columnNames;
     private List<Map<String, String>> rows;
     private String errorMessage;
+    private int totalRows;
+    private boolean totalRowsExact = true;
+    private boolean truncated;
+    private int rowLimit;
+    private boolean bytesCapped;
+
+    public int getTotalRows() {
+        return totalRows;
+    }
+
+    public void setTotalRows(int totalRows) {
+        this.totalRows = totalRows;
+    }
+
+    public boolean isTotalRowsExact() {
+        return totalRowsExact;
+    }
+
+    public void setTotalRowsExact(boolean totalRowsExact) {
+        this.totalRowsExact = totalRowsExact;
+    }
+
+    public boolean isTruncated() {
+        return truncated;
+    }
+
+    public void setTruncated(boolean truncated) {
+        this.truncated = truncated;
+    }
+
+    public int getRowLimit() {
+        return rowLimit;
+    }
+
+    public void setRowLimit(int rowLimit) {
+        this.rowLimit = rowLimit;
+    }
+
+    public boolean isBytesCapped() {
+        return bytesCapped;
+    }
+
+    public void setBytesCapped(boolean bytesCapped) {
+        this.bytesCapped = bytesCapped;
+    }
 
     public SqwrlQueryResponse() {
     }

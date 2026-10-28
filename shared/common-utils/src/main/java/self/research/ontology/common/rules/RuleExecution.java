@@ -33,6 +33,7 @@ import org.semanticweb.owlapi.model.parameters.AxiomAnnotations;
 import org.semanticweb.owlapi.model.parameters.Imports;
 import org.semanticweb.owlapi.reasoner.InferenceType;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
+import self.research.ontology.common.RestRuleStage;
 import self.research.ontology.common.RuleStage;
 import self.research.ontology.common.SwrlBuiltIns;
 import self.research.ontology.common.SwrlComparisonTranslator;
@@ -171,6 +172,7 @@ public final class RuleExecution {
 
         Map<String, DerivedFact> derived = new LinkedHashMap<>();
         boolean engineAvailable = true;
+        String busyNote = null;
         boolean engineRan = false;
         int round = 0;
         Limit limit = Limit.NONE;
@@ -197,6 +199,7 @@ public final class RuleExecution {
                     Optional<Set<OWLAxiom>> out = runEngine(baseManager, engineBase, engineRules);
                     if (out.isEmpty()) {
                         engineAvailable = false;
+                        busyNote = RestRuleStage.takeBusyLimitation();
                     } else {
                         engineRan = true;
                         absorb(out.get(), working, manager, engineBase, baseManager, derived, Origin.RULE_ENGINE, round, ignored, engineInputs);
@@ -237,8 +240,12 @@ public final class RuleExecution {
             limitations.add(ignored[1] + " derived sameAs or differentFrom conclusion" + (ignored[1] == 1 ? "" : "s") + " from the rule engine " + (ignored[1] == 1 ? "was" : "were") + " not transferred.");
         }
         if (!engineAvailable) {
+            String skipReason = busyNote != null ? "The rule engine is busy." : "The rule engine could not be reached.";
             for (SWRLRule rule : engineRules) {
-                skipped.add(new SkippedRule(names.get(rule), ids.get(rule), "The rule engine could not be reached."));
+                skipped.add(new SkippedRule(names.get(rule), ids.get(rule), skipReason));
+            }
+            if (busyNote != null) {
+                limitations.add(busyNote);
             }
         } else if (engineRan || engineRules.isEmpty()) {
             for (SWRLRule rule : engineRules) {
@@ -260,7 +267,9 @@ public final class RuleExecution {
             status = Status.COMPLETED;
         }
         if (message == null) {
-            message = describe(status, limit, skipped.size(), round, limits);
+            message = busyNote != null && status == Status.PARTIAL_ENGINE_UNAVAILABLE
+                    ? "The rule engine is busy, so rules that need it did not run. Try again in a moment. OWL reasoning continued without them; their conclusions are unknown, not false."
+                    : describe(status, limit, skipped.size(), round, limits);
         }
         Stopping stopping = new Stopping(round, limits.maxRounds(), elapsedMillis(started), limits.maxMillis(), limit, converged);
         return new RuleExecutionResult(status, working, List.copyOf(derived.values()), List.copyOf(executed), List.copyOf(executedIds), engineRan ? engineRules.size() : 0, translatedCount,

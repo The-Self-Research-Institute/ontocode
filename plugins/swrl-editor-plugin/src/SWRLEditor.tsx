@@ -11,7 +11,9 @@ import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
 import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
 import { rt, btn } from './resultsTheme';
-import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
+import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
+import type { SqwrlSort } from './sqwrlModel';
+import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
 import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
 import type { AxiomKind } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
@@ -581,24 +583,49 @@ interface ResultsPanelProps {
 
 const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; draftMode?: boolean }> = ({ projectId, context, draftMode = false }) => {
   const [query, setQuery] = useState('Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)');
-  const [results, setResults] = useState<{ columnNames: string[], rows: Record<string, any>[], rowCount: number, executionTimeMs: number, success: boolean, errorMessage?: string } | null>(null);
+  const [results, setResults] = useState<SqwrlQueryResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [filterInput, setFilterInput] = useState('');
+  const [filterTerm, setFilterTerm] = useState('');
+  const [pageSize, setPageSize] = useState(SQWRL_DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(0);
+  const [sort, setSort] = useState<SqwrlSort | null>(null);
+  const [copyNote, setCopyNote] = useState('');
+  const [serverPage, setServerPage] = useState<{ key: string; rows: Record<string, any>[]; filtered: number } | null>(null);
+  const [pageNote, setPageNote] = useState('');
+  const [expired, setExpired] = useState(false);
+  const fetchSeq = useRef(0);
+
+  useEffect(() => {
+    if (filterInput === filterTerm) return;
+    const timer = setTimeout(() => {
+      setFilterTerm(filterInput);
+      setPage(0);
+    }, SQWRL_FILTER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [filterInput, filterTerm]);
+
+  const runId = results?.runId;
 
   const execute = useCallback(async () => {
     setLoading(true);
     setResults(null);
+    setServerPage(null);
+    setPageNote('');
+    setExpired(false);
+    setFilterInput('');
+    setFilterTerm('');
+    setPage(0);
+    setSort(null);
+    setCopyNote('');
     try {
-      const res = await apiClient.post<{ 
-        columnNames: string[], 
-        rows: Record<string, any>[],
-        rowCount: number,
-        executionTimeMs: number,
-        success: boolean,
-        errorMessage?: string
-      }>(
-        withDraft(`/api/swrl/${projectId}/sqwrl/query`, draftMode), 
-        { queryText: query }
+      const res = await apiClient.post<SqwrlQueryResponse>(
+        withDraft(`/api/swrl/${projectId}/sqwrl/query`, draftMode),
+        { queryText: query, pageSize }
       );
+      if (res.runId) {
+        setServerPage({ key: pageKey(res.runId, '', null, 0, pageSize), rows: res.rows ?? [], filtered: res.filteredRows ?? (res.rows ?? []).length });
+      }
       setResults(res);
     } catch (e: any) {
       console.error(e);
@@ -611,7 +638,83 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
         errorMessage: e.message || 'Query execution failed'
       });
     } finally { setLoading(false); }
-  }, [projectId, query, draftMode]);
+  }, [projectId, query, draftMode, pageSize]);
+
+  const columns = results?.columnNames ?? [];
+  const meta = useMemo(() => sqwrlMeta(results ?? {}), [results]);
+  const storedRows = runId ? (results?.storedRows ?? meta.returned) : meta.returned;
+  const wantedKey = runId ? pageKey(runId, filterTerm, sort, page, pageSize) : '';
+
+  useEffect(() => {
+    if (!runId || !wantedKey || serverPage?.key === wantedKey) return;
+    const seq = ++fetchSeq.current;
+    apiClient
+      .get<{ rows: Record<string, any>[]; filteredRows: number }>(
+        sqwrlRowsPath(projectId, runId, { offset: page * pageSize, limit: pageSize, filter: filterTerm, sort }, draftMode)
+      )
+      .then((res) => {
+        if (seq !== fetchSeq.current) return;
+        setPageNote('');
+        setServerPage({ key: wantedKey, rows: res.rows ?? [], filtered: res.filteredRows ?? 0 });
+      })
+      .catch((e: any) => {
+        if (seq !== fetchSeq.current) return;
+        if (e?.status === 410) {
+          setExpired(true);
+        } else {
+          setPageNote(e?.data?.message || e?.message || 'Could not load this page. Try again.');
+        }
+      });
+  }, [runId, wantedKey, serverPage, projectId, page, pageSize, filterTerm, sort, draftMode]);
+
+  const local = useMemo(
+    () => (runId ? null : localPage(results?.rows ?? [], columns, filterTerm, sort, page, pageSize)),
+    [runId, results, filterTerm, sort, page, pageSize]
+  );
+  const filteredCount = runId ? (serverPage?.filtered ?? 0) : (local?.filtered ?? 0);
+  const safePage = clampPage(page, filteredCount, pageSize);
+  const pageRows = runId ? (serverPage?.rows ?? []) : (local?.rows ?? []);
+  const lastPage = pageCount(filteredCount, pageSize) - 1;
+  const notice = truncationNotice(meta);
+
+  const allFilteredRows = async (): Promise<Record<string, any>[]> => {
+    if (runId) {
+      const res = await apiClient.get<{ rows: Record<string, any>[] }>(
+        sqwrlRowsPath(projectId, runId, { offset: 0, limit: 1, filter: filterTerm, sort, exportAll: true }, draftMode)
+      );
+      return res.rows ?? [];
+    }
+    return sortRows(filterRows(results?.rows ?? [], columns, filterTerm), sort);
+  };
+
+  const downloadCsv = async () => {
+    try {
+      const blob = new Blob([buildCsv(await allFilteredRows(), columns)], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'sqwrl-results.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e: any) {
+      if (e?.status === 410) setExpired(true);
+      else setPageNote(e?.data?.message || e?.message || 'Could not prepare the download. Try again.');
+    }
+  };
+
+  const copyTsv = async () => {
+    try {
+      const rows = await allFilteredRows();
+      await navigator.clipboard.writeText(buildTsv(rows, columns));
+      setCopyNote(`Copied ${formatNumber(rows.length)} rows`);
+    } catch (e: any) {
+      if (e?.status === 410) setExpired(true);
+      else setCopyNote('Copy failed');
+    }
+    setTimeout(() => setCopyNote(''), 2500);
+  };
 
   const queryExamples = [
     { label: 'All Persons with Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)' },
@@ -683,31 +786,86 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
           ) : (
             <div>
               <div className="p-2 bg-green-50 border-b border-green-200 text-green-700 text-sm flex items-center justify-between">
-                <span className="flex items-center gap-2">
+                <span className="flex items-center gap-2" data-testid="sqwrl-results-line">
                   <Check size={16} />
-                  {results.rowCount} results in {results.executionTimeMs}ms
+                  {resultsLine(meta, results.executionTimeMs)}
                 </span>
+              </div>
+              {notice && (
+                <div className="p-2 text-sm" style={rt.bannerWarning} data-testid="sqwrl-truncation-notice">{notice}</div>
+              )}
+              <div className="p-2 flex flex-wrap items-center gap-2 text-sm" style={rt.panelHeader}>
+                <input
+                  type="search"
+                  value={filterInput}
+                  onChange={(e) => setFilterInput(e.target.value)}
+                  placeholder="Filter all columns"
+                  aria-label="Filter results"
+                  className="px-2 py-1 rounded text-sm"
+                  style={rt.input}
+                />
+                <button onClick={copyTsv} className="px-2 py-1 rounded text-xs" style={rt.button}>Copy (TSV)</button>
+                <button onClick={downloadCsv} className="px-2 py-1 rounded text-xs" style={rt.button}>Download CSV</button>
+                {copyNote && <span className="text-xs" style={rt.muted}>{copyNote}</span>}
+                {pageNote && <span className="text-xs" style={rt.bannerError}>{pageNote}</span>}
+                <label className="ml-auto flex items-center gap-1 text-xs" style={rt.label}>
+                  Rows per page
+                  <select
+                    value={pageSize}
+                    onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
+                    className="px-1 py-0.5 rounded text-xs"
+                    style={rt.input}
+                    aria-label="Rows per page"
+                  >
+                    {SQWRL_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
               </div>
               <table className="min-w-full text-sm">
                 <thead className="bg-gray-100 sticky top-0">
                   <tr>
                     <th className="p-2 text-left font-semibold text-gray-500 w-8">#</th>
-                    {results.columnNames.map(c => (
-                      <th key={c} className="p-2 text-left font-semibold text-gray-700">{c}</th>
+                    {columns.map(c => (
+                      <th
+                        key={c}
+                        className="p-2 text-left font-semibold text-gray-700 cursor-pointer select-none"
+                        onClick={() => { setSort(nextSort(sort, c)); setPage(0); }}
+                        aria-sort={sort?.column === c ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                      >
+                        {c}{sort?.column === c ? ` ${sortArrow(sort, c)}` : ''}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {results.rows.map((row, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
-                      <td className="p-2 text-gray-400 text-xs">{i + 1}</td>
-                      {results.columnNames.map(c => (
+                  {pageRows.map((row, i) => (
+                    <tr key={safePage * pageSize + i} className="hover:bg-gray-50">
+                      <td className="p-2 text-gray-400 text-xs">{safePage * pageSize + i + 1}</td>
+                      {columns.map(c => (
                         <td key={c} className="p-2 text-gray-800 whitespace-nowrap font-mono">{String(row[c] ?? '')}</td>
                       ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {expired && (
+                <div className="p-3 text-sm flex items-center gap-2" style={rt.bannerWarning} data-testid="sqwrl-expired">
+                  {SQWRL_EXPIRED_MESSAGE}
+                  <button onClick={execute} className="px-2 py-1 rounded text-xs" style={rt.button}>Run again</button>
+                </div>
+              )}
+              {!expired && filteredCount === 0 && (runId ? serverPage !== null : true) && (
+                <div className="p-4 text-sm text-center" style={rt.muted}>No rows match the filter.</div>
+              )}
+              <div className="p-2 flex flex-wrap items-center gap-2 text-xs" style={rt.panelHeader}>
+                <span data-testid="sqwrl-showing">{showingText(filteredCount, storedRows, safePage, pageSize)}</span>
+                <span className="ml-auto flex items-center gap-1">
+                  <button onClick={() => setPage(0)} disabled={safePage === 0} className="px-2 py-1 rounded" style={btn(safePage === 0)} aria-label="First page">First</button>
+                  <button onClick={() => setPage(safePage - 1)} disabled={safePage === 0} className="px-2 py-1 rounded" style={btn(safePage === 0)}>Previous</button>
+                  <button onClick={() => setPage(safePage + 1)} disabled={safePage >= lastPage} className="px-2 py-1 rounded" style={btn(safePage >= lastPage)}>Next</button>
+                  <button onClick={() => setPage(lastPage)} disabled={safePage >= lastPage} className="px-2 py-1 rounded" style={btn(safePage >= lastPage)} aria-label="Last page">Last</button>
+                </span>
+              </div>
             </div>
           )}
         </div>
