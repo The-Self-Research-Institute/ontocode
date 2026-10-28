@@ -43,7 +43,7 @@ describe("Include inferred switch", () => {
     await mount(okStatus, post);
     expect(button("Asserted only")!.getAttribute("aria-pressed")).toBe("true");
     await click("Execute");
-    expect(post.mock.calls[0][1]).toEqual({ query: "SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o\n} LIMIT 10" });
+    expect(post.mock.calls[0][1]).toEqual({ query: "SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o\n} LIMIT 10", pageSize: 100 });
   });
 
   it("is disabled with a tooltip when the reasoner has not run", async () => {

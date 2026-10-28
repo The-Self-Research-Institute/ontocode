@@ -1269,12 +1269,18 @@ public class SparqlDatasetService {
     }
 
     public SparqlUserQueryResult execUserQuery(String projectId, String sparqlQuery, int graphCap) {
+        return execUserQuery(projectId, sparqlQuery, graphCap, null);
+    }
+
+    public SparqlUserQueryResult execUserQuery(String projectId, String sparqlQuery, int graphCap,
+                                               SparqlResultLimits retain) {
         try (HeavyWorkAdmission.Hold hold = heavyWork.admitSparql(SparqlQueryContext.getUserId())) {
-            return execUserQueryAdmitted(projectId, sparqlQuery, graphCap);
+            return execUserQueryAdmitted(projectId, sparqlQuery, graphCap, retain);
         }
     }
 
-    private SparqlUserQueryResult execUserQueryAdmitted(String projectId, String sparqlQuery, int graphCap) {
+    private SparqlUserQueryResult execUserQueryAdmitted(String projectId, String sparqlQuery, int graphCap,
+                                                        SparqlResultLimits retain) {
         SparqlQueryScope scope = resolveUserQueryScope(projectId);
         SparqlQueryGuard.Checked checked = SparqlQueryGuard.check(sparqlQuery, new LinkedHashSet<>(scope.graphs()));
         if (!scope.draft() && projectRepoCache != null && projectRepoCache.isEnabled()) {
@@ -1286,7 +1292,7 @@ public class SparqlDatasetService {
             }
             if (memRepo != null) {
                 try {
-                    return execUserQueryInGraphs(memRepo, scope, List.of(getGraphUri(projectId)), checked, graphCap);
+                    return execUserQueryInGraphs(memRepo, scope, List.of(getGraphUri(projectId)), checked, graphCap, retain);
                 } catch (SparqlQueryRejectedException e) {
                     throw e;
                 } catch (Exception e) {
@@ -1297,7 +1303,7 @@ public class SparqlDatasetService {
         }
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try {
-            return execUserQueryInGraphs(binding.repository(), scope, scope.graphs(), checked, graphCap);
+            return execUserQueryInGraphs(binding.repository(), scope, scope.graphs(), checked, graphCap, retain);
         } catch (SparqlQueryRejectedException e) {
             throw e;
         } catch (Exception e) {
@@ -1309,6 +1315,12 @@ public class SparqlDatasetService {
     public SparqlUserQueryResult execUserQueryInGraphs(Repository repository, SparqlQueryScope scope,
                                                        List<String> visibleGraphs, SparqlQueryGuard.Checked checked,
                                                        int graphCap) {
+        return execUserQueryInGraphs(repository, scope, visibleGraphs, checked, graphCap, null);
+    }
+
+    public SparqlUserQueryResult execUserQueryInGraphs(Repository repository, SparqlQueryScope scope,
+                                                       List<String> visibleGraphs, SparqlQueryGuard.Checked checked,
+                                                       int graphCap, SparqlResultLimits retain) {
         if (visibleGraphs.isEmpty() || !new LinkedHashSet<>(scope.graphs()).containsAll(visibleGraphs)) {
             throw new SparqlQueryRejectedException("The query scope does not match the project.");
         }
@@ -1316,7 +1328,7 @@ public class SparqlDatasetService {
         try (RepositoryConnection raw = repository.getConnection()) {
             RepositoryConnection conn = checked.kind() == SparqlQueryGuard.Kind.SELECT
                     || checked.kind() == SparqlQueryGuard.Kind.ASK ? raw : TolerantRdfParsing.apply(raw);
-            SparqlUserQueryResult result = SparqlUserQueryRunner.run(conn, checked, visibleGraphs, graphCap, sparqlResultLimits);
+            SparqlUserQueryResult result = SparqlUserQueryRunner.run(conn, checked, visibleGraphs, graphCap, sparqlResultLimits, retain);
             sparqlLog.info("[SPARQL_USER] {} project={} draft={} graphs={} time={}ms",
                     checked.kind(), scope.projectId(), scope.draft(), visibleGraphs.size(), elapsedMillis(start));
             return result;
