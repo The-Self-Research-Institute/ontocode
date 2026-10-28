@@ -308,7 +308,7 @@ services:
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       LOG_DIR: /app/logs
       JAVA_OPTS: >-
-        -Xms256m -Xmx768m
+        -Xms256m -Xmx1280m
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap-dump.hprof
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=2,filesize=10m
@@ -324,7 +324,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1024m
+          memory: 2g
 
   # Reasoner Worker — unified DL Query + Reasoner queue (isolated heap)
   reasoner-worker:
@@ -360,9 +360,11 @@ services:
         -Xms1g -Xmx2g
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
         -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/heapdumps
+    entrypoint: ["sh", "-c", "bash /usr/local/bin/prune-heapdumps.sh /app/heapdumps || true; exec java $${JAVA_OPTS:--Xms2g -Xmx8g -XX:+UseG1GC -XX:MaxGCPauseMillis=200} -jar app.jar"]
     volumes:
       - /var/log/ontocode/reasoner-worker:/app/logs
       - reasoner-heapdumps:/app/heapdumps
+      - ./scripts/prune-heapdumps.sh:/usr/local/bin/prune-heapdumps.sh:ro
     depends_on:
       owl-editor:
         condition: service_healthy
