@@ -55,7 +55,21 @@ async function proxyHttp(req, res) {
         return;
     }
 
-    if (port === SWRL_PORT) {
+    const isSwrl = port === SWRL_PORT;
+    svcMgr.noteActivity({ swrl: isSwrl });
+    svcMgr.beginRequest();
+    let requestEnded = false;
+    const finishRequest = () => {
+        if (requestEnded) return;
+        requestEnded = true;
+        svcMgr.endRequest();
+        svcMgr.noteActivity({ swrl: isSwrl });
+    };
+    res.once('close', finishRequest);
+
+    if (!isSwrl) await svcMgr.resumeAfterIdle();
+
+    if (isSwrl) {
         try {
             await svcMgr.ensureSwrl();
         } catch (err) {
@@ -93,6 +107,7 @@ async function proxyHttp(req, res) {
 
 function proxyWs(req, socket, head) {
     const port = targetPort(req.url);
+    svcMgr.noteActivity({ swrl: port === SWRL_PORT });
 
     const upstream = net.createConnection({ host: '127.0.0.1', port }, () => {
         let rawHeaders = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;

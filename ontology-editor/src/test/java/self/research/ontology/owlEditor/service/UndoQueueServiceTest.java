@@ -100,6 +100,14 @@ class UndoQueueServiceTest {
     }
 
     @Test
+    void everyStepCarriesItsChangeTimeAndTheQueueCarriesTheServerTime() {
+        own(change("a", "Me@x.com", "e:A", 1));
+        Queue queue = service.queue(P, false, me, 5);
+        assertEquals(T0.plusMinutes(1).toInstant(java.time.ZoneOffset.UTC).toString(), queue.steps().get(0).timestamp());
+        assertNotNull(queue.serverTime());
+    }
+
+    @Test
     void skipsRevertedAndRollbackEntries() {
         HistoryChange reverted = change("r", "Me@x.com", "e:R", 4);
         reverted.setReverted(true);

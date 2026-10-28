@@ -45,7 +45,14 @@ public class GraphViewController {
     private final GridFsTemplate gridfs;
     private final CollaborativeEditService collaborativeEditService;
     private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
-    private final java.util.Map<String, OWLOntology> ontologyCache = new HashMap<>();
+    private final self.research.ontology.owlEditor.cache.BoundedOntologyLru ontologyCache =
+            new self.research.ontology.owlEditor.cache.BoundedOntologyLru(
+                    Integer.getInteger("ontocode.graph.cache.maxProjects", 3), "graphViewOntologies");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        ontologyCache.bindAccount(ledger.cacheAccount("graphViewOntologies"));
+    }
 
     // Desktop lazy Fuseki flag — non-final so Lombok's @RequiredArgsConstructor skips it.
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.owlapi-first:false}")
@@ -60,11 +67,15 @@ public class GraphViewController {
     }
 
     private OWLOntology loadOntology(String projectId, boolean forceReload) throws Exception {
-        if (!forceReload && ontologyCache.containsKey(projectId)) {
-            log.debug("Using cached ontology for project: {}", projectId);
-            return ontologyCache.get(projectId);
+        if (!forceReload) {
+            return ontologyCache.getOrLoad(projectId, () -> readOntologyFromGridFs(projectId));
         }
+        OWLOntology fresh = readOntologyFromGridFs(projectId);
+        ontologyCache.put(projectId, fresh);
+        return fresh;
+    }
 
+    private OWLOntology readOntologyFromGridFs(String projectId) throws Exception {
         GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
         if (file == null) {
             throw new RuntimeException("Ontology file not found for project: " + projectId);
@@ -73,9 +84,7 @@ public class GraphViewController {
         GridFsResource resource = gridfs.getResource(file);
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
-            ontologyCache.put(projectId, ontology);
-            return ontology;
+            return manager.loadOntologyFromOntologyDocument(inputStream);
         }
     }
 

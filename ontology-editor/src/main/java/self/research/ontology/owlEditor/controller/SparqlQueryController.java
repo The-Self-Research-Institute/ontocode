@@ -76,6 +76,9 @@ public class SparqlQueryController {
                     "error", TripleStoreErrors.STORE_STARTING_MESSAGE,
                     "retryable", true));
         }
+        if (TripleStoreErrors.isQueryTimeout(e)) {
+            return ResponseEntity.badRequest().body(Map.of("error", TripleStoreErrors.QUERY_TIMEOUT_MESSAGE));
+        }
         String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
         return ResponseEntity.badRequest().body(Map.of("error", msg));
     }

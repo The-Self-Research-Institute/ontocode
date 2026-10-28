@@ -23,6 +23,7 @@ const proxy    = require('./services/ProxyServer');
 const autoUpdater = require('./services/AutoUpdater');
 const { undoRedoKind } = require('./services/UndoShortcut');
 const detectJava = require('./scripts/detect-java');
+const logHygiene = require('./services/LogHygiene');
 
 if (process.platform === 'linux') {
     if (process.env.WAYLAND_DISPLAY) {
@@ -41,16 +42,29 @@ function writeCrashLog(label, err) {
         const dir = app.getPath('userData');
         fs.mkdirSync(dir, { recursive: true });
         const line = `[${new Date().toISOString()}] ${label}: ${err && err.stack ? err.stack : err}\n`;
-        fs.appendFileSync(path.join(dir, 'crash.log'), line);
+        logHygiene.appendCapped(path.join(dir, 'crash.log'), line);
     } catch (_) { /* best effort — never let logging itself crash the crash handler */ }
+}
+function killChildrenNow() {
+    try { svcMgr.killAllSync(); } catch (_) {}
+    try { syncMgr.killNow(); } catch (_) {}
 }
 process.on('uncaughtException', (err) => {
     writeCrashLog('uncaughtException', err);
+    killChildrenNow();
     dialog.showErrorBox('OntoCode Studio crashed', String(err && err.stack ? err.stack : err));
     app.exit(1);
 });
 process.on('unhandledRejection', (err) => {
     writeCrashLog('unhandledRejection', err);
+});
+process.on('exit', killChildrenNow);
+['SIGINT', 'SIGTERM'].forEach((sig) => {
+    process.on(sig, () => {
+        writeCrashLog(sig, 'received signal, shutting down');
+        killChildrenNow();
+        app.exit(0);
+    });
 });
 
 // ── Dev mode ─────────────────────────────────────────────────────────────────
@@ -390,6 +404,26 @@ app.whenReady().then(async () => {
         if (splashWindow && !splashWindow.isDestroyed()) {
             splashWindow.webContents.send('service-log', { level, msg });
         }
+    });
+
+    let serviceNoticeOpen = false;
+    svcMgr.onServiceEvent((event) => {
+        if (event.kind === 'restarted') {
+            if (Notification.isSupported()) new Notification({ title: 'OntoCode Studio', body: event.message }).show();
+            return;
+        }
+        if (serviceNoticeOpen) return;
+        serviceNoticeOpen = true;
+        const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+        const options = {
+            type: 'warning',
+            title: event.kind === 'low-disk' ? 'Low disk space' : 'A service stopped',
+            message: event.message,
+            buttons: ['OK'],
+        };
+        (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options))
+            .catch(() => {})
+            .finally(() => { serviceNoticeOpen = false; });
     });
 
     // ── Start Syncthing (optional, both modes) ─────────────────────────────

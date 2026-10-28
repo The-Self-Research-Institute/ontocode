@@ -18,6 +18,8 @@ import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import self.research.ontology.common.disk.DiskSpaceGate;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -55,17 +57,26 @@ final class OntologyExporter {
 
     public Path exportDraftCodeViewFile(String projectId, String userId, String format) throws IOException {
         String extension = extensionFor(format);
+        DiskSpaceGate.defaults().requireFree(Path.of(System.getProperty("java.io.tmpdir")), 0);
         Path tempFile = Files.createTempFile("codeview-draft-", "." + extension);
-        if (requiresOwlApiFormat(format)) {
-            String rdfXmlContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
-            String converted = convertRdfXmlToOwlApiFormat(rdfXmlContent, format);
-            AtomicFileWrite.writeString(tempFile, converted);
+        boolean written = false;
+        try {
+            if (requiresOwlApiFormat(format)) {
+                String rdfXmlContent = datasetService.exportDraftGraphContent(projectId, userId, RDFFormat.RDFXML);
+                String converted = convertRdfXmlToOwlApiFormat(rdfXmlContent, format);
+                AtomicFileWrite.writeString(tempFile, converted);
+            } else {
+                RDFFormat rdfFormat = resolveLang(format);
+                String content = datasetService.exportDraftGraphContent(projectId, userId, rdfFormat);
+                AtomicFileWrite.writeString(tempFile, content);
+            }
+            written = true;
             return tempFile;
+        } finally {
+            if (!written) {
+                Files.deleteIfExists(tempFile);
+            }
         }
-        RDFFormat rdfFormat = resolveLang(format);
-        String content = datasetService.exportDraftGraphContent(projectId, userId, rdfFormat);
-        AtomicFileWrite.writeString(tempFile, content);
-        return tempFile;
     }
 
     public Path exportOntology(String projectId, String format) throws IOException {
@@ -78,6 +89,7 @@ final class OntologyExporter {
         String extension = extensionFor(format);
         Path exportPath = projectDirs.apply(projectId).resolve("ontology.original." + extension);
         Files.createDirectories(exportPath.getParent());
+        requireDisk(exportPath);
         String content = datasetService.exportDataset(projectId, rdfFormat);
         
         Map<String, String> citationMappings = citations.getCitationEntityMappings(projectId);
@@ -104,9 +116,15 @@ final class OntologyExporter {
         String extension = extensionFor(format);
         Path exportPath = projectDirs.apply(projectId).resolve("ontology.original." + extension);
         Files.createDirectories(exportPath.getParent());
+        requireDisk(exportPath);
         AtomicFileWrite.write(exportPath, out -> datasetService.exportDatasetToStream(projectId, rdfFormat, out));
         log.info("Exported ontology (streamed) to: {} ({} bytes)", exportPath, Files.size(exportPath));
         return exportPath;
+    }
+
+    private static void requireDisk(Path exportPath) throws IOException {
+        long previous = Files.isRegularFile(exportPath) ? Files.size(exportPath) : 0L;
+        DiskSpaceGate.defaults().requireFree(exportPath, previous);
     }
 
     private RDFFormat resolveLang(String format) {
@@ -156,6 +174,7 @@ final class OntologyExporter {
         String extension = extensionFor(format);
         Path exportPath = projectDirs.apply(projectId).resolve("ontology.original." + extension);
         Files.createDirectories(exportPath.getParent());
+        requireDisk(exportPath);
 
         String rdfXmlContent = datasetService.exportDataset(projectId, RDFFormat.RDFXML);
         if (rdfXmlContent == null || rdfXmlContent.isBlank()) {

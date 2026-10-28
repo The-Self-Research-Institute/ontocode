@@ -16,6 +16,8 @@ import self.research.ontology.owlEditor.repository.DraftSessionRepository;
 import self.research.ontology.owlEditor.service.OntologyHeaderMerge.Field;
 import self.research.ontology.owlEditor.service.OntologyHeaderMerge.Header;
 
+import self.research.ontology.common.disk.DiskSpaceGate;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -67,7 +69,8 @@ public class DraftPublishMergeService {
         String relative = "baselines/" + sanitizeUserId(userId) + ".owl";
         Path path = storageManager.projectDir(projectId).resolve(relative);
         Files.createDirectories(path.getParent());
-        Files.writeString(path, rdf);
+        DiskSpaceGate.defaults().requireFree(path, rdf.length());
+        AtomicFileWrite.writeString(path, rdf);
         saveToStore(projectId, userId, rdf);
         log.info("[DRAFT-MERGE] Captured baseline snapshot for project {} user {} → {}",
                 projectId, userId, path);

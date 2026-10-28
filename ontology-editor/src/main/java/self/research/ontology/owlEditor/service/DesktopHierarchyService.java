@@ -99,11 +99,7 @@ public class DesktopHierarchyService {
                                                Imports importsScope) {
         return ontologyCache.get(projectId)
             .map(c -> {
-                OWLReasoner r = c.reasoner();
-                if (r == null) {
-                    r = new org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory()
-                            .createNonBufferingReasoner(c.ontology());
-                }
+                OWLReasoner r = c.structuralReasoner();
                 return snapshotBuilder.buildChildren(c.ontology(), r, parentIri, limit, offset, importsScope);
             })
             .orElse(Collections.emptyList());
@@ -128,7 +124,7 @@ public class DesktopHierarchyService {
 
     public Map<String, Object> classDetails(String projectId, String classIri) {
         return ontologyCache.get(projectId)
-            .map(c -> buildClassDetails(c.ontology(), c.reasoner(), classIri))
+            .map(c -> buildClassDetails(c.ontology(), c.structuralReasoner(), classIri))
             .orElse(Collections.emptyMap());
     }
 

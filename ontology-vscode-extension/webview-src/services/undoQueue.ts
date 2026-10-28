@@ -1,4 +1,4 @@
-import { CHECK_DELAY_MS, FINISHED_VISIBLE_MS, INFLIGHT_WAIT_MS, MAX_CHECKS, MAX_FINISHED_ITEMS, MAX_WAITING, REQUEST_TIMEOUT_MS } from './undoQueueSupport';
+import { CHECK_DELAY_MS, EARLIER_SESSION_TEXT, FINISHED_VISIBLE_MS, INFLIGHT_WAIT_MS, MAX_CHECKS, MAX_FINISHED_ITEMS, MAX_WAITING, REQUEST_TIMEOUT_MS } from './undoQueueSupport';
 import { TIMED_OUT, blockedText, defaultQueueApi, detailOf, pause, revalidate, stepFromHint, summaryOf, withTimeout } from './undoQueueSupport';
 import { newOpId } from '../utils/opId';
 import type { Entry, FinishedItem, PauseReason, PressResult, QueueApi, UndoKind, UndoRunPhase, UndoRunSnapshot } from './undoQueueSupport';
@@ -135,6 +135,10 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
     try {
       while (entries.length && phase === 'running' && epoch === myEpoch) {
         const entry = entries.shift() as Entry;
+        if (kind === 'undo' && entry.step.earlierSession && !entry.confirmedEarlier) {
+          haltWith('Earlier session', EARLIER_SESSION_TEXT, entry);
+          break;
+        }
         current = entry;
         publish();
         inFlight = attempt(entry);
@@ -278,6 +282,16 @@ export function createUndoQueue(api: QueueApi = defaultQueueApi) {
     async resume(): Promise<void> {
       if (phase !== 'paused') return;
       const head = entries[0];
+      if (reason === 'Earlier session' && head) {
+        head.confirmedEarlier = true;
+        reason = undefined;
+        message = undefined;
+        item = undefined;
+        phase = 'running';
+        publish();
+        void drain();
+        return;
+      }
       if (reason === 'Conflict' && head) {
         const verdict = await revalidate(api, projectId, entries);
         if (verdict.message) {

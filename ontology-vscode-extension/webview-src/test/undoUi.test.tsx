@@ -31,7 +31,7 @@ describe('undo edit menu', () => {
     expect(buttons.map((b) => b.textContent)).toEqual([
       'Undo text editCtrl+Z',
       'Undo ontology change: Change domain of hasParent',
-      'Redo ontology change: nothing to redoCtrl+Y',
+      'Redo ontology change: nothing to redoCtrl+Y / Ctrl+Shift+Z',
     ]);
     expect(buttons[0].disabled).toBe(true);
     expect(buttons[2].disabled).toBe(true);

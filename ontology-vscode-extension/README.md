@@ -25,7 +25,7 @@ Want to try it without an account or without VS Code? Use the [desktop app](http
 ## 🚀 Features
 
 - **AI Code View assistant** — ask questions about your ontology, or let the AI propose edits in Code View (Turtle, RDF/XML, OWL/XML, Manchester, Functional). Review each change before it is applied. Works with your own OpenAI, Gemini or Claude key, or your organization's provider.
-- **Undo and Redo** — `Ctrl+Z` / `Ctrl+Shift+Z` reverse creating, deleting and renaming entities, axiom edits and more. In shared projects, Undo only reverses your own changes.
+- **Undo and Redo** — `Ctrl+Z` to undo and `Ctrl+Y` or `Ctrl+Shift+Z` to redo (`Cmd+Z` and `Cmd+Shift+Z` on a Mac) reverse creating, deleting and renaming entities, axiom edits and more. In shared projects, Undo only reverses your own changes.
 - **Ontology editing across formats** — the Code View editor reads *and writes* the same ontology as Turtle, RDF/XML, N-Triples, OWL/XML, Manchester, Functional, or JSON-LD. Switch formats and keep editing — it's not a one-way export.
 - **SPARQL / DL Query Workbench** — run SPARQL queries against your active ontology and browse results as a table or JSON.
 - **Change Assistant** — every edit is tracked as a reviewable change (drafts, saved, conflicts, timeline, rollback) with per-author attribution.
@@ -45,7 +45,7 @@ Want to try it without an account or without VS Code? Use the [desktop app](http
 - **Find the icon:** it sits in the Activity Bar on the left. If the bar is hidden, choose **View → Appearance → Activity Bar**.
 - **Command Palette:** press `Ctrl+Shift+P` (`Cmd+Shift+P` on a Mac) and type `OntoCode` to see every command.
 - **Open an ontology file:** choose **File → Open File**, pick your `.owl`, `.ttl` or `.rdf` file, right-click inside it and choose **OntoCode: Edit Ontology File**. The editor opens as a new tab next to your file.
-- **Undo and redo:** `Ctrl+Z` and `Ctrl+Shift+Z` (`Cmd+Z` and `Cmd+Shift+Z` on a Mac) work inside the OntoCode tab.
+- **Undo and redo:** `Ctrl+Z` to undo and `Ctrl+Y` or `Ctrl+Shift+Z` to redo (`Cmd+Z` and `Cmd+Shift+Z` on a Mac) work inside the OntoCode tab. If the change to undo was made in an earlier session, you are asked to confirm first.
 - **Sign out:** run **OntoCode: Logout** from the Command Palette.
 
 ---

@@ -20,12 +20,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
+import self.research.ontology.common.admission.WorkKind;
+import self.research.ontology.common.disk.DiskSpaceGate;
 import self.research.ontology.owlEditor.model.merge.*;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -59,6 +59,11 @@ public class OntologyMergeService {
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private MergeLiveSource liveSource;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    HeavyWorkAdmission admission;
+
+    DiskSpaceGate diskGate = DiskSpaceGate.defaults();
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     @org.springframework.context.annotation.Lazy
@@ -101,6 +106,13 @@ public class OntologyMergeService {
                                                   String targetProjectId,
                                                   String targetFileName,
                                                   String draftUserId) throws OWLOntologyCreationException {
+        try (HeavyWorkAdmission.Hold hold = admitMerge(draftUserId, sourceFile, targetProjectId, targetFileName)) {
+            return analyzeAdmitted(sourceFile, targetProjectId, targetFileName, draftUserId);
+        }
+    }
+
+    private MergeAnalysisResult analyzeAdmitted(Path sourceFile, String targetProjectId, String targetFileName,
+                                                String draftUserId) throws OWLOntologyCreationException {
         log.info("[MERGE] Analyzing ontologies for conflicts");
         log.info("[MERGE] Source: {}, Target project: {}", sourceFile, targetProjectId);
 
@@ -300,6 +312,15 @@ public class OntologyMergeService {
                                       String userId,
                                       String username,
                                       boolean draft) throws Exception {
+        try (HeavyWorkAdmission.Hold hold = admitMerge(userId, sourceFile, targetProjectId, targetFileName)) {
+            return mergeAdmitted(sourceFile, targetProjectId, targetFileName, outputFileName, options, userId, username,
+                    draft);
+        }
+    }
+
+    private MergeResult mergeAdmitted(Path sourceFile, String targetProjectId, String targetFileName,
+                                      String outputFileName, MergeOptions options, String userId, String username,
+                                      boolean draft) throws Exception {
         log.info("[MERGE] Starting merge operation");
         log.info("[MERGE] Source: {}, Target: {}", sourceFile, targetProjectId);
         log.info("[MERGE] Strategy: {}", options.getStrategy());
@@ -385,6 +406,8 @@ public class OntologyMergeService {
                 outputPath = targetFile;
             }
 
+            diskGate.requireFree(outputPath, 3 * (fileSize(sourceFile) + fileSize(targetFile)));
+
             ChangeOrigin mergeOrigin = ChangeOrigin.manual();
             String checkpointId = null;
             if (!isNewFile) {
@@ -396,14 +419,17 @@ public class OntologyMergeService {
                 }
             }
 
-            File outputFile = outputPath.toFile();
-            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                if (loaded.live()) {
-                    manager.saveOntology(targetOntology, MergeLiveSource.formatFor(targetFile), fos);
-                } else {
-                    manager.saveOntology(targetOntology, fos);
+            AtomicFileWrite.write(outputPath, out -> {
+                try {
+                    if (loaded.live()) {
+                        manager.saveOntology(targetOntology, MergeLiveSource.formatFor(targetFile), out);
+                    } else {
+                        manager.saveOntology(targetOntology, out);
+                    }
+                } catch (OWLOntologyStorageException e) {
+                    throw new IOException(e.getMessage(), e);
                 }
-            }
+            });
             if (checkpointId != null) {
                 checkpointId = saveCheckpointAfter(importProjectId, checkpointId, outputPath);
             }
@@ -444,6 +470,7 @@ public class OntologyMergeService {
             log.error("[MERGE] Merge operation failed", e);
             result.setSuccess(false);
             result.setMessage("Merge failed: " + e.getMessage());
+            MergeTempProjectSweeper.discard(storageManager.projectsRoot(), result.getTargetProjectId());
             throw e;
         } finally {
             // Clean up: remove ontologies from manager to release file handles (important for Windows)
@@ -456,6 +483,36 @@ public class OntologyMergeService {
         }
         
         return result;
+    }
+
+    private HeavyWorkAdmission.Hold admitMerge(String userId, Path sourceFile, String targetProjectId,
+                                               String targetFileName) {
+        long sourceBytes = fileSize(sourceFile);
+        long targetBytes = 0;
+        try {
+            targetBytes = fileSize(resolveTargetOntologyFile(targetProjectId, targetFileName));
+        } catch (Exception e) {
+            log.debug("[MERGE] Target size unknown before loading: {}", e.getMessage());
+        }
+        long limit = Limit.MERGE_INPUT_MAX_MB.mb();
+        if (sourceBytes > limit) {
+            throw new MergeInputTooLargeException("The file you are merging", limit);
+        }
+        if (targetBytes > limit) {
+            throw new MergeInputTooLargeException("The project ontology", limit);
+        }
+        if (admission == null) {
+            return HeavyWorkAdmission.Hold.NONE;
+        }
+        return admission.admit(userId, WorkKind.IMPORT_PARSE, admission.estimates().importParse(2 * sourceBytes + targetBytes));
+    }
+
+    private static long fileSize(Path file) {
+        try {
+            return file == null || !Files.isRegularFile(file) ? 0L : Files.size(file);
+        } catch (IOException e) {
+            return 0L;
+        }
     }
 
     private String saveCheckpointBefore(String projectId, Path file) {

@@ -8,11 +8,20 @@ const http = require('http');
 const os   = require('os');
 const crypto = require('crypto');
 
+const guard = require('./SharedGuard');
+const policy = require('./ResourcePolicy');
+const logHygiene = require('./LogHygiene');
+
 function jvmHeaps() {
-    const totalGb = os.totalmem() / (1024 ** 3);
-    const desktopGb = Math.min(Math.max(Math.floor(totalGb * 0.40), 2), 12);
-    const fusekiGb  = Math.min(Math.max(Math.floor(totalGb * 0.28), 2), 8);
-    return { desktopXmx: `${desktopGb}g`, fusekiXmx: `${fusekiGb}g`, totalGb: Math.round(totalGb) };
+    const budget = policy.computeBudget(os.totalmem());
+    return {
+        desktopXmx: `${budget.backendMb}m`,
+        fusekiXmx: `${budget.fusekiMb}m`,
+        swrlXmx: `${budget.swrlMb}m`,
+        mongoCacheGb: policy.mongoCacheArg(budget),
+        totalGb: Math.round(budget.totalMb / 1024),
+        budget,
+    };
 }
 
 const RESOURCES_DIR = app.isPackaged
@@ -25,6 +34,19 @@ const FUSEKI_DATA_DIR = path.join(DATA_DIR, 'fuseki');
 const OWL_DATA_DIR    = path.join(DATA_DIR, 'ontologies');
 const LOGS_DIR        = path.join(app.getPath('userData'), 'logs');
 const FUSEKI_BASE_DIR = path.join(app.getPath('userData'), 'fuseki-base');
+const JVM_TMP_DIR     = path.join(app.getPath('userData'), 'tmp');
+const DIAG_DIR        = path.join(app.getPath('userData'), 'diagnostics');
+const MAX_DIAG_FILES  = 3;
+let heapDumpAllowed   = false;
+
+function safetyFlags() {
+    return policy.jvmSafetyFlags({ crashDir: DIAG_DIR, tmpDir: JVM_TMP_DIR, heapDump: heapDumpAllowed });
+}
+
+function exeNameFor(bin) {
+    const base = path.basename(bin);
+    return process.platform === 'win32' && !/\.exe$/i.test(base) ? `${base}.exe` : base;
+}
 
 const PLATFORM_JVM_FLAGS = [
     ...(process.platform === 'win32'
@@ -53,6 +75,7 @@ const pendingTraining = [];
 let trainingTimer = null;
 let trainingActive = false;
 const STARTUP_HEALTH_TIMEOUT_MS = 300000;
+const FUSEKI_QUERY_TIMEOUT_MS = 120000;
 
 const DEFAULT_PORTS = {
     mongo:   27117,
@@ -79,6 +102,21 @@ const LAZY_SWRL = process.env.ONTOCODE_LAZY_SWRL !== '0';
 let swrlProcess    = null;
 let swrlStartPromise = null;
 let _logCallback   = null;
+let _eventCallback = null;
+let shuttingDown   = false;
+let idleTimer      = null;
+let idleTicks      = 0;
+let diskWarned     = false;
+let fusekiIdleStopped = false;
+const idle = new policy.IdleTracker({ idleMs: policy.idleMsFromEnv() });
+const restartBudget = new policy.RestartBudget({ max: 2 });
+
+function emitEvent(event) {
+    log(event.kind === 'restarted' ? 'info' : 'warn', event.message);
+    if (_eventCallback) {
+        try { _eventCallback(event); } catch (_) {}
+    }
+}
 
 function isPortFree(port) {
     return new Promise((resolve) => {
@@ -121,10 +159,39 @@ module.exports = {
     get AUTH_PORT()    { return DESKTOP_PORT; },
 
     onLog(callback) { _logCallback = callback; },
+    onServiceEvent(callback) { _eventCallback = callback; },
+    killAllSync() { return guard.killAllSync(); },
+
+    noteActivity({ swrl = false } = {}) {
+        idle.touch('Fuseki');
+        if (swrl) idle.touch('SWRL');
+    },
+    beginRequest() { idle.begin(); },
+    endRequest() { idle.end(); },
+
+    async resumeAfterIdle() {
+        if (!fusekiIdleStopped || shuttingDown) return;
+        try {
+            await module.exports.ensureFuseki();
+        } catch (err) {
+            log('warn', `Could not restart Fuseki after idle stop: ${err.message}`);
+        }
+    },
 
     async startAll() {
         startupCancelled = false;
+        shuttingDown = false;
         ensureDirs();
+        prepareHygiene();
+        const reaped = guard.reapStale();
+        reaped.reaped.forEach((r) => log('warn', `Stopped leftover ${r.name} (pid ${r.pid}) from an earlier run that did not close cleanly`));
+        const disk = policy.diskStatus(DATA_DIR);
+        if (disk.level === 'critical') throw new Error(policy.diskMessage(disk));
+        if (disk.level === 'low') {
+            diskWarned = true;
+            emitEvent({ kind: 'low-disk', name: 'Disk', message: policy.diskMessage(disk) });
+        }
+        startIdleWatcher();
         validateBackendBundles();
         await resolveAllPorts();
         await startMongo();
@@ -153,7 +220,7 @@ module.exports = {
     },
 
     async ensureFuseki() {
-
+        idle.touch('Fuseki');
         if (fusekiProcess && !fusekiProcess.killed && fusekiProcess.exitCode === null) {
             return { running: true, port: FUSEKI_PORT };
         }
@@ -170,7 +237,7 @@ module.exports = {
     },
 
     async ensureSwrl() {
-
+        idle.touch('SWRL');
         if (swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null) {
             return { running: true, port: SWRL_PORT };
         }
@@ -190,6 +257,9 @@ module.exports = {
 
     async stopAll() {
         startupCancelled = true;
+        shuttingDown = true;
+        clearInterval(idleTimer);
+        idleTimer = null;
         clearTimeout(trainingTimer);
         trainingTimer = null;
         pendingTraining.length = 0;
@@ -203,6 +273,7 @@ module.exports = {
         desktopProcess = null;
         fusekiProcess  = null;
         mongoProcess   = null;
+        guard.killAllSync();
     },
 
     status() {
@@ -218,9 +289,93 @@ module.exports = {
 };
 
 function ensureDirs() {
-    [MONGO_DATA_DIR, FUSEKI_DATA_DIR, OWL_DATA_DIR, LOGS_DIR, FUSEKI_BASE_DIR].forEach(d => {
+    [MONGO_DATA_DIR, FUSEKI_DATA_DIR, OWL_DATA_DIR, LOGS_DIR, FUSEKI_BASE_DIR, DIAG_DIR].forEach(d => {
         if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
     });
+}
+
+function prepareHygiene() {
+    logHygiene.resetDir(JVM_TMP_DIR);
+    logHygiene.pruneDir(DIAG_DIR, MAX_DIAG_FILES);
+    const rotated = logHygiene.rotateLogsAtStartup(LOGS_DIR, [
+        { file: path.join(app.getPath('userData'), 'crash.log'), maxBytes: logHygiene.MAX_CRASH_LOG_BYTES },
+    ]);
+    if (rotated.length) log('info', `Rotated large log files: ${rotated.join(', ')}`);
+    const heaps = jvmHeaps();
+    const free = policy.freeBytes(DATA_DIR);
+    heapDumpAllowed = process.env.ONTOCODE_HEAP_DUMP === '1'
+        && free !== null
+        && free > heaps.budget.backendMb * policy.MB * 1.5 + policy.LOW_DISK_BYTES;
+}
+
+function startIdleWatcher() {
+    clearInterval(idleTimer);
+    idleTicks = 0;
+    idleTimer = setInterval(() => {
+        idleTicks++;
+        idle.due().forEach((name) => stopIdle(name));
+        if (idleTicks % 10 === 0) checkDiskPeriodically();
+    }, 60000);
+    if (idleTimer.unref) idleTimer.unref();
+}
+
+function checkDiskPeriodically() {
+    const disk = policy.diskStatus(DATA_DIR);
+    if (disk.level === 'low' || disk.level === 'critical') {
+        if (!diskWarned) {
+            diskWarned = true;
+            emitEvent({ kind: 'low-disk', name: 'Disk', message: policy.diskMessage(disk) });
+        }
+    } else if (disk.level === 'ok') {
+        diskWarned = false;
+    }
+}
+
+function stopIdle(name) {
+    idle.untrack(name);
+    if (name === 'Fuseki') {
+        fusekiIdleStopped = true;
+        log('info', 'Stopping Fuseki after a long idle period to free memory; it restarts when needed');
+        stopProcess(fusekiProcess, 'Fuseki', 4000).then(() => { fusekiProcess = null; });
+    } else if (name === 'SWRL') {
+        log('info', 'Stopping the SWRL reasoner after a long idle period to free memory; it restarts when needed');
+        stopProcess(swrlProcess, 'SWRL', 4000).then(() => { swrlProcess = null; });
+    }
+}
+
+const SERVICE_LABELS = {
+    MongoDB: 'The database',
+    Desktop: 'The OntoCode backend',
+    Fuseki: 'The graph and SPARQL service',
+    SWRL: 'The rule reasoner',
+};
+
+function handleChildExit(name, child, code, tail) {
+    if (shuttingDown || child._ontoStopping || !child._ontoReady) return;
+    const restartable = name === 'MongoDB' || name === 'Desktop';
+    let recovery = 'lazy';
+    if (restartable) recovery = restartBudget.tryTake() ? 'restart' : 'none';
+    const info = policy.classifyExit({ name, code, outputTail: tail, stopping: false, recovery });
+    if (!info) return;
+    emitEvent({ kind: 'died', name, outOfMemory: info.outOfMemory, message: info.message });
+    if (recovery === 'restart') restartService(name);
+}
+
+async function restartService(name) {
+    const label = SERVICE_LABELS[name] || name;
+    try {
+        if (name === 'MongoDB') {
+            clearMongoLock();
+            mongoProcess = await attemptStartMongo(MONGO_DATA_DIR);
+        } else {
+            await startDesktop();
+        }
+        if (!shuttingDown) emitEvent({ kind: 'restarted', name, message: `${label} is running again.` });
+    } catch (err) {
+        if (!shuttingDown) {
+            emitEvent({ kind: 'restart-failed', name, message: `${label} could not be restarted (${err.message}). Please close and reopen OntoCode Studio.` });
+        }
+    }
 }
 
 function log(level, msg) {
@@ -296,6 +451,8 @@ async function attemptStartMongo(dataDir) {
         '--port',   String(MONGO_PORT),
         '--logpath', logFile,
         '--logappend',
+        '--logRotate', 'rename',
+        '--wiredTigerCacheSizeGB', jvmHeaps().mongoCacheGb,
         '--bind_ip', '127.0.0.1',
         ...MONGO_PLATFORM_ARGS,
     ], {});
@@ -318,6 +475,7 @@ async function attemptStartMongo(dataDir) {
         ]);
         proc.removeListener('exit', onEarlyExit);
         proc.removeListener('error', onSpawnError);
+        proc._ontoReady = true;
         return proc;
     } catch (err) {
         proc.removeListener('exit', onEarlyExit);
@@ -328,9 +486,7 @@ async function attemptStartMongo(dataDir) {
     }
 }
 
-async function startMongo() {
-    log('info', 'Starting MongoDB…');
-
+function clearMongoLock() {
     const mongoLock = path.join(MONGO_DATA_DIR, 'mongod.lock');
     try {
         if (fs.existsSync(mongoLock) && fs.readFileSync(mongoLock, 'utf8').trim()) {
@@ -338,6 +494,11 @@ async function startMongo() {
             log('info', `Removed stale MongoDB lock: ${mongoLock}`);
         }
     } catch (_) {}
+}
+
+async function startMongo() {
+    log('info', 'Starting MongoDB…');
+    clearMongoLock();
 
     try {
         mongoProcess = await attemptStartMongo(MONGO_DATA_DIR);
@@ -405,7 +566,7 @@ async function startFuseki() {
     fuseki:name "ontocode" ;
     fuseki:endpoint [ fuseki:operation fuseki:query ;
                       fuseki:name "query" ;
-                      ja:context [ ja:cxtName "arq:queryTimeout" ; ja:cxtValue "120000,120000" ] ] ;
+                      ja:context [ ja:cxtName "arq:queryTimeout" ; ja:cxtValue "${FUSEKI_QUERY_TIMEOUT_MS},${FUSEKI_QUERY_TIMEOUT_MS}" ] ] ;
     fuseki:endpoint [ fuseki:operation fuseki:update ; fuseki:name "update" ] ;
     fuseki:endpoint [ fuseki:operation fuseki:gsp-r ;  fuseki:name "get"    ] ;
     fuseki:endpoint [ fuseki:operation fuseki:gsp-rw ; fuseki:name "data"   ] ;
@@ -425,10 +586,12 @@ async function startFuseki() {
     const args = [
         `-Xmx${fusekiHeaps.fusekiXmx}`,
         '-Xms256m',
+        ...safetyFlags(),
         ...PLATFORM_JVM_FLAGS,
         '-jar', jar,
         '--port', String(FUSEKI_PORT),
         '--localhost',
+        `--timeout=${FUSEKI_QUERY_TIMEOUT_MS},${FUSEKI_QUERY_TIMEOUT_MS}`,
         '--config', configFile,
     ];
 
@@ -464,6 +627,9 @@ async function startFuseki() {
             fusekiProcess.removeListener('error', onSpawnError);
         }
     }
+    fusekiProcess._ontoReady = true;
+    fusekiIdleStopped = false;
+    idle.track('Fuseki');
     log('ok', `Fuseki ready on port ${FUSEKI_PORT}`);
 }
 
@@ -598,6 +764,7 @@ async function startScratchMongo(scratchDir) {
         ...MONGO_PLATFORM_ARGS,
     ], { stdio: 'ignore', windowsHide: true });
     helperProcesses.add(proc);
+    guard.register('Scratch MongoDB', exeNameFor(mongoBin()), proc);
     proc.once('exit', () => helperProcesses.delete(proc));
     await waitForTcp('127.0.0.1', port, 30000, 'scratch MongoDB');
     return { proc, port };
@@ -619,6 +786,11 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
     }
     if (os.freemem() < CDS_TRAINING_MIN_FREE_BYTES) {
         log('info', `[${name}] Startup cache waiting for more free memory`);
+        return 'deferred';
+    }
+    const diskLevel = policy.diskStatus(DATA_DIR).level;
+    if (diskLevel === 'low' || diskLevel === 'critical') {
+        log('info', `[${name}] Startup cache waiting for more free disk space`);
         return 'deferred';
     }
     fs.mkdirSync(cdsDir, { recursive: true });
@@ -724,6 +896,7 @@ function runToCompletion(bin, args, extraEnv = {}, logFile = null, { timeoutMs =
         let ticker = null;
         let killer = null;
         helperProcesses.add(p);
+        guard.register('Helper', exeNameFor(bin), p);
         const cleanup = () => {
             clearInterval(ticker);
             clearTimeout(killer);
@@ -818,6 +991,7 @@ async function startDesktop() {
     const args = [
         `-Xmx${heaps.desktopXmx}`,
         '-XX:+UseG1GC', '-XX:MaxGCPauseMillis=200',
+        ...safetyFlags(),
         ...PLATFORM_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
@@ -844,6 +1018,7 @@ async function startDesktop() {
     } finally {
         clearInterval(heartbeat);
     }
+    desktopProcess._ontoReady = true;
     log('ok', `Desktop service ready on port ${DESKTOP_PORT}`);
 }
 
@@ -888,7 +1063,8 @@ async function startSwrl() {
 
     assertNotCancelled();
     swrlProcess = spawnService('SWRL', swrlJava, [
-        '-Xmx512m',
+        `-Xmx${jvmHeaps().swrlXmx}`,
+        ...safetyFlags(),
         ...PLATFORM_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
@@ -898,6 +1074,8 @@ async function startSwrl() {
 
     await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, STARTUP_HEALTH_TIMEOUT_MS, 'SWRL',
         () => hasExited(swrlProcess));
+    if (swrlProcess) swrlProcess._ontoReady = true;
+    idle.track('SWRL');
     log('ok', `SWRL reasoner ready on port ${SWRL_PORT}`);
 }
 
@@ -916,11 +1094,12 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
         windowsHide: true,
         ...spawnOptions,
     });
+    guard.register(name, exeNameFor(bin), child);
 
     const outputBuffer = [];
     let logStream = null;
     if (logFile) {
-        try { logStream = fs.createWriteStream(logFile, { flags: 'a' }); }
+        try { logStream = logHygiene.createRotatingStream(logFile); }
         catch (e) { log('warn', `[${name}] Cannot open log file: ${e.message}`); }
     }
 
@@ -959,6 +1138,7 @@ function spawnService(name, bin, args, extraEnv = {}, logFile = null, spawnOptio
             log('error', `${name} exited with code ${code}`);
             outputBuffer.forEach(line => log('error', `[${name}] ${line.substring(0, 300)}`));
         }
+        handleChildExit(name, child, code, outputBuffer);
     });
 
     child.on('error', (err) => {
@@ -1008,11 +1188,17 @@ function stopProcess(child, name, gracePeriodMs = 5000) {
         if (!child || child.killed || child.exitCode !== null) return resolve();
         let done = false;
         const finish = () => { if (!done) { done = true; resolve(); } };
+        child._ontoStopping = true;
         child.once('exit', finish);
-        try { child.kill('SIGTERM'); } catch (_) {}
+        if (process.platform === 'win32' && child.pid) {
+            guard.killTree(child.pid);
+        } else {
+            try { child.kill('SIGTERM'); } catch (_) {}
+        }
         setTimeout(() => {
             if (!done) {
                 log('warn', `${name} did not stop in time; force-killing`);
+                if (child.pid) guard.killTree(child.pid);
                 try { child.kill('SIGKILL'); } catch (_) {}
                 finish();
             }
