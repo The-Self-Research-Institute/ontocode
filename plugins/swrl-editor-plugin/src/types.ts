@@ -144,3 +144,23 @@ export interface SQWRLResult {
   rows: Record<string, any>[];
   executionTimeMs?: number;
 }
+
+export interface SqwrlQueryResponse {
+  success: boolean;
+  columnNames: string[];
+  rows: Record<string, any>[];
+  rowCount: number;
+  executionTimeMs: number;
+  errorMessage?: string;
+  totalRows?: number;
+  totalRowsExact?: boolean;
+  truncated?: boolean;
+  rowLimit?: number;
+  bytesCapped?: boolean;
+  runId?: string;
+  storedRows?: number;
+  filteredRows?: number;
+  pageSize?: number;
+  nextOffset?: number;
+  pageBytesCapped?: boolean;
+}
