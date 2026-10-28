@@ -37,27 +37,47 @@ public class MergeLiveSource {
     public Optional<Path> export(String projectId) throws IOException {
         if (desktopMutation != null && desktopMutation.isAuthoritative(projectId)) {
             Path temp = tempFile(projectId);
-            if (desktopMutation.exportLiveModel(projectId, temp)) {
-                return Optional.of(temp);
+            boolean exported = false;
+            try {
+                exported = desktopMutation.exportLiveModel(projectId, temp);
+                return exported ? Optional.of(temp) : Optional.empty();
+            } finally {
+                if (!exported) {
+                    Files.deleteIfExists(temp);
+                }
             }
-            Files.deleteIfExists(temp);
-            return Optional.empty();
         }
         if (Files.exists(storageManager.projectDir(projectId).resolve("ontology.dirty"))) {
             Path temp = tempFile(projectId);
-            try (OutputStream out = Files.newOutputStream(temp)) {
-                datasetService.exportDatasetToStream(projectId, RDFFormat.RDFXML, out);
+            boolean exported = false;
+            try {
+                try (OutputStream out = Files.newOutputStream(temp)) {
+                    datasetService.exportDatasetToStream(projectId, RDFFormat.RDFXML, out);
+                }
+                exported = true;
+                return Optional.of(temp);
+            } finally {
+                if (!exported) {
+                    Files.deleteIfExists(temp);
+                }
             }
-            return Optional.of(temp);
         }
         return Optional.empty();
     }
 
     public Path exportDraft(String projectId, String userId) throws IOException {
         Path temp = tempFile(projectId);
-        Files.writeString(temp, datasetService.exportNamedGraph(projectId,
-                datasetService.getDraftGraphUri(projectId, userId), RDFFormat.RDFXML));
-        return temp;
+        boolean exported = false;
+        try {
+            Files.writeString(temp, datasetService.exportNamedGraph(projectId,
+                    datasetService.getDraftGraphUri(projectId, userId), RDFFormat.RDFXML));
+            exported = true;
+            return temp;
+        } finally {
+            if (!exported) {
+                Files.deleteIfExists(temp);
+            }
+        }
     }
 
     public static OWLDocumentFormat formatFor(Path target) {
