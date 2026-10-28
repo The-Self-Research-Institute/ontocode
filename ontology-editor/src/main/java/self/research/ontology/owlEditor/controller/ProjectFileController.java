@@ -60,10 +60,8 @@ public class ProjectFileController {
             CallerIdentity caller) {
 
         List<FileInfo> files = new ArrayList<>();
-        for (String projectId : storageManager.listProjectIds()) {
-            if (authorization.noAccessTo(caller, projectId).isEmpty()) {
-                buildFileInfo(projectId).ifPresent(files::add);
-            }
+        for (String projectId : authorization.accessibleAmong(caller, storageManager.listProjectIds())) {
+            buildFileInfo(projectId).ifPresent(files::add);
         }
 
         if (search != null && !search.isBlank()) {

@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.config.CallerIdentity;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Component
@@ -44,6 +46,17 @@ public class ProjectAuthorization {
                 ? accessService.hasProjectAccess(projectId, caller.userId(), caller.email())
                 : accessService.hasProjectAccess(projectId, caller.email());
         return allowed ? Optional.empty() : Optional.of(AccessDenial.forbidden("You do not have access to this project"));
+    }
+
+    public List<String> accessibleAmong(CallerIdentity caller, Collection<String> projectIds) {
+        if (desktopMode) {
+            return List.copyOf(projectIds);
+        }
+        if (unauthenticated(caller).isPresent()) {
+            return List.of();
+        }
+        ProjectAccessService.Visibility visibility = accessService.visibleProjects(caller.userId(), caller.email());
+        return projectIds.stream().filter(visibility::allows).toList();
     }
 
     public Optional<AccessDenial> notOwnerOf(HttpServletRequest request, String projectId) {

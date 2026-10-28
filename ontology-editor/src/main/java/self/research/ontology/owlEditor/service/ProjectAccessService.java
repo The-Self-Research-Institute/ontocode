@@ -1,6 +1,8 @@
 package self.research.ontology.owlEditor.service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -52,8 +54,15 @@ public class ProjectAccessService {
         }
         int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
         String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
+        Criteria[] anyOf = accessCriteria(userId, email);
+        Query query = new Query(Criteria.where("projectId").is(parentProjectId)
+                .orOperator(anyOf));
+        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+    }
+
+    private static Criteria[] accessCriteria(String userId, String email) {
         List<Criteria> anyOf = new ArrayList<>();
-        if (!noUserId) {
+        if (userId != null && !userId.isBlank()) {
             anyOf.add(Criteria.where("ownerId").is(userId));
             anyOf.add(Criteria.where("members").elemMatch(Criteria.where("userId").is(userId)));
         }
@@ -63,9 +72,41 @@ public class ProjectAccessService {
             anyOf.add(Criteria.where("ownerEmail").regex(sameEmail));
             anyOf.add(Criteria.where("members").elemMatch(Criteria.where("email").regex(sameEmail)));
         }
-        Query query = new Query(Criteria.where("projectId").is(parentProjectId)
-                .orOperator(anyOf.toArray(new Criteria[0])));
-        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+        return anyOf.toArray(new Criteria[0]);
+    }
+
+    public record Visibility(Set<String> projectIds, Set<String> parentIds) {
+
+        public boolean allows(String projectId) {
+            if (projectId == null || projectId.isBlank()) {
+                return false;
+            }
+            if (projectIds.contains(projectId)) {
+                return true;
+            }
+            int sep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
+            return parentIds.contains(sep > 0 ? projectId.substring(0, sep) : projectId);
+        }
+    }
+
+    public Visibility visibleProjects(String userId, String email) {
+        Criteria[] anyOf = accessCriteria(userId, email);
+        if (anyOf.length == 0) {
+            return new Visibility(Set.of(), Set.of());
+        }
+        Query query = new Query(new Criteria().orOperator(anyOf));
+        query.fields().include("projectId");
+        Set<String> ids = new HashSet<>();
+        Set<String> parents = new HashSet<>();
+        for (ProjectDocument doc : mongoTemplate.find(query, ProjectDocument.class, "projects")) {
+            if (doc.getId() != null) {
+                ids.add(doc.getId());
+            }
+            if (doc.getProjectId() != null) {
+                parents.add(doc.getProjectId());
+            }
+        }
+        return new Visibility(ids, parents);
     }
 
     public boolean isOwner(String projectId, String userId, String email) {
