@@ -58,7 +58,7 @@ public class ProjectAccessFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !enabled || !PATH.match(SWRL_PROJECT_ROUTE, routeOf(request));
+        return !enabled || HttpMethod.OPTIONS.matches(request.getMethod()) || !PATH.match(SWRL_PROJECT_ROUTE, routeOf(request));
     }
 
     private static String routeOf(HttpServletRequest request) {

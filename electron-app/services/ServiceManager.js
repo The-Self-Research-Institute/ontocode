@@ -862,6 +862,7 @@ async function startSwrl() {
         `--server.port=${SWRL_PORT}`,
         '--server.address=127.0.0.1',
         '--spring.profiles.active=desktop',
+        '--swrl.access-check.enabled=false',
         `--spring.data.mongodb.uri=${mongoUri}`,
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
 
