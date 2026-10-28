@@ -6,6 +6,11 @@ import { detectQueryForm, isGraphForm, UPDATE_HINT } from './queryForm';
 import { formatTerm, normalizeRows, XSD_NS } from './bindingFormat';
 import type { PrefixEntry } from './bindingFormat';
 import { buildExportTable, toCsv, toTsv, buildJsonBindings } from './exportColumns';
+import {
+  INCLUDED_ITEMS, NOT_INCLUDED_ITEMS, buildRequestBody, canRefresh, countsText, effectiveMode, infoLine,
+  loadMode, mapConflict, partialMessages, saveMode, statusUrl, switchState, usedInferred
+} from './inferredState';
+import type { ConflictKind, InferenceMode, InferenceStatus, InferredInfo } from './inferredState';
 
 const GRAPH_FORMATS: { value: GraphFormat; label: string; ext: string; mime: string }[] = [
   { value: 'turtle', label: 'Turtle', ext: 'ttl', mime: 'text/turtle' },
@@ -121,11 +126,43 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [booleanResult, setBooleanResult] = useState<{ value: boolean; executionTime?: number } | null>(null);
   const [graphFormat, setGraphFormat] = useState<GraphFormat>('turtle');
   const [includeTypes, setIncludeTypes] = useState(false);
+  const [mode, setMode] = useState<InferenceMode>(() => loadMode(projectId));
+  const [status, setStatus] = useState<InferenceStatus | null>(null);
+  const [inferredInfo, setInferredInfo] = useState<InferredInfo | null>(null);
+  const [conflict, setConflict] = useState<ConflictKind | null>(null);
+  const [showIncluded, setShowIncluded] = useState(false);
 
   const clearResults = () => {
     setResults(null);
     setGraphResult(null);
     setBooleanResult(null);
+    setInferredInfo(null);
+  };
+
+  useEffect(() => {
+    setMode(loadMode(projectId));
+  }, [projectId]);
+
+  const refreshStatus = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const next = await apiClient.get<InferenceStatus>(statusUrl(projectId, draftMode));
+      setStatus(next && typeof next === 'object' && !Array.isArray(next) ? next : null);
+    } catch {
+      setStatus(null);
+    }
+  }, [projectId, draftMode, apiClient]);
+
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
+
+  const switchInfo = switchState(status);
+  const activeMode = effectiveMode(mode, status);
+
+  const chooseMode = (next: InferenceMode) => {
+    setMode(next);
+    saveMode(projectId, next);
   };
 
   const queryForm = detectQueryForm(queryText);
@@ -247,7 +284,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
 
   const baseName = () => queryName.replace(/\s+/g, '_') || 'query-results';
 
-  const handleExecuteQuery = async (formatOverride?: GraphFormat) => {
+  const handleExecuteQuery = async (formatOverride?: GraphFormat, refresh = false) => {
     const form = detectQueryForm(queryText);
     if (form === 'update') {
       setError(UPDATE_HINT);
@@ -257,18 +294,27 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setIsLoading(true);
     clearResults();
     setError(null);
+    setConflict(null);
 
     try {
-      const body: { query: string; format?: GraphFormat } = { query: queryText };
-      if (isGraphForm(form)) body.format = format;
+      const base: { query: string; format?: GraphFormat } = { query: queryText };
+      if (isGraphForm(form)) base.format = format;
+      const body = buildRequestBody(base, activeMode, refresh);
       const response = await apiClient.post<any>(
         `/api/sparql/query/${projectId}${draftMode ? '?draft=true' : ''}`,
         body
       );
+      const answeredConflict = mapConflict(response);
+      if (answeredConflict) {
+        setConflict(answeredConflict);
+        setActiveTab('editor');
+        return;
+      }
       if (response?.error) {
         setError(response.error);
         return;
       }
+      setInferredInfo(usedInferred(response));
       const executionTime = response?.executionTime;
       if (response?.type === 'graph') {
         setGraphResult({
@@ -289,10 +335,17 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       }
       setActiveTab('results');
     } catch (err: any) {
-      setError(err?.message || 'Failed to execute query');
-      console.error('Failed to execute SPARQL query:', err);
+      const thrownConflict = mapConflict(err);
+      if (thrownConflict) {
+        setConflict(thrownConflict);
+        setActiveTab('editor');
+      } else {
+        setError(err?.message || 'Failed to execute query');
+        console.error('Failed to execute SPARQL query:', err);
+      }
     } finally {
       setIsLoading(false);
+      refreshStatus();
     }
   };
 
@@ -584,6 +637,52 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               </div>
             )}
 
+            {conflict?.kind === 'needsReasoning' && (
+              <div
+                data-testid="needs-reasoning-panel"
+                className="p-3 border rounded-lg text-sm space-y-2"
+                style={{ borderColor: 'var(--warning, #f59e0b)', backgroundColor: 'var(--surface-2)' }}
+              >
+                <div>{conflict.message}</div>
+                <div className="flex items-center gap-2">
+                  {canRefresh(conflict.reason) && (
+                    <button
+                      onClick={() => handleExecuteQuery(undefined, true)}
+                      disabled={isLoading}
+                      className="px-3 py-1.5 text-xs rounded-lg btn-outline disabled:opacity-50"
+                    >
+                      Run again with refresh
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { chooseMode('asserted'); setConflict(null); }}
+                    className="px-3 py-1.5 text-xs rounded-lg btn-outline"
+                  >
+                    Switch to asserted only
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {conflict?.kind === 'inconsistent' && (
+              <div
+                data-testid="inconsistent-panel"
+                className="p-3 border rounded-lg text-sm space-y-1"
+                style={{ borderColor: 'var(--error)', backgroundColor: 'var(--surface-2)' }}
+              >
+                <div className="font-semibold text-error">The ontology is inconsistent</div>
+                <div>{conflict.message}</div>
+                {conflict.explanation && <div className="text-xs text-secondary whitespace-pre-wrap">{conflict.explanation}</div>}
+                <div className="text-xs text-secondary">No results are shown. Fix the inconsistency, or switch to asserted only.</div>
+                <button
+                  onClick={() => { chooseMode('asserted'); setConflict(null); }}
+                  className="px-3 py-1.5 text-xs rounded-lg btn-outline"
+                >
+                  Switch to asserted only
+                </button>
+              </div>
+            )}
+
             {error && (
               <div
                 className="p-3 border rounded-lg text-sm text-error"
@@ -613,6 +712,57 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               </div>
               
               <div className="flex items-center gap-2">
+                <div className="relative flex items-center gap-1">
+                  <div
+                    role="group"
+                    aria-label="Data searched"
+                    title={switchInfo.tooltip}
+                    className="flex rounded-lg border border-default overflow-hidden"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={activeMode === 'asserted'}
+                      onClick={() => chooseMode('asserted')}
+                      className={`px-3 py-1.5 text-xs transition-colors ${activeMode === 'asserted' ? 'btn-tonal' : 'text-secondary hover-overlay'}`}
+                    >
+                      Asserted only
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={activeMode === 'inferred'}
+                      disabled={switchInfo.disabled}
+                      title={switchInfo.tooltip}
+                      onClick={() => chooseMode('inferred')}
+                      className={`px-3 py-1.5 text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${activeMode === 'inferred' ? 'btn-tonal' : 'text-secondary hover-overlay'}`}
+                    >
+                      Include inferred
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowIncluded(v => !v)}
+                    aria-expanded={showIncluded}
+                    className="px-2 py-1 text-xs text-secondary hover-overlay rounded"
+                  >
+                    What is included
+                  </button>
+                  {showIncluded && (
+                    <div
+                      data-testid="included-popover"
+                      className="absolute right-0 bottom-full mb-2 w-72 p-3 rounded-lg border border-default text-xs space-y-2 z-10"
+                      style={{ backgroundColor: 'var(--surface-1)' }}
+                    >
+                      <div className="font-semibold">Included</div>
+                      <ul className="list-disc pl-4">
+                        {INCLUDED_ITEMS.map(item => <li key={item}>{item}</li>)}
+                      </ul>
+                      <div className="font-semibold">Not included</div>
+                      <ul className="list-disc pl-4">
+                        {NOT_INCLUDED_ITEMS.map(item => <li key={item}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={handleSaveQuery}
                   disabled={isSaving}
@@ -764,6 +914,36 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                 </div>
               )}
             </div>
+
+            {inferredInfo && (
+              <div
+                data-testid="inferred-info"
+                className="px-3 py-2 text-xs border-b border-default space-y-1"
+                style={{ backgroundColor: 'var(--surface-1)' }}
+              >
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>{infoLine(inferredInfo)}</span>
+                  {status?.stale && (
+                    <span
+                      data-testid="stale-badge"
+                      className="px-2 py-0.5 rounded-full font-medium"
+                      style={{ backgroundColor: 'var(--surface-2)', color: 'var(--warning, #f59e0b)' }}
+                    >
+                      Stale
+                    </span>
+                  )}
+                  {countsText(inferredInfo) && <span className="text-tertiary">{countsText(inferredInfo)}</span>}
+                </div>
+                {partialMessages(inferredInfo).length > 0 && (
+                  <div data-testid="partial-warning" style={{ color: 'var(--warning, #f59e0b)' }}>
+                    <div className="font-semibold">Partial results</div>
+                    <ul className="list-disc pl-4">
+                      {partialMessages(inferredInfo).map(m => <li key={m}>{m}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="flex-1 overflow-auto">
               {isLoading ? (
