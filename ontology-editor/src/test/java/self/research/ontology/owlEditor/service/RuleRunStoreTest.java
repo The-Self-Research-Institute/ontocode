@@ -98,6 +98,32 @@ class RuleRunStoreTest {
     }
 
     @Test
+    void theTotalAxiomBudgetEvictsTheOldestRunsFirst() {
+        FakeClock clock = new FakeClock();
+        RuleRunStore store = new RuleRunStore(clock, Duration.ofMinutes(15), 10, 50, 100, 100, 25);
+        String a = store.put("p", "u1", false, assertions(10), List.of());
+        clock.advance(Duration.ofSeconds(1));
+        String b = store.put("p", "u2", false, assertions(10), List.of());
+        clock.advance(Duration.ofSeconds(1));
+        String c = store.put("p", "u3", false, assertions(10), List.of());
+        assertFalse(store.find(a).isPresent());
+        assertTrue(store.find(b).isPresent());
+        assertTrue(store.find(c).isPresent());
+        assertEquals(20, store.storedAxioms());
+    }
+
+    @Test
+    void aSingleRunLargerThanTheBudgetIsTrimmedAndFlagged() {
+        RuleRunStore store = new RuleRunStore(new FakeClock(), Duration.ofMinutes(15), 5, 50, 100, 100, 12);
+        String id = store.put("p", "u", false, assertions(10), assertions(8));
+        RuleRunStore.Run run = store.find(id).orElseThrow();
+        assertEquals(10, run.conclusions().size());
+        assertEquals(2, run.structure().size());
+        assertTrue(run.capped());
+        assertEquals(12, store.storedAxioms());
+    }
+
+    @Test
     void listsAreCappedAndFlagged() {
         RuleRunStore store = new RuleRunStore(new FakeClock(), Duration.ofMinutes(15), 5, 50, 10, 4);
         String id = store.put("p", "u", false, assertions(25), assertions(9));
