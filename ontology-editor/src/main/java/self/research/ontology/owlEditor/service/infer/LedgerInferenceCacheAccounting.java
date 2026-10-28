@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service.infer;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import self.research.ontology.common.admission.CacheAccount;
 import self.research.ontology.common.admission.ReservationLedger;
@@ -13,6 +14,7 @@ public class LedgerInferenceCacheAccounting implements InferenceCacheAccounting 
 
     private final CacheAccount account;
 
+    @Autowired
     public LedgerInferenceCacheAccounting(ObjectProvider<ReservationLedger> ledger) {
         ReservationLedger found = ledger.getIfAvailable();
         this.account = found != null ? found.cacheAccount(ACCOUNT_NAME) : RetainedMemory.detachedAccount(ACCOUNT_NAME);
