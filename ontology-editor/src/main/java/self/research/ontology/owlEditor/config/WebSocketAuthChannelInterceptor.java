@@ -127,7 +127,9 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         Map<String, Object> attrs = accessor.getSessionAttributes();
         if (attrs != null) {
             attrs.put("plan", plan != null ? plan : "FREE");
-            attrs.put("userId", userId);
+            if (userId != null) {
+                attrs.put("userId", userId);
+            }
             attrs.put("username", subject);
             attrs.put(EMAIL_ATTRIBUTE, subject);
             attrs.put(VERIFIED_ATTRIBUTE, Boolean.TRUE);
@@ -153,7 +155,9 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             Map<String, Object> attrs = accessor.getSessionAttributes();
             if (attrs != null) {
                 attrs.put("plan", claims.has("plan") ? claims.get("plan").asText() : "FREE");
-                attrs.put("userId", claims.has("userId") ? claims.get("userId").asText() : null);
+                if (claims.hasNonNull("userId")) {
+                    attrs.put("userId", claims.get("userId").asText());
+                }
                 attrs.put("username", claims.has("sub") ? claims.get("sub").asText() : "anonymous");
             }
         } catch (Exception e) {

@@ -127,6 +127,17 @@ class WebSocketAuthChannelInterceptorTest {
     }
 
     @Test
+    void tokenWithoutUserIdConnectsOnAMapThatRejectsNulls() {
+        Map<String, Object> attrs = new java.util.concurrent.ConcurrentHashMap<>();
+        String noUserId = Jwts.builder().subject("ann@x.org").signWith(key).compact();
+
+        assertNotNull(connect(attrs, "Bearer " + noUserId));
+
+        assertTrue(!attrs.containsKey("userId"));
+        assertEquals("ann@x.org", attrs.get("email"));
+    }
+
+    @Test
     void expiredTokenIsRefusedWhenJwtIsRequired() {
         String expired = Jwts.builder().subject("ann@x.org").claim("userId", "u-ann")
                 .expiration(new Date(System.currentTimeMillis() - 60_000)).signWith(key).compact();
