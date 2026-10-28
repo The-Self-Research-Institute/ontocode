@@ -1810,6 +1810,9 @@ public class SparqlDatasetService {
     /**
      * Inject GRAPH/WITH context into SPARQL UPDATE
      */
+    private static final java.util.regex.Pattern PROLOGUE_DECLARATION = java.util.regex.Pattern.compile(
+            "^\\s*((?:PREFIX\\s+[^\\s:<>]*:\\s*<[^>\\s]*>)|(?:BASE\\s*<[^>\\s]*>))", java.util.regex.Pattern.CASE_INSENSITIVE);
+
     private String injectGraphContext(String sparql, String graphUri) {
         // Extract PREFIX declarations
         StringBuilder prefixes = new StringBuilder();
@@ -1817,10 +1820,17 @@ public class SparqlDatasetService {
 
         String[] lines = sparql.split("\\n");
         for (String line : lines) {
-            if (line.trim().toUpperCase().startsWith("PREFIX")) {
-                prefixes.append(line).append("\n");
-            } else if (!line.trim().isEmpty()) {
-                operations.append(line).append("\n");
+            String rest = line;
+            java.util.regex.Matcher declaration = PROLOGUE_DECLARATION.matcher(rest);
+            while (declaration.find()) {
+                prefixes.append(declaration.group(1)).append("\n");
+                rest = rest.substring(declaration.end());
+                declaration = PROLOGUE_DECLARATION.matcher(rest);
+            }
+            if (rest.trim().toUpperCase().startsWith("PREFIX")) {
+                prefixes.append(rest).append("\n");
+            } else if (!rest.trim().isEmpty()) {
+                operations.append(rest).append("\n");
             }
         }
 

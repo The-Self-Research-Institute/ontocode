@@ -59,4 +59,26 @@ class DraftUpdateGraphInjectionTest {
         String result = inject("DELETE DATA { <http://x/A> <http://x/p> \"1\" } ; INSERT { <http://x/B> <http://x/p> ?o } WHERE { <http://x/A> <http://x/p> ?o }");
         assertTrue(result.contains("WITH <" + DRAFT + "> INSERT {"), result);
     }
+
+    @Test
+    void prefixDeclarationsOnTheSameLineAsTheOperationAreKeptAndTheDataLandsInTheTargetGraph() {
+        String result = inject("PREFIX ex: <http://x/> PREFIX owl: <http://www.w3.org/2002/07/owl#> INSERT DATA { ex:A owl:sameAs ex:B }");
+        assertTrue(result.contains("INSERT DATA { GRAPH <" + DRAFT + "> {"), result);
+        assertTrue(result.contains("PREFIX ex: <http://x/>") && result.contains("PREFIX owl: <http://www.w3.org/2002/07/owl#>"), result);
+        QueryParserUtil.parseUpdate(QueryLanguage.SPARQL, result, null);
+    }
+
+    @Test
+    void sameLinePrefixesBeforeDeleteDataStillTargetTheGraph() {
+        String result = inject("prefix ex: <http://x/> BASE <http://x/> DELETE DATA { ex:A <http://x/p> ex:B }");
+        assertTrue(result.contains("DELETE DATA { GRAPH <" + DRAFT + "> {"), result);
+        QueryParserUtil.parseUpdate(QueryLanguage.SPARQL, result, null);
+    }
+
+    @Test
+    void prefixesOnTheirOwnLinesStillWork() {
+        String result = inject("PREFIX ex: <http://x/>\nINSERT DATA { ex:A ex:p ex:B }");
+        assertTrue(result.contains("INSERT DATA { GRAPH <" + DRAFT + "> {"), result);
+        QueryParserUtil.parseUpdate(QueryLanguage.SPARQL, result, null);
+    }
 }
