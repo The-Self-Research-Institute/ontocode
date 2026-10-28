@@ -166,6 +166,10 @@ class SparqlIsolationTest {
             "SELECT (<java:java.lang.Math.abs>(1) AS ?x) WHERE { ?s ?p ?o }",
             "SELECT * WHERE { ?s ?p ?o FILTER(<http://example.org/fn/custom>(?o)) }",
             "SELECT * WHERE { ?s <java:com.example.Prop> ?o }",
+            "SELECT * WHERE { ?s <http://jena.apache.org/ARQ/list#member> ?o }",
+            "SELECT * WHERE { ?s <http://jena.apache.org/text#query> ?o }",
+            "SELECT * WHERE { ?s <http://jena.hpl.hp.com/ARQ/property#bag> ?o }",
+            "SELECT (<http://jena.apache.org/ARQ/function#sha1sum>(?o) AS ?x) WHERE { ?s ?p ?o }",
             "SELECT * WHERE { ?s ?p ?o } \n# harmless comment\n VALUES ?x { 1 } FROM <http://e/g>",
             "ASK FROM <http://ontocode.org/project/projB> { ?s ?p ?o }",
             "CONSTRUCT { ?s ?p ?o } FROM <http://ontocode.org/project/projB> WHERE { ?s ?p ?o }",
@@ -262,6 +266,7 @@ class SparqlIsolationTest {
         session.setCopyStatus(draftReady ? DraftCopyStatus.READY : DraftCopyStatus.COPYING);
         Mockito.when(sessions.findByProjectIdAndUserId("projA", "userA")).thenReturn(Optional.of(session));
         ReflectionTestUtils.setField(svc, "draftSessionRepository", sessions);
+        ReflectionTestUtils.setField(svc, "fusekiQueryEndpoint", "http://localhost:3030/ontocode/query");
         svc.registerPartitionGraphs("projA", List.of(A_PART));
         return svc;
     }

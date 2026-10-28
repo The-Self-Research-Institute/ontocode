@@ -25,6 +25,9 @@ public final class RuleExecutionPresenter {
                             int omittedTrivial, boolean truncated) {
     }
 
+    public record Full(List<OWLAxiom> conclusions, List<OWLAxiom> structure, int omittedTrivial) {
+    }
+
     private RuleExecutionPresenter() {
     }
 
@@ -36,7 +39,7 @@ public final class RuleExecutionPresenter {
         return out;
     }
 
-    public static Presented present(Iterable<OWLAxiom> derived, Set<OWLAxiom> asserted, int limit) {
+    public static Full partition(Iterable<OWLAxiom> derived, Set<OWLAxiom> asserted) {
         List<OWLAxiom> conclusions = new ArrayList<>();
         List<OWLAxiom> structure = new ArrayList<>();
         int trivial = 0;
@@ -54,6 +57,17 @@ public final class RuleExecutionPresenter {
         Comparator<OWLAxiom> order = Comparator.comparing((OWLAxiom a) -> a.getAxiomType().getName()).thenComparing(Object::toString);
         conclusions.sort(order);
         structure.sort(order);
+        return new Full(conclusions, structure, trivial);
+    }
+
+    public static Presented present(Iterable<OWLAxiom> derived, Set<OWLAxiom> asserted, int limit) {
+        return limited(partition(derived, asserted), limit);
+    }
+
+    public static Presented limited(Full full, int limit) {
+        List<OWLAxiom> conclusions = full.conclusions();
+        List<OWLAxiom> structure = full.structure();
+        int trivial = full.omittedTrivial();
         int conclusionCap = Math.max(limit, 1) * 10;
         List<OWLAxiom> keptConclusions = conclusions.size() > conclusionCap ? new ArrayList<>(conclusions.subList(0, conclusionCap)) : conclusions;
         int structureRoom = Math.max(limit - keptConclusions.size(), 0);

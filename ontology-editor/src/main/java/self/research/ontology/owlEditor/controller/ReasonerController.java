@@ -88,6 +88,12 @@ public class ReasonerController {
     private ReasonerWorkerClient reasonerWorkerClient;
 
     @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleRunStore ruleRunStore;
+
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleRunAccess ruleRunAccess;
+
+    @Autowired(required = false)
     private ReasoningJobRelayService reasoningJobRelayService;
 
     @Autowired(required = false)
@@ -1792,7 +1798,9 @@ public class ReasonerController {
 
             Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
             List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
-            RuleExecutionPresenter.Presented presented = RuleExecutionPresenter.present(derived, asserted, RuleExecutionPresenter.MAX_INFERRED);
+            RuleExecutionPresenter.Full full = RuleExecutionPresenter.partition(derived, asserted);
+            RuleExecutionPresenter.Presented presented = RuleExecutionPresenter.limited(full, RuleExecutionPresenter.MAX_INFERRED);
+            String runId = storeRun(projectId, isDraft, request, full);
             List<Map<String, Object>> axioms = new ArrayList<>();
             for (OWLAxiom axiom : presented.ordered()) {
                 axioms.add(RuleExecutionPresenter.toJson(axiom, presented.conclusions().contains(axiom) ? "conclusion" : "structure"));
@@ -1829,6 +1837,8 @@ public class ReasonerController {
             body.put("structureCount", presented.structureCount());
             body.put("omittedTrivialCount", presented.omittedTrivial());
             body.put("truncated", presented.truncated());
+            body.put("runId", runId);
+            body.put("counts", runCounts(full));
             body.put("executionMode", "all");
             body.put("status", status.name());
             body.put("statusLabel", status.label());
@@ -1854,6 +1864,26 @@ public class ReasonerController {
             body.put("executionMode", "all");
             return ResponseEntity.ok(body);
         }
+    }
+
+    private String storeRun(String projectId, boolean isDraft, HttpServletRequest request, RuleExecutionPresenter.Full full) {
+        if (ruleRunStore == null || ruleRunAccess == null) {
+            return null;
+        }
+        Optional<String> owner = ruleRunAccess.identity(request);
+        return owner.map(id -> ruleRunStore.put(projectId, id, isDraft, full.conclusions(), full.structure())).orElse(null);
+    }
+
+    private static Map<String, Object> runCounts(RuleExecutionPresenter.Full full) {
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("conclusions", full.conclusions().size());
+        counts.put("structure", full.structure().size());
+        counts.put("omittedTrivial", full.omittedTrivial());
+        if (full.conclusions().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_CONCLUSIONS
+                || full.structure().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_STRUCTURE) {
+            counts.put("capped", true);
+        }
+        return counts;
     }
 
     private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {

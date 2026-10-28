@@ -38,7 +38,7 @@ import static org.mockito.Mockito.when;
 
 class SparqlQueryControllerResponseTest {
 
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper = new ObjectMapper().setSerializationInclusion(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL);
     private final ValueFactory vf = SimpleValueFactory.getInstance();
     private SparqlDatasetService dataset;
     private SparqlQueryController controller;
@@ -69,7 +69,7 @@ class SparqlQueryControllerResponseTest {
     @Test
     void selectKeepsLegacyShapeAndAddsBindings() throws Exception {
         List<BindingSet> rows = new ArrayList<>();
-        rows.add(row("a", vf.createLiteral("plain"), "b", vf.createLiteral(5), "c", vf.createLiteral("hola", "es"),
+        rows.add(row("a", vf.createLiteral("plain"), "b", vf.createLiteral("5", XSD.INTEGER), "c", vf.createLiteral("hola", "es"),
                 "d", vf.createLiteral(""), "e", vf.createBNode("n1"), "f", vf.createIRI("http://e/x")));
         rows.add(row("a", vf.createLiteral("second")));
         when(dataset.execUserQuery(eq("proj"), anyString(), anyInt())).thenReturn(

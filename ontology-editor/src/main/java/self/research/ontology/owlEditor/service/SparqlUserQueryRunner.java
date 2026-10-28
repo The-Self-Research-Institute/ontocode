@@ -216,31 +216,8 @@ public final class SparqlUserQueryRunner {
         return sb.toString();
     }
 
-    static String decodeUnicodeEscapes(String s) {
-        StringBuilder out = new StringBuilder(s.length());
-        int i = 0;
-        while (i < s.length()) {
-            char c = s.charAt(i);
-            if (c == '\\' && i + 1 < s.length() && (s.charAt(i + 1) == 'u' || s.charAt(i + 1) == 'U')) {
-                int len = s.charAt(i + 1) == 'u' ? 4 : 8;
-                if (i + 2 + len <= s.length()) {
-                    try {
-                        int cp = Integer.parseInt(s.substring(i + 2, i + 2 + len), 16);
-                        out.appendCodePoint(cp);
-                        i += 2 + len;
-                        continue;
-                    } catch (IllegalArgumentException ignored) {
-                    }
-                }
-            }
-            out.append(c);
-            i++;
-        }
-        return out.toString();
-    }
-
     static String surrogateSelect(String text) {
-        String t = decodeUnicodeEscapes(text);
+        String t = SparqlQueryGuard.decodeUnicodeEscapes(text);
         int d = SparqlText.indexOfKeyword(t, "DESCRIBE");
         if (d < 0) {
             return null;

@@ -47,6 +47,7 @@ public final class SparqlQueryGuard {
         if (text == null || text.isBlank()) {
             throw new SparqlQueryRejectedException("Query must not be empty");
         }
+        text = decodeUnicodeEscapes(text);
         ParsedOperation op;
         try {
             op = QueryParserUtil.parseOperation(QueryLanguage.SPARQL, text, null);
@@ -79,6 +80,28 @@ public final class SparqlQueryGuard {
         Set<String> allowed = authorizedGraphs.stream().map(SparqlQueryGuard::normalizeIri).collect(Collectors.toSet());
         parsed.getTupleExpr().visit(new Visitor(allowed));
         return new Checked(parsed, kind, text);
+    }
+
+    public static String decodeUnicodeEscapes(String s) {
+        StringBuilder out = new StringBuilder(s.length());
+        int i = 0;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (c == '\\' && i + 1 < s.length() && (s.charAt(i + 1) == 'u' || s.charAt(i + 1) == 'U')) {
+                int len = s.charAt(i + 1) == 'u' ? 4 : 8;
+                if (i + 2 + len <= s.length()) {
+                    try {
+                        out.appendCodePoint(Integer.parseInt(s.substring(i + 2, i + 2 + len), 16));
+                        i += 2 + len;
+                        continue;
+                    } catch (IllegalArgumentException ignored) {
+                    }
+                }
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
     }
 
     public static String normalizeIri(String iri) {
@@ -131,9 +154,25 @@ public final class SparqlQueryGuard {
         return line.length() > MAX_PARSE_MESSAGE ? line.substring(0, MAX_PARSE_MESSAGE) : line;
     }
 
+    private static final List<String> EXTENSION_PREFIXES = List.of(
+            "java:", "http://jena.apache.org/", "http://jena.hpl.hp.com/", "urn:x-arq:");
+
+    private static boolean isExtensionIri(String iri) {
+        String lower = iri.toLowerCase(Locale.ROOT);
+        for (String prefix : EXTENSION_PREFIXES) {
+            if (lower.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean functionAllowed(String iri) {
         if (iri == null) {
             return false;
+        }
+        if (iri.indexOf(':') < 0) {
+            return true;
         }
         for (String ns : ALLOWED_FUNCTION_NAMESPACES) {
             if (iri.startsWith(ns)) {
@@ -166,7 +205,7 @@ public final class SparqlQueryGuard {
             checkGraph(node.getContextVar());
             Var pred = node.getPredicateVar();
             if (pred != null && pred.hasValue() && pred.getValue().isIRI()
-                    && pred.getValue().stringValue().regionMatches(true, 0, "java:", 0, 5)) {
+                    && isExtensionIri(pred.getValue().stringValue())) {
                 throw new SparqlQueryRejectedException("Extension property functions are not supported.");
             }
             super.meet(node);

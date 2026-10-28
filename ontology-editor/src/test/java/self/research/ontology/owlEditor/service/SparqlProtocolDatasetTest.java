@@ -39,15 +39,15 @@ class SparqlProtocolDatasetTest {
             String accept = exchange.getRequestHeaders().getFirst("Accept");
             byte[] out;
             String type;
-            if (accept != null && accept.contains("sparql-results+json") && q.contains("ASK")) {
-                out = "{\"head\":{},\"boolean\":false}".getBytes(StandardCharsets.UTF_8);
-                type = "application/sparql-results+json";
-            } else if (accept != null && accept.contains("sparql-results+json")) {
-                out = "{\"head\":{\"vars\":[\"s\"]},\"results\":{\"bindings\":[]}}".getBytes(StandardCharsets.UTF_8);
-                type = "application/sparql-results+json";
-            } else {
-                out = "".getBytes(StandardCharsets.UTF_8);
+            if (q.contains("query=CONSTRUCT") || q.contains("query=DESCRIBE")) {
+                out = new byte[0];
                 type = "text/turtle";
+            } else if (q.contains("query=ASK")) {
+                out = "<sparql xmlns=\"http://www.w3.org/2005/sparql-results#\"><head/><boolean>false</boolean></sparql>".getBytes(StandardCharsets.UTF_8);
+                type = "application/sparql-results+xml";
+            } else {
+                out = "<sparql xmlns=\"http://www.w3.org/2005/sparql-results#\"><head><variable name=\"s\"/></head><results/></sparql>".getBytes(StandardCharsets.UTF_8);
+                type = "application/sparql-results+xml";
             }
             exchange.getResponseHeaders().add("Content-Type", type);
             exchange.sendResponseHeaders(200, out.length == 0 ? -1 : out.length);
