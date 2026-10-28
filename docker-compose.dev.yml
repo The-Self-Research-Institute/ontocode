@@ -48,7 +48,7 @@ services:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
       # Large OWL files (mondo/go-plus) need headroom for CONSTRUCT + concurrent imports
       JVM_ARGS: "${FUSEKI_JVM_ARGS:--Xms1g -Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=200}"
-    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
+    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl", "--timeout=${FUSEKI_QUERY_TIMEOUT_MS:-120000},${FUSEKI_QUERY_TIMEOUT_MS:-120000}"]
     volumes:
       - ./fuseki-config.ttl:/config.ttl:ro
       - fuseki-data:/fuseki/databases

@@ -5,16 +5,15 @@ PREFIX ja:      <http://jena.hpl.hp.com/2005/11/Assembler#>
 PREFIX tdb2:    <http://jena.apache.org/2016/tdb#>
 
 [] a fuseki:Server ;
-    ja:context [ ja:cxtName "arq:queryTimeout" ; ja:cxtValue "120000,120000" ] ;
     ja:context [ ja:cxtName "arq:spillToDiskThreshold" ; ja:cxtValue "100000" ] ;
     fuseki:services ( <#service> ) .
 
 <#service> a fuseki:Service ;
     fuseki:name                     "ontocode" ;
-    fuseki:endpoint [ fuseki:operation fuseki:query  ; fuseki:name "query"  ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:query  ; fuseki:name "query" ; ja:context [ ja:cxtName "arq:spillToDiskThreshold" ; ja:cxtValue "100000" ] ] ;
     fuseki:endpoint [ fuseki:operation fuseki:update ; fuseki:name "update" ] ;
     fuseki:endpoint [ fuseki:operation fuseki:gsp-rw ; fuseki:name "data"   ] ;
-    fuseki:endpoint [ fuseki:operation fuseki:query  ] ;
+    fuseki:endpoint [ fuseki:operation fuseki:query ; ja:context [ ja:cxtName "arq:spillToDiskThreshold" ; ja:cxtValue "100000" ] ] ;
     fuseki:endpoint [ fuseki:operation fuseki:update ] ;
     fuseki:dataset <#dataset> ;
     .

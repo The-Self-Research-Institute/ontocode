@@ -57,7 +57,7 @@ services:
     environment:
       ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:?FUSEKI_ADMIN_PASSWORD is required in production}
       JVM_ARGS: "-Xmx5g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
-    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl"]
+    command: ["/jena-fuseki/fuseki-server", "--conf", "/config.ttl", "--timeout=${FUSEKI_QUERY_TIMEOUT_MS:-120000},${FUSEKI_QUERY_TIMEOUT_MS:-120000}"]
     volumes:
       - ./fuseki-config.ttl:/config.ttl:ro
       - fuseki-data:/fuseki/databases

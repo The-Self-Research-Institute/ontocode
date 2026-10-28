@@ -98,6 +98,8 @@ services:
     # fuseki-config.ttl → /fuseki/configuration/ontocode.ttl. Mounting the same
     # file again as /config.ttl and passing --conf registers /ontocode twice and
     # Fuseki crashes with "Data service name already registered".
+    # Query timeout comes from --timeout (also covers datasets created through /$/datasets).
+    command: ["/jena-fuseki/fuseki-server", "--timeout=${FUSEKI_QUERY_TIMEOUT_MS:-120000},${FUSEKI_QUERY_TIMEOUT_MS:-120000}"]
     volumes:
       - fuseki-data:/fuseki/databases
       - ./fuseki-config.ttl:/fuseki/configuration/ontocode.ttl:ro
