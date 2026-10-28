@@ -1,7 +1,6 @@
 package self.research.ontology.swrl.service;
 
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -16,23 +15,29 @@ class SqwrlTimeoutTest {
     void aSqwrlQueryThatRunsPastTheLimitFailsWithAClearMessage() throws Exception {
         TriageHarness harness = new TriageHarness();
         ReflectionTestUtils.setField(harness.service, "executionTimeoutSeconds", 1);
-        java.util.concurrent.ExecutorService real = java.util.concurrent.Executors.newCachedThreadPool();
-        java.util.concurrent.ExecutorService slow = Mockito.mock(java.util.concurrent.ExecutorService.class);
-        Mockito.when(slow.submit(Mockito.<java.util.concurrent.Callable<Object>>any())).thenAnswer(invocation -> {
-            java.util.concurrent.Callable<Object> work = invocation.getArgument(0);
-            return real.submit(() -> {
-                Thread.sleep(5000);
-                return work.call();
-            });
-        });
-        ReflectionTestUtils.setField(harness.service, "executorService", slow);
+        long[] waited = new long[1];
+        ExecutionGate slow = new ExecutionGate(2, 10, 1, 1, 10000) {
+            @Override
+            public <T> T call(String owner, java.util.concurrent.Callable<T> task, long timeoutSeconds)
+                    throws java.util.concurrent.TimeoutException, InterruptedException, java.util.concurrent.ExecutionException {
+                long begun = System.currentTimeMillis();
+                try {
+                    return super.call(owner, () -> {
+                        Thread.sleep(5000);
+                        return task.call();
+                    }, timeoutSeconds);
+                } finally {
+                    waited[0] = System.currentTimeMillis() - begun;
+                }
+            }
+        };
+        ReflectionTestUtils.setField(harness.service, "executionGate", slow);
 
-        long start = System.currentTimeMillis();
         SwrlEngineService.SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "slow", null);
 
         assertFalse(result.isSuccess());
         assertEquals("Query timed out after 1 seconds", result.getErrorMessage());
-        assertTrue(System.currentTimeMillis() - start < 4000);
+        assertTrue(waited[0] < 4000, "waited " + waited[0]);
     }
 
     @Test
