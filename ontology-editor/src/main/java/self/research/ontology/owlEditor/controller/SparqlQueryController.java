@@ -39,6 +39,9 @@ public class SparqlQueryController {
     private final SparqlQueryRepository queryRepository;
     private final OntologyMutationService mutationService;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InferredQueryHandler inferredQueryHandler;
+
     @org.springframework.beans.factory.annotation.Value("${ontocode.sparql.graph-result-cap:100000}")
     private int graphResultCap = 100000;
 
@@ -130,6 +133,10 @@ public class SparqlQueryController {
                                    @org.springframework.web.bind.annotation.RequestHeader(value = "Accept", required = false) String accept) {
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
+        }
+        if (Boolean.TRUE.equals(request.includeInferred()) && inferredQueryHandler != null) {
+            return inferredQueryHandler.handle(projectId, request.query(), request.format(),
+                    Boolean.TRUE.equals(request.refresh()), accept);
         }
         long startTime = System.currentTimeMillis();
         try {
@@ -246,9 +253,13 @@ public class SparqlQueryController {
         return node.toString();
     }
 
-    public record SparqlRequest(String query, String format) {
+    public record SparqlRequest(String query, String format, Boolean includeInferred, Boolean refresh) {
         @com.fasterxml.jackson.annotation.JsonCreator
         public SparqlRequest {
+        }
+
+        public SparqlRequest(String query, String format) {
+            this(query, format, null, null);
         }
 
         public SparqlRequest(String query) {
