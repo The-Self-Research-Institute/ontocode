@@ -1,7 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.model.Value;
-import org.eclipse.rdf4j.query.MalformedQueryException;
 import org.eclipse.rdf4j.query.QueryLanguage;
 import org.eclipse.rdf4j.query.algebra.AggregateFunctionCall;
 import org.eclipse.rdf4j.query.algebra.ArbitraryLengthPath;
@@ -43,23 +42,77 @@ public final class SparqlQueryGuard {
 
     private SparqlQueryGuard() {}
 
+    static final String MSG_UPDATE =
+            "This is an UPDATE. The query endpoint only runs SELECT, ASK, CONSTRUCT and DESCRIBE; use the update tab for changes.";
+    static final String MSG_FORMS = "Only SELECT, ASK, CONSTRUCT and DESCRIBE queries are supported.";
+    static final String MSG_DATASET =
+            "FROM and FROM NAMED are not supported; queries run against the project you selected.";
+    static final String MSG_SERVICE = "SERVICE is not supported; queries cannot reach other endpoints.";
+    static final String MSG_PROPERTY_FUNCTION = "Extension property functions are not supported.";
+    static final String MSG_UNSUPPORTED_SYNTAX = "The query uses syntax that is not supported.";
+    static final String MSG_UNCLASSIFIED = "The query could not be classified safely.";
+    static final String MSG_NESTED_ESCAPES = "The query contains nested unicode escapes, which are not supported.";
+    static final String MSG_TOO_DEEP = "The query is nested too deeply.";
+
+    static String graphMessage(String iri) {
+        return "GRAPH <" + iri
+                + "> is not available; queries only see the project you selected and your own draft when it is open.";
+    }
+
     public static Checked check(String text, Set<String> authorizedGraphs) {
         if (text == null || text.isBlank()) {
             throw new SparqlQueryRejectedException("Query must not be empty");
         }
         text = decodeUnicodeEscapes(text);
+        if (!decodeUnicodeEscapes(text).equals(text)) {
+            throw new SparqlQueryRejectedException(MSG_NESTED_ESCAPES);
+        }
+        try {
+            return crossCheck(text, authorizedGraphs);
+        } catch (StackOverflowError e) {
+            throw new SparqlQueryRejectedException(MSG_TOO_DEEP);
+        }
+    }
+
+    private static Checked crossCheck(String text, Set<String> authorizedGraphs) {
+        Checked rdf4j = null;
+        SparqlQueryRejectedException rdf4jRejection = null;
+        try {
+            rdf4j = checkRdf4j(text, authorizedGraphs);
+        } catch (SparqlQueryRejectedException e) {
+            rdf4jRejection = e;
+        }
+        Kind jenaKind = null;
+        SparqlQueryRejectedException jenaRejection = null;
+        try {
+            jenaKind = JenaQueryGuard.check(text, authorizedGraphs);
+        } catch (SparqlQueryRejectedException e) {
+            jenaRejection = e;
+        }
+        if (rdf4jRejection != null) {
+            throw rdf4jRejection;
+        }
+        if (jenaRejection != null) {
+            throw jenaRejection;
+        }
+        if (rdf4j.kind() != jenaKind) {
+            throw new SparqlQueryRejectedException(MSG_UNCLASSIFIED);
+        }
+        return rdf4j;
+    }
+
+    static Checked checkRdf4j(String text, Set<String> authorizedGraphs) {
         ParsedOperation op;
         try {
             op = QueryParserUtil.parseOperation(QueryLanguage.SPARQL, text, null);
-        } catch (MalformedQueryException | IllegalArgumentException e) {
+        } catch (RuntimeException | Error e) {
             throw new SparqlQueryRejectedException("The query could not be parsed: " + firstLine(e.getMessage()));
         }
         if (op instanceof ParsedUpdate) {
-            throw new SparqlQueryRejectedException(
-                    "This is an UPDATE. The query endpoint only runs SELECT, ASK, CONSTRUCT and DESCRIBE; use the update tab for changes.");
+            throw new SparqlQueryRejectedException(MSG_UPDATE);
         }
         if (!(op instanceof ParsedQuery parsed)) {
-            throw new SparqlQueryRejectedException("Only SELECT, ASK, CONSTRUCT and DESCRIBE queries are supported.");
+            throw new SparqlQueryRejectedException(MSG_FORMS);
         }
         Kind kind;
         if (parsed instanceof ParsedTupleQuery) {
@@ -71,11 +124,10 @@ public final class SparqlQueryGuard {
         } else if (parsed instanceof ParsedGraphQuery) {
             kind = Kind.CONSTRUCT;
         } else {
-            throw new SparqlQueryRejectedException("Only SELECT, ASK, CONSTRUCT and DESCRIBE queries are supported.");
+            throw new SparqlQueryRejectedException(MSG_FORMS);
         }
         if (parsed.getDataset() != null) {
-            throw new SparqlQueryRejectedException(
-                    "FROM and FROM NAMED are not supported; queries run against the project you selected.");
+            throw new SparqlQueryRejectedException(MSG_DATASET);
         }
         Set<String> allowed = authorizedGraphs.stream().map(SparqlQueryGuard::normalizeIri).collect(Collectors.toSet());
         parsed.getTupleExpr().visit(new Visitor(allowed));
@@ -146,7 +198,7 @@ public final class SparqlQueryGuard {
         }
     }
 
-    private static String firstLine(String message) {
+    static String firstLine(String message) {
         if (message == null || message.isBlank()) {
             return "syntax error";
         }
@@ -157,7 +209,7 @@ public final class SparqlQueryGuard {
     private static final List<String> EXTENSION_PREFIXES = List.of(
             "java:", "http://jena.apache.org/", "http://jena.hpl.hp.com/", "urn:x-arq:");
 
-    private static boolean isExtensionIri(String iri) {
+    static boolean isExtensionIri(String iri) {
         String lower = iri.toLowerCase(Locale.ROOT);
         for (String prefix : EXTENSION_PREFIXES) {
             if (lower.startsWith(prefix)) {
@@ -167,7 +219,7 @@ public final class SparqlQueryGuard {
         return false;
     }
 
-    private static boolean functionAllowed(String iri) {
+    static boolean functionAllowed(String iri) {
         if (iri == null) {
             return false;
         }
@@ -194,8 +246,7 @@ public final class SparqlQueryGuard {
                 Value v = contextVar.getValue();
                 String iri = v.stringValue();
                 if (!v.isIRI() || !allowedGraphs.contains(normalizeIri(iri))) {
-                    throw new SparqlQueryRejectedException("GRAPH <" + iri
-                            + "> is not available; queries only see the project you selected and your own draft when it is open.");
+                    throw new SparqlQueryRejectedException(graphMessage(iri));
                 }
             }
         }
@@ -206,7 +257,7 @@ public final class SparqlQueryGuard {
             Var pred = node.getPredicateVar();
             if (pred != null && pred.hasValue() && pred.getValue().isIRI()
                     && isExtensionIri(pred.getValue().stringValue())) {
-                throw new SparqlQueryRejectedException("Extension property functions are not supported.");
+                throw new SparqlQueryRejectedException(MSG_PROPERTY_FUNCTION);
             }
             super.meet(node);
         }
@@ -225,8 +276,7 @@ public final class SparqlQueryGuard {
 
         @Override
         public void meet(Service node) {
-            throw new SparqlQueryRejectedException(
-                    "SERVICE is not supported; queries cannot reach other endpoints.");
+            throw new SparqlQueryRejectedException(MSG_SERVICE);
         }
 
         @Override
