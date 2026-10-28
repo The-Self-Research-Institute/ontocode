@@ -16,7 +16,11 @@ class RuleFactsBenchmarkTest {
         RuleExecutionLimits limits = new RuleExecutionLimits(20, 300_000L, 500_000, () -> false);
         for (String s : sizes.split(",")) {
             int n = Integer.parseInt(s.trim());
+            String only = System.getProperty("benchSet", "");
             for (String[] set : new String[][]{{"single", RuleFactsGenerator.SINGLE_RULE}, {"demo", RuleFactsGenerator.DEMO_RULES}}) {
+                if (!only.isEmpty() && !only.equals(set[0])) {
+                    continue;
+                }
                 OWLOntology o = RuleExecutionTest.load(RuleFactsGenerator.generate(n, set[1]));
                 long t = System.nanoTime();
                 RuleExecutionResult r = legacy
