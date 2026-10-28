@@ -83,7 +83,7 @@ class ProjectLoadControllerUploadBoundsTest {
 
     private ResponseEntity<Map<String, Object>> upload(String name, byte[] body) {
         return controller.upload("proj-1", new MockMultipartFile("file", name, "application/octet-stream", body),
-                null, null, null, null, null, null, false);
+                null, new self.research.ontology.owlEditor.config.CallerIdentity(null, null), null, null, null, null, null, false);
     }
 
     private static byte[] zip(String... names) throws IOException {

@@ -63,7 +63,8 @@ class ProjectLoadControllerFileRefTest {
     }
 
     private ResponseEntity<Map<String, Object>> upload(String projectId, String parentProjectId) {
-        return controller.uploadByFileRef(projectId, "f1", parentProjectId, "owner@x.org", null, null, null, null);
+        return controller.uploadByFileRef(projectId, "f1", parentProjectId, "owner@x.org",
+                new self.research.ontology.owlEditor.config.CallerIdentity("u-owner", "owner@x.org"), null, null, null, null);
     }
 
     @Test

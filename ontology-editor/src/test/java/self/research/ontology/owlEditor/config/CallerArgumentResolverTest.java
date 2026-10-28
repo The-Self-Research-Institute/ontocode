@@ -13,6 +13,7 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -115,13 +116,17 @@ class CallerArgumentResolverTest {
     }
 
     @Test
-    void aTokenWithoutAUserIdFallsBackToItsEmail() throws Exception {
+    void aTokenWithoutAUserIdIsAskedToSignInAgainInsteadOfUsingItsEmail() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
                 "{\"email\":\"old@x.org\"}".getBytes(StandardCharsets.UTF_8));
         request.addHeader("Authorization", "Bearer h." + payload + ".s");
 
-        assertEquals("old@x.org", resolve(new CallerArgumentResolver(false), 3, request));
+        AccessDeniedApiException refused = assertThrows(AccessDeniedApiException.class,
+                () -> resolve(new CallerArgumentResolver(false), 3, request));
+        assertEquals(HttpStatus.UNAUTHORIZED, refused.denial().status());
+        assertEquals("Sign in again to continue.", refused.denial().message());
+        assertEquals("old@x.org", assertDoesNotThrow(() -> resolve(new CallerArgumentResolver(false), 0, request)));
     }
 
     @Test

@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import self.research.ontology.owlEditor.config.CallerEmail;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import self.research.ontology.owlEditor.service.AccessDenial;
 import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import org.slf4j.Logger;
@@ -287,6 +288,7 @@ public class ProjectLoadController {
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
                                                       @CallerEmail String ownerEmail,
+                                                      CallerIdentity caller,
                                                       @RequestParam(required = false) String action,
                                                       @RequestParam(required = false) String importMode,
                                                       @RequestParam(required = false) String partition,
@@ -309,7 +311,7 @@ public class ProjectLoadController {
 
         try {
             return processUploadedFile(projectId, file.getInputStream(), file.getOriginalFilename(),
-                    file.getContentType(), ownerEmail, action, importMode, partition, workspaceId,
+                    file.getContentType(), ownerEmail, caller.userId(), action, importMode, partition, workspaceId,
                     parentProjectId, compressed, uploadStartTime);
         } catch (IOException e) {
             ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
@@ -337,6 +339,7 @@ public class ProjectLoadController {
             String originalFilename,
             String contentType,
             String ownerEmail,
+            String ownerId,
             String action,
             String importMode,
             String partition,
@@ -513,7 +516,7 @@ public class ProjectLoadController {
 
             stepStart = System.nanoTime();
             ProjectStatus status = ProjectStatus.uploaded(filename);
-            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, workspaceId, parentProjectId);
+            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, ownerId, workspaceId, parentProjectId);
             log.info("[ProjectLoadController] [TIMING] Metadata update: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             stepStart = System.nanoTime();
@@ -562,6 +565,7 @@ public class ProjectLoadController {
             @RequestParam String chunkHash,
             @RequestParam String fileName,
             @CallerEmail String ownerEmail,
+            CallerIdentity caller,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String importMode,
             @RequestParam(required = false) String partition,
@@ -639,7 +643,7 @@ public class ProjectLoadController {
                 long uploadStartTime = System.nanoTime();
                 try (InputStream reassembledStream = Files.newInputStream(reassembled)) {
                     return processUploadedFile(projectId, reassembledStream, fileName, "application/octet-stream",
-                            ownerEmail, action, importMode, partition, workspaceId, parentProjectId, compressed,
+                            ownerEmail, caller.userId(), action, importMode, partition, workspaceId, parentProjectId, compressed,
                             uploadStartTime);
                 }
             } finally {
@@ -696,6 +700,7 @@ public class ProjectLoadController {
             @RequestParam String fileId,
             @RequestParam String parentProjectId,
             @CallerEmail String ownerEmail,
+            CallerIdentity caller,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String importMode,
             @RequestParam(required = false) String partition,
@@ -819,7 +824,7 @@ public class ProjectLoadController {
 
             storageManager.extractCitationMappingsFromFile(original, projectId);
             ProjectStatus status = ProjectStatus.uploaded(fileName);
-            metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, workspaceId, parentProjectId);
+            metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, caller.userId(), workspaceId, parentProjectId);
 
             ImportOptions options = UploadFileSupport.resolveImportOptions(importMode, partition);
             importWorkerDispatcher.dispatch(projectId, original, ownerEmail, fileName, gridfsId, options);

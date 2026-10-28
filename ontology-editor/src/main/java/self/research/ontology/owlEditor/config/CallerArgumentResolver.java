@@ -37,12 +37,12 @@ public class CallerArgumentResolver implements HandlerMethodArgumentResolver {
             return signedInOrDesktop(caller) ? caller : refuse();
         }
         boolean wantsUserId = parameter.hasParameterAnnotation(CallerUserId.class);
-        String verified = wantsUserId ? userIdOrEmail(caller) : blankToNull(caller.email());
+        String verified = wantsUserId ? blankToNull(caller.userId()) : blankToNull(caller.email());
         if (verified != null) {
             return verified;
         }
         if (!desktopMode) {
-            return refuse();
+            return wantsUserId ? signInAgain() : refuse();
         }
         return webRequest.getParameter(wantsUserId ? USER_ID_PARAMETER : String.valueOf(parameter.getParameterName()));
     }
@@ -51,12 +51,12 @@ public class CallerArgumentResolver implements HandlerMethodArgumentResolver {
         return desktopMode || caller.signedIn();
     }
 
-    private static String userIdOrEmail(CallerIdentity caller) {
-        return blankToNull(caller.userId()) != null ? caller.userId() : blankToNull(caller.email());
-    }
-
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private static <T> T signInAgain() {
+        throw new AccessDeniedApiException(AccessDenial.unauthenticated("Sign in again to continue."));
     }
 
     private static <T> T refuse() {

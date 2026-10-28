@@ -11,6 +11,10 @@ public record AccessDenial(HttpStatus status, String message) {
         return new AccessDenial(HttpStatus.UNAUTHORIZED, "Authentication required");
     }
 
+    public static AccessDenial unauthenticated(String message) {
+        return new AccessDenial(HttpStatus.UNAUTHORIZED, message);
+    }
+
     public static AccessDenial forbidden(String message) {
         return new AccessDenial(HttpStatus.FORBIDDEN, message);
     }
