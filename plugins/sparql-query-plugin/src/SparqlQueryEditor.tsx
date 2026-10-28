@@ -1,10 +1,16 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Plus, Trash2, Play, Save, Loader2, ChevronDown, ChevronRight, Download, Database, Code, Table, FileText, RefreshCw, Copy, Check } from 'lucide-react';
 import type { SparqlQuery, SparqlQueryResult, OntologyPrefix, PluginContext, SparqlQueryEditorProps, GraphQueryResult, GraphFormat } from './types';
 import { detectQueryForm, isGraphForm, UPDATE_HINT } from './queryForm';
 import { formatTerm, normalizeRows, XSD_NS } from './bindingFormat';
-import type { PrefixEntry } from './bindingFormat';
+import type { PrefixEntry, TermRow } from './bindingFormat';
+import {
+  DEFAULT_PAGE_SIZE, EXPIRED_MESSAGE, FILTER_DEBOUNCE_MS, PAGE_SIZES, clampPage, exportNote, filterRows, formatNumber,
+  localPage, nextSort, pageCount, pageKey, resultsLine, resultsMeta, rowsPath, showingText, sortArrow, sortRows,
+  truncationNotice
+} from './resultsPaging';
+import type { ResultsMeta, ResultsSort } from './resultsPaging';
 import { buildExportTable, toCsv, toTsv, buildJsonBindings } from './exportColumns';
 import {
   INCLUDED_ITEMS, NOT_INCLUDED_ITEMS, buildRequestBody, canRefresh, countsText, effectiveMode, infoLine,
@@ -132,12 +138,84 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [conflict, setConflict] = useState<ConflictKind | null>(null);
   const [showIncluded, setShowIncluded] = useState(false);
 
+  const [meta, setMeta] = useState<ResultsMeta | null>(null);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(0);
+  const [filterInput, setFilterInput] = useState('');
+  const [filterTerm, setFilterTerm] = useState('');
+  const [sort, setSort] = useState<ResultsSort | null>(null);
+  const [serverPage, setServerPage] = useState<{ key: string; rows: TermRow[]; filtered: number } | null>(null);
+  const [pageNote, setPageNote] = useState('');
+  const [expired, setExpired] = useState(false);
+  const fetchSeq = useRef(0);
+
+  const resetPaging = () => {
+    setMeta(null);
+    setServerPage(null);
+    setPageNote('');
+    setExpired(false);
+    setFilterInput('');
+    setFilterTerm('');
+    setPage(0);
+    setSort(null);
+  };
+
   const clearResults = () => {
     setResults(null);
     setGraphResult(null);
     setBooleanResult(null);
     setInferredInfo(null);
+    resetPaging();
   };
+
+  useEffect(() => {
+    if (filterInput === filterTerm) return;
+    const timer = setTimeout(() => {
+      setFilterTerm(filterInput);
+      setPage(0);
+    }, FILTER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [filterInput, filterTerm]);
+
+  const runId = meta?.runId ?? null;
+  const columns = results?.head.vars ?? [];
+  const wantedKey = runId ? pageKey(runId, filterTerm, sort, page, pageSize) : '';
+
+  useEffect(() => {
+    if (!runId || !wantedKey || serverPage?.key === wantedKey) return;
+    const seq = ++fetchSeq.current;
+    apiClient
+      .get<any>(rowsPath(projectId, runId, { offset: page * pageSize, limit: pageSize, filter: filterTerm, sort }))
+      .then((res) => {
+        if (seq !== fetchSeq.current) return;
+        const rows = normalizeRows(res);
+        setPageNote('');
+        setServerPage({ key: wantedKey, rows, filtered: typeof res?.filteredRows === 'number' ? res.filteredRows : rows.length });
+      })
+      .catch((e: any) => {
+        if (seq !== fetchSeq.current) return;
+        if (e?.status === 410) {
+          setExpired(true);
+        } else {
+          setPageNote(e?.data?.message || e?.message || 'Could not load this page. Try again.');
+        }
+      });
+  }, [runId, wantedKey, serverPage, projectId, page, pageSize, filterTerm, sort, apiClient]);
+
+  const local = useMemo(
+    () => (runId || !results ? null : localPage(results.results.bindings, columns, filterTerm, sort, page, pageSize)),
+    [runId, results, columns, filterTerm, sort, page, pageSize]
+  );
+  const filteredCount = runId ? (serverPage?.filtered ?? 0) : (local?.filtered ?? 0);
+  const pageRows: TermRow[] = runId ? (serverPage?.rows ?? []) : (local?.rows ?? []);
+  const safePage = clampPage(page, filteredCount, pageSize);
+  const lastPage = pageCount(filteredCount, pageSize) - 1;
+  const pageLoading = !!runId && !expired && serverPage?.key !== wantedKey;
+  const notice = meta ? truncationNotice(meta) : null;
+  const jsonText = useMemo(
+    () => (activeResultTab === 'json' && results ? JSON.stringify({ ...results, results: { bindings: pageRows } }, null, 2) : ''),
+    [activeResultTab, results, pageRows]
+  );
 
   useEffect(() => {
     setMode(loadMode(projectId));
@@ -297,8 +375,9 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setConflict(null);
 
     try {
-      const base: { query: string; format?: GraphFormat } = { query: queryText };
+      const base: { query: string; format?: GraphFormat; pageSize?: number } = { query: queryText };
       if (isGraphForm(form)) base.format = format;
+      if (form === 'select') base.pageSize = pageSize;
       const body = buildRequestBody(base, activeMode, refresh);
       const response = await apiClient.post<any>(
         `/api/sparql/query/${projectId}${draftMode ? '?draft=true' : ''}`,
@@ -331,6 +410,15 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
         const vars: string[] = Array.isArray(response?.head?.vars)
           ? response.head.vars
           : Array.from(new Set(rows.flatMap(r => Object.keys(r))));
+        const next = resultsMeta(response, rows.length);
+        if (next.runId) {
+          setServerPage({
+            key: pageKey(next.runId, '', null, 0, pageSize),
+            rows,
+            filtered: typeof response?.filteredRows === 'number' ? response.filteredRows : rows.length
+          });
+        }
+        setMeta(next);
         setResults({ head: { vars }, results: { bindings: rows }, executionTime });
       }
       setActiveTab('results');
@@ -359,7 +447,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     if (graphResult) {
       text = graphResult.content;
     } else if (results) {
-      text = toTsv(buildExportTable(results.head.vars, results.results.bindings, includeTypes));
+      text = toTsv(buildExportTable(results.head.vars, pageRows, includeTypes));
     } else {
       return;
     }
@@ -369,45 +457,66 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const downloadCsv = () => {
+  const exportRows = async (): Promise<TermRow[]> => {
+    if (!results) return [];
+    if (runId) {
+      const res = await apiClient.get<any>(
+        rowsPath(projectId, runId, { offset: 0, limit: 1, filter: filterTerm, sort, exportAll: true })
+      );
+      const rows = normalizeRows(res);
+      const note = exportNote(rows.length, typeof res?.filteredRows === 'number' ? res.filteredRows : rows.length);
+      setPageNote(note ?? '');
+      return rows;
+    }
+    return sortRows(filterRows(results.results.bindings, results.head.vars, filterTerm), sort);
+  };
+
+  const exportFailed = (error: any, what: string) => {
+    if (error?.status === 410) {
+      setExpired(true);
+      context.showNotification?.(EXPIRED_MESSAGE, 'warning');
+      return;
+    }
+    console.error(`${what} download failed:`, error);
+    context.showNotification?.(`Failed to download ${what}`, 'error');
+  };
+
+  const downloadCsv = async () => {
     if (!results) return;
 
     try {
-      const csv = toCsv(buildExportTable(results.head.vars, results.results.bindings, includeTypes));
+      const csv = toCsv(buildExportTable(results.head.vars, await exportRows(), includeTypes));
       saveBlob(csv, 'text/csv;charset=utf-8;', `${baseName()}.csv`);
       context.showNotification?.('CSV downloaded successfully', 'success');
     } catch (error) {
-      console.error('CSV download failed:', error);
-      context.showNotification?.('Failed to download CSV', 'error');
+      exportFailed(error, 'CSV');
     }
   };
 
-  const downloadTsv = () => {
+  const downloadTsv = async () => {
     if (!results) return;
 
     try {
-      const tsv = toTsv(buildExportTable(results.head.vars, results.results.bindings, includeTypes), true);
+      const tsv = toTsv(buildExportTable(results.head.vars, await exportRows(), includeTypes), true);
       saveBlob(tsv, 'text/tab-separated-values;charset=utf-8;', `${baseName()}.tsv`);
       context.showNotification?.('TSV downloaded successfully', 'success');
     } catch (error) {
-      console.error('TSV download failed:', error);
-      context.showNotification?.('Failed to download TSV', 'error');
+      exportFailed(error, 'TSV');
     }
   };
 
-  const downloadJson = () => {
+  const downloadJson = async () => {
     if (!results) return;
 
     try {
       const out = {
         ...results,
-        results: { bindings: buildJsonBindings(results.head.vars, results.results.bindings, includeTypes) }
+        results: { bindings: buildJsonBindings(results.head.vars, await exportRows(), includeTypes) }
       };
       saveBlob(JSON.stringify(out, null, 2), 'application/json', `${baseName()}.json`);
       context.showNotification?.('JSON downloaded successfully', 'success');
     } catch (error) {
-      console.error('JSON download failed:', error);
-      context.showNotification?.('Failed to download JSON', 'error');
+      exportFailed(error, 'JSON');
     }
   };
 
@@ -801,8 +910,8 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                 {hasOutcome && (
                   <>
                     {results && (
-                      <span className="text-xs text-tertiary">
-                        {results.results.bindings.length} rows
+                      <span className="text-xs text-tertiary" data-testid="results-line">
+                        {meta ? resultsLine(meta) : `${results.results.bindings.length} rows`}
                       </span>
                     )}
                     {graphResult && graphResult.tripleCount !== undefined && !graphResult.truncated && (
@@ -886,7 +995,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                   <button
                     onClick={handleCopyResults}
                     className="flex items-center gap-1 px-2 py-1 text-xs text-secondary hover-overlay rounded transition-colors"
-                    title="Copy to clipboard"
+                    title="Copy this page to clipboard"
                   >
                     {copied ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Copy size={14} />}
                   </button>
@@ -976,37 +1085,95 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                   </span>
                 </div>
               ) : results ? (
-                activeResultTab === 'table' ? (
-                  <table className="min-w-full text-sm">
-                    <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-2)' }}>
-                      <tr>
-                        {results.head.vars.map((col) => (
-                          <th key={col} className="p-2 text-left font-semibold text-secondary border-b border-default">
-                            ?{col}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y" style={{ borderColor: 'var(--divider)' }}>
-                      {results.results.bindings.map((binding, rowIndex) => (
-                        <tr key={rowIndex} className="hover-overlay">
-                          {results.head.vars.map((col) => {
-                            const shown = formatTerm(binding[col], shortPrefixes);
-                            return (
-                              <td key={col} className="p-2 text-primary font-mono text-xs">
-                                <span title={shown.title ?? binding[col]?.value}>{shown.text}</span>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <pre className="p-4 text-xs font-mono text-primary overflow-auto">
-                    {JSON.stringify(results, null, 2)}
-                  </pre>
-                )
+                <div className="flex flex-col h-full">
+                  {notice && (
+                    <div className="p-2 text-xs border-b border-default" style={{ backgroundColor: 'var(--surface-2)' }} data-testid="truncation-notice">
+                      {notice}
+                    </div>
+                  )}
+                  <div className="p-2 flex flex-wrap items-center gap-2 text-xs border-b border-default" style={{ backgroundColor: 'var(--surface-1)' }}>
+                    <input
+                      type="search"
+                      value={filterInput}
+                      onChange={(e) => setFilterInput(e.target.value)}
+                      placeholder="Filter all columns"
+                      aria-label="Filter results"
+                      className="px-2 py-1 rounded text-xs theme-input"
+                    />
+                    {pageNote && <span className="text-xs" style={{ color: 'var(--warning, #f59e0b)' }} data-testid="page-note">{pageNote}</span>}
+                    <label className="ml-auto flex items-center gap-1 text-xs text-secondary">
+                      Rows per page
+                      <select
+                        value={pageSize}
+                        onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
+                        className="px-1 py-0.5 rounded text-xs theme-input"
+                        aria-label="Rows per page"
+                      >
+                        {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="flex-1 overflow-auto">
+                    {activeResultTab === 'table' ? (
+                      <table className="min-w-full text-sm">
+                        <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-2)' }}>
+                          <tr>
+                            {results.head.vars.map((col) => (
+                              <th
+                                key={col}
+                                className="p-2 text-left font-semibold text-secondary border-b border-default cursor-pointer select-none"
+                                onClick={() => { setSort(nextSort(sort, col)); setPage(0); }}
+                                aria-sort={sort?.column === col ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                              >
+                                ?{col}{sort?.column === col ? ` ${sortArrow(sort, col)}` : ''}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y" style={{ borderColor: 'var(--divider)' }}>
+                          {pageRows.map((binding, rowIndex) => (
+                            <tr key={safePage * pageSize + rowIndex} className="hover-overlay">
+                              {results.head.vars.map((col) => {
+                                const shown = formatTerm(binding[col], shortPrefixes);
+                                return (
+                                  <td key={col} className="p-2 text-primary font-mono text-xs">
+                                    <span title={shown.title ?? binding[col]?.value}>{shown.text}</span>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <pre className="p-4 text-xs font-mono text-primary overflow-auto">
+                        {jsonText}
+                      </pre>
+                    )}
+                    {expired && (
+                      <div className="p-3 text-sm flex items-center gap-2 border-t border-default" data-testid="results-expired">
+                        {EXPIRED_MESSAGE}
+                        <button onClick={() => handleExecuteQuery()} className="px-2 py-1 rounded text-xs btn-outline">Run again</button>
+                      </div>
+                    )}
+                    {!expired && filteredCount === 0 && !pageLoading && (
+                      <div className="p-4 text-sm text-center text-tertiary">
+                        {meta && meta.storedRows > 0 ? 'No rows match the filter.' : 'The query returned no rows.'}
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-2 flex flex-wrap items-center gap-2 text-xs border-t border-default" style={{ backgroundColor: 'var(--surface-1)' }}>
+                    <span data-testid="results-showing">
+                      {pageLoading ? 'Loading page...' : showingText(filteredCount, meta?.storedRows ?? results.results.bindings.length, safePage, pageSize)}
+                    </span>
+                    <span className="ml-auto flex items-center gap-1">
+                      <button onClick={() => setPage(0)} disabled={safePage === 0} className="px-2 py-1 rounded btn-outline disabled:opacity-50" aria-label="First page">First</button>
+                      <button onClick={() => setPage(safePage - 1)} disabled={safePage === 0} className="px-2 py-1 rounded btn-outline disabled:opacity-50">Previous</button>
+                      <button onClick={() => setPage(safePage + 1)} disabled={safePage >= lastPage} className="px-2 py-1 rounded btn-outline disabled:opacity-50">Next</button>
+                      <button onClick={() => setPage(lastPage)} disabled={safePage >= lastPage} className="px-2 py-1 rounded btn-outline disabled:opacity-50" aria-label="Last page">Last</button>
+                    </span>
+                  </div>
+                </div>
               ) : (
                 <div className="flex items-center justify-center h-64 text-tertiary">
                   <div className="text-center">
