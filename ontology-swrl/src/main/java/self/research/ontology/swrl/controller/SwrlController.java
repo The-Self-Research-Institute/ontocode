@@ -122,7 +122,9 @@ public class SwrlController {
     @PostMapping("/{projectId}/validate")
     public ResponseEntity<?> validateRule(
             @PathVariable String projectId,
-            @RequestBody Map<String, String> request) {
+            @RequestBody Map<String, String> request,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId) {
         
         try {
             String ruleText = request.get("ruleText");
@@ -132,7 +134,7 @@ public class SwrlController {
                     .body(createErrorResponse("Rule text cannot be empty"));
             }
             
-            ValidationResult result = swrlEngineService.validateRule(projectId, ruleText);
+            ValidationResult result = swrlEngineService.validateRule(projectId, ruleText, draft && userId != null && !userId.isBlank() ? userId : null);
             return ResponseEntity.ok(result);
             
         } catch (self.research.ontology.swrl.service.SwrlBusyException e) {

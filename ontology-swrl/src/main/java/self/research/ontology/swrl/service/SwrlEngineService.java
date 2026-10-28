@@ -181,6 +181,10 @@ public class SwrlEngineService {
         return validateAdmitted(projectId, ruleText, null, null);
     }
 
+    public ValidationResult validateRule(String projectId, String ruleText, String draftUserId) {
+        return validateAdmitted(projectId, ruleText, draftUserId, null);
+    }
+
     private ValidationResult validateAdmitted(String projectId, String ruleText, String draftUserId,
                                               org.swrlapi.core.SWRLAPIRule[] created) {
         try {

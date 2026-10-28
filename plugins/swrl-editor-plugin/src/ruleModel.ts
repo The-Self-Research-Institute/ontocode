@@ -619,12 +619,22 @@ export function isImportFile(name: string): boolean {
   return /\.(xlsx|json)$/i.test(name);
 }
 
+export function needsValidation(text: string, savedText: string | null | undefined): boolean {
+  return text.trim().length > 0 && text.trim() !== (savedText ?? '').trim();
+}
+
+export function ruleFromResponse<T>(res: unknown): T {
+  const body = res as { rule?: unknown } | null | undefined;
+  return (body && typeof body === 'object' && body.rule && typeof body.rule === 'object' ? body.rule : res) as T;
+}
+
 export function applySavedRule<T extends { id: string; ruleName: string }>(
   rules: T[],
   selectedId: string | null,
-  res: Partial<T> | null | undefined,
+  response: Partial<T> | null | undefined,
   form: { ruleName: string; ruleText: string; comment?: string; category?: string; enabled: boolean }
 ): { rules: T[]; saved: T } {
+  const res = ruleFromResponse<Partial<T> | null | undefined>(response);
   const current = rules.find(r => r.id === (selectedId ?? res?.id));
   const merged = {
     ...(current || {}),
