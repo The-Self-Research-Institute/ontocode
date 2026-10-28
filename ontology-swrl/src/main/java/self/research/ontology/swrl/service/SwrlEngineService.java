@@ -86,21 +86,39 @@ public class SwrlEngineService {
     @Value("${ontocode.capacity.swrl-execute.fetch-allowance-seconds:120}")
     private int fetchAllowanceSeconds = 120;
 
+    @Value("${ontocode.capacity.swrl-validate.workers:1}")
+    private int validationWorkers = 1;
+
+    @Value("${ontocode.capacity.swrl-validate.queue:4}")
+    private int validationQueue = 4;
+
+    @Value("${ontocode.capacity.swrl-validate.max-wait-ms:5000}")
+    private long validationMaxWaitMs = 5000;
+
     private volatile ExecutionGate executionGate;
+    private volatile ExecutionGate validationGate;
+    private final ValidationCache validationCache = new ValidationCache();
 
     private long taskBudgetSeconds() {
         return (long) executionTimeoutSeconds + Math.max(0, fetchAllowanceSeconds);
     }
 
     private <T> T admitted(Callable<T> task) throws Exception {
+        return admitted(gate(), task);
+    }
+
+    private <T> T admitted(ExecutionGate selected, Callable<T> task) throws Exception {
         org.springframework.web.context.request.RequestAttributes attributes =
                 org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+        String owner = OwnerContext.current();
         try {
-            return gate().call(OwnerContext.current(), () -> {
+            return selected.call(owner, () -> {
                 org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(attributes);
+                OwnerContext.set(owner);
                 try {
                     return task.call();
                 } finally {
+                    OwnerContext.clear();
                     org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
                 }
             }, taskBudgetSeconds());
@@ -128,6 +146,20 @@ public class SwrlEngineService {
         return current;
     }
 
+    ExecutionGate validationGate() {
+        ExecutionGate current = validationGate;
+        if (current == null) {
+            synchronized (this) {
+                if (validationGate == null) {
+                    validationGate = new ExecutionGate(validationWorkers, validationQueue, perOwnerActive, perOwnerWaiting,
+                            validationMaxWaitMs);
+                }
+                current = validationGate;
+            }
+        }
+        return current;
+    }
+
     public ExecutionGate.Stats executionStats() {
         return gate().stats();
     }
@@ -137,6 +169,10 @@ public class SwrlEngineService {
         ExecutionGate current = executionGate;
         if (current != null) {
             current.shutdown();
+        }
+        ExecutionGate validating = validationGate;
+        if (validating != null) {
+            validating.shutdown();
         }
     }
 
@@ -178,17 +214,17 @@ public class SwrlEngineService {
     }
 
     public ValidationResult validateRule(String projectId, String ruleText) {
-        return validateAdmitted(projectId, ruleText, null, null);
+        return validateAdmitted(projectId, ruleText, null, null, true);
     }
 
     public ValidationResult validateRule(String projectId, String ruleText, String draftUserId) {
-        return validateAdmitted(projectId, ruleText, draftUserId, null);
+        return validateAdmitted(projectId, ruleText, draftUserId, null, true);
     }
 
     private ValidationResult validateAdmitted(String projectId, String ruleText, String draftUserId,
-                                              org.swrlapi.core.SWRLAPIRule[] created) {
+                                              org.swrlapi.core.SWRLAPIRule[] created, boolean light) {
         try {
-            return admitted(() -> validate(projectId, ruleText, draftUserId, created));
+            return admitted(light ? validationGate() : gate(), () -> validate(projectId, ruleText, draftUserId, created, light));
         } catch (TimeoutException e) {
             return new ValidationResult(false, "Validation timed out after " + taskBudgetSeconds()
                     + " seconds. Try again, or simplify the rule.", Collections.emptyList());
@@ -209,30 +245,56 @@ public class SwrlEngineService {
                 : ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
     }
 
+    private ValidationCache.Entry buildValidationEntry(String projectId, String draftUserId, String stamp)
+            throws OWLOntologyCreationException {
+        OWLOntology ontology = fetch(projectId, draftUserId);
+        ensureNamespacePrefixes(projectId, ontology);
+        OntologyRules.removeAll(ontology);
+        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        return validationCache.put(new ValidationCache.Key(projectId, draftUserId, OwnerContext.current()), stamp,
+                ontology, engine, ontologyClient.maxAxioms());
+    }
+
+    private ValidationCache.Entry validationEntry(String projectId, String draftUserId, boolean light)
+            throws OWLOntologyCreationException {
+        if (!light) {
+            OWLOntology ontology = fetch(projectId, draftUserId);
+            ensureNamespacePrefixes(projectId, ontology);
+            OntologyRules.removeAll(ontology);
+            return new ValidationCache.Entry(null, ontology, SWRLAPIFactory.createSWRLRuleEngine(ontology), 0);
+        }
+        String stamp = ontologyClient.currentStamp(projectId, draftUserId);
+        ValidationCache.Key key = new ValidationCache.Key(projectId, draftUserId, OwnerContext.current());
+        ValidationCache.Entry hit = stamp == null ? null : validationCache.get(key, stamp);
+        if (hit != null) {
+            engineLog.info("[VALIDATE] Reused the parsed ontology project={}", projectId);
+            return hit;
+        }
+        if (stamp == null) {
+            OWLOntology ontology = fetch(projectId, draftUserId);
+            ensureNamespacePrefixes(projectId, ontology);
+            OntologyRules.removeAll(ontology);
+            return new ValidationCache.Entry(null, ontology, SWRLAPIFactory.createSWRLRuleEngine(ontology), 0);
+        }
+        return buildValidationEntry(projectId, draftUserId, stamp);
+    }
+
     private ValidationResult validate(String projectId, String ruleText, String draftUserId,
-                                      org.swrlapi.core.SWRLAPIRule[] created) {
+                                      org.swrlapi.core.SWRLAPIRule[] created, boolean light) {
         long startTime = System.currentTimeMillis();
         engineLog.info("[VALIDATE] Starting validation project={} ruleLength={}", projectId, ruleText.length());
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
         
         try {
             long fetchStart = System.currentTimeMillis();
-            OWLOntology ontology = fetch(projectId, draftUserId);
-            long fetchDuration = System.currentTimeMillis() - fetchStart;
-            engineLog.info("[VALIDATE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
-
-            // Register namespace prefixes for name resolution only (don't touch the shared engine cache)
-            ensureNamespacePrefixes(projectId, ontology);
-
-            // Use a FRESH isolated engine for validation so that infer() only runs the one
-            // rule being validated — not all previously saved/enabled rules in the cached engine.
-            long engineStart = System.currentTimeMillis();
-            OntologyRules.removeAll(ontology);
-            SWRLRuleEngine validationEngine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
-            long engineDuration = System.currentTimeMillis() - engineStart;
-            engineLog.info("[VALIDATE] Fresh validation engine created in {}ms project={}", engineDuration, projectId);
+            ValidationCache.Entry entry = validationEntry(projectId, draftUserId, light);
+            OWLOntology ontology = entry.ontology;
+            SWRLRuleEngine validationEngine = entry.engine;
+            engineLog.info("[VALIDATE] Ontology and engine ready in {}ms project={}", System.currentTimeMillis() - fetchStart, projectId);
 
             String tempName = "temp_validation_" + System.currentTimeMillis();
+            synchronized (entry) {
+            try {
             String resolvedText = resolveEntityNames(ruleText, ontology);
 
             try {
@@ -261,7 +323,7 @@ public class SwrlEngineService {
 
             // Semantic validation: run inference on the isolated engine to catch unbound
             // argument errors in built-ins. Only the one temp rule runs here.
-            try {
+            if (!light) try {
                 validationEngine.infer();
             } catch (Exception inferEx) {
                 String errorMsg = inferEx.getMessage() != null ? inferEx.getMessage() : inferEx.getClass().getSimpleName();
@@ -291,7 +353,16 @@ public class SwrlEngineService {
 
                 throw inferEx;
             }
-            
+            } finally {
+                if (light) {
+                    try {
+                        validationEngine.deleteSWRLRule(tempName);
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+            }
+            }
+
             logger.info("Rule validation successful for project: {}", projectId);
             long totalDuration = System.currentTimeMillis() - startTime;
             perfLog.info("[PERF] SWRL_VALIDATE project={} status=success duration={}ms", projectId, totalDuration);
@@ -418,7 +489,7 @@ public class SwrlEngineService {
 
     public RuleParse parseRule(String projectId, String ruleText, String draftUserId) {
         org.swrlapi.core.SWRLAPIRule[] created = new org.swrlapi.core.SWRLAPIRule[1];
-        ValidationResult validation = validateAdmitted(projectId, ruleText, draftUserId, created);
+        ValidationResult validation = validateAdmitted(projectId, ruleText, draftUserId, created, false);
         List<String> suggestions = validation.getSuggestions() == null ? List.of() : validation.getSuggestions();
         if (!validation.isValid() || created[0] == null) {
             String message = validation.getErrorMessage() != null ? validation.getErrorMessage() : "The rule could not be understood";
@@ -1144,7 +1215,7 @@ public class SwrlEngineService {
 
     private ExecutionResult runSingleRule(String projectId, String ruleText, long startTime) throws Exception {
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
-        ValidationResult validation = validate(projectId, ruleText, null, null);
+        ValidationResult validation = validate(projectId, ruleText, null, null, false);
         if (!validation.isValid()) {
             return new ExecutionResult(false, 0, 0, Collections.emptyList(),
                     validation.getErrorMessage());
