@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE } from '../src/ruleModel.ts';
+import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, ruleFromResponse, needsValidation, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE } from '../src/ruleModel.ts';
 
 const DEMO = [
   ['Senior', 'Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)', true],
@@ -342,4 +342,29 @@ test('a 410 maps to the expired message', () => {
   assert.equal(pageErrorMessage({ status: 410 }), EXPIRED_RUN_MESSAGE);
   assert.equal(pageErrorMessage({ message: 'boom' }), 'Could not load this page: boom');
   assert.equal(pageErrorMessage({}), 'Could not load this page. Try again.');
+});
+
+test('a saved rule wrapped in the server envelope switches to the new id', () => {
+  const rules = [{ id: 'rule-4b0e8dc3f0f155b9', ruleName: 'Old', ruleText: 't', enabled: true }, { id: '2', ruleName: 'B', ruleText: 'u', enabled: true }];
+  const form = { ruleName: 'Old', ruleText: 't', enabled: true };
+  const envelope = { success: true, draft: false, rule: { id: 'new-uuid', ruleName: 'Old', ruleText: 't', enabled: true } };
+  const a = applySavedRule(rules, 'rule-4b0e8dc3f0f155b9', envelope, form);
+  assert.equal(a.saved.id, 'new-uuid');
+  assert.deepEqual(a.rules.map(r => r.id), ['new-uuid', '2']);
+  const b = applySavedRule(a.rules, a.saved.id, { success: true, rule: { id: 'new-uuid', ruleName: 'Renamed', ruleText: 't', enabled: true } }, { ...form, ruleName: 'Renamed' });
+  assert.equal(b.saved.id, 'new-uuid');
+  assert.deepEqual(b.rules.map(r => r.ruleName), ['Renamed', 'B']);
+});
+
+test('ruleFromResponse unwraps the envelope and leaves a plain rule alone', () => {
+  assert.deepEqual(ruleFromResponse({ success: true, rule: { id: 'a' } }), { id: 'a' });
+  assert.deepEqual(ruleFromResponse({ id: 'a' }), { id: 'a' });
+  assert.equal(ruleFromResponse(null), null);
+});
+
+test('needsValidation skips empty and unchanged text', () => {
+  assert.equal(needsValidation('', 'a -> b'), false);
+  assert.equal(needsValidation(' a -> b ', 'a -> b'), false);
+  assert.equal(needsValidation('a -> c', 'a -> b'), true);
+  assert.equal(needsValidation('a -> c', null), true);
 });

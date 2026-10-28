@@ -14,7 +14,7 @@ import { rt, btn } from './resultsTheme';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
 import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
-import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
 import type { AxiomKind } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
@@ -1354,7 +1354,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           Execution Summary
           {results.executionMode && (
             <span className="text-xs px-2 py-0.5 rounded-full" style={rt.chip}>
-              {results.executionMode === 'selected' ? 'Selected Rules' : 'All Rules'}
+              {results.executionMode === 'test' ? 'This rule only' : results.executionMode === 'selected' ? 'Selected Rules' : 'All Rules'}
             </span>
           )}
         </h3>
@@ -1372,10 +1372,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           </div>
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
             <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Rules Run</div>
-            <div className="text-lg font-bold" style={rt.value}>{results.totalRulesExecuted}</div>
+            <div className="text-lg font-bold" style={rt.value}>{results.totalRulesExecuted ?? results.executedRuleNames?.length ?? 0}</div>
           </div>
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
-            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Inferred</div>
+            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>{results.executionMode === 'test' ? 'New conclusions' : 'Inferred'}</div>
             <div className="text-lg font-bold" style={rt.value}>{results.inferredAxiomsCount}</div>
           </div>
         </div>
@@ -2088,8 +2088,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
   useUndoRefresh(projectId, () => { void loadRules(); });
 
+  const savedRuleText = selectedRule ? selectedRule.ruleText : null;
+
   useEffect(() => {
-    if (!debouncedRuleText.trim() || !isEditing) {
+    if (!isEditing || !needsValidation(debouncedRuleText, savedRuleText)) {
       setValidationResult(null);
       return;
     }
@@ -2122,7 +2124,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [debouncedRuleText, projectId, isEditing, draftMode]);
+  }, [debouncedRuleText, savedRuleText, projectId, isEditing, draftMode]);
 
   const filteredRules = useMemo(() => {
     if (!searchQuery.trim()) return rules;
@@ -2174,20 +2176,20 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     try {
       const body = ruleWriteBody(editForm, (selectedRule ? 'Edited rule ' : 'Added rule ') + editForm.ruleName.trim());
       if (selectedRule) {
-        const res = await apiClient.put<SwrlRule>(
+        const res = ruleFromResponse<SwrlRule>(await apiClient.put<unknown>(
           withDraft(`/api/ontology/${projectId}/rules/${selectedRule.id}`, draftMode),
           body
-        );
+        ));
         rulesVersionRef.current++;
         const applied = applySavedRule(rules, selectedRule.id, res, editForm);
         setRules(prev => applySavedRule(prev, selectedRule.id, res, editForm).rules);
         setSelectedRule(applied.saved);
         setEditForm(prev => ({ ...prev, ruleName: applied.saved.ruleName }));
       } else {
-        const res = await apiClient.post<SwrlRule>(
+        const res = ruleFromResponse<SwrlRule>(await apiClient.post<unknown>(
           withDraft(`/api/ontology/${projectId}/rules`, draftMode),
           body
-        );
+        ));
         rulesVersionRef.current++;
         setRules([...rules, res]);
         setSelectedRule(res);
@@ -2243,10 +2245,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     setSaveError(null);
     try {
       const body = localCopyBody({ ...rule, comment: rule.comment ?? '' }, rules.map(r => r.ruleName));
-      const res = await apiClient.post<SwrlRule>(
+      const res = ruleFromResponse<SwrlRule>(await apiClient.post<unknown>(
         withDraft(`/api/ontology/${projectId}/rules`, draftMode),
         { ...body, origin: { source: 'swrl-rules', label: 'Made a local copy of ' + rule.ruleName } }
-      );
+      ));
       rulesVersionRef.current++;
       setRules(prev => [...prev, res]);
       handleSelectRule(res);
@@ -2285,13 +2287,13 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
   const handleToggleEnabled = async (rule: SwrlRule) => {
     try {
-      const res = await apiClient.put<SwrlRule>(
+      const res = ruleFromResponse<SwrlRule>(await apiClient.put<unknown>(
         withDraft(`/api/ontology/${projectId}/rules/${rule.id}`, draftMode),
         ruleWriteBody(
           { ruleName: rule.ruleName, ruleText: rule.ruleText, comment: rule.comment || '', category: rule.category || '', enabled: !rule.enabled },
           (rule.enabled ? 'Turned off rule ' : 'Turned on rule ') + rule.ruleName
         )
-      );
+      ));
       rulesVersionRef.current++;
       setRules(rules.map(r => r.id === rule.id ? res : r));
       if (selectedRule?.id === rule.id) {
