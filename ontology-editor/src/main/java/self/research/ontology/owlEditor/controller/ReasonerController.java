@@ -1799,8 +1799,10 @@ public class ReasonerController {
             Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
             List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
             RuleExecutionPresenter.Full full = RuleExecutionPresenter.partition(derived, asserted);
-            RuleExecutionPresenter.Presented presented = RuleExecutionPresenter.limited(full, RuleExecutionPresenter.MAX_INFERRED);
             String runId = storeRun(projectId, isDraft, request, full);
+            RuleExecutionPresenter.Presented presented = runId != null
+                    ? RuleExecutionPresenter.firstPage(full, RuleExecutionPresenter.FIRST_PAGE)
+                    : RuleExecutionPresenter.limited(full, RuleExecutionPresenter.MAX_INFERRED);
             List<Map<String, Object>> axioms = new ArrayList<>();
             for (OWLAxiom axiom : presented.ordered()) {
                 axioms.add(RuleExecutionPresenter.toJson(axiom, presented.conclusions().contains(axiom) ? "conclusion" : "structure"));
