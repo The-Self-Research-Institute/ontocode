@@ -19,6 +19,7 @@
     <properties>
         <java.version>21</java.version>
         <rdf4j.version>4.3.7</rdf4j.version>
+        <jena.version>6.1.0</jena.version>
         <owlapi.version>5.5.0</owlapi.version>
         <git.commit>unknown</git.commit>
     </properties>
@@ -157,6 +158,12 @@
         </dependency>
         
         <!-- ========== ECLIPSE RDF4J (SPARQL client + in-memory cache) ========== -->
+        <dependency>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-arq</artifactId>
+            <version>${jena.version}</version>
+        </dependency>
+
         <!-- RDF4J Repository API -->
         <dependency>
             <groupId>org.eclipse.rdf4j</groupId>
@@ -180,6 +187,11 @@
         <dependency>
             <groupId>org.eclipse.rdf4j</groupId>
             <artifactId>rdf4j-sail-memory</artifactId>
+            <version>${rdf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-sail-nativerdf</artifactId>
             <version>${rdf4j.version}</version>
         </dependency>
 

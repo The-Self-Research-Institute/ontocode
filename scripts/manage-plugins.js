@@ -90,11 +90,11 @@ const PLUGINS = [
   {
     pluginId: 'reasoner-plugin',
     name: 'OWL Reasoner',
-    shortDescription: 'Advanced OWL 2 reasoning with HermiT, ELK, and Pellet',
+    shortDescription: 'Advanced OWL 2 reasoning with HermiT, ELK, and JFact',
     description: 'Advanced OWL 2 reasoning plugin providing Protégé-style interface. Supports HermiT, ELK, JFact, and structural reasoners. Features include consistency checking, classification, inferred hierarchy visualization, unsatisfiable class detection with explanations, and real-time synchronization with the ontology editor.',
     version: '1.0.0',
     category: 'Reasoning',
-    keywords: ['reasoner', 'owl', 'hermit', 'elk', 'pellet', 'inference', 'consistency', 'classification'],
+    keywords: ['reasoner', 'owl', 'hermit', 'elk', 'jfact', 'inference', 'consistency', 'classification'],
     featured: true
   },
   {

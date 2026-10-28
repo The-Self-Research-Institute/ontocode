@@ -122,6 +122,16 @@ export interface ExecutionResponse {
   structureCount?: number;
   omittedTrivialCount?: number;
   truncated?: boolean;
+  runId?: string;
+  counts?: { conclusions: number; structure: number; omittedTrivial?: number };
+}
+
+export interface AxiomsPageResponse {
+  axioms: InferredAxiom[];
+  total: number;
+  offset: number;
+  limit: number;
+  kind: string;
 }
 
 export interface PluginContext {

@@ -5,7 +5,18 @@ import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassAssertionAxiom;
+import org.semanticweb.owlapi.model.ClassExpressionType;
+import org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom;
+import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
+import org.semanticweb.owlapi.model.OWLDataPropertyDomainAxiom;
+import org.semanticweb.owlapi.model.OWLDataPropertyRangeAxiom;
+import org.semanticweb.owlapi.model.OWLDeclarationAxiom;
+import org.semanticweb.owlapi.model.OWLEntity;
+import org.semanticweb.owlapi.model.OWLObjectPropertyDomainAxiom;
+import org.semanticweb.owlapi.model.OWLObjectPropertyRangeAxiom;
+import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
+import org.semanticweb.owlapi.model.SWRLClassAtom;
 import org.semanticweb.owlapi.model.OWLDataProperty;
 import org.semanticweb.owlapi.model.OWLDataPropertyAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLNamedIndividual;
@@ -93,23 +104,27 @@ public final class RuleExecution {
 
         int translatedCount = 0;
         List<String> executed = new ArrayList<>();
+        List<String> executedIds = new ArrayList<>();
         List<SkippedRule> skipped = new ArrayList<>();
         List<String> limitations = new ArrayList<>();
         List<SWRLRule> engineRules = new ArrayList<>();
         List<SWRLRule> headRules = new ArrayList<>();
         Map<SWRLRule, String> ids = new LinkedHashMap<>();
+        Map<SWRLRule, String> names = new LinkedHashMap<>();
         for (SWRLRule rule : rules) {
             String id = ruleId(rule);
             ids.put(rule, id);
+            names.put(rule, ruleName(rule));
             if (SwrlBuiltIns.usesBuiltIn(rule)) {
                 Optional<OWLAxiom> translated = SwrlComparisonTranslator.translate(rule, df);
                 if (translated.isPresent()) {
                     manager.addAxiom(working, translated.get());
                     translatedCount++;
-                    executed.add(id);
+                    executed.add(names.get(rule));
+                    executedIds.add(id);
                     headRules.add(rule);
                 } else if (concludesEquality(rule)) {
-                    skipped.add(new SkippedRule(id, "A rule that uses a built-in function and concludes sameAs or differentFrom is not supported."));
+                    skipped.add(new SkippedRule(names.get(rule), id, "A rule that uses a built-in function and concludes sameAs or differentFrom is not supported."));
                 } else {
                     engineRules.add(rule);
                     headRules.add(rule);
@@ -119,13 +134,14 @@ public final class RuleExecution {
                 headRules.add(rule);
             } else {
                 manager.addAxiom(working, rule);
-                executed.add(id);
+                executed.add(names.get(rule));
+                executedIds.add(id);
                 headRules.add(rule);
             }
         }
         if (!engineRules.isEmpty() && stage == null) {
             for (SWRLRule rule : engineRules) {
-                skipped.add(new SkippedRule(ids.get(rule), "No rule engine is available here."));
+                skipped.add(new SkippedRule(names.get(rule), ids.get(rule), "No rule engine is available here."));
             }
             engineRules.clear();
         }
@@ -222,11 +238,12 @@ public final class RuleExecution {
         }
         if (!engineAvailable) {
             for (SWRLRule rule : engineRules) {
-                skipped.add(new SkippedRule(ids.get(rule), "The rule engine could not be reached."));
+                skipped.add(new SkippedRule(names.get(rule), ids.get(rule), "The rule engine could not be reached."));
             }
         } else if (engineRan || engineRules.isEmpty()) {
             for (SWRLRule rule : engineRules) {
-                executed.add(ids.get(rule));
+                executed.add(names.get(rule));
+                executedIds.add(ids.get(rule));
             }
         }
 
@@ -246,14 +263,14 @@ public final class RuleExecution {
             message = describe(status, limit, skipped.size(), round, limits);
         }
         Stopping stopping = new Stopping(round, limits.maxRounds(), elapsedMillis(started), limits.maxMillis(), limit, converged);
-        return new RuleExecutionResult(status, working, List.copyOf(derived.values()), List.copyOf(executed), engineRan ? engineRules.size() : 0, translatedCount,
+        return new RuleExecutionResult(status, working, List.copyOf(derived.values()), List.copyOf(executed), List.copyOf(executedIds), engineRan ? engineRules.size() : 0, translatedCount,
                 List.copyOf(skipped), List.copyOf(limitations), snapshotId, versions, stopping, message);
     }
 
     private RuleExecutionResult failed(OWLOntology working, String snapshotId, Map<String, String> versions, String message,
                                        RuleExecutionLimits limits, long started, int rounds, List<String> executed,
                                        List<SkippedRule> skipped, List<String> limitations) {
-        return new RuleExecutionResult(Status.FAILED, working, List.of(), executed, 0, 0, skipped, limitations, snapshotId, versions,
+        return new RuleExecutionResult(Status.FAILED, working, List.of(), executed, executed, 0, 0, skipped, limitations, snapshotId, versions,
                 new Stopping(rounds, limits.maxRounds(), elapsedMillis(started), limits.maxMillis(), Limit.NONE, false), message);
     }
 
@@ -288,31 +305,121 @@ public final class RuleExecution {
 
     private Optional<Set<OWLAxiom>> owlFacts(OWLOntology working, OWLDataFactory df, Set<OWLClass> classes,
                                              Set<OWLObjectProperty> objectProperties, Set<OWLDataProperty> dataProperties) {
+        boolean mayMerge = mayMergeIndividuals(working);
+        Set<OWLClass> openClasses = new LinkedHashSet<>();
+        for (OWLClass c : classes) {
+            if (mayMerge || !onlyAsserted(working, c)) {
+                openClasses.add(c);
+            }
+        }
+        List<OWLObjectProperty> openObjectProperties = new ArrayList<>();
+        for (OWLObjectProperty p : objectProperties) {
+            if (mayMerge || !onlyAsserted(working, p)) {
+                openObjectProperties.add(p);
+            }
+        }
+        List<OWLDataProperty> openDataProperties = new ArrayList<>();
+        for (OWLDataProperty d : dataProperties) {
+            if (mayMerge || !onlyAsserted(working, d)) {
+                openDataProperties.add(d);
+            }
+        }
         OWLReasoner reasoner = reasonerFactory.apply(working);
         try {
             if (!reasoner.isConsistent()) {
                 return Optional.empty();
             }
-            reasoner.precomputeInferences(InferenceType.CLASS_ASSERTIONS, InferenceType.OBJECT_PROPERTY_ASSERTIONS);
+            List<InferenceType> precompute = new ArrayList<>();
+            if (!openClasses.isEmpty()) {
+                precompute.add(InferenceType.CLASS_ASSERTIONS);
+            }
+            if (!openObjectProperties.isEmpty()) {
+                precompute.add(InferenceType.OBJECT_PROPERTY_ASSERTIONS);
+            }
+            if (!precompute.isEmpty()) {
+                reasoner.precomputeInferences(precompute.toArray(new InferenceType[0]));
+            }
             Set<OWLAxiom> facts = new LinkedHashSet<>();
-            for (OWLClass c : classes) {
+            for (OWLClass c : openClasses) {
                 reasoner.getInstances(c, false).entities().forEach(i -> facts.add(df.getOWLClassAssertionAxiom(c, i)));
             }
-            List<OWLNamedIndividual> individuals = working.individualsInSignature().collect(Collectors.toList());
-            for (OWLNamedIndividual i : individuals) {
-                for (OWLObjectProperty p : objectProperties) {
-                    reasoner.getObjectPropertyValues(i, p).entities()
-                            .filter(OWLNamedIndividual.class::isInstance)
-                            .forEach(o -> facts.add(df.getOWLObjectPropertyAssertionAxiom(p, i, o)));
-                }
-                for (OWLDataProperty d : dataProperties) {
-                    reasoner.getDataPropertyValues(i, d).forEach(v -> facts.add(df.getOWLDataPropertyAssertionAxiom(d, i, v)));
+            if (!openObjectProperties.isEmpty() || !openDataProperties.isEmpty()) {
+                List<OWLNamedIndividual> individuals = working.individualsInSignature().collect(Collectors.toList());
+                for (OWLNamedIndividual i : individuals) {
+                    for (OWLObjectProperty p : openObjectProperties) {
+                        reasoner.getObjectPropertyValues(i, p).entities()
+                                .filter(OWLNamedIndividual.class::isInstance)
+                                .forEach(o -> facts.add(df.getOWLObjectPropertyAssertionAxiom(p, i, o)));
+                    }
+                    for (OWLDataProperty d : openDataProperties) {
+                        reasoner.getDataPropertyValues(i, d).forEach(v -> facts.add(df.getOWLDataPropertyAssertionAxiom(d, i, v)));
+                    }
                 }
             }
             return Optional.of(facts);
         } finally {
             reasoner.dispose();
         }
+    }
+
+    private static final Set<ClassExpressionType> MONOTONE = Set.of(ClassExpressionType.OWL_CLASS, ClassExpressionType.OBJECT_INTERSECTION_OF,
+            ClassExpressionType.OBJECT_UNION_OF, ClassExpressionType.OBJECT_SOME_VALUES_FROM, ClassExpressionType.DATA_SOME_VALUES_FROM,
+            ClassExpressionType.OBJECT_HAS_VALUE, ClassExpressionType.DATA_HAS_VALUE, ClassExpressionType.OBJECT_MIN_CARDINALITY,
+            ClassExpressionType.DATA_MIN_CARDINALITY);
+
+    private static boolean monotone(OWLClassExpression expression) {
+        return expression.nestedClassExpressions().allMatch(e -> MONOTONE.contains(e.getClassExpressionType()));
+    }
+
+    private static boolean mayMergeIndividuals(OWLOntology ontology) {
+        return ontology.axioms().anyMatch(axiom -> {
+            if (axiom instanceof OWLClassAssertionAxiom a && a.getClassExpression() instanceof OWLClass) {
+                return false;
+            }
+            if (axiom instanceof OWLObjectPropertyAssertionAxiom || axiom instanceof OWLDataPropertyAssertionAxiom
+                    || axiom instanceof OWLDeclarationAxiom || axiom instanceof OWLAnnotationAssertionAxiom) {
+                return false;
+            }
+            if (axiom.isOfType(AxiomType.SAME_INDIVIDUAL, AxiomType.FUNCTIONAL_OBJECT_PROPERTY,
+                    AxiomType.INVERSE_FUNCTIONAL_OBJECT_PROPERTY, AxiomType.HAS_KEY)) {
+                return true;
+            }
+            if (axiom instanceof SWRLRule r && r.head().anyMatch(a -> a instanceof SWRLSameIndividualAtom || a instanceof SWRLDifferentIndividualsAtom)) {
+                return true;
+            }
+            return axiom.nestedClassExpressions().anyMatch(e -> switch (e.getClassExpressionType()) {
+                case OBJECT_ONE_OF, OBJECT_MAX_CARDINALITY, OBJECT_EXACT_CARDINALITY -> true;
+                default -> false;
+            });
+        });
+    }
+
+    private static boolean onlyAsserted(OWLOntology ontology, OWLEntity entity) {
+        boolean isClass = entity instanceof OWLClass;
+        return ontology.referencingAxioms(entity).allMatch(axiom -> {
+            if (axiom instanceof OWLObjectPropertyAssertionAxiom a) {
+                return a.getProperty() instanceof OWLObjectProperty;
+            }
+            if (axiom instanceof OWLDeclarationAxiom || axiom instanceof OWLAnnotationAssertionAxiom
+                    || axiom instanceof OWLDataPropertyAssertionAxiom) {
+                return true;
+            }
+            if (axiom instanceof OWLClassAssertionAxiom a) {
+                return a.getClassExpression() instanceof OWLClass;
+            }
+            if (axiom instanceof OWLObjectPropertyDomainAxiom || axiom instanceof OWLObjectPropertyRangeAxiom
+                    || axiom instanceof OWLDataPropertyDomainAxiom || axiom instanceof OWLDataPropertyRangeAxiom) {
+                return !isClass;
+            }
+            if (axiom instanceof OWLSubClassOfAxiom s) {
+                return monotone(s.getSubClass()) && s.getSuperClass().signature().noneMatch(entity::equals);
+            }
+            if (axiom instanceof SWRLRule r) {
+                return r.head().noneMatch(a -> a.signature().anyMatch(entity::equals))
+                        && r.body().filter(SWRLClassAtom.class::isInstance).map(a -> ((SWRLClassAtom) a).getPredicate()).allMatch(RuleExecution::monotone);
+            }
+            return false;
+        });
     }
 
     private static int absorb(Set<OWLAxiom> axioms, OWLOntology working, OWLOntologyManager manager,
@@ -386,12 +493,24 @@ public final class RuleExecution {
         return axiom.getAxiomWithoutAnnotations().toString();
     }
 
-    public static String ruleId(SWRLRule rule) {
-        String label = rule.annotations()
+    private static String labelOf(SWRLRule rule) {
+        return rule.annotations()
                 .filter(a -> a.getProperty().isLabel())
                 .map(a -> a.getValue().asLiteral().map(l -> l.getLiteral()).orElse(null))
                 .filter(v -> v != null && !v.isBlank())
                 .findFirst().orElse(null);
+    }
+
+    public static String ruleName(SWRLRule rule) {
+        String label = labelOf(rule);
+        if (label != null) {
+            return label;
+        }
+        return "Rule " + ruleId(rule).substring("rule-".length());
+    }
+
+    public static String ruleId(SWRLRule rule) {
+        String label = labelOf(rule);
         if (label != null) {
             return label;
         }

@@ -76,6 +76,69 @@ class RestRuleStageTest {
         assertEquals(1, calls.get());
     }
 
+    private String startWithBody(int status, String json) throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/swrl/infer/ontology-rules", exchange -> {
+            calls.incrementAndGet();
+            byte[] body = json.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        return "http://127.0.0.1:" + server.getAddress().getPort();
+    }
+
+    @Test
+    void aBusyAnswerIsNotAFailureAndDoesNotSwitchTheEngineOffForAMinute() throws Exception {
+        RestRuleStage stage = new RestRuleStage(startWithBody(429,
+                "{\"busy\":true,\"reason\":\"queue_full\",\"retryAfterSeconds\":5,\"message\":\"busy\"}"), Duration.ofSeconds(5), "t");
+
+        assertTrue(stage.infer(empty(), List.of()).isEmpty());
+        assertEquals("The rule engine is busy. 0 rules were not run. Try again in a moment.", RestRuleStage.takeBusyLimitation());
+        assertTrue(stage.infer(empty(), List.of()).isEmpty());
+
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void aBusy503IsNotRetriedForTheStartupWaitAndIsNotAFailure() throws Exception {
+        RestRuleStage stage = new RestRuleStage(startWithBody(503, "{ \"busy\" : true, \"reason\": \"owner_limit\" }"), Duration.ofSeconds(5), "t");
+
+        assertTrue(stage.infer(empty(), List.of()).isEmpty());
+        assertTrue(stage.infer(empty(), List.of()).isEmpty());
+
+        assertEquals(2, calls.get());
+        assertTrue(RestRuleStage.takeBusyLimitation().startsWith("The rule engine is busy."));
+    }
+
+    @Test
+    void theBusyTextCountsRulesInTheSingular() {
+        assertEquals("The rule engine is busy. 1 rule was not run. Try again in a moment.", RestRuleStage.busyLimitation(1));
+        assertEquals("The rule engine is busy. 3 rules were not run. Try again in a moment.", RestRuleStage.busyLimitation(3));
+    }
+
+    @Test
+    void aRealFailureStillSwitchesTheEngineOffAndLeavesNoBusyNote() throws Exception {
+        RestRuleStage stage = new RestRuleStage(startWithBody(500, "{\"error\":\"boom\"}"), Duration.ofSeconds(5), "t");
+
+        assertTrue(stage.infer(empty(), List.of()).isEmpty());
+        assertTrue(stage.infer(empty(), List.of()).isEmpty());
+
+        assertEquals(1, calls.get());
+        assertEquals(null, RestRuleStage.takeBusyLimitation());
+    }
+
+    @Test
+    void a429WithoutTheBusyMarkerIsStillAFailure() throws Exception {
+        RestRuleStage stage = new RestRuleStage(startWithBody(429, "{\"error\":\"rate limited\"}"), Duration.ofSeconds(5), "t");
+
+        stage.infer(empty(), List.of());
+        stage.infer(empty(), List.of());
+
+        assertEquals(1, calls.get());
+    }
+
     @Test
     void anAnsweredRequestIsKeptSoTheSameOntologyDoesNotAskAgain() throws Exception {
         RestRuleStage stage = new RestRuleStage(start(200), Duration.ofSeconds(5), "secret-1");

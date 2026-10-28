@@ -1,7 +1,23 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Trash2, Play, Save, Loader2, ChevronDown, ChevronRight, Download, Database, Code, Table, FileText, RefreshCw, Copy, Check } from 'lucide-react';
-import type { SparqlQuery, SparqlQueryResult, OntologyPrefix, PluginContext, SparqlQueryEditorProps, SparqlBinding } from './types';
+import type { SparqlQuery, SparqlQueryResult, OntologyPrefix, PluginContext, SparqlQueryEditorProps, GraphQueryResult, GraphFormat } from './types';
+import { detectQueryForm, isGraphForm, UPDATE_HINT } from './queryForm';
+import { formatTerm, normalizeRows, XSD_NS } from './bindingFormat';
+import type { PrefixEntry } from './bindingFormat';
+import { buildExportTable, toCsv, toTsv, buildJsonBindings } from './exportColumns';
+import {
+  INCLUDED_ITEMS, NOT_INCLUDED_ITEMS, buildRequestBody, canRefresh, countsText, effectiveMode, infoLine,
+  loadMode, mapConflict, partialMessages, saveMode, statusUrl, switchState, usedInferred
+} from './inferredState';
+import type { ConflictKind, InferenceMode, InferenceStatus, InferredInfo } from './inferredState';
+
+const GRAPH_FORMATS: { value: GraphFormat; label: string; ext: string; mime: string }[] = [
+  { value: 'turtle', label: 'Turtle', ext: 'ttl', mime: 'text/turtle' },
+  { value: 'jsonld', label: 'JSON-LD', ext: 'jsonld', mime: 'application/ld+json' },
+  { value: 'rdfxml', label: 'RDF/XML', ext: 'rdf', mime: 'application/rdf+xml' },
+  { value: 'ntriples', label: 'N-Triples', ext: 'nt', mime: 'application/n-triples' }
+];
 
 const SPARQL_KEYWORDS = [
   'SELECT', 'CONSTRUCT', 'DESCRIBE', 'ASK', 'WHERE', 'FROM', 'NAMED',
@@ -17,6 +33,18 @@ PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 `;
 
 const SAMPLE_QUERIES = [
+  {
+    name: 'Construct Subclass Triples',
+    query: `${COMMON_PREFIXES}CONSTRUCT { ?sub rdfs:subClassOf ?super } WHERE {
+  ?sub rdfs:subClassOf ?super .
+  FILTER(isIRI(?super))
+}
+LIMIT 100`
+  },
+  {
+    name: 'Ask If Any Class Exists',
+    query: `${COMMON_PREFIXES}ASK { ?class a owl:Class }`
+  },
   {
     name: 'List All Classes',
     query: `${COMMON_PREFIXES}SELECT DISTINCT ?class ?label WHERE {
@@ -94,6 +122,56 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [isResizing, setIsResizing] = useState(false);
   const [activeTab, setActiveTab] = useState<'editor' | 'results'>('editor');
   const [selectedSample, setSelectedSample] = useState('');
+  const [graphResult, setGraphResult] = useState<GraphQueryResult | null>(null);
+  const [booleanResult, setBooleanResult] = useState<{ value: boolean; executionTime?: number } | null>(null);
+  const [graphFormat, setGraphFormat] = useState<GraphFormat>('turtle');
+  const [includeTypes, setIncludeTypes] = useState(false);
+  const [mode, setMode] = useState<InferenceMode>(() => loadMode(projectId));
+  const [status, setStatus] = useState<InferenceStatus | null>(null);
+  const [inferredInfo, setInferredInfo] = useState<InferredInfo | null>(null);
+  const [conflict, setConflict] = useState<ConflictKind | null>(null);
+  const [showIncluded, setShowIncluded] = useState(false);
+
+  const clearResults = () => {
+    setResults(null);
+    setGraphResult(null);
+    setBooleanResult(null);
+    setInferredInfo(null);
+  };
+
+  useEffect(() => {
+    setMode(loadMode(projectId));
+  }, [projectId]);
+
+  const refreshStatus = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const next = await apiClient.get<InferenceStatus>(statusUrl(projectId, draftMode));
+      setStatus(next && typeof next === 'object' && !Array.isArray(next) ? next : null);
+    } catch {
+      setStatus(null);
+    }
+  }, [projectId, draftMode, apiClient]);
+
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
+
+  const switchInfo = switchState(status);
+  const activeMode = effectiveMode(mode, status);
+
+  const chooseMode = (next: InferenceMode) => {
+    setMode(next);
+    saveMode(projectId, next);
+  };
+
+  const queryForm = detectQueryForm(queryText);
+  const isUpdate = queryForm === 'update';
+  const hasOutcome = !!(results || graphResult || booleanResult);
+  const shortPrefixes: PrefixEntry[] = [
+    ...prefixes.map(p => ({ prefix: p.prefix, namespace: p.namespace })),
+    { prefix: 'xsd', namespace: XSD_NS }
+  ];
 
   const fetchQueries = useCallback(async () => {
     if (!projectId) return;
@@ -113,7 +191,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setSelectedQuery(query);
     setQueryText(query.queryText);
     setQueryName(query.name);
-    setResults(null);
+    clearResults();
     setError(null);
     setActiveTab('editor');
   };
@@ -122,7 +200,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setSelectedQuery(null);
     setQueryText('SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o\n} LIMIT 10');
     setQueryName('New Query');
-    setResults(null);
+    clearResults();
     setError(null);
     setActiveTab('editor');
   };
@@ -131,7 +209,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     setSelectedQuery(null);
     setQueryText(sample.query);
     setQueryName(sample.name);
-    setResults(null);
+    clearResults();
     setError(null);
     setActiveTab('editor');
     setTimeout(() => setSelectedSample(''), 300);
@@ -194,64 +272,98 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     }
   };
 
-  const handleExecuteQuery = async () => {
+  const saveBlob = (content: string, mime: string, filename: string) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const baseName = () => queryName.replace(/\s+/g, '_') || 'query-results';
+
+  const handleExecuteQuery = async (formatOverride?: GraphFormat, refresh = false) => {
+    const form = detectQueryForm(queryText);
+    if (form === 'update') {
+      setError(UPDATE_HINT);
+      return;
+    }
+    const format = formatOverride ?? graphFormat;
     setIsLoading(true);
-    setResults(null);
+    clearResults();
     setError(null);
-    
+    setConflict(null);
+
     try {
+      const base: { query: string; format?: GraphFormat } = { query: queryText };
+      if (isGraphForm(form)) base.format = format;
+      const body = buildRequestBody(base, activeMode, refresh);
       const response = await apiClient.post<any>(
         `/api/sparql/query/${projectId}${draftMode ? '?draft=true' : ''}`,
-        { query: queryText }
+        body
       );
-      if (response.error) {
+      const answeredConflict = mapConflict(response);
+      if (answeredConflict) {
+        setConflict(answeredConflict);
+        setActiveTab('editor');
+        return;
+      }
+      if (response?.error) {
         setError(response.error);
         return;
       }
-      let resultsData = response.results;
-      if (typeof resultsData === 'string') {
-        try { resultsData = JSON.parse(resultsData); } catch { resultsData = []; }
+      setInferredInfo(usedInferred(response));
+      const executionTime = response?.executionTime;
+      if (response?.type === 'graph') {
+        setGraphResult({
+          format: (response.format as GraphFormat) || format,
+          content: typeof response.content === 'string' ? response.content : '',
+          tripleCount: typeof response.tripleCount === 'number' ? response.tripleCount : undefined,
+          truncated: response.truncated === true,
+          executionTime
+        });
+      } else if (response?.type === 'boolean') {
+        setBooleanResult({ value: response.boolean === true, executionTime });
+      } else {
+        const rows = normalizeRows(response);
+        const vars: string[] = Array.isArray(response?.head?.vars)
+          ? response.head.vars
+          : Array.from(new Set(rows.flatMap(r => Object.keys(r))));
+        setResults({ head: { vars }, results: { bindings: rows }, executionTime });
       }
-      const rawRows: Record<string, any>[] = Array.isArray(resultsData)
-        ? resultsData
-        : Array.isArray(resultsData?.bindings)
-          ? resultsData.bindings
-          : [];
-      const transformedResults: SparqlQueryResult = {
-        head: response.head,
-        results: {
-          bindings: rawRows.map((row: Record<string, any>) => {
-            const binding: SparqlBinding = {};
-            for (const [key, val] of Object.entries(row)) {
-              binding[key] = {
-                type: val?.type || (typeof val === 'string' && val.startsWith('http') ? 'uri' : 'literal'),
-                value: (typeof val === 'string' ? val : val?.value) || '',
-                datatype: val?.datatype,
-                'xml:lang': val?.['xml:lang']
-              };
-            }
-            return binding;
-          })
-        },
-        executionTime: (response as any).executionTime
-      };
-      setResults(transformedResults);
       setActiveTab('results');
     } catch (err: any) {
-      setError(err?.message || 'Failed to execute query');
-      console.error('Failed to execute SPARQL query:', err);
+      const thrownConflict = mapConflict(err);
+      if (thrownConflict) {
+        setConflict(thrownConflict);
+        setActiveTab('editor');
+      } else {
+        setError(err?.message || 'Failed to execute query');
+        console.error('Failed to execute SPARQL query:', err);
+      }
     } finally {
       setIsLoading(false);
+      refreshStatus();
     }
   };
 
+  const handleGraphFormatChange = (format: GraphFormat) => {
+    setGraphFormat(format);
+    handleExecuteQuery(format);
+  };
+
   const handleCopyResults = () => {
-    if (!results) return;
-    
-    const text = results.results.bindings.map(b => 
-      results.head.vars.map(v => b[v]?.value || '').join('\t')
-    ).join('\n');
-    
+    let text = '';
+    if (graphResult) {
+      text = graphResult.content;
+    } else if (results) {
+      text = toTsv(buildExportTable(results.head.vars, results.results.bindings, includeTypes));
+    } else {
+      return;
+    }
+
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -259,32 +371,10 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
 
   const downloadCsv = () => {
     if (!results) return;
-    
+
     try {
-      const cols = results.head.vars;
-      const escapeCsv = (val: string) => {
-        if (val == null) return '""';
-        const str = String(val);
-        if (str.includes('"') || str.includes(',') || str.includes('\n')) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
-      };
-      
-      const header = cols.map(escapeCsv).join(',');
-      const rows = results.results.bindings.map(b =>
-        cols.map(c => escapeCsv(b[c]?.value ?? '')).join(',')
-      );
-      
-      const csv = [header, ...rows].join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${queryName.replace(/\s+/g, '_') || 'query-results'}.csv`;
-      link.click();
-      URL.revokeObjectURL(url);
-      
+      const csv = toCsv(buildExportTable(results.head.vars, results.results.bindings, includeTypes));
+      saveBlob(csv, 'text/csv;charset=utf-8;', `${baseName()}.csv`);
       context.showNotification?.('CSV downloaded successfully', 'success');
     } catch (error) {
       console.error('CSV download failed:', error);
@@ -292,23 +382,45 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     }
   };
 
+  const downloadTsv = () => {
+    if (!results) return;
+
+    try {
+      const tsv = toTsv(buildExportTable(results.head.vars, results.results.bindings, includeTypes), true);
+      saveBlob(tsv, 'text/tab-separated-values;charset=utf-8;', `${baseName()}.tsv`);
+      context.showNotification?.('TSV downloaded successfully', 'success');
+    } catch (error) {
+      console.error('TSV download failed:', error);
+      context.showNotification?.('Failed to download TSV', 'error');
+    }
+  };
+
   const downloadJson = () => {
     if (!results) return;
-    
+
     try {
-      const json = JSON.stringify(results, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${queryName.replace(/\s+/g, '_') || 'query-results'}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      
+      const out = {
+        ...results,
+        results: { bindings: buildJsonBindings(results.head.vars, results.results.bindings, includeTypes) }
+      };
+      saveBlob(JSON.stringify(out, null, 2), 'application/json', `${baseName()}.json`);
       context.showNotification?.('JSON downloaded successfully', 'success');
     } catch (error) {
       console.error('JSON download failed:', error);
       context.showNotification?.('Failed to download JSON', 'error');
+    }
+  };
+
+  const downloadGraph = () => {
+    if (!graphResult) return;
+
+    try {
+      const meta = GRAPH_FORMATS.find(f => f.value === graphResult.format) ?? GRAPH_FORMATS[0];
+      saveBlob(graphResult.content, `${meta.mime};charset=utf-8;`, `${baseName()}.${meta.ext}`);
+      context.showNotification?.(`${meta.label} downloaded successfully`, 'success');
+    } catch (error) {
+      console.error('Graph download failed:', error);
+      context.showNotification?.('Failed to download results', 'error');
     }
   };
 
@@ -516,6 +628,61 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               spellCheck={false}
             />
 
+            {isUpdate && (
+              <div
+                className="p-3 border rounded-lg text-sm"
+                style={{ borderColor: 'var(--warning, #f59e0b)', backgroundColor: 'var(--surface-2)' }}
+              >
+                {UPDATE_HINT}
+              </div>
+            )}
+
+            {conflict?.kind === 'needsReasoning' && (
+              <div
+                data-testid="needs-reasoning-panel"
+                className="p-3 border rounded-lg text-sm space-y-2"
+                style={{ borderColor: 'var(--warning, #f59e0b)', backgroundColor: 'var(--surface-2)' }}
+              >
+                <div>{conflict.message}</div>
+                <div className="flex items-center gap-2">
+                  {canRefresh(conflict.reason) && (
+                    <button
+                      onClick={() => handleExecuteQuery(undefined, true)}
+                      disabled={isLoading}
+                      className="px-3 py-1.5 text-xs rounded-lg btn-outline disabled:opacity-50"
+                    >
+                      Run again with refresh
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { chooseMode('asserted'); setConflict(null); }}
+                    className="px-3 py-1.5 text-xs rounded-lg btn-outline"
+                  >
+                    Switch to asserted only
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {conflict?.kind === 'inconsistent' && (
+              <div
+                data-testid="inconsistent-panel"
+                className="p-3 border rounded-lg text-sm space-y-1"
+                style={{ borderColor: 'var(--error)', backgroundColor: 'var(--surface-2)' }}
+              >
+                <div className="font-semibold text-error">The ontology is inconsistent</div>
+                <div>{conflict.message}</div>
+                {conflict.explanation && <div className="text-xs text-secondary whitespace-pre-wrap">{conflict.explanation}</div>}
+                <div className="text-xs text-secondary">No results are shown. Fix the inconsistency, or switch to asserted only.</div>
+                <button
+                  onClick={() => { chooseMode('asserted'); setConflict(null); }}
+                  className="px-3 py-1.5 text-xs rounded-lg btn-outline"
+                >
+                  Switch to asserted only
+                </button>
+              </div>
+            )}
+
             {error && (
               <div
                 className="p-3 border rounded-lg text-sm text-error"
@@ -545,6 +712,57 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               </div>
               
               <div className="flex items-center gap-2">
+                <div className="relative flex items-center gap-1">
+                  <div
+                    role="group"
+                    aria-label="Data searched"
+                    title={switchInfo.tooltip}
+                    className="flex rounded-lg border border-default overflow-hidden"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={activeMode === 'asserted'}
+                      onClick={() => chooseMode('asserted')}
+                      className={`px-3 py-1.5 text-xs transition-colors ${activeMode === 'asserted' ? 'btn-tonal' : 'text-secondary hover-overlay'}`}
+                    >
+                      Asserted only
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={activeMode === 'inferred'}
+                      disabled={switchInfo.disabled}
+                      title={switchInfo.tooltip}
+                      onClick={() => chooseMode('inferred')}
+                      className={`px-3 py-1.5 text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${activeMode === 'inferred' ? 'btn-tonal' : 'text-secondary hover-overlay'}`}
+                    >
+                      Include inferred
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowIncluded(v => !v)}
+                    aria-expanded={showIncluded}
+                    className="px-2 py-1 text-xs text-secondary hover-overlay rounded"
+                  >
+                    What is included
+                  </button>
+                  {showIncluded && (
+                    <div
+                      data-testid="included-popover"
+                      className="absolute right-0 bottom-full mb-2 w-72 p-3 rounded-lg border border-default text-xs space-y-2 z-10"
+                      style={{ backgroundColor: 'var(--surface-1)' }}
+                    >
+                      <div className="font-semibold">Included</div>
+                      <ul className="list-disc pl-4">
+                        {INCLUDED_ITEMS.map(item => <li key={item}>{item}</li>)}
+                      </ul>
+                      <div className="font-semibold">Not included</div>
+                      <ul className="list-disc pl-4">
+                        {NOT_INCLUDED_ITEMS.map(item => <li key={item}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={handleSaveQuery}
                   disabled={isSaving}
@@ -554,8 +772,8 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                   Save
                 </button>
                 <button
-                  onClick={handleExecuteQuery}
-                  disabled={isLoading || !queryText.trim()}
+                  onClick={() => handleExecuteQuery()}
+                  disabled={isLoading || !queryText.trim() || isUpdate}
                   className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   style={{ backgroundColor: '#8b5cf6', color: '#ffffff' }}
                   onMouseEnter={(e) => !isLoading && (e.currentTarget.style.backgroundColor = '#7c3aed')}
@@ -580,25 +798,70 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                   <Table size={16} />
                   Query Results
                 </span>
-                {results && (
+                {hasOutcome && (
                   <>
-                    <span className="text-xs text-tertiary">
-                    {results.results.bindings.length} rows
-                  </span>
-                    {results.executionTime !== undefined && (
+                    {results && (
+                      <span className="text-xs text-tertiary">
+                        {results.results.bindings.length} rows
+                      </span>
+                    )}
+                    {graphResult && graphResult.tripleCount !== undefined && !graphResult.truncated && (
+                      <span className="text-xs text-tertiary">
+                        {graphResult.tripleCount} triples
+                      </span>
+                    )}
+                    {(results?.executionTime ?? graphResult?.executionTime ?? booleanResult?.executionTime) !== undefined && (
                       <span
                         className="text-xs px-2 py-0.5 rounded-full font-medium"
                         style={{ backgroundColor: 'var(--success-tint)', color: 'var(--success)' }}
                       >
-                        {results.executionTime}ms
+                        {results?.executionTime ?? graphResult?.executionTime ?? booleanResult?.executionTime}ms
                       </span>
                     )}
                   </>
                 )}
               </div>
               
+              {graphResult && (
+                <div className="flex items-center gap-2">
+                  <select
+                    aria-label="Result format"
+                    value={graphResult.format}
+                    onChange={(e) => handleGraphFormatChange(e.target.value as GraphFormat)}
+                    disabled={isLoading}
+                    className="text-xs rounded px-2 py-1 theme-input"
+                  >
+                    {GRAPH_FORMATS.map(f => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleCopyResults}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-secondary hover-overlay rounded transition-colors"
+                    title="Copy to clipboard"
+                  >
+                    {copied ? <Check size={14} style={{ color: 'var(--success)' }} /> : <Copy size={14} />}
+                  </button>
+                  <button
+                    onClick={downloadGraph}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-secondary hover-overlay rounded transition-colors"
+                    title="Download results"
+                  >
+                    <Download size={14} /> Download
+                  </button>
+                </div>
+              )}
+
               {results && (
                 <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1 text-xs text-secondary" title="Add datatype and language columns to CSV, TSV, JSON and copy">
+                    <input
+                      type="checkbox"
+                      checked={includeTypes}
+                      onChange={(e) => setIncludeTypes(e.target.checked)}
+                    />
+                    Include datatype and language
+                  </label>
                   <div className="flex rounded-lg border border-default overflow-hidden">
                     <button
                       onClick={() => setActiveResultTab('table')}
@@ -635,6 +898,13 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                     <Download size={14} /> CSV
                   </button>
                   <button
+                    onClick={downloadTsv}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-secondary hover-overlay rounded transition-colors"
+                    title="Download TSV"
+                  >
+                    <Download size={14} /> TSV
+                  </button>
+                  <button
                     onClick={downloadJson}
                     className="flex items-center gap-1 px-2 py-1 text-xs text-secondary hover-overlay rounded transition-colors"
                     title="Download JSON"
@@ -645,11 +915,65 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               )}
             </div>
 
+            {inferredInfo && (
+              <div
+                data-testid="inferred-info"
+                className="px-3 py-2 text-xs border-b border-default space-y-1"
+                style={{ backgroundColor: 'var(--surface-1)' }}
+              >
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>{infoLine(inferredInfo)}</span>
+                  {status?.stale && (
+                    <span
+                      data-testid="stale-badge"
+                      className="px-2 py-0.5 rounded-full font-medium"
+                      style={{ backgroundColor: 'var(--surface-2)', color: 'var(--warning, #f59e0b)' }}
+                    >
+                      Stale
+                    </span>
+                  )}
+                  {countsText(inferredInfo) && <span className="text-tertiary">{countsText(inferredInfo)}</span>}
+                </div>
+                {partialMessages(inferredInfo).length > 0 && (
+                  <div data-testid="partial-warning" style={{ color: 'var(--warning, #f59e0b)' }}>
+                    <div className="font-semibold">Partial results</div>
+                    <ul className="list-disc pl-4">
+                      {partialMessages(inferredInfo).map(m => <li key={m}>{m}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex-1 overflow-auto">
               {isLoading ? (
                 <div className="flex items-center justify-center h-64 text-secondary">
                   <Loader2 size={24} className="animate-spin mr-2" />
                   <span>Executing query...</span>
+                </div>
+              ) : graphResult ? (
+                <div className="flex flex-col h-full">
+                  {graphResult.truncated && (
+                    <div className="p-2 text-xs border-b border-default" style={{ backgroundColor: 'var(--surface-2)' }}>
+                      Showing first {graphResult.tripleCount ?? ''} triples; the rest were cut off. Add a LIMIT or narrow the query.
+                    </div>
+                  )}
+                  <pre data-testid="graph-result" className="p-4 text-xs font-mono text-primary overflow-auto whitespace-pre-wrap flex-1">
+                    {graphResult.content}
+                  </pre>
+                </div>
+              ) : booleanResult ? (
+                <div className="flex items-center justify-center h-64">
+                  <span
+                    data-testid="boolean-result"
+                    className="text-lg font-semibold px-6 py-2 rounded-full"
+                    style={{
+                      backgroundColor: booleanResult.value ? 'var(--success-tint)' : 'var(--surface-2)',
+                      color: booleanResult.value ? 'var(--success)' : 'var(--error)'
+                    }}
+                  >
+                    {booleanResult.value ? 'true' : 'false'}
+                  </span>
                 </div>
               ) : results ? (
                 activeResultTab === 'table' ? (
@@ -666,13 +990,14 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                     <tbody className="divide-y" style={{ borderColor: 'var(--divider)' }}>
                       {results.results.bindings.map((binding, rowIndex) => (
                         <tr key={rowIndex} className="hover-overlay">
-                          {results.head.vars.map((col) => (
-                            <td key={col} className="p-2 text-primary font-mono text-xs">
-                              <span title={binding[col]?.value}>
-                                {binding[col]?.value?.split('#').pop() || binding[col]?.value?.split('/').pop() || binding[col]?.value || '-'}
-                              </span>
-                            </td>
-                          ))}
+                          {results.head.vars.map((col) => {
+                            const shown = formatTerm(binding[col], shortPrefixes);
+                            return (
+                              <td key={col} className="p-2 text-primary font-mono text-xs">
+                                <span title={shown.title ?? binding[col]?.value}>{shown.text}</span>
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>

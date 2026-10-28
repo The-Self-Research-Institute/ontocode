@@ -88,7 +88,16 @@ public class ReasonerController {
     private ReasonerWorkerClient reasonerWorkerClient;
 
     @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleRunStore ruleRunStore;
+
+    @Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleRunAccess ruleRunAccess;
+
+    @Autowired(required = false)
     private ReasoningJobRelayService reasoningJobRelayService;
+
+    @Autowired
+    private self.research.ontology.owlEditor.service.JobAccess jobAccess;
 
     @Autowired(required = false)
     private StorageManager storageManager;
@@ -325,7 +334,7 @@ public class ReasonerController {
                 "error", e.getMessage()));
     }
 
-    private String submitHierarchyJob(String jobType, String projectId, String reasonerType) {
+    private String submitHierarchyJob(String jobType, String projectId, String reasonerType, HttpServletRequest request) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return null;
         }
@@ -338,6 +347,9 @@ public class ReasonerController {
             return null;
         }
         Object jobId = submitted.get("jobId");
+        if (jobId != null) {
+            jobAccess.register(request, String.valueOf(jobId), projectId);
+        }
         return jobId != null ? String.valueOf(jobId) : null;
     }
 
@@ -348,19 +360,38 @@ public class ReasonerController {
     @GetMapping("/{projectId}/reasoner/jobs/{jobId}")
     public ResponseEntity<Map<String, Object>> getReasonerJob(
             @PathVariable String projectId,
-            @PathVariable String jobId
+            @PathVariable String jobId,
+            HttpServletRequest request
     ) {
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return ResponseEntity.status(404).body(Map.of(
                     "success", false, "error", "Reasoner worker is not enabled on this deployment"));
         }
+        java.util.Optional<self.research.ontology.owlEditor.service.JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
+        if (jobAccess.isRegistered(jobId) && !jobAccess.check(caller.get(), projectId, jobId, null).allowed()) {
+            return jobNotFound();
+        }
         Map<String, Object> job = reasonerWorkerClient.getJob(jobId);
         if (job == null) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
+            return jobNotFound();
+        }
+        if (job.get("jobId") == null && !jobAccess.isRegistered(jobId)) {
+            return jobNotFound();
+        }
+        Object recordProject = job.get("projectId");
+        if (!jobAccess.check(caller.get(), projectId, jobId, recordProject != null ? recordProject.toString() : null).allowed()) {
+            return jobNotFound();
         }
         Map<String, Object> response = new HashMap<>(withNestedSnapshotResult(job));
         response.put("projectId", projectId);
         return ResponseEntity.ok(response);
+    }
+
+    private static ResponseEntity<Map<String, Object>> jobNotFound() {
+        return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
     }
 
     static Map<String, Object> withNestedSnapshotResult(Map<String, Object> job) {
@@ -407,7 +438,7 @@ public class ReasonerController {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
             if (!isDraft && reasonerWorkerEnabled && reasonerWorkerClient != null) {
-                ResponseEntity<Map<String, Object>> fromWorker = snapshotFromWorker(projectId, requested);
+                ResponseEntity<Map<String, Object>> fromWorker = snapshotFromWorker(projectId, requested, request);
                 if (fromWorker != null) {
                     return fromWorker;
                 }
@@ -421,7 +452,7 @@ public class ReasonerController {
         }
     }
 
-    private ResponseEntity<Map<String, Object>> snapshotFromWorker(String projectId, String requested) {
+    private ResponseEntity<Map<String, Object>> snapshotFromWorker(String projectId, String requested, HttpServletRequest request) {
         Map<String, Object> submitted = reasonerWorkerClient.submitJob(SNAPSHOT_JOB_TYPE, projectId, null, null, requested, null);
         if (Boolean.TRUE.equals(submitted.get("rateLimited"))) {
             throw new WorkerQueueFullException(String.valueOf(submitted.get("error")));
@@ -447,6 +478,7 @@ public class ReasonerController {
             body.put("error", ReasoningFriendlyErrors.forUser(String.valueOf(submitted.get("error"))));
             return ResponseEntity.ok(body);
         }
+        jobAccess.register(request, String.valueOf(jobId), projectId);
         if (reasoningJobRelayService != null) {
             reasoningJobRelayService.rememberSubmittedJob(String.valueOf(jobId), projectId, null, SNAPSHOT_JOB_TYPE, submitted);
         }
@@ -699,14 +731,20 @@ public class ReasonerController {
     @DeleteMapping("/{projectId}/reasoner/jobs/{jobId}")
     public ResponseEntity<Map<String, Object>> cancelReasonerJob(
             @PathVariable String projectId,
-            @PathVariable String jobId
+            @PathVariable String jobId,
+            HttpServletRequest request
     ) {
+        java.util.Optional<self.research.ontology.owlEditor.service.JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return ResponseEntity.ok(Map.of("success", true, "cancelled", false));
         }
         DLQueryJob relayed = reasoningJobRelayService != null ? reasoningJobRelayService.getJob(jobId) : null;
-        if (relayed != null && relayed.getProjectId() != null && !relayed.getProjectId().equals(projectId)) {
-            return ResponseEntity.status(404).body(Map.of("success", false, "error", "Job not found"));
+        String relayedProject = relayed != null ? relayed.getProjectId() : null;
+        if (!jobAccess.check(caller.get(), projectId, jobId, relayedProject).allowed()) {
+            return jobNotFound();
         }
         Map<String, Object> result = reasonerWorkerClient.cancelJob(jobId);
         if (Boolean.TRUE.equals(result.get("cancelled")) && reasoningJobRelayService != null) {
@@ -832,7 +870,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -1105,7 +1143,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_OBJ_PROP_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -1227,7 +1265,7 @@ public class ReasonerController {
         try {
             String resolvedUserId = resolveUserId(projectId, userId, request);
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
-            String jobId = isDraft ? null : submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType);
+            String jobId = isDraft ? null : submitHierarchyJob("REASONER_DATA_PROP_HIERARCHY", projectId, reasonerType, request);
             if (jobId != null) {
                 return ResponseEntity.ok(Map.of(
                         "success", true, "projectId", projectId,
@@ -1792,7 +1830,11 @@ public class ReasonerController {
 
             Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
             List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
-            RuleExecutionPresenter.Presented presented = RuleExecutionPresenter.present(derived, asserted, RuleExecutionPresenter.MAX_INFERRED);
+            RuleExecutionPresenter.Full full = RuleExecutionPresenter.partition(derived, asserted);
+            String runId = storeRun(projectId, isDraft, request, full);
+            RuleExecutionPresenter.Presented presented = runId != null
+                    ? RuleExecutionPresenter.firstPage(full, RuleExecutionPresenter.FIRST_PAGE)
+                    : RuleExecutionPresenter.limited(full, RuleExecutionPresenter.MAX_INFERRED);
             List<Map<String, Object>> axioms = new ArrayList<>();
             for (OWLAxiom axiom : presented.ordered()) {
                 axioms.add(RuleExecutionPresenter.toJson(axiom, presented.conclusions().contains(axiom) ? "conclusion" : "structure"));
@@ -1800,7 +1842,7 @@ public class ReasonerController {
 
             List<Map<String, String>> skipped = new ArrayList<>();
             for (RuleExecutionResult.SkippedRule rule : result.skippedRules()) {
-                skipped.add(Map.of("ruleName", rule.ruleId(), "reason", rule.reason()));
+                skipped.add(Map.of("ruleName", rule.ruleName(), "ruleId", rule.ruleId(), "reason", rule.reason()));
             }
             List<String> limitations = new ArrayList<>(result.limitations());
             String message = result.message();
@@ -1821,6 +1863,7 @@ public class ReasonerController {
             body.put("inferredAxioms", axioms);
             body.put("errorMessage", status == RuleExecutionResult.Status.FAILED ? message : null);
             body.put("executedRuleNames", result.executedRules());
+            body.put("executedRuleIds", result.executedRuleIds());
             body.put("skippedRules", skipped);
             body.put("completion", completion);
             body.put("stamp", ontologyVersionStamps != null ? ontologyVersionStamps.current(projectId, isDraft, draftUserId) : null);
@@ -1828,6 +1871,8 @@ public class ReasonerController {
             body.put("structureCount", presented.structureCount());
             body.put("omittedTrivialCount", presented.omittedTrivial());
             body.put("truncated", presented.truncated());
+            body.put("runId", runId);
+            body.put("counts", runCounts(full));
             body.put("executionMode", "all");
             body.put("status", status.name());
             body.put("statusLabel", status.label());
@@ -1853,6 +1898,26 @@ public class ReasonerController {
             body.put("executionMode", "all");
             return ResponseEntity.ok(body);
         }
+    }
+
+    private String storeRun(String projectId, boolean isDraft, HttpServletRequest request, RuleExecutionPresenter.Full full) {
+        if (ruleRunStore == null || ruleRunAccess == null) {
+            return null;
+        }
+        Optional<String> owner = ruleRunAccess.identity(request);
+        return owner.map(id -> ruleRunStore.put(projectId, id, isDraft, full.conclusions(), full.structure())).orElse(null);
+    }
+
+    private static Map<String, Object> runCounts(RuleExecutionPresenter.Full full) {
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("conclusions", full.conclusions().size());
+        counts.put("structure", full.structure().size());
+        counts.put("omittedTrivial", full.omittedTrivial());
+        if (full.conclusions().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_CONCLUSIONS
+                || full.structure().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_STRUCTURE) {
+            counts.put("capped", true);
+        }
+        return counts;
     }
 
     private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {

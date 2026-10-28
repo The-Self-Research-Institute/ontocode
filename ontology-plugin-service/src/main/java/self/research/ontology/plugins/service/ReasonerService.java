@@ -99,11 +99,37 @@ public class ReasonerService {
     // minutes in aggregate. Cap the whole loop, not just one call.
     @Value("${ontocode.reasoner.realization-budget-ms:20000}")
     private long REALIZATION_TOTAL_BUDGET_MS;
-    private final ExecutorService realizationExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "reasoner-realization-worker");
-        t.setDaemon(true);
-        return t;
-    });
+    private static final String TOO_MANY = "Too many reasoning requests in progress — please try again shortly.";
+
+    @Value("${ontocode.capacity.plugin-reasoning.realization-workers:4}")
+    private int realizationWorkers = 4;
+    @Value("${ontocode.capacity.plugin-reasoning.realization-queue:50}")
+    private int realizationQueue = 50;
+    @Value("${ontocode.capacity.plugin-reasoning.cache-max-size:20}")
+    private int reasonerCacheMaxSize = 20;
+    @Value("${ontocode.capacity.plugin-reasoning.cache-ttl-minutes:60}")
+    private long reasonerCacheTtlMinutes = 60;
+    @Value("${ontocode.capacity.plugin-reasoning.dispose-grace-seconds:120}")
+    private long disposeGraceSeconds = 120;
+
+    private final Map<String, Long> reasonerLastUse = new ConcurrentHashMap<>();
+    private final java.util.concurrent.ScheduledExecutorService disposeScheduler =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "reasoner-dispose-scheduler");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private volatile ExecutorService realizationExecutor = newRealizationExecutor(4, 50);
+
+    private static ExecutorService newRealizationExecutor(int workers, int queue) {
+        return new java.util.concurrent.ThreadPoolExecutor(
+                workers, workers, 60, TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(queue), r -> {
+                    Thread t = new Thread(r, "reasoner-realization-worker");
+                    t.setDaemon(true);
+                    return t;
+                }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+    }
 
     @Value("${ontocode.reasoner.justification-pool-size:2}")
     private int justificationPoolSize;
@@ -111,6 +137,9 @@ public class ReasonerService {
 
     @jakarta.annotation.PostConstruct
     private void initJustificationExecutor() {
+        ExecutorService previous = realizationExecutor;
+        realizationExecutor = newRealizationExecutor(Math.max(1, realizationWorkers), Math.max(1, realizationQueue));
+        previous.shutdown();
         justificationExecutor = new java.util.concurrent.ThreadPoolExecutor(
                 justificationPoolSize, justificationPoolSize, 60, TimeUnit.SECONDS,
                 new java.util.concurrent.ArrayBlockingQueue<>(20), r -> {
@@ -147,6 +176,8 @@ public class ReasonerService {
             return scoped;
         }
         CompletableFuture<OWLReasoner> future = reasonerCache.computeIfAbsent(cacheKey, k -> submitReasonerBuild(ontology, type));
+        reasonerLastUse.put(cacheKey, System.currentTimeMillis());
+        trimReasonerCache(cacheKey);
         try {
             OWLReasoner reasoner = future.get(reasonerOperationTimeoutMs, TimeUnit.MILLISECONDS);
             RuleOutcome outcome = ruleOutcomes.get(reasoner);
@@ -177,6 +208,59 @@ public class ReasonerService {
         }
     }
 
+    int reasonerCacheSize() {
+        return reasonerCache.size();
+    }
+
+    void trimReasonerCache(String keep) {
+        reasonerLastUse.keySet().retainAll(reasonerCache.keySet());
+        long now = System.currentTimeMillis();
+        long ttlMillis = TimeUnit.MINUTES.toMillis(Math.max(1, reasonerCacheTtlMinutes));
+        for (Map.Entry<String, CompletableFuture<OWLReasoner>> entry : new ArrayList<>(reasonerCache.entrySet())) {
+            String key = entry.getKey();
+            Long used = reasonerLastUse.get(key);
+            if (!key.equals(keep) && entry.getValue().isDone() && used != null && now - used > ttlMillis) {
+                evictFromCache(key, entry.getValue());
+            }
+        }
+        while (reasonerCache.size() > Math.max(1, reasonerCacheMaxSize)) {
+            String oldestKey = null;
+            long oldest = Long.MAX_VALUE;
+            for (Map.Entry<String, CompletableFuture<OWLReasoner>> entry : reasonerCache.entrySet()) {
+                String key = entry.getKey();
+                if (key.equals(keep) || !entry.getValue().isDone()) {
+                    continue;
+                }
+                long used = reasonerLastUse.getOrDefault(key, 0L);
+                if (used < oldest) {
+                    oldest = used;
+                    oldestKey = key;
+                }
+            }
+            if (oldestKey == null) {
+                return;
+            }
+            CompletableFuture<OWLReasoner> victim = reasonerCache.get(oldestKey);
+            if (victim == null || !evictFromCache(oldestKey, victim)) {
+                return;
+            }
+        }
+    }
+
+    private boolean evictFromCache(String key, CompletableFuture<OWLReasoner> future) {
+        if (!reasonerCache.remove(key, future)) {
+            return false;
+        }
+        reasonerLastUse.remove(key);
+        log.info("Evicted reasoner {} from the cache; it is disposed after a short grace period", key);
+        try {
+            disposeScheduler.schedule(() -> disposeWhenBuilt(future), Math.max(0, disposeGraceSeconds), TimeUnit.SECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            disposeWhenBuilt(future);
+        }
+        return true;
+    }
+
     private static void disposeWhenBuilt(CompletableFuture<OWLReasoner> future) {
         future.thenAccept(reasoner -> {
             try {
@@ -201,7 +285,7 @@ public class ReasonerService {
             });
         } catch (java.util.concurrent.RejectedExecutionException e) {
             future.completeExceptionally(
-                    new RuntimeException("Too many reasoning requests in progress — please try again shortly."));
+                    new RuntimeException(TOO_MANY));
         }
         return future;
     }
@@ -1132,8 +1216,12 @@ public class ReasonerService {
      */
     private NodeSet<OWLClass> getTypesWithTimeout(OWLReasoner reasoner, OWLNamedIndividual individual)
             throws TimeoutException {
-        CompletableFuture<NodeSet<OWLClass>> future = CompletableFuture.supplyAsync(
-            () -> reasoner.getTypes(individual, true), realizationExecutor);
+        CompletableFuture<NodeSet<OWLClass>> future;
+        try {
+            future = CompletableFuture.supplyAsync(() -> reasoner.getTypes(individual, true), realizationExecutor);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            throw new RuntimeException(TOO_MANY);
+        }
         try {
             return future.get(PER_INDIVIDUAL_TYPE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException te) {

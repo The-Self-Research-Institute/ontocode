@@ -96,6 +96,7 @@ export interface WebGLGraphViewProps {
   selectedNodeIds?: Set<string>;
   /** Enables SPARQL-in-search-box against the editor backend. */
   projectId?: string;
+  draftMode?: boolean;
   onNodeClick?: (nodeId: string) => void;
   onNodeRightClick?: (nodeId: string, event: { x: number; y: number }) => void;
   onNodeDoubleClick?: (nodeId: string) => void;
@@ -169,6 +170,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   positions,
   selectedNodeIds,
   projectId,
+  draftMode = false,
   onNodeClick,
   onNodeRightClick,
   onNodeDoubleClick,
@@ -567,8 +569,8 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   const handleRunSparql = useCallback(async (query: string) => {
     if (!projectId) return;
     setAskResult({ subgraph: new Set(), answers: new Set(), summary: 'Running SPARQL…', predicates: [] });
-    applyAskResult(await runSparqlHighlight(graph, query, projectId));
-  }, [graph, projectId, applyAskResult]);
+    applyAskResult(await runSparqlHighlight(graph, query, projectId, draftMode));
+  }, [graph, projectId, draftMode, applyAskResult]);
 
   // Enter on a question: escalating AI cascade, every step falling back to the
   // deterministic answer already on screen.
@@ -592,7 +594,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
 
     const query = await generateSparql(question, classes, predicateNames);
     if (query) {
-      const result = await runSparqlHighlight(graph, query, projectId);
+      const result = await runSparqlHighlight(graph, query, projectId, draftMode);
       // Aggregates (COUNT/"most") return literals — accept any non-empty rows, not just IRIs in view
       if (result.answers.size > 0 || (result.rows?.length ?? 0) > 0) {
         applyAskResult({ ...result, summary: `AI · ${result.summary}`, detail: query });
@@ -627,7 +629,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     applyAskResult(fallback
       ? { ...fallback, summary: `${fallback.summary}${query ? ' (AI query returned nothing)' : ' (local AI unavailable)'}`, detail: query ?? undefined }
       : { subgraph: new Set(), answers: new Set(), predicates: [], summary: 'No matching concepts found' });
-  }, [graph, projectId, applyAskResult]);
+  }, [graph, projectId, draftMode, applyAskResult]);
 
   // Visual search: matches are emphasized in place — the graph reshapes around the query.
   // Questions ("which qualities are measured by sensors?") route to ask-the-graph.
@@ -662,7 +664,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     emphasizedIdsRef.current = new Set(matches);
     sigmaRef.current?.refresh({ skipIndexation: true });
     fitToNodes(matches);
-  }, [graph, fitToNodes, projectId, applyAskResult]);
+  }, [graph, fitToNodes, projectId, draftMode, applyAskResult]);
 
   // Invariant: an external selection always ends up centered on screen.
   // In focus mode it retargets the neighborhood instead (follow-selection).

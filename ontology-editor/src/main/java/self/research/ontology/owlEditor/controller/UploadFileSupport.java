@@ -5,7 +5,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import self.research.ontology.owlEditor.model.ImportOptions;
 
+import self.research.ontology.owlEditor.upload.ArchiveLimits;
+import self.research.ontology.owlEditor.upload.UploadLimitExceededException;
+
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -46,10 +50,21 @@ final class UploadFileSupport {
     }
 
     static void extractOntologyPackage(Path packageZip, Path targetDir) throws IOException {
+        extractOntologyPackage(packageZip, targetDir, ArchiveLimits.defaults());
+    }
+
+    static void extractOntologyPackage(Path packageZip, Path targetDir, ArchiveLimits limits) throws IOException {
         Path normalizedTarget = targetDir.toAbsolutePath().normalize();
+        int entries = 0;
+        long total = 0;
+        byte[] buffer = new byte[64 * 1024];
         try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(packageZip))) {
             ZipEntry entry;
             while ((entry = zip.getNextEntry()) != null) {
+                if (++entries > limits.zipMaxEntries()) {
+                    throw new UploadLimitExceededException(
+                            "The package has more than " + limits.zipMaxEntries() + " files", limits.zipMaxTotalBytes());
+                }
                 Path destination = normalizedTarget.resolve(entry.getName()).normalize();
                 if (!destination.startsWith(normalizedTarget)) {
                     throw new IOException("Unsafe ZIP entry outside target directory: " + entry.getName());
@@ -58,7 +73,25 @@ final class UploadFileSupport {
                     Files.createDirectories(destination);
                 } else {
                     Files.createDirectories(destination.getParent());
-                    Files.copy(zip, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    long entryBytes = 0;
+                    try (OutputStream out = Files.newOutputStream(destination)) {
+                        int n;
+                        while ((n = zip.read(buffer)) > 0) {
+                            entryBytes += n;
+                            total += n;
+                            if (entryBytes > limits.zipMaxEntryBytes()) {
+                                throw new UploadLimitExceededException(
+                                        "A file inside the package is larger than "
+                                                + limits.zipMaxEntryBytes() / (1024 * 1024) + " MB", limits.zipMaxEntryBytes());
+                            }
+                            if (total > limits.zipMaxTotalBytes()) {
+                                throw new UploadLimitExceededException(
+                                        "The package expands to more than "
+                                                + limits.zipMaxTotalBytes() / (1024 * 1024) + " MB", limits.zipMaxTotalBytes());
+                            }
+                            out.write(buffer, 0, n);
+                        }
+                    }
                 }
                 zip.closeEntry();
             }

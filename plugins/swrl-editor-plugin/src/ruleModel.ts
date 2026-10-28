@@ -642,3 +642,113 @@ export function applySavedRule<T extends { id: string; ruleName: string }>(
     : [...rules, merged];
   return { rules: next, saved: merged };
 }
+
+export const RESULTS_PAGE_SIZE = 50;
+export const EXPIRED_RUN_MESSAGE = 'This result has expired. Run Execute again.';
+
+export type AxiomKind = 'conclusions' | 'structure';
+
+export interface RunCounts {
+  conclusions: number;
+  structure: number;
+  omittedTrivial?: number;
+}
+
+export interface KeyedAxiom {
+  description: string;
+}
+
+export function isPagedRun(res: { runId?: unknown; counts?: unknown } | null | undefined): boolean {
+  if (!res || typeof res.runId !== 'string' || !res.runId) return false;
+  const c = res.counts as Partial<RunCounts> | null | undefined;
+  return !!c && typeof c.conclusions === 'number' && typeof c.structure === 'number';
+}
+
+export function formatCount(n: number): string {
+  return Math.max(0, Math.trunc(n || 0)).toLocaleString('en-US');
+}
+
+function pluralize(n: number, one: string, many: string): string {
+  return n === 1 ? one : many;
+}
+
+export function derivedSummary(counts: RunCounts): string {
+  const total = counts.conclusions + counts.structure;
+  const base = `${formatCount(total)} derived: ${formatCount(counts.conclusions)} ${pluralize(counts.conclusions, 'rule conclusion', 'rule conclusions')}, ${formatCount(counts.structure)} structure`;
+  const omitted = counts.omittedTrivial ?? 0;
+  if (omitted > 0) {
+    return `${base} (${formatCount(omitted)} trivial same-individual ${pluralize(omitted, 'fact', 'facts')} hidden)`;
+  }
+  return base;
+}
+
+export function pageStart(offset: number, total: number, limit: number = RESULTS_PAGE_SIZE): number {
+  if (total <= 0) return 0;
+  const clamped = Math.min(Math.max(0, offset), total - 1);
+  return Math.floor(clamped / limit) * limit;
+}
+
+export function nextOffset(offset: number, total: number, limit: number = RESULTS_PAGE_SIZE): number | null {
+  const next = offset + limit;
+  return next < total ? next : null;
+}
+
+export function previousOffset(offset: number, limit: number = RESULTS_PAGE_SIZE): number | null {
+  return offset > 0 ? Math.max(0, offset - limit) : null;
+}
+
+export function pageRangeText(offset: number, shown: number, total: number): string {
+  if (total <= 0 || shown <= 0) return 'No results';
+  return `Showing ${formatCount(offset + 1)}-${formatCount(offset + shown)} of ${formatCount(total)}`;
+}
+
+export function pageCacheKey(runId: string, kind: AxiomKind, query: string, offset: number): string {
+  return `${runId}|${kind}|${query}|${offset}`;
+}
+
+export function axiomsPagePath(
+  projectId: string,
+  runId: string,
+  opts: { offset: number; limit: number; kind: AxiomKind; query: string },
+  draftMode: boolean
+): string {
+  const params = new URLSearchParams();
+  params.set('offset', String(opts.offset));
+  params.set('limit', String(opts.limit));
+  params.set('kind', opts.kind);
+  const q = opts.query.trim();
+  if (q) params.set('q', q);
+  return withDraft(`/api/ontology/${encodeURIComponent(projectId)}/rules/execute/${encodeURIComponent(runId)}/axioms?${params.toString()}`, draftMode);
+}
+
+export function axiomKey(ax: KeyedAxiom): string {
+  return ax.description;
+}
+
+export function toggleSelection<T extends KeyedAxiom>(sel: Map<string, T>, ax: T): Map<string, T> {
+  const next = new Map(sel);
+  const key = axiomKey(ax);
+  if (next.has(key)) next.delete(key);
+  else next.set(key, ax);
+  return next;
+}
+
+export function addToSelection<T extends KeyedAxiom>(sel: Map<string, T>, axioms: T[]): Map<string, T> {
+  const next = new Map(sel);
+  axioms.forEach(ax => next.set(axiomKey(ax), ax));
+  return next;
+}
+
+export function allSelected<T extends KeyedAxiom>(sel: Map<string, T>, axioms: T[]): boolean {
+  return axioms.length > 0 && axioms.every(ax => sel.has(axiomKey(ax)));
+}
+
+export function isExpiredRunError(e: any): boolean {
+  return e?.status === 410;
+}
+
+export function pageErrorMessage(e: any): string {
+  if (isExpiredRunError(e)) return EXPIRED_RUN_MESSAGE;
+  const detail = e?.data?.message || e?.message;
+  return detail ? `Could not load this page: ${detail}` : 'Could not load this page. Try again.';
+}

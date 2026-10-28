@@ -198,6 +198,41 @@ public class ProjectLoadController {
 
     private static final String DESKTOP_USER_ID = "desktop-user-local";
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.upload.UploadSettings uploadSettings;
+
+    private self.research.ontology.owlEditor.upload.ArchiveLimits archiveLimits() {
+        return uploadSettings != null
+                ? uploadSettings.archiveLimits()
+                : self.research.ontology.owlEditor.upload.ArchiveLimits.defaults();
+    }
+
+    private static ResponseEntity<Map<String, Object>> uploadRejected(Throwable e) {
+        self.research.ontology.owlEditor.upload.UploadLimitExceededException exceeded =
+                self.research.ontology.owlEditor.upload.UploadExceptionAdvice.find(e);
+        if (exceeded == null) {
+            for (Throwable t = e; t != null; t = t.getCause()) {
+                if (t instanceof self.research.ontology.owlEditor.service.ImportQueueFullException full) {
+                    return self.research.ontology.owlEditor.upload.UploadExceptionAdvice.busy(full);
+                }
+            }
+            return null;
+        }
+        log.warn("Upload rejected: {}", exceeded.getMessage());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("success", false, "error", exceeded.getMessage(), "limitBytes", exceeded.getLimitBytes()));
+    }
+
+    private static void cleanupStaged(Path... paths) {
+        for (Path path : paths) {
+            try {
+                UploadFileSupport.deleteRecursively(path);
+            } catch (IOException ex) {
+                log.warn("Could not remove staged upload file {}: {}", path, ex.getMessage());
+            }
+        }
+    }
+
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
@@ -271,10 +306,18 @@ public class ProjectLoadController {
                     file.getContentType(), ownerEmail, action, importMode, partition, workspaceId,
                     parentProjectId, compressed, uploadStartTime);
         } catch (IOException e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("Upload failed (IO)", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
         } catch (Exception e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("Upload failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error",
@@ -376,6 +419,7 @@ public class ProjectLoadController {
                 UploadFileSupport.deleteRecursively(libraryDir);
                 Files.createDirectories(libraryDir);
 
+                try {
                 try (InputStream in = fileStream;
                      OutputStream out = Files.newOutputStream(packageZip,
                              StandardOpenOption.CREATE,
@@ -390,10 +434,14 @@ public class ProjectLoadController {
                     );
                 }
 
-                UploadFileSupport.extractOntologyPackage(packageZip, libraryDir);
+                UploadFileSupport.extractOntologyPackage(packageZip, libraryDir, archiveLimits());
                 importRoot = UploadFileSupport.selectPackageRootOntology(libraryDir, filename)
                         .orElseThrow(() -> new IOException("Ontology package must contain at least one ontology file (.owl, .rdf, .ttl, .n3, .nt, .xml, .jsonld)"));
                 Files.copy(importRoot, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException | RuntimeException stageFailure) {
+                    cleanupStaged(libraryDir, packageZip, original);
+                    throw stageFailure;
+                }
                 filename = importRoot.getFileName().toString();
                 log.info("[ProjectLoadController] Ontology package root selected: {}", importRoot);
             } else {
@@ -410,15 +458,16 @@ public class ProjectLoadController {
                     
                     if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
                         log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
-                        effectiveStream = new GZIPInputStream(pb);
+                        effectiveStream = self.research.ontology.owlEditor.upload.BoundedGzipInputStream.open(pb, archiveLimits());
                         wasCompressed = true;
                     } else {
                         effectiveStream = pb;
                     }
                 } else {
-                    effectiveStream = new GZIPInputStream(fileStream);
+                    effectiveStream = self.research.ontology.owlEditor.upload.BoundedGzipInputStream.open(fileStream, archiveLimits());
                 }
 
+                try {
                 try (InputStream in = effectiveStream;
                      OutputStream out = Files.newOutputStream(original,
                              StandardOpenOption.CREATE,
@@ -436,6 +485,10 @@ public class ProjectLoadController {
                         contentType,
                         tee
                     );
+                }
+                } catch (IOException | RuntimeException stageFailure) {
+                    cleanupStaged(original);
+                    throw stageFailure;
                 }
             }
 
@@ -588,10 +641,18 @@ public class ProjectLoadController {
                 UploadFileSupport.deleteRecursively(chunkDir);
             }
         } catch (IOException e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("[ProjectLoadController] Chunk upload failed (IO) uploadId={} chunkIndex={}", uploadId, chunkIndex, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
         } catch (Exception e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("[ProjectLoadController] Chunk upload failed uploadId={} chunkIndex={}", uploadId, chunkIndex, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error",
@@ -891,6 +952,9 @@ public class ProjectLoadController {
     @org.springframework.beans.factory.annotation.Autowired
     private self.research.ontology.owlEditor.service.ExportScopeResolver exportScopeResolver;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private self.research.ontology.owlEditor.service.JobAccess jobAccess;
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private self.research.ontology.owlEditor.service.OntologyVersionStamps exportStampSource;
 
@@ -973,6 +1037,7 @@ public class ProjectLoadController {
                 return ResponseEntity.status(scope.status()).body(Map.of("success", false, "error", scope.error()));
             }
             self.research.ontology.owlEditor.model.ExportJob job = exportJobService.submit(projectId, format, scope.contentScope());
+            jobAccess.register(request, job.getJobId(), projectId);
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "jobId", job.getJobId(),
@@ -985,9 +1050,23 @@ public class ProjectLoadController {
         }
     }
 
+    private ResponseEntity<Map<String, Object>> exportJobRefusal(jakarta.servlet.http.HttpServletRequest request) {
+        if (jobAccess.caller(request).isPresent()) {
+            return null;
+        }
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("success", false, "error", "Authentication required"));
+    }
+
     @GetMapping("/export-async/status/{jobId}")
-    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable String jobId) {
+    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable String jobId,
+                                                               jakarta.servlet.http.HttpServletRequest request) {
+        var unauthorized = exportJobRefusal(request);
+        if (unauthorized != null) {
+            return unauthorized;
+        }
         return exportJobService.getStatus(jobId)
+                .filter(job -> jobAccess.check(request, null, jobId, job.getProjectId()).allowed())
                 .map(job -> {
                     Map<String, Object> data = new java.util.LinkedHashMap<>();
                     data.put("success", true);
@@ -1002,8 +1081,14 @@ public class ProjectLoadController {
     }
 
     @GetMapping("/export-async/download/{jobId}")
-    public ResponseEntity<?> downloadExportJobResult(@PathVariable String jobId) {
-        Optional<self.research.ontology.owlEditor.model.ExportJob> jobOpt = exportJobService.getStatus(jobId);
+    public ResponseEntity<?> downloadExportJobResult(@PathVariable String jobId,
+                                                     jakarta.servlet.http.HttpServletRequest request) {
+        var unauthorized = exportJobRefusal(request);
+        if (unauthorized != null) {
+            return unauthorized;
+        }
+        Optional<self.research.ontology.owlEditor.model.ExportJob> jobOpt = exportJobService.getStatus(jobId)
+                .filter(job -> jobAccess.check(request, null, jobId, job.getProjectId()).allowed());
         if (jobOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("success", false, "error", "Export job not found. It may have expired — please retry the export."));
