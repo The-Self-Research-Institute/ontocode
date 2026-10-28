@@ -18,19 +18,6 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
-    version: "1.2.8-beta.1",
-    webVersion: "1.2.8",
-    date: "October 28, 2026",
-    title: "Undo and Redo shortcuts and earlier-session undo",
-    highlights: [
-      "Undo and Redo — Edit > Redo now shows its shortcuts: Ctrl+Y or Ctrl+Shift+Z on Windows and Linux, and Cmd+Shift+Z on a Mac. Undo is Ctrl+Z, or Cmd+Z on a Mac.",
-      "Undo and Redo — Ctrl+Z and Edit > Undo undo the changes you made in the current session straight away. If the next change to undo was made in an earlier session, OntoCode asks \"This change was made in an earlier session. Undo it anyway?\" and only undoes it if you choose Undo. Undoing from the Change Assistant is unchanged.",
-    ],
-    videoUrl: "",
-    videoPoster: "",
-  },
-
-  {
     version: "1.2.7-beta.1",
     webVersion: "1.2.7",
     date: "October 26, 2026",
