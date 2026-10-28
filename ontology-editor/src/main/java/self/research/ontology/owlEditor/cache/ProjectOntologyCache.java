@@ -8,7 +8,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Conditional;
 import org.springframework.stereotype.Component;
+import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
+import self.research.ontology.common.admission.CacheAccount;
+import self.research.ontology.common.admission.ReservationLedger;
 import self.research.ontology.owlEditor.config.FastOpenCondition;
+import self.research.ontology.owlEditor.service.RetainedMemory;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -28,15 +32,66 @@ public class ProjectOntologyCache {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectOntologyCache.class);
 
-    public record CachedOntology(
-            OWLOntology ontology,
-            OWLReasoner reasoner,
-            OWLOntologyManager manager,
-            boolean assertedHierarchyOnly) {
+    public static final class CachedOntology {
 
-        void dispose() {
+        private final OWLOntology ontology;
+        private final OWLReasoner reasoner;
+        private final OWLOntologyManager manager;
+        private final boolean assertedHierarchyOnly;
+        private final CacheAccount account;
+        private final long accountedBytes;
+        private OWLReasoner structural;
+        private boolean disposed;
+
+        public CachedOntology(OWLOntology ontology, OWLReasoner reasoner, OWLOntologyManager manager,
+                              boolean assertedHierarchyOnly) {
+            this(ontology, reasoner, manager, assertedHierarchyOnly, null);
+        }
+
+        CachedOntology(OWLOntology ontology, OWLReasoner reasoner, OWLOntologyManager manager,
+                       boolean assertedHierarchyOnly, CacheAccount account) {
+            this.ontology = ontology;
+            this.reasoner = reasoner;
+            this.manager = manager;
+            this.assertedHierarchyOnly = assertedHierarchyOnly;
+            this.account = account;
+            this.accountedBytes = account == null ? 0 : RetainedMemory.ontologyBytes(ontology.getAxiomCount());
+            if (account != null) {
+                account.add(accountedBytes);
+            }
+        }
+
+        public OWLOntology ontology() { return ontology; }
+
+        public OWLReasoner reasoner() { return reasoner; }
+
+        public OWLOntologyManager manager() { return manager; }
+
+        public boolean assertedHierarchyOnly() { return assertedHierarchyOnly; }
+
+        public synchronized OWLReasoner structuralReasoner() {
+            if (reasoner != null) {
+                return reasoner;
+            }
+            if (structural == null) {
+                structural = new StructuralReasonerFactory().createNonBufferingReasoner(ontology);
+            }
+            return structural;
+        }
+
+        synchronized void dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            if (account != null) {
+                account.remove(accountedBytes);
+            }
             if (reasoner != null) {
                 try { reasoner.dispose(); } catch (Exception e) { /* ignore */ }
+            }
+            if (structural != null) {
+                try { structural.dispose(); } catch (Exception e) { /* ignore */ }
             }
             try { manager.removeOntology(ontology); } catch (Exception e) { /* ignore */ }
         }
@@ -52,6 +107,17 @@ public class ProjectOntologyCache {
     private final int maxProjects;
 
     private final Map<String, CachedOntology> cache;
+
+    private volatile CacheAccount account = RetainedMemory.detachedAccount("projectOntologies");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(ReservationLedger ledger) {
+        this.account = ledger.cacheAccount("projectOntologies");
+    }
+
+    public CacheAccount account() {
+        return account;
+    }
 
     public ProjectOntologyCache(@Value("${ontocode.desktop.mode:false}") boolean desktopMode) {
         int defaultMaxProjects = desktopMode ? 1 : 4;
@@ -79,7 +145,7 @@ public class ProjectOntologyCache {
                     OWLOntologyManager manager, boolean assertedHierarchyOnly) {
         CachedOntology existing = cache.remove(projectId);
         if (existing != null) existing.dispose();
-        cache.put(projectId, new CachedOntology(ontology, reasoner, manager, assertedHierarchyOnly));
+        cache.put(projectId, new CachedOntology(ontology, reasoner, manager, assertedHierarchyOnly, account));
         log.info("[OntologyCache] Cached OWLAPI model for project {} ({} classes)",
             projectId, ontology.classesInSignature().count());
     }
