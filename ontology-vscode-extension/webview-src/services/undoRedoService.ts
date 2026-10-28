@@ -3,6 +3,7 @@ import apiClient from './apiClient';
 import { isDraftScopeActive } from '../utils/draftScope';
 import { emitCommittedChange } from '../utils/committedChange';
 import { newOpId } from '../utils/opId';
+import { isEarlierSession, noteServerTime } from '../utils/undoSession';
 
 export interface UndoDependent {
   changeId: string;
@@ -40,6 +41,8 @@ export interface QueueStep {
   source?: string;
   affected?: string;
   restoring?: string;
+  timestamp?: string;
+  earlierSession?: boolean;
 }
 
 export interface QueueBlock {
@@ -90,6 +93,7 @@ interface ServerBody extends Partial<UndoState> {
   status?: string;
   inProgress?: boolean;
   steps?: QueueStep[];
+  serverTime?: string;
   blocked?: QueueBlock | null;
   othersOnTop?: OtherChange[];
   revertPr?: RevertPrHint;
@@ -169,7 +173,9 @@ function toStep(step: QueueStep, isRedo: boolean): UndoStep {
 export const undoRedoService = {
   async fetchQueue(projectId: string, count: number): Promise<QueueResponse> {
     const body = unwrap(await apiClient.get<ServerBody>(`${base(projectId)}/undo/queue?draft=${draftFlag()}&count=${count}`));
-    return { steps: body.steps || [], blocked: body.blocked || null };
+    noteServerTime(body.serverTime);
+    const steps = (body.steps || []).map((step) => (isEarlierSession(step.timestamp) ? { ...step, earlierSession: true } : step));
+    return { steps, blocked: body.blocked || null };
   },
 
   async sendStep(
@@ -213,7 +219,9 @@ export const undoRedoService = {
 
   async fetchState(projectId: string): Promise<UndoState | undefined> {
     try {
-      return stateOf(unwrap(await apiClient.get<ServerBody>(`${base(projectId)}/undo/next?draft=${draftFlag()}&opId=${newOpId()}`)));
+      const body = unwrap(await apiClient.get<ServerBody>(`${base(projectId)}/undo/next?draft=${draftFlag()}&opId=${newOpId()}`));
+      noteServerTime(body.serverTime);
+      return stateOf(body);
     } catch {
       return undefined;
     }
