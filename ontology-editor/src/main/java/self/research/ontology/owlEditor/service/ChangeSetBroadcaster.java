@@ -58,6 +58,10 @@ public class ChangeSetBroadcaster {
     }
 
     static String describe(List<HistoryChange> entries, String source) {
+        if (entries.size() == 1 && CodeViewHistoryRecorder.RULE_CHANGE.equals(entries.get(0).getOperationType())
+                && entries.get(0).getDescription() != null && !entries.get(0).getDescription().isBlank()) {
+            return entries.get(0).getDescription();
+        }
         Map<String, Integer> counts = new LinkedHashMap<>();
         for (HistoryChange entry : entries) {
             if (entry.getEntityIRI() == null || entry.getEntityIRI().isBlank()) {

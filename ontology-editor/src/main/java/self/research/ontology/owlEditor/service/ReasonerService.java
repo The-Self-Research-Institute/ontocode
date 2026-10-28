@@ -229,6 +229,7 @@ public class ReasonerService {
         OWLReasonerConfiguration config = configurationFor(type);
 
         try {
+            self.research.ontology.common.rules.DisabledRules.strip(ontology);
             OWLOntology target = type == ReasonerType.HERMIT ? SwrlBuiltIns.withoutBuiltInRules(ontology) : ontology;
             return getReasonerFactory(type).createReasoner(target, config);
         } catch (Throwable e) {

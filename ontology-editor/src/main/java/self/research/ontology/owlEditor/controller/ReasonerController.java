@@ -17,6 +17,7 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.common.rules.DisabledRules;
 import self.research.ontology.common.rules.OntologyRulesFingerprint;
 import self.research.ontology.common.rules.RuleExecution;
 import self.research.ontology.common.rules.RuleExecutionLimits;
@@ -24,7 +25,6 @@ import self.research.ontology.common.rules.RuleExecutionResult;
 import self.research.ontology.owlEditor.service.RuleExecutionPresenter;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
 import self.research.ontology.owlEditor.service.ReasonerService;
-import self.research.ontology.owlEditor.service.SavedRulesService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
@@ -108,9 +108,6 @@ public class ReasonerController {
 
     @Autowired(required = false)
     private MainGraphRevisionService mainGraphRevisionService;
-
-    @Autowired(required = false)
-    private self.research.ontology.owlEditor.service.SavedRulesService savedRulesService;
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.service.OntologyVersionStamps ontologyVersionStamps;
@@ -484,7 +481,8 @@ public class ReasonerController {
                 OWLOntology current = isDraft
                         ? datasetService.loadDraftAsOntology(projectId, draftUserId, draftVersion)
                         : loadOntology(projectId);
-                return SavedRulesService.mergeOrPlain(savedRulesService, current, projectId, draftUserId).fingerprint();
+                DisabledRules.strip(current);
+                return OntologyRulesFingerprint.of(current);
             } catch (Exception e) {
                 throw new IllegalStateException(e);
             }
@@ -552,8 +550,8 @@ public class ReasonerController {
         OWLOntology ontology = isDraft
                 ? datasetService.loadDraftAsOntology(projectId, draftUserId, draftVersion)
                 : loadOntology(projectId);
-        SavedRulesService.Merged merged = SavedRulesService.mergeOrPlain(savedRulesService, ontology, projectId, draftUserId);
-        run.rulesFingerprint = merged.fingerprint();
+        DisabledRules.strip(ontology);
+        run.rulesFingerprint = OntologyRulesFingerprint.of(ontology);
 
         ReasonerType classType = requestedType;
         String downgradedWarning = null;
@@ -573,7 +571,7 @@ public class ReasonerController {
         }
 
         self.research.ontology.common.PreparedOntology prepared = classType == ReasonerType.HERMIT
-                ? chained(merged.ontology(), projectId) : null;
+                ? chained(ontology, projectId) : null;
         if (prepared != null && prepared.note() != null) {
             downgradedWarning = downgradedWarning == null ? prepared.note() : downgradedWarning + " " + prepared.note();
         }
@@ -600,7 +598,7 @@ public class ReasonerController {
         OWLOntology propertyInput = ontology;
         if (propertyType != classType) {
             self.research.ontology.common.PreparedOntology forProperty = prepared != null
-                    ? prepared : chained(merged.ontology(), projectId);
+                    ? prepared : chained(ontology, projectId);
             propertyInput = forProperty.forHermit();
             rulesComplete = rulesComplete && forProperty.complete();
             if (prepared == null && forProperty.note() != null) {
@@ -608,12 +606,6 @@ public class ReasonerController {
             }
             propertyReasoner = reasonerService.getUnwarmedReasoner(propertyInput, propertyType);
             run.attach(propertyReasoner);
-        }
-
-        if (merged.savedRulesUnavailable() && (prepared != null || propertyReasoner != null)) {
-            rulesComplete = false;
-            downgradedWarning = downgradedWarning == null ? SavedRulesService.UNAVAILABLE_NOTE
-                    : downgradedWarning + " " + SavedRulesService.UNAVAILABLE_NOTE;
         }
 
         Map<String, Object> snapshot = new LinkedHashMap<>();
@@ -1793,12 +1785,12 @@ public class ReasonerController {
             boolean isDraft = draft && resolvedUserId != null && !resolvedUserId.isBlank();
             String draftUserId = isDraft ? resolvedUserId : null;
             OWLOntology ontology = isDraft ? loadDraftOntology(projectId, draftUserId) : loadOntology(projectId);
-            SavedRulesService.Merged merged = SavedRulesService.mergeOrPlain(savedRulesService, ontology, projectId, draftUserId);
+            DisabledRules.strip(ontology);
             RuleExecutionResult result = new RuleExecution(ruleStage,
                     input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519")
-                    .run(merged.ontology(), projectId + ":" + merged.ontology().getAxiomCount(), RuleExecutionLimits.defaults());
+                    .run(ontology, projectId + ":" + ontology.getAxiomCount(), RuleExecutionLimits.defaults());
 
-            Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(merged.ontology());
+            Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
             List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
             RuleExecutionPresenter.Presented presented = RuleExecutionPresenter.present(derived, asserted, RuleExecutionPresenter.MAX_INFERRED);
             List<Map<String, Object>> axioms = new ArrayList<>();
@@ -1807,22 +1799,14 @@ public class ReasonerController {
             }
 
             List<Map<String, String>> skipped = new ArrayList<>();
-            for (SavedRulesService.SkippedSavedRule rule : merged.skipped()) {
-                skipped.add(Map.of("ruleName", rule.ruleName(), "reason", rule.reason()));
-            }
             for (RuleExecutionResult.SkippedRule rule : result.skippedRules()) {
                 skipped.add(Map.of("ruleName", rule.ruleId(), "reason", rule.reason()));
             }
             List<String> limitations = new ArrayList<>(result.limitations());
             String message = result.message();
-            if (merged.savedRulesUnavailable()) {
-                limitations.add(SavedRulesService.UNAVAILABLE_NOTE);
-                message = message == null || message.isBlank() ? SavedRulesService.UNAVAILABLE_NOTE
-                        : message + " " + SavedRulesService.UNAVAILABLE_NOTE;
-            }
             RuleExecutionResult.Status status = result.status();
             String completion = switch (status) {
-                case COMPLETED -> merged.savedRulesUnavailable() ? "completed_with_warnings" : "completed";
+                case COMPLETED -> "completed";
                 case PARTIAL_RULES_SKIPPED, PARTIAL_ENGINE_UNAVAILABLE, PARTIAL_LIMIT_REACHED -> "completed_with_warnings";
                 case FAILED -> "failed";
                 case INCONSISTENT -> "inconsistent";

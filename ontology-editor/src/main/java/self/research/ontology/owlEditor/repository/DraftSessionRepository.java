@@ -11,6 +11,8 @@ public interface DraftSessionRepository extends MongoRepository<DraftSession, St
 
     Optional<DraftSession> findByProjectIdAndUserId(String projectId, String userId);
 
+    java.util.List<DraftSession> findByProjectId(String projectId);
+
     void deleteByProjectIdAndUserId(String projectId, String userId);
 
     java.util.List<DraftSession> findByUserIdStartingWith(String userIdPrefix);

@@ -14766,7 +14766,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (

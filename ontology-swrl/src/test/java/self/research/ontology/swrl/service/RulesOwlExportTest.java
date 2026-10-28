@@ -7,10 +7,8 @@ import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.SWRLBuiltInAtom;
 import org.semanticweb.owlapi.model.SWRLRule;
-import self.research.ontology.common.preview.RulesFingerprint;
 import self.research.ontology.swrl.model.SwrlRule;
 
-import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -26,20 +24,21 @@ class RulesOwlExportTest {
     private static final String SENIOR = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)";
     private static final String POWER = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:pow(?x, ?a, 2) ^ swrlb:lessThan(?x, 400) -> Child(?p)";
     private static final String TEXT = "Patient(?p) ^ inWard(?p, ?w) ^ swrlb:equal(?w, \"ICU\") -> Critical(?p)";
-    private static final String UNKNOWN_CLASS = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:lessThan(?a, 18) -> Childd(?p)";
 
     private static String label(SWRLRule rule) {
         return rule.getAnnotations().iterator().next().getValue().asLiteral().get().getLiteral();
     }
 
     @Test
-    void onlyEnabledResolvableRulesAreExportedWithLabelsAndDeclarations() throws Exception {
+    void onlyEnabledRulesAreExportedWithLabelsAndDeclarations() throws Exception {
+        SwrlRule disabled = rule("r5", "Off rule", SENIOR.replace("Senior", "Obese"));
+        disabled.setEnabled(false);
         TriageHarness harness = new TriageHarness(
                 rule("r1", "Age under 18", CHILD),
                 rule("r2", "Senior age", SENIOR),
                 rule("r3", "Squared age", POWER),
                 rule("r4", "ICU ward", TEXT),
-                rule("r5", "Typo rule", UNKNOWN_CLASS));
+                disabled);
 
         SwrlEngineService.RulesExport export = harness.service.exportEnabledRulesAsOwl(TriageHarness.PROJECT, null);
 
@@ -52,24 +51,22 @@ class RulesOwlExportTest {
         assertEquals(parsed.getAxiomCount() - 4, parsed.getAxioms(AxiomType.DECLARATION).size());
         assertTrue(parsed.containsClassInSignature(org.semanticweb.owlapi.model.IRI.create(NS + "Patient")));
         assertTrue(parsed.containsDataPropertyInSignature(org.semanticweb.owlapi.model.IRI.create(NS + "hasAge")));
-        assertFalse(export.text().contains("Childd"));
+        assertFalse(export.text().contains("Off rule"));
         long builtIns = rules.stream().flatMap(r -> r.getBody().stream()).filter(a -> a instanceof SWRLBuiltInAtom).count();
         assertEquals(5, builtIns);
         assertTrue(export.text().contains("swrlb#lessThan"), export.text());
-        assertEquals(1, export.skipped().size());
-        assertEquals("Typo rule", export.skipped().get(0).ruleName());
-        assertTrue(export.skipped().get(0).reason().contains("Childd"));
+        assertTrue(export.skipped().isEmpty());
     }
 
     @Test
     void theFingerprintMatchesTheOneExecutionStampsAndDisabledRulesAreAbsent() throws Exception {
         SwrlRule disabled = rule("r2", "Senior age", SENIOR);
         disabled.setEnabled(false);
-        TriageHarness harness = new TriageHarness(rule("r1", "Age under 18", CHILD));
+        TriageHarness harness = new TriageHarness(rule("r1", "Age under 18", CHILD), disabled);
 
         SwrlEngineService.RulesExport export = harness.service.exportEnabledRulesAsOwl(TriageHarness.PROJECT, null);
 
-        assertEquals(RulesFingerprint.of(List.<String[]>of(new String[]{"Age under 18", CHILD})), export.fingerprint());
+        assertEquals(harness.service.executeRules(TriageHarness.PROJECT).getStamp().rulesFingerprint(), export.fingerprint());
         assertFalse(export.text().contains("Senior age"));
         assertEquals(1, OWLManager.createOWLOntologyManager()
                 .loadOntologyFromOntologyDocument(new StringDocumentSource(export.text()))
@@ -86,5 +83,14 @@ class RulesOwlExportTest {
                 .loadOntologyFromOntologyDocument(new StringDocumentSource(export.text()))
                 .getAxioms(AxiomType.SWRL_RULE);
         assertEquals(Set.of("Same (a1)", "Same (a2)"), rules.stream().map(RulesOwlExportTest::label).collect(Collectors.toSet()));
+    }
+
+    @Test
+    void rulesAlreadyInTheOntologyAreExportedWithoutAnyStoredRule() throws Exception {
+        SwrlEngineService.RulesExport export = TriageHarness.withEmbeddedRules().service.exportEnabledRulesAsOwl(TriageHarness.PROJECT, null);
+
+        assertEquals(12, OWLManager.createOWLOntologyManager()
+                .loadOntologyFromOntologyDocument(new StringDocumentSource(export.text()))
+                .getAxioms(AxiomType.SWRL_RULE).size());
     }
 }

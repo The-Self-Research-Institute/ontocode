@@ -5,10 +5,12 @@ import org.mockito.Mockito;
 import self.research.ontology.swrl.model.ExecutionResult;
 import self.research.ontology.swrl.model.SwrlRule;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static self.research.ontology.swrl.service.TriageHarness.rule;
@@ -16,61 +18,11 @@ import static self.research.ontology.swrl.service.TriageHarness.rule;
 class RuleProjectIsolationTest {
 
     private static final String CHILD = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:lessThan(?a, 18) -> Child(?p)";
-
-    private SwrlRule ruleOfAnotherProject() {
-        SwrlRule other = new SwrlRule("other-project", "Their rule", CHILD);
-        other.setId("theirs");
-        other.setEnabled(true);
-        return other;
-    }
+    private static final String SENIOR = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)";
 
     @Test
-    void aRuleCannotBeEditedThroughAnotherProjectsAddress() throws Exception {
-        TriageHarness harness = new TriageHarness();
-        Mockito.when(harness.repository.findByIdAndProjectId("theirs", "other-project")).thenReturn(Optional.of(ruleOfAnotherProject()));
-
-        assertThrows(IllegalArgumentException.class,
-                () -> harness.service.updateRule(TriageHarness.PROJECT, "theirs", CHILD, null, false, null));
-
-        Mockito.verify(harness.repository, Mockito.never()).save(Mockito.any(SwrlRule.class));
-    }
-
-    @Test
-    void aRuleCannotBeDeletedThroughAnotherProjectsAddress() throws Exception {
-        TriageHarness harness = new TriageHarness();
-        Mockito.when(harness.repository.findByIdAndProjectId("theirs", "other-project")).thenReturn(Optional.of(ruleOfAnotherProject()));
-
-        assertThrows(IllegalArgumentException.class, () -> harness.service.deleteRule(TriageHarness.PROJECT, "theirs"));
-
-        Mockito.verify(harness.repository, Mockito.never()).delete(Mockito.any(SwrlRule.class));
-        Mockito.verify(harness.repository, Mockito.never()).deleteById(Mockito.anyString());
-    }
-
-    @Test
-    void aBatchDeleteSkipsRulesOfOtherProjects() throws Exception {
-        TriageHarness harness = new TriageHarness();
-        Mockito.when(harness.repository.findByIdAndProjectId("theirs", "other-project")).thenReturn(Optional.of(ruleOfAnotherProject()));
-
-        harness.service.deleteRulesBatch(TriageHarness.PROJECT, List.of("theirs"));
-
-        Mockito.verify(harness.repository, Mockito.never()).delete(Mockito.any(SwrlRule.class));
-    }
-
-    @Test
-    void aRuleCannotBeDuplicatedThroughAnotherProjectsAddress() throws Exception {
-        TriageHarness harness = new TriageHarness();
-        Mockito.when(harness.repository.findByIdAndProjectId("theirs", "other-project")).thenReturn(Optional.of(ruleOfAnotherProject()));
-
-        assertThrows(IllegalArgumentException.class, () -> harness.service.duplicateRule(TriageHarness.PROJECT, "theirs", "Copy"));
-
-        Mockito.verify(harness.repository, Mockito.never()).save(Mockito.any(SwrlRule.class));
-    }
-
-    @Test
-    void executeSelectedNeverRunsARuleOfAnotherProject() throws Exception {
-        TriageHarness harness = new TriageHarness();
-        SwrlRule mine = rule("mine", "Age under 18", CHILD);
-        Mockito.when(harness.repository.findAllById(List.of("mine", "theirs"))).thenReturn(List.of(mine, ruleOfAnotherProject()));
+    void executeSelectedRunsOnlyTheChosenRulesOfTheOntologyAndSkipsUnknownOnes() throws Exception {
+        TriageHarness harness = new TriageHarness(rule("mine", "Age under 18", CHILD), rule("other", "Senior age", SENIOR));
 
         ExecutionResult result = harness.service.executeSelectedRules(TriageHarness.PROJECT, List.of("mine", "theirs"));
 
@@ -80,12 +32,12 @@ class RuleProjectIsolationTest {
         assertEquals("theirs", result.getSkippedRules().get(0).ruleName());
         assertEquals("This rule was not found in this project.", result.getSkippedRules().get(0).reason());
         assertEquals("completed_with_warnings", result.getCompletion());
+        assertTrue(result.getInferredAxioms().stream().noneMatch(a -> String.valueOf(a.getDescription()).contains("ClassAssertion") && String.valueOf(a.getDescription()).contains("#Senior>")));
     }
 
     @Test
-    void executeSelectedWithOnlyForeignRulesFailsAndSaysWhy() throws Exception {
-        TriageHarness harness = new TriageHarness();
-        Mockito.when(harness.repository.findAllById(List.of("theirs"))).thenReturn(List.of(ruleOfAnotherProject()));
+    void executeSelectedWithOnlyUnknownRulesFailsAndSaysWhy() throws Exception {
+        TriageHarness harness = new TriageHarness(rule("mine", "Age under 18", CHILD));
 
         ExecutionResult result = harness.service.executeSelectedRules(TriageHarness.PROJECT, List.of("theirs"));
 
@@ -93,5 +45,57 @@ class RuleProjectIsolationTest {
         assertEquals("failed", result.getCompletion());
         assertEquals(1, result.getSkippedRules().size());
         assertEquals("This rule was not found in this project.", result.getSkippedRules().get(0).reason());
+    }
+
+    @Test
+    void executeSelectedSkipsADisabledRule() throws Exception {
+        SwrlRule off = rule("off", "Senior age", SENIOR);
+        off.setEnabled(false);
+        TriageHarness harness = new TriageHarness(rule("mine", "Age under 18", CHILD), off);
+
+        ExecutionResult result = harness.service.executeSelectedRules(TriageHarness.PROJECT, List.of("mine", "off"));
+
+        assertEquals(List.of("Age under 18"), result.getExecutedRuleNames());
+        assertEquals("This rule is disabled.", result.getSkippedRules().get(0).reason());
+    }
+
+    @Test
+    void legacyRowsAreReadOnlyFromMongoAndOnlyThoseNotYetMigrated() throws Exception {
+        TriageHarness harness = new TriageHarness();
+        Mockito.when(harness.repository.findByProjectIdAndMigratedAtIsNull(TriageHarness.PROJECT))
+                .thenReturn(List.of(rule("old", "Old rule", CHILD)));
+
+        List<SwrlRule> rows = harness.service.legacyRules(TriageHarness.PROJECT);
+
+        assertEquals(1, rows.size());
+        assertEquals("old", rows.get(0).getId());
+    }
+
+    @Test
+    void markingALegacyRowMigratedStampsItAndAnotherProjectsRowIsRefused() throws Exception {
+        TriageHarness harness = new TriageHarness();
+        SwrlRule mine = rule("old", "Old rule", CHILD);
+        Mockito.when(harness.repository.findByIdAndProjectId("old", TriageHarness.PROJECT)).thenReturn(Optional.of(mine));
+        Mockito.when(harness.repository.findByIdAndProjectId("theirs", TriageHarness.PROJECT)).thenReturn(Optional.empty());
+        Mockito.when(harness.repository.save(Mockito.any(SwrlRule.class))).thenAnswer(i -> i.getArgument(0));
+
+        SwrlRule saved = harness.service.markMigrated(TriageHarness.PROJECT, "old");
+
+        assertNotNull(saved.getMigratedAt());
+        assertTrue(saved.getMigratedAt().isBefore(LocalDateTime.now().plusSeconds(1)));
+        assertThrows(IllegalArgumentException.class, () -> harness.service.markMigrated(TriageHarness.PROJECT, "theirs"));
+        Mockito.verify(harness.repository, Mockito.times(1)).save(Mockito.any(SwrlRule.class));
+    }
+
+    @Test
+    void executionNeverReadsMongo() throws Exception {
+        TriageHarness harness = new TriageHarness(rule("mine", "Age under 18", CHILD));
+
+        harness.service.executeRules(TriageHarness.PROJECT);
+        harness.service.executeSelectedRules(TriageHarness.PROJECT, List.of("mine"));
+        harness.service.exportEnabledRulesAsOwl(TriageHarness.PROJECT, null);
+        harness.service.listEmbeddedRules(TriageHarness.PROJECT, null);
+
+        Mockito.verifyNoInteractions(harness.repository);
     }
 }

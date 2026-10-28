@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { parseRuleText, serializeRule } from '../src/ruleModel.ts';
+import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule } from '../src/ruleModel.ts';
 
 const DEMO = [
   ['Senior', 'Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)', true],
@@ -139,4 +139,142 @@ test('every simple parse re-serializes to a stable fixed point', () => {
     const once = serializeRule(parseRuleText(text));
     assert.equal(serializeRule(parseRuleText(once)), once);
   }
+});
+
+import {
+  withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule,
+  sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError,
+} from '../src/ruleModel.ts';
+
+test('withDraft appends the draft flag', () => {
+  assert.equal(withDraft('/a', false), '/a');
+  assert.equal(withDraft('/a', true), '/a?draft=true');
+  assert.equal(withDraft('/a?x=1', true), '/a?x=1&draft=true');
+});
+
+test('normalizeRulesResponse accepts an array or an object', () => {
+  assert.deepEqual(normalizeRulesResponse([{ id: '1' }]), { rules: [{ id: '1' }], unmigrated: [] });
+  const r = normalizeRulesResponse({ rules: [{ id: '2' }], unmigrated: [{ id: 'x', ruleName: 'Old', error: 'bad' }] });
+  assert.equal(r.rules.length, 1);
+  assert.equal(r.unmigrated[0].ruleName, 'Old');
+  assert.deepEqual(normalizeRulesResponse(null), { rules: [], unmigrated: [] });
+});
+
+test('notice text and disabled check', () => {
+  assert.equal(unmigratedNotice(1), '1 saved rule could not be moved into the ontology');
+  assert.equal(unmigratedNotice(3), '3 saved rules could not be moved into the ontology');
+  assert.equal(hasDisabledRule([{ enabled: true }]), false);
+  assert.equal(hasDisabledRule([{ enabled: true }, { enabled: false }]), true);
+});
+
+test('imported rule detection and label', () => {
+  assert.equal(isImportedRule({ readOnly: true, source: 'http://x/o' }), true);
+  assert.equal(isImportedRule({ readOnly: false, source: null }), false);
+  assert.equal(sourceLabel({ source: 'http://x/o' }), 'From http://x/o');
+  assert.equal(sourceLabel({ source: null }), '');
+});
+
+test('local copy body', () => {
+  const rule = { id: '1', ruleName: 'Senior', ruleText: 'A(?x) -> B(?x)', enabled: false, source: 'http://x/o', readOnly: true };
+  const body = localCopyBody(rule, ['Senior']);
+  assert.equal(body.ruleName, 'Senior (local copy)');
+  assert.equal(body.comment, 'Copied from http://x/o');
+  assert.equal(body.ruleText, rule.ruleText);
+  assert.equal(body.enabled, true);
+  assert.equal(localCopyBody(rule, ['Senior (local copy)']).ruleName, 'Senior (local copy 2)');
+});
+
+test('ruleWriteBody trims the name and adds origin', () => {
+  const b = ruleWriteBody({ ruleName: ' R ', ruleText: 't', enabled: true }, 'Added rule R');
+  assert.equal(b.ruleName, 'R');
+  assert.equal(b.comment, '');
+  assert.equal(b.origin.source, 'swrl-rules');
+});
+
+test('friendlyRuleError', () => {
+  assert.equal(
+    friendlyRuleError({ status: 400, data: { errors: ['Unknown class Foo.'], suggestions: ['Did you mean Bar?'] } }, 'x'),
+    'Unknown class Foo. Try this: Did you mean Bar?'
+  );
+  assert.match(friendlyRuleError({ status: 409, data: { message: 'A rule named R already exists' } }, 'x'), /Another rule already has this name/);
+  assert.match(friendlyRuleError({ status: 409, data: { message: 'stale precondition' } }, 'x'), /changed since/);
+  assert.match(friendlyRuleError({ status: 404 }, 'x'), /no longer exists/);
+  assert.match(friendlyRuleError({ status: 503 }, 'x'), /not available/);
+  assert.equal(friendlyRuleError(new Error('boom'), 'x'), 'boom');
+  assert.equal(friendlyRuleError(null, 'fallback'), 'fallback');
+});
+
+test('import summary line wording and plurals', () => {
+  const r = { read: 12, imported: new Array(9).fill({}), duplicates: 2, invalid: 1 };
+  assert.equal(importSummaryLine(r, false), '12 rows read · 9 imported · 2 duplicates · 1 invalid');
+  assert.equal(importSummaryLine(r, true), '12 rows read · 9 would import · 2 duplicates · 1 invalid');
+  assert.equal(importSummaryLine({ read: 1, imported: [{}], duplicates: 1, invalid: 0 }, false), '1 row read · 1 imported · 1 duplicate · 0 invalid');
+  assert.equal(importSummaryLine({ read: 0, imported: [], duplicates: 0, invalid: 0 }, true), '0 rows read · 0 would import · 0 duplicates · 0 invalid');
+});
+
+test('skipped rows view model', () => {
+  const v = skippedRowsView([
+    { sheet: 'Rules', row: 4, ruleName: 'A', reason: 'Unknown class Pateint', suggestions: ['Patient', 'Person'] },
+    { reason: '' },
+  ]);
+  assert.equal(v.length, 2);
+  assert.deepEqual({ ...v[0], key: '' }, { key: '', sheet: 'Rules', row: '4', ruleName: 'A', reason: 'Unknown class Pateint', suggestions: 'Patient, Person' });
+  assert.equal(v[1].reason, 'Skipped');
+  assert.equal(v[1].row, '');
+  assert.notEqual(v[0].key, v[1].key);
+  assert.deepEqual(skippedRowsView(undefined), []);
+});
+
+test('import button label and enablement', () => {
+  assert.equal(importButtonLabel({ imported: new Array(9).fill({}) }), 'Import 9 rules');
+  assert.equal(importButtonLabel({ imported: [{}] }), 'Import 1 rule');
+  assert.equal(canRunImport({ imported: [{}] }, false), true);
+  assert.equal(canRunImport({ imported: [{}] }, true), false);
+  assert.equal(canRunImport({ imported: [] }, false), false);
+  assert.equal(canRunImport(null, false), false);
+});
+
+test('import id is a uuid and reused for the same file only', () => {
+  const id = newImportId();
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  const f = { name: 'rules.xlsx', size: 100, lastModified: 5 };
+  const s1 = importSessionFor(null, f);
+  assert.equal(importSessionFor(s1, { ...f }).importId, s1.importId);
+  assert.notEqual(importSessionFor(s1, { ...f, size: 101 }).importId, s1.importId);
+  assert.notEqual(importSessionFor(s1, { ...f, name: 'other.xlsx' }).importId, s1.importId);
+});
+
+test('stale import handling', () => {
+  const err = { status: 409, data: { stale: true, message: '2 rows are now duplicates since the preview', read: 12, imported: [{ id: 'a' }], skipped: [], duplicates: 2, invalid: 1, previewStamp: 'new' } };
+  assert.equal(isStaleImport(err), true);
+  const r = staleImportReport(err);
+  assert.equal(r.previewStamp, 'new');
+  assert.equal(r.message, '2 rows are now duplicates since the preview');
+  assert.equal(r.imported.length, 1);
+  assert.equal(r.stale, true);
+  assert.equal(staleImportReport({ status: 409, data: { message: 'A rule named X already exists' } }), null);
+  assert.equal(staleImportReport({ status: 500, data: { stale: true } }), null);
+});
+
+test('import outcome and error messages', () => {
+  assert.equal(importOutcomeNotice({ read: 3, imported: [{}], skipped: [], duplicates: 0, invalid: 0, replayed: true }), 'This import was already done');
+  assert.equal(importOutcomeNotice({ read: 3, imported: [{}, {}, {}], skipped: [], duplicates: 0, invalid: 0 }), '3 rows read · 3 imported · 0 duplicates · 0 invalid');
+  assert.equal(importErrorMessage({ status: 413, message: 'x' }), 'This file is too large to import.');
+  assert.equal(importErrorMessage({ status: 400, data: { message: 'This is not a valid .xlsx file' } }), 'This is not a valid .xlsx file');
+  assert.equal(isImportFile('a.XLSX'), true);
+  assert.equal(isImportFile('a.json'), true);
+  assert.equal(isImportFile('a.xlsm'), false);
+});
+
+test('rename result replaces the rule in the list and selection', () => {
+  const rules = [{ id: '1', ruleName: 'A', ruleText: 't', enabled: true }, { id: '2', ruleName: 'B', ruleText: 'u', enabled: true }];
+  const form = { ruleName: ' A2 ', ruleText: 't', comment: '', category: '', enabled: true };
+  const a = applySavedRule(rules, '1', { id: '1', ruleName: 'A2', ruleText: 't', enabled: true }, form);
+  assert.deepEqual(a.rules.map(r => r.ruleName), ['A2', 'B']);
+  assert.equal(a.saved.ruleName, 'A2');
+  const b = applySavedRule(rules, '1', { ruleText: 't' }, form);
+  assert.deepEqual(b.rules.map(r => r.ruleName), ['A2', 'B']);
+  const c = applySavedRule(rules, '1', { id: '1', ruleName: 'A2' }, { ...form, ruleText: 'new', enabled: false });
+  assert.equal(c.saved.ruleText, 'new');
+  assert.equal(c.saved.enabled, false);
 });

@@ -11,8 +11,6 @@ import self.research.ontology.swrl.dto.WhyNotRequest;
 import self.research.ontology.swrl.dto.WhyNotResponse;
 import self.research.ontology.swrl.model.SwrlRule;
 
-import java.util.Optional;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static self.research.ontology.swrl.service.TriageHarness.rule;
@@ -22,15 +20,14 @@ class WhyNotFiredTest {
     private static final String NS = "http://example.org/triage#";
 
     private static TriageHarness harness(SwrlRule target) throws Exception {
-        TriageHarness harness = new TriageHarness();
-        Mockito.when(harness.repository.findByIdAndProjectId(target.getId(), TriageHarness.PROJECT)).thenReturn(Optional.of(target));
+        TriageHarness harness = new TriageHarness(target);
         Mockito.when(harness.client.fetchOntologyWithStamp(Mockito.anyString(), Mockito.any()))
-                .thenAnswer(invocation -> new OntologyClientService.FetchedOntology(withIvy(), 1L, null));
+                .thenAnswer(invocation -> new OntologyClientService.FetchedOntology(withIvy(harness), 1L, null));
         return harness;
     }
 
-    private static OWLOntology withIvy() throws Exception {
-        OWLOntology ontology = TriageHarness.triage();
+    private static OWLOntology withIvy(TriageHarness harness) throws Exception {
+        OWLOntology ontology = harness.fresh();
         OWLDataFactory factory = OWLManager.getOWLDataFactory();
         OWLNamedIndividual ivy = factory.getOWLNamedIndividual(IRI.create(NS + "ivy"));
         ontology.getOWLOntologyManager().addAxiom(ontology,

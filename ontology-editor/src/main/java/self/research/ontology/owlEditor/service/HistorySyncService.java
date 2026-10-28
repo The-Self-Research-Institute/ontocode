@@ -404,6 +404,13 @@ public class HistorySyncService {
         if (changeData.get("rollbackAuditId") instanceof String rollbackAuditId) {
             builder.metadata("rollbackAuditId", rollbackAuditId);
         }
+        if (changeData.get("batch") instanceof Map<?, ?> batch) {
+            batch.forEach((key, value) -> {
+                if (key instanceof String name && value instanceof String text) {
+                    builder.metadata(name, text);
+                }
+            });
+        }
     }
 
     public void save(HistoryChange change) {

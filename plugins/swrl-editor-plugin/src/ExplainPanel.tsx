@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { rt } from './resultsTheme';
 import apiClient from './apiClient';
 import type { InferredAxiom } from './types';
+import { withDraft } from './ruleModel';
 
 interface Premise {
   kind: string;
@@ -71,19 +73,19 @@ const COLLAPSE_AFTER = 3;
 const JustificationView: React.FC<{ j: Justification; index: number }> = ({ j, index }) => {
   const bindings = formatBindings(j.bindings);
   return (
-    <div className="border border-gray-200 rounded-lg p-2 bg-white">
-      <div className="text-xs text-gray-500 mb-1">Reason {index + 1}</div>
-      <div className="text-sm text-gray-900">
+    <div className="rounded-lg p-2" style={rt.card}>
+      <div className="text-xs mb-1" style={rt.label}>Reason {index + 1}</div>
+      <div className="text-sm" style={rt.value}>
         <span className="font-semibold">Rule {j.ruleName}</span>
-        {j.ruleText ? <span className="font-mono text-xs text-purple-800">: {j.ruleText}</span> : null}
+        {j.ruleText ? <span className="font-mono text-xs">: {j.ruleText}</span> : null}
       </div>
       {bindings && (
-        <div className="text-xs text-gray-700 mt-1">
+        <div className="text-xs mt-1" style={rt.value}>
           With <span className="font-mono">{bindings}</span>
         </div>
       )}
       {j.premises && j.premises.length > 0 && (
-        <ul className="list-disc pl-5 mt-1 text-xs text-gray-700 space-y-0.5">
+        <ul className="list-disc pl-5 mt-1 text-xs space-y-0.5" style={rt.value}>
           {j.premises.map((p, i) => (
             <li key={i}>{p.text}</li>
           ))}
@@ -93,7 +95,7 @@ const JustificationView: React.FC<{ j: Justification; index: number }> = ({ j, i
   );
 };
 
-export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; onClose: () => void }> = ({ projectId, axiom, onClose }) => {
+export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; onClose: () => void; draftMode?: boolean }> = ({ projectId, axiom, onClose, draftMode = false }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExplainResult | null>(null);
@@ -116,7 +118,7 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
       return;
     }
     apiClient
-      .post<ExplainResult>(`/api/swrl/${projectId}/explain`, body)
+      .post<ExplainResult>(withDraft(`/api/swrl/${projectId}/explain`, draftMode), body)
       .then(res => {
         if (!cancelled) setResult(res);
       })
@@ -136,37 +138,37 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
   const hidden = justifications.length - visible.length;
 
   return (
-    <div className="border border-purple-200 bg-purple-50/50 rounded-lg p-3 text-sm space-y-2">
+    <div className="rounded-lg p-3 text-sm space-y-2" style={rt.panel}>
       <div className="flex items-start justify-between gap-2">
-        <div className="font-semibold text-gray-800">Why was this concluded?</div>
-        <button onClick={onClose} className="text-xs text-gray-500 hover:text-gray-800">Close</button>
+        <div className="font-semibold" style={rt.heading}>Why was this concluded?</div>
+        <button onClick={onClose} className="text-xs" style={rt.link}>Close</button>
       </div>
-      {loading && <div className="text-xs text-gray-600">Looking for the reasons...</div>}
-      {error && <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
+      {loading && <div className="text-xs" style={rt.label}>Looking for the reasons...</div>}
+      {error && <div className="text-xs rounded p-2" style={rt.bannerError}>{error}</div>}
       {result && (
         <>
-          <div className="text-xs font-medium text-gray-800">{statusText(result)}</div>
+          <div className="text-xs font-medium" style={rt.value}>{statusText(result)}</div>
           {result.status === 'explained' && justifications.length > 1 && (
-            <div className="text-xs text-gray-600">{justifications.length} different rules or bindings each produce this conclusion.</div>
+            <div className="text-xs" style={rt.label}>{justifications.length} different rules or bindings each produce this conclusion.</div>
           )}
           {result.status === 'origin_only' && !hasAssertedNote(result.notes) && (
-            <div className="text-xs text-gray-600">This does not mean the conclusion is wrong, only that no rule here could be shown to produce it.</div>
+            <div className="text-xs" style={rt.label}>This does not mean the conclusion is wrong, only that no rule here could be shown to produce it.</div>
           )}
           {visible.map((j, i) => (
             <JustificationView key={i} j={j} index={i} />
           ))}
           {hidden > 0 && (
-            <button onClick={() => setShowAll(true)} className="text-xs text-purple-700 hover:underline">
+            <button onClick={() => setShowAll(true)} className="text-xs font-medium" style={rt.link}>
               Show {hidden} more
             </button>
           )}
           {showAll && justifications.length > COLLAPSE_AFTER && (
-            <button onClick={() => setShowAll(false)} className="text-xs text-purple-700 hover:underline">
+            <button onClick={() => setShowAll(false)} className="text-xs font-medium" style={rt.link}>
               Show fewer
             </button>
           )}
           {result.notes && result.notes.length > 0 && (
-            <ul className="list-disc pl-5 text-xs text-gray-700 space-y-0.5">
+            <ul className="list-disc pl-5 text-xs space-y-0.5" style={rt.value}>
               {result.notes.map((n, i) => (
                 <li key={i}>{n}</li>
               ))}
@@ -218,7 +220,7 @@ const atomStatusText = (s: string): string => {
 
 const isFullIri = (s: string): boolean => /^[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+$/.test(s) || /^urn:\S+$/.test(s);
 
-export const WhyNotPanel: React.FC<{ projectId: string; ruleId: string; individuals?: string[] }> = ({ projectId, ruleId, individuals }) => {
+export const WhyNotPanel: React.FC<{ projectId: string; ruleId: string; individuals?: string[]; draftMode?: boolean }> = ({ projectId, ruleId, individuals, draftMode = false }) => {
   const [open, setOpen] = useState(false);
   const [individual, setIndividual] = useState('');
   const [loading, setLoading] = useState(false);
@@ -242,7 +244,7 @@ export const WhyNotPanel: React.FC<{ projectId: string; ruleId: string; individu
     setError(null);
     setLoading(true);
     try {
-      const res = await apiClient.post<WhyNotResult>(`/api/swrl/${projectId}/rules/${ruleId}/why-not`, { individual: value });
+      const res = await apiClient.post<WhyNotResult>(withDraft(`/api/swrl/${projectId}/rules/${ruleId}/why-not`, draftMode), { individual: value });
       setResult(res);
       setAsked(value);
     } catch (e) {

@@ -894,6 +894,9 @@ public class ProjectLoadController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private self.research.ontology.owlEditor.service.OntologyVersionStamps exportStampSource;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleService exportRuleService;
+
     @GetMapping("/export/{projectId:.+}")
     public ResponseEntity<?> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format,
@@ -912,6 +915,7 @@ public class ProjectLoadController {
                 if (exportStampSource != null) {
                     draftStamp.set("X-Ontology-Draft-Version", exportStampSource.draftVersion(projectId, scope.userId()));
                 }
+                self.research.ontology.owlEditor.service.DisabledRulesHeader.into(draftStamp, exportRuleService, projectId, true, scope.userId());
                 exportPath = storageManager.resolveCodeViewFile(projectId, format, scope.contentScope());
                 return ResponseEntity.ok()
                         .headers(draftStamp)
@@ -928,6 +932,7 @@ public class ProjectLoadController {
             if (exportStampSource != null) {
                 publicStamp.set("X-Ontology-Revision", String.valueOf(exportStampSource.publicRevision(projectId)));
             }
+            self.research.ontology.owlEditor.service.DisabledRulesHeader.into(publicStamp, exportRuleService, projectId, false, null);
 
             Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
             if (cachedContent.isPresent()) {
@@ -1015,7 +1020,10 @@ public class ProjectLoadController {
         try {
             Path exportPath = job.getResultPath();
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
+            HttpHeaders jobHeaders = self.research.ontology.owlEditor.service.DisabledRulesHeader.into(
+                    new HttpHeaders(), exportRuleService, job.getProjectId(), job.isDraft(), job.getUserId());
             return ResponseEntity.ok()
+                    .headers(jobHeaders)
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(Files.size(exportPath))
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename="

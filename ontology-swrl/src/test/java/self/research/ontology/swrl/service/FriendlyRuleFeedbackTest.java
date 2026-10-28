@@ -1,10 +1,18 @@
 package self.research.ontology.swrl.service;
 
 import org.junit.jupiter.api.Test;
+import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLDataFactory;
+import org.semanticweb.owlapi.model.SWRLAtom;
+import org.semanticweb.owlapi.model.SWRLRule;
+import org.semanticweb.owlapi.model.SWRLVariable;
 import self.research.ontology.swrl.model.ExecutionResult;
 import self.research.ontology.swrl.model.ValidationResult;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -16,20 +24,21 @@ class FriendlyRuleFeedbackTest {
     private static final String CHILD = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:lessThan(?a, 18) -> Child(?p)";
     private static final String UNKNOWN_CLASS = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:lessThan(?a, 18) -> Childd(?p)";
 
-    @Test
-    void aRuleUsingAnUnknownNameIsSkippedWithAReasonAndTheOthersStillRun() throws Exception {
-        TriageHarness harness = new TriageHarness(rule("r1", "Age under 18", CHILD), rule("r2", "Typo rule", UNKNOWN_CLASS));
-
-        ExecutionResult result = harness.service.executeRules(TriageHarness.PROJECT);
-
-        assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
-        assertEquals("completed_with_warnings", result.getCompletion());
-        assertEquals(List.of("Age under 18"), result.getExecutedRuleNames());
-        assertEquals(1, result.getSkippedRules().size());
-        assertEquals("Typo rule", result.getSkippedRules().get(0).ruleName());
-        String reason = result.getSkippedRules().get(0).reason();
-        assertTrue(reason.contains("'Childd'"), reason);
-        assertTrue(reason.contains("Did you mean: Child"), reason);
+    private static SWRLRule heightIntoMod() {
+        OWLDataFactory df = OWLManager.getOWLDataFactory();
+        String ns = "http://example.org/triage#";
+        SWRLVariable p = df.getSWRLVariable(IRI.create(ns + "p"));
+        SWRLVariable h = df.getSWRLVariable(IRI.create(ns + "h"));
+        SWRLVariable r = df.getSWRLVariable(IRI.create(ns + "r"));
+        Set<SWRLAtom> body = new LinkedHashSet<>();
+        body.add(df.getSWRLClassAtom(df.getOWLClass(IRI.create(ns + "Patient")), p));
+        body.add(df.getSWRLDataPropertyAtom(df.getOWLDataProperty(IRI.create(ns + "hasHeight")), p, h));
+        body.add(df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#mod"),
+                List.of(r, h, df.getSWRLLiteralArgument(df.getOWLLiteral(7)))));
+        body.add(df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#equal"),
+                List.of(r, df.getSWRLLiteralArgument(df.getOWLLiteral(0)))));
+        Set<SWRLAtom> head = Set.of(df.getSWRLClassAtom(df.getOWLClass(IRI.create(ns + "WeeklyReview")), p));
+        return df.getSWRLRule(body, head, Set.of(df.getOWLAnnotation(df.getRDFSLabel(), df.getOWLLiteral("Bad maths"))));
     }
 
     @Test
@@ -56,8 +65,8 @@ class FriendlyRuleFeedbackTest {
 
     @Test
     void aTypeMismatchIsExplainedInPlainWords() throws Exception {
-        String heightIntoMod = "Patient(?p) ^ hasHeight(?p, ?h) ^ swrlb:mod(?r, ?h, 7) ^ swrlb:equal(?r, 0) -> WeeklyReview(?p)";
-        TriageHarness harness = new TriageHarness(rule("r1", "Bad maths", heightIntoMod));
+        TriageHarness harness = new TriageHarness();
+        harness.addAxiom(heightIntoMod());
 
         ExecutionResult result = harness.service.executeRules(TriageHarness.PROJECT);
 

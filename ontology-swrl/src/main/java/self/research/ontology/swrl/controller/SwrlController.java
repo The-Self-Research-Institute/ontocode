@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -13,7 +14,6 @@ import self.research.ontology.swrl.dto.*;
 import self.research.ontology.swrl.model.*;
 import self.research.ontology.swrl.service.SwrlEngineService;
 
-import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +48,12 @@ public class SwrlController {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(createErrorResponse("Could not check your permission to change rules. Try again shortly."));
         }
+    }
+
+    private ResponseEntity<?> gone(String projectId) {
+        return ResponseEntity.status(HttpStatus.GONE).body(createErrorResponse(
+                "Rules are stored in the ontology now. Create, change, enable, disable and delete them with /api/ontology/"
+                        + projectId + "/rules."));
     }
 
     private boolean hasInternalToken(String presented) {
@@ -102,37 +108,58 @@ public class SwrlController {
         }
     }
 
-    /**
-     * Create a new SWRL rule
-     */
     @PostMapping("/{projectId}/rules")
-    public ResponseEntity<?> createRule(
+    public ResponseEntity<?> createRule(@PathVariable String projectId, @RequestBody(required = false) Map<String, Object> request) {
+        return gone(projectId);
+    }
+
+    @PostMapping("/{projectId}/rules/parse")
+    public ResponseEntity<?> parseRule(
             @PathVariable String projectId,
-            @Valid @RequestBody CreateRuleRequest request) {
+            @RequestBody Map<String, String> request,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId) {
+        String ruleText = request == null ? null : request.get("ruleText");
+        if (ruleText == null || ruleText.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body(createErrorResponse("Rule text cannot be empty"));
+        }
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to parse on a private draft"));
+        }
+        try {
+            return ResponseEntity.ok(swrlEngineService.parseRule(projectId, ruleText, draft ? userId : null));
+        } catch (Exception e) {
+            logger.error("Failed to parse a rule for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(createErrorResponse("Parsing failed: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{projectId}/rules/legacy")
+    public ResponseEntity<?> getLegacyRules(@PathVariable String projectId) {
+        try {
+            return ResponseEntity.ok(swrlEngineService.legacyRules(projectId));
+        } catch (Exception e) {
+            logger.error("Failed to read the legacy rules of project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(createErrorResponse("Failed to read the older saved rules: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{projectId}/rules/legacy/{ruleId}/migrated")
+    public ResponseEntity<?> markLegacyRuleMigrated(@PathVariable String projectId, @PathVariable String ruleId) {
         ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
         if (denied != null) {
             return denied;
         }
-        
         try {
-            SwrlRule rule = swrlEngineService.createRule(
-                projectId, 
-                request.getRuleName(), 
-                request.getRuleText(),
-                request.getComment(),
-                request.getCategory()
-            );
-            return ResponseEntity.status(HttpStatus.CREATED).body(rule);
-            
+            return ResponseEntity.ok(swrlEngineService.markMigrated(projectId, ruleId));
         } catch (IllegalArgumentException e) {
-            logger.warn("Invalid rule creation request: {}", e.getMessage());
-            return ResponseEntity.badRequest()
-                .body(createErrorResponse(e.getMessage()));
-                
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(createErrorResponse(e.getMessage()));
         } catch (Exception e) {
-            logger.error("Failed to create rule for project: {}", projectId, e);
+            logger.error("Failed to mark rule {} of project {} as migrated", ruleId, projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse("Failed to create rule: " + e.getMessage()));
+                .body(createErrorResponse("Failed to mark the rule as migrated: " + e.getMessage()));
         }
     }
 
@@ -156,19 +183,20 @@ public class SwrlController {
             }
             
             Pageable pageable = PageRequest.of(page, size);
-            Page<SwrlRule> rules;
-            
-            // Apply filters
+            List<SwrlRule> all = new java.util.ArrayList<>(swrlEngineService.listRulesAsRows(projectId, null));
             if (search != null && !search.trim().isEmpty()) {
-                rules = swrlEngineService.searchRules(projectId, search, pageable);
+                String needle = search.toLowerCase();
+                all.removeIf(r -> !(String.valueOf(r.getRuleName()).toLowerCase().contains(needle)
+                        || String.valueOf(r.getRuleText()).toLowerCase().contains(needle)));
             } else if (category != null && !category.trim().isEmpty()) {
-                rules = swrlEngineService.getRulesByCategory(projectId, category, pageable);
+                all.removeIf(r -> !category.equals(r.getCategory()));
             } else if (enabled != null) {
-                rules = swrlEngineService.getRulesByEnabled(projectId, enabled, pageable);
-            } else {
-                rules = swrlEngineService.getRulesPaginated(projectId, pageable);
+                all.removeIf(r -> r.isEnabled() != enabled);
             }
-            
+            int from = (int) Math.min(pageable.getOffset(), all.size());
+            int to = Math.min(from + size, all.size());
+            Page<SwrlRule> rules = new PageImpl<>(all.subList(from, to), pageable, all.size());
+
             return ResponseEntity.ok(rules);
             
         } catch (Exception e) {
@@ -262,66 +290,15 @@ public class SwrlController {
         }
     }
 
-    /**
-     * Update an existing rule
-     */
     @PutMapping("/{projectId}/rules/{ruleId}")
-    public ResponseEntity<?> updateRule(
-            @PathVariable String projectId,
-            @PathVariable String ruleId,
-            @RequestBody UpdateRuleRequest request) {
-        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
-        if (denied != null) {
-            return denied;
-        }
-        
-        try {
-            SwrlRule rule = swrlEngineService.updateRule(
-                projectId,
-                ruleId,
-                request.getRuleText(),
-                request.getComment(),
-                request.getEnabled(),
-                request.getCategory()
-            );
-            return ResponseEntity.ok(rule);
-            
-        } catch (IllegalArgumentException e) {
-            logger.warn("Invalid rule update: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(createErrorResponse(e.getMessage()));
-                
-        } catch (Exception e) {
-            logger.error("Failed to update rule {} for project {}", ruleId, projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse("Failed to update rule: " + e.getMessage()));
-        }
+    public ResponseEntity<?> updateRule(@PathVariable String projectId, @PathVariable String ruleId,
+                                        @RequestBody(required = false) Map<String, Object> request) {
+        return gone(projectId);
     }
 
-    /**
-     * Delete a rule
-     */
     @DeleteMapping("/{projectId}/rules/{ruleId}")
-    public ResponseEntity<?> deleteRule(
-            @PathVariable String projectId,
-            @PathVariable String ruleId) {
-        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
-        if (denied != null) {
-            return denied;
-        }
-        
-        try {
-            swrlEngineService.deleteRule(projectId, ruleId);
-            return ResponseEntity.noContent().build();
-            
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-            
-        } catch (Exception e) {
-            logger.error("Failed to delete rule {} for project {}", ruleId, projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse("Failed to delete rule: " + e.getMessage()));
-        }
+    public ResponseEntity<?> deleteRule(@PathVariable String projectId, @PathVariable String ruleId) {
+        return gone(projectId);
     }
 
     /**
@@ -342,12 +319,14 @@ public class SwrlController {
                 result.isSuccess(),
                 result.getExecutionTimeMs(),
                 result.getInferredAxiomsCount(),
-                swrlEngineService.getRules(projectId).size(),
+                result.getExecutedRuleNames() == null ? 0 : result.getExecutedRuleNames().size()
+                        + (result.getSkippedRules() == null ? 0 : result.getSkippedRules().size()),
                 result.getInferredAxioms(),
                 result.getErrorMessage()
             );
             // Pass through rule names and execution mode
             response.setExecutedRuleNames(result.getExecutedRuleNames());
+            response.setExecutedRuleIds(result.getExecutedRuleIds());
             response.setExecutionMode(result.getExecutionMode());
             response.setStamp(result.getStamp());
             response.setSkippedRules(result.getSkippedRules());
@@ -393,6 +372,7 @@ public class SwrlController {
             );
             // Pass through rule names and execution mode
             response.setExecutedRuleNames(result.getExecutedRuleNames());
+            response.setExecutedRuleIds(result.getExecutedRuleIds());
             response.setExecutionMode(result.getExecutionMode());
             response.setSkippedRules(result.getSkippedRules());
             response.setConclusionCount(result.getConclusionCount());
@@ -432,63 +412,24 @@ public class SwrlController {
         }
     }
 
-    /**
-     * ✅ NEW: Batch create rules
-     */
     @PostMapping("/{projectId}/rules/batch")
-    public ResponseEntity<?> createRulesBatch(
-            @PathVariable String projectId,
-            @RequestBody List<CreateRuleRequest> requests) {
-        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
-        if (denied != null) {
-            return denied;
-        }
-        
-        try {
-            List<SwrlRule> createdRules = swrlEngineService.createRulesBatch(projectId, requests);
-            return ResponseEntity.status(HttpStatus.CREATED).body(createdRules);
-            
-        } catch (Exception e) {
-            logger.error("Failed to create rules batch for project: {}", projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse("Batch creation failed: " + e.getMessage()));
-        }
+    public ResponseEntity<?> createRulesBatch(@PathVariable String projectId, @RequestBody(required = false) Object request) {
+        return gone(projectId);
     }
 
-    /**
-     * ✅ NEW: Batch delete rules
-     */
     @DeleteMapping("/{projectId}/rules/batch")
-    public ResponseEntity<?> deleteRulesBatch(
-            @PathVariable String projectId,
-            @RequestBody List<String> ruleIds) {
-        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
-        if (denied != null) {
-            return denied;
-        }
-        
-        try {
-            swrlEngineService.deleteRulesBatch(projectId, ruleIds);
-            return ResponseEntity.noContent().build();
-            
-        } catch (Exception e) {
-            logger.error("Failed to delete rules batch for project: {}", projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse("Batch deletion failed: " + e.getMessage()));
-        }
+    public ResponseEntity<?> deleteRulesBatch(@PathVariable String projectId, @RequestBody(required = false) Object request) {
+        return gone(projectId);
     }
 
-    /**
-     * ✅ NEW: Export rules
-     */
     @GetMapping("/{projectId}/rules/export")
     public ResponseEntity<?> exportRules(@PathVariable String projectId) {
         try {
-            List<SwrlRule> rules = swrlEngineService.getRules(projectId);
+            List<SwrlRule> rules = swrlEngineService.listRulesAsRows(projectId, null);
             return ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename=rules-" + projectId + ".json")
                 .body(rules);
-                
+
         } catch (Exception e) {
             logger.error("Failed to export rules for project: {}", projectId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -496,27 +437,9 @@ public class SwrlController {
         }
     }
 
-    /**
-     * ✅ NEW: Import rules
-     */
     @PostMapping("/{projectId}/rules/import")
-    public ResponseEntity<?> importRules(
-            @PathVariable String projectId,
-            @RequestBody List<CreateRuleRequest> rules) {
-        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
-        if (denied != null) {
-            return denied;
-        }
-        
-        try {
-            ImportResult result = swrlEngineService.importRules(projectId, rules);
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            logger.error("Failed to import rules for project: {}", projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse("Import failed: " + e.getMessage()));
-        }
+    public ResponseEntity<?> importRules(@PathVariable String projectId, @RequestBody(required = false) Object request) {
+        return gone(projectId);
     }
 
     /**
@@ -535,33 +458,10 @@ public class SwrlController {
         }
     }
 
-    /**
-     * ✅ NEW: Duplicate a rule
-     */
     @PostMapping("/{projectId}/rules/{ruleId}/duplicate")
-    public ResponseEntity<?> duplicateRule(
-            @PathVariable String projectId,
-            @PathVariable String ruleId,
-            @RequestBody(required = false) Map<String, String> request) {
-        ResponseEntity<?> denied = denyUnlessMayWriteRules(projectId);
-        if (denied != null) {
-            return denied;
-        }
-        
-        try {
-            String newName = request != null ? request.get("newName") : null;
-            SwrlRule duplicated = swrlEngineService.duplicateRule(projectId, ruleId, newName);
-            return ResponseEntity.status(HttpStatus.CREATED).body(duplicated);
-            
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(createErrorResponse(e.getMessage()));
-                
-        } catch (Exception e) {
-            logger.error("Failed to duplicate rule {} for project {}", ruleId, projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse("Duplication failed: " + e.getMessage()));
-        }
+    public ResponseEntity<?> duplicateRule(@PathVariable String projectId, @PathVariable String ruleId,
+                                           @RequestBody(required = false) Map<String, String> request) {
+        return gone(projectId);
     }
 
     /**

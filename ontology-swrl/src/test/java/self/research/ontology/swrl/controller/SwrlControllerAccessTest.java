@@ -4,8 +4,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
-import self.research.ontology.swrl.dto.CreateRuleRequest;
-import self.research.ontology.swrl.dto.UpdateRuleRequest;
 import self.research.ontology.swrl.service.OntologyClientService;
 import self.research.ontology.swrl.service.SwrlEngineService;
 
@@ -14,6 +12,7 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SwrlControllerAccessTest {
 
@@ -27,10 +26,10 @@ class SwrlControllerAccessTest {
         ReflectionTestUtils.setField(controller, "internalToken", "secret");
     }
 
-    private Map<String, Supplier<ResponseEntity<?>>> writes() {
+    private Map<String, Supplier<ResponseEntity<?>>> mongoWrites() {
         return Map.of(
-                "create", () -> controller.createRule("p1", new CreateRuleRequest()),
-                "update", () -> controller.updateRule("p1", "r1", new UpdateRuleRequest()),
+                "create", () -> controller.createRule("p1", Map.of()),
+                "update", () -> controller.updateRule("p1", "r1", Map.of()),
                 "delete", () -> controller.deleteRule("p1", "r1"),
                 "batch create", () -> controller.createRulesBatch("p1", List.of()),
                 "batch delete", () -> controller.deleteRulesBatch("p1", List.of("r1")),
@@ -39,30 +38,56 @@ class SwrlControllerAccessTest {
     }
 
     @Test
-    void aViewerIsRefusedOnEveryRuleChangingEndpointAndNothingIsChanged() {
+    void everyOldRuleWritingEndpointAnswers410AndPointsToTheEditorAndTouchesNothing() {
+        mongoWrites().forEach((name, call) -> {
+            ResponseEntity<?> response = call.get();
+            assertEquals(410, response.getStatusCode().value(), name);
+            assertTrue(String.valueOf(response.getBody()).contains("/api/ontology/p1/rules"), name);
+        });
+
+        Mockito.verifyNoInteractions(engine);
+        Mockito.verifyNoInteractions(client);
+    }
+
+    @Test
+    void markingALegacyRuleMigratedNeedsPermissionAndFailsClosed() {
         Mockito.when(client.canWriteRules("p1")).thenReturn(new OntologyClientService.RuleAccess(false, "view-only"));
+        assertEquals(403, controller.markLegacyRuleMigrated("p1", "r1").getStatusCode().value());
 
-        writes().forEach((name, call) -> assertEquals(403, call.get().getStatusCode().value(), name));
-
-        Mockito.verifyNoInteractions(engine);
-    }
-
-    @Test
-    void aFailedPermissionCheckFailsClosed() {
         Mockito.when(client.canWriteRules("p1")).thenThrow(new IllegalStateException("editor down"));
-
-        writes().forEach((name, call) -> assertEquals(503, call.get().getStatusCode().value(), name));
+        assertEquals(503, controller.markLegacyRuleMigrated("p1", "r1").getStatusCode().value());
 
         Mockito.verifyNoInteractions(engine);
     }
 
     @Test
-    void anAllowedCallerReachesTheService() {
+    void anAllowedCallerCanMarkALegacyRuleMigrated() {
         Mockito.when(client.canWriteRules("p1")).thenReturn(new OntologyClientService.RuleAccess(true, null));
 
-        controller.deleteRule("p1", "r1");
+        assertEquals(200, controller.markLegacyRuleMigrated("p1", "r1").getStatusCode().value());
 
-        Mockito.verify(engine).deleteRule("p1", "r1");
+        Mockito.verify(engine).markMigrated("p1", "r1");
+    }
+
+    @Test
+    void theLegacyListComesFromTheService() {
+        Mockito.when(engine.legacyRules("p1")).thenReturn(List.of());
+
+        assertEquals(200, controller.getLegacyRules("p1").getStatusCode().value());
+        Mockito.verify(engine).legacyRules("p1");
+    }
+
+    @Test
+    void parseRejectsEmptyTextAndAnswersTheServiceResult() {
+        assertEquals(400, controller.parseRule("p1", Map.of("ruleName", "r"), false, null).getStatusCode().value());
+        assertEquals(400, controller.parseRule("p1", Map.of("ruleText", "x"), true, null).getStatusCode().value());
+        Mockito.when(engine.parseRule("p1", "A(?x) -> B(?x)", null))
+                .thenReturn(new SwrlEngineService.RuleParse(true, "Ontology()", List.of(), List.of()));
+
+        ResponseEntity<?> response = controller.parseRule("p1", Map.of("ruleName", "r", "ruleText", "A(?x) -> B(?x)"), false, null);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertTrue(((SwrlEngineService.RuleParse) response.getBody()).valid());
     }
 
     @Test

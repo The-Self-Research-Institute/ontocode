@@ -10,6 +10,7 @@ public class ExecutionResult {
     private List<InferredAxiom> inferredAxioms;
     private String errorMessage;
     private List<String> executedRuleNames = new ArrayList<>();
+    private List<String> executedRuleIds = new ArrayList<>();
     private String executionMode = "all"; // "all" or "selected"
     private self.research.ontology.common.preview.PreviewStamp stamp;
     private int conclusionCount;
@@ -48,6 +49,9 @@ public class ExecutionResult {
 
     public List<String> getExecutedRuleNames() { return executedRuleNames; }
     public void setExecutedRuleNames(List<String> executedRuleNames) { this.executedRuleNames = executedRuleNames; }
+
+    public List<String> getExecutedRuleIds() { return executedRuleIds; }
+    public void setExecutedRuleIds(List<String> executedRuleIds) { this.executedRuleIds = executedRuleIds; }
 
     public String getExecutionMode() { return executionMode; }
     public void setExecutionMode(String executionMode) { this.executionMode = executionMode; }

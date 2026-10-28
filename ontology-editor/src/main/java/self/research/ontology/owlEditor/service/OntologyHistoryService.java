@@ -156,6 +156,7 @@ public class OntologyHistoryService {
                 if (origin.toolLabel() != null) changeData.put("toolLabel", origin.toolLabel());
                 if (origin.revertsChangeSetId() != null) changeData.put("revertsChangeSetId", origin.revertsChangeSetId());
                 if (origin.rollbackAuditId() != null) changeData.put("rollbackAuditId", origin.rollbackAuditId());
+                if (origin.batch() != null && !origin.batch().isEmpty()) changeData.put("batch", origin.batch());
                 if (origin.exact() != null) origin.exact().stamp(changeData, editId);
             }
 

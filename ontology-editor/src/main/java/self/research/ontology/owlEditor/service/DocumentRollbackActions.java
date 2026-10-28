@@ -14,6 +14,12 @@ import org.springframework.web.client.RestTemplate;
 @Component
 public class DocumentRollbackActions implements RollbackActionRunner {
 
+    public static final String SAVED_RULES_MOVED = "Saved rules moved into the ontology; undo from the rule list";
+
+    public static boolean isRetired(RollbackAction action) {
+        return action != null && DocumentStore.SWRL_RULE.key().equals(action.store());
+    }
+
     private final MongoTemplate mongoTemplate;
     private final String swrlServiceUrl;
     private final RestTemplate restTemplate;
@@ -30,6 +36,9 @@ public class DocumentRollbackActions implements RollbackActionRunner {
 
     @Override
     public void run(String projectId, RollbackAction action, boolean draft, String draftOwner) {
+        if (isRetired(action)) {
+            throw new IllegalStateException(SAVED_RULES_MOVED);
+        }
         DocumentStore store = requireStore(action);
         Object id = identity(action);
         if (action.document() != null && !projectId.equals(Document.parse(action.document()).getString("projectId"))) {
@@ -41,13 +50,13 @@ public class DocumentRollbackActions implements RollbackActionRunner {
         } else {
             collection.replaceOne(Filters.eq("_id", id), Document.parse(action.document()), new ReplaceOptions().upsert(true));
         }
-        if (store == DocumentStore.SWRL_RULE) {
-            clearSwrlCache(projectId);
-        }
     }
 
     @Override
     public boolean holds(String projectId, RollbackAction action, boolean draft, String draftOwner) {
+        if (isRetired(action)) {
+            return false;
+        }
         DocumentStore store = DocumentStore.find(action.store());
         if (store == null) {
             return false;
@@ -81,13 +90,5 @@ public class DocumentRollbackActions implements RollbackActionRunner {
             throw new IllegalArgumentException("A document action needs a before or after state");
         }
         return Document.parse(json).get("_id");
-    }
-
-    private void clearSwrlCache(String projectId) {
-        try {
-            restTemplate.postForEntity(swrlServiceUrl + "/api/swrl/" + projectId + "/cache/clear", null, String.class);
-        } catch (RuntimeException e) {
-            log.warn("[UNDO] Could not clear the SWRL engine cache for {}: {}", projectId, e.getMessage());
-        }
     }
 }

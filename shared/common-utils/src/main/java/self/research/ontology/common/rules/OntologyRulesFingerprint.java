@@ -23,6 +23,7 @@ public final class OntologyRulesFingerprint {
         }
         List<String> rules = ontology.importsClosure()
                 .flatMap(o -> o.axioms(AxiomType.SWRL_RULE))
+                .filter(rule -> !DisabledRules.isDisabled(rule))
                 .map(SWRLRule::getAxiomWithoutAnnotations)
                 .map(Object::toString)
                 .distinct()

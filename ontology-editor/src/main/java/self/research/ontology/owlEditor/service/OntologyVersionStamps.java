@@ -1,14 +1,8 @@
 package self.research.ontology.owlEditor.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.preview.PreviewStamp;
 import self.research.ontology.common.preview.RulesFingerprint;
-import self.research.ontology.owlEditor.model.SwrlRuleEntity;
-import self.research.ontology.owlEditor.repository.SwrlRuleRepository;
-
-import java.util.ArrayList;
-import java.util.List;
 
 @Service
 public class OntologyVersionStamps {
@@ -16,9 +10,6 @@ public class OntologyVersionStamps {
     private final MainGraphRevisionService revisions;
     private final StorageManager storageManager;
     private final SparqlDatasetService datasetService;
-
-    @Autowired(required = false)
-    private SwrlRuleRepository swrlRules;
 
     public OntologyVersionStamps(MainGraphRevisionService revisions, StorageManager storageManager,
                                  SparqlDatasetService datasetService) {
@@ -36,16 +27,7 @@ public class OntologyVersionStamps {
     }
 
     public String rulesFingerprint(String projectId) {
-        if (swrlRules == null) {
-            return RulesFingerprint.NONE;
-        }
-        List<String[]> enabled = new ArrayList<>();
-        for (SwrlRuleEntity rule : swrlRules.findByProjectIdOrderByCreatedAtDesc(projectId)) {
-            if (rule.isEnabled()) {
-                enabled.add(new String[]{rule.getRuleName(), rule.getRuleText()});
-            }
-        }
-        return RulesFingerprint.of(enabled);
+        return RulesFingerprint.NONE;
     }
 
     public PreviewStamp current(String projectId, boolean draft, String userId) {

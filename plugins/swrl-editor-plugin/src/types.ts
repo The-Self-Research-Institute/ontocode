@@ -1,13 +1,38 @@
 export interface SwrlRule {
   id: string;
-  projectId: string;
+  projectId?: string;
   ruleName: string;
   ruleText: string;
-  comment?: string;
-  category?: string;
+  comment?: string | null;
+  category?: string | null;
   enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
+  source?: string | null;
+  readOnly?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface UnmigratedRule {
+  id?: string;
+  ruleName: string;
+  ruleText?: string;
+  error?: string;
+}
+
+export interface RulesListResponse {
+  rules: SwrlRule[];
+  unmigrated?: UnmigratedRule[];
+}
+
+export interface RuleWriteErrorBody {
+  errors?: string[];
+  suggestions?: string[];
+  message?: string;
+}
+
+export interface ExportCheckResponse {
+  disabledRules: { id: string; ruleName: string }[];
+  warning?: string;
 }
 
 export interface PagedResponse<T> {

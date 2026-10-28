@@ -5,7 +5,41 @@ import self.research.ontology.owlEditor.model.HistoryChange;
 import java.util.UUID;
 
 public record ChangeOrigin(String changeSetId, String source, HistoryChange.AiInfo ai, String revertsChangeSetId,
-                           String rollbackAuditId, ExactCarrier exact, String toolSource, String toolLabel) {
+                           String rollbackAuditId, ExactCarrier exact, String toolSource, String toolLabel,
+                           RuleNote ruleNote, java.util.Map<String, String> batch) {
+
+    public record RuleNote(String name, String action, String text) {
+        public static final String ADDED = "added";
+        public static final String CHANGED = "changed";
+        public static final String TURNED_OFF = "turned off";
+        public static final String TURNED_ON = "turned on";
+        public static final String DELETED = "deleted";
+        public static final String MIGRATED = "migrated";
+        public static final String RENAMED = "renamed";
+        public static final String IMPORTED = "imported";
+
+        public RuleNote(String name, String action) {
+            this(name, action, null);
+        }
+
+        public String description() {
+            if (text != null) {
+                return text;
+            }
+            return MIGRATED.equals(action) ? "Migrated saved rule \"" + name + "\"" : "Rule \"" + name + "\" " + action;
+        }
+    }
+
+    public ChangeOrigin(String changeSetId, String source, HistoryChange.AiInfo ai, String revertsChangeSetId,
+                        String rollbackAuditId, ExactCarrier exact, String toolSource, String toolLabel,
+                        RuleNote ruleNote) {
+        this(changeSetId, source, ai, revertsChangeSetId, rollbackAuditId, exact, toolSource, toolLabel, ruleNote, null);
+    }
+
+    public ChangeOrigin(String changeSetId, String source, HistoryChange.AiInfo ai, String revertsChangeSetId,
+                        String rollbackAuditId, ExactCarrier exact, String toolSource, String toolLabel) {
+        this(changeSetId, source, ai, revertsChangeSetId, rollbackAuditId, exact, toolSource, toolLabel, null);
+    }
 
     public ChangeOrigin(String changeSetId, String source, HistoryChange.AiInfo ai, String revertsChangeSetId,
                         String rollbackAuditId, ExactCarrier exact) {
@@ -19,7 +53,17 @@ public record ChangeOrigin(String changeSetId, String source, HistoryChange.AiIn
 
     public ChangeOrigin withExact(ExactCarrier carrier) {
         return new ChangeOrigin(changeSetId, source, ai, revertsChangeSetId, rollbackAuditId, carrier, toolSource,
-                toolLabel);
+                toolLabel, ruleNote, batch);
+    }
+
+    public ChangeOrigin withRule(RuleNote note) {
+        return new ChangeOrigin(changeSetId, source, ai, revertsChangeSetId, rollbackAuditId, exact, toolSource,
+                toolLabel, note, batch);
+    }
+
+    public ChangeOrigin withBatch(java.util.Map<String, String> entries) {
+        return new ChangeOrigin(changeSetId, source, ai, revertsChangeSetId, rollbackAuditId, exact, toolSource,
+                toolLabel, ruleNote, entries);
     }
 
     public static final String MANUAL = "MANUAL";

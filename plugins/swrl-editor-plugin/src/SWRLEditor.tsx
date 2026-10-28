@@ -10,7 +10,10 @@ import apiClient from './apiClient';
 import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
 import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
-import type { SwrlRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom } from './types';
+import { rt, btn } from './resultsTheme';
+import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, BuiltInCategory, InferredAxiom } from './types';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView } from './ruleModel';
+import type { ImportReport, ImportSession } from './ruleModel';
 
 
 function parseSwrlError(raw: string): { title: string; detail: string; hint?: string } {
@@ -332,11 +335,15 @@ interface RuleListItemProps {
   onToggle: () => void;
   onToggleEnabled: () => void;
   onDelete: () => void;
+  onMakeLocalCopy: () => void;
+  isCopying: boolean;
 }
 
 const RuleListItem: React.FC<RuleListItemProps> = ({ 
-  rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete 
-}) => (
+  rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete, onMakeLocalCopy, isCopying
+}) => {
+  const imported = isImportedRule(rule);
+  return (
   <div
     className={`group relative flex items-start gap-3 p-3 cursor-pointer transition-all duration-150 border-l-3 ${
       isSelected 
@@ -368,8 +375,22 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
         )}
       </div>
       <p className="text-xs text-gray-500 font-mono truncate mt-0.5">{rule.ruleText}</p>
+      {imported && (
+        <div className="mt-1" onClick={e => e.stopPropagation()}>
+          <div className="text-[11px] text-gray-600 truncate" title={sourceLabel(rule)}>{sourceLabel(rule)}</div>
+          <button
+            onClick={onMakeLocalCopy}
+            disabled={isCopying}
+            className="mt-0.5 text-xs text-purple-700 hover:underline disabled:opacity-50"
+          >
+            {isCopying ? 'Copying...' : 'Make a local copy'}
+          </button>
+          <div className="text-[10px] text-gray-400">Imported rules cannot be turned off here yet.</div>
+        </div>
+      )}
     </div>
 
+    {!imported && (
     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
       <button
         onClick={onToggleEnabled}
@@ -390,8 +411,10 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
         <Trash2 size={14} />
       </button>
     </div>
+    )}
   </div>
-);
+  );
+};
 
 
 interface QuickInsertProps {
@@ -555,7 +578,7 @@ interface ResultsPanelProps {
 }
 
 
-const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> = ({ projectId, context }) => {
+const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; draftMode?: boolean }> = ({ projectId, context, draftMode = false }) => {
   const [query, setQuery] = useState('Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)');
   const [results, setResults] = useState<{ columnNames: string[], rows: Record<string, any>[], rowCount: number, executionTimeMs: number, success: boolean, errorMessage?: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -572,7 +595,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
         success: boolean,
         errorMessage?: string
       }>(
-        `/api/swrl/${projectId}/sqwrl/query`, 
+        withDraft(`/api/swrl/${projectId}/sqwrl/query`, draftMode), 
         { queryText: query }
       );
       setResults(res);
@@ -587,7 +610,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
         errorMessage: e.message || 'Query execution failed'
       });
     } finally { setLoading(false); }
-  }, [projectId, query]);
+  }, [projectId, query, draftMode]);
 
   const queryExamples = [
     { label: 'All Persons with Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)' },
@@ -695,6 +718,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext }> =
 
 interface ResultsPanelProps {
   projectId: string;
+  draftMode?: boolean;
   results: ExecutionResponse | null;
   isExecuting: boolean;
   onAdd?: (axioms: InferredAxiom[]) => Promise<{ ok: boolean; message: string }>;
@@ -951,24 +975,13 @@ const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomIte
   return groups;
 };
 
-const getAxiomTypeStyle = (type: string): { icon: string; bgColor: string; textColor: string; borderColor: string } => {
-  const styles: Record<string, { icon: string; bgColor: string; textColor: string; borderColor: string }> = {
-    'ClassAssertion': { icon: '🏷️', bgColor: 'bg-blue-50', textColor: 'text-blue-800', borderColor: 'border-blue-200' },
-    'ObjectPropertyAssertion': { icon: '🔗', bgColor: 'bg-green-50', textColor: 'text-green-800', borderColor: 'border-green-200' },
-    'DataPropertyAssertion': { icon: '📊', bgColor: 'bg-amber-50', textColor: 'text-amber-800', borderColor: 'border-amber-200' },
-    'SubClassOf': { icon: '⊆', bgColor: 'bg-purple-50', textColor: 'text-purple-800', borderColor: 'border-purple-200' },
-    'EquivalentClasses': { icon: '≡', bgColor: 'bg-indigo-50', textColor: 'text-indigo-800', borderColor: 'border-indigo-200' },
-    'EquivalentObjectProperties': { icon: '⇔', bgColor: 'bg-teal-50', textColor: 'text-teal-800', borderColor: 'border-teal-200' },
-    'SubObjectPropertyOf': { icon: '⊑', bgColor: 'bg-cyan-50', textColor: 'text-cyan-800', borderColor: 'border-cyan-200' },
-    'ObjectPropertyDomain': { icon: '🎯', bgColor: 'bg-rose-50', textColor: 'text-rose-800', borderColor: 'border-rose-200' },
-    'ObjectPropertyRange': { icon: '🎪', bgColor: 'bg-pink-50', textColor: 'text-pink-800', borderColor: 'border-pink-200' },
-    'DataPropertyDomain': { icon: '📍', bgColor: 'bg-orange-50', textColor: 'text-orange-800', borderColor: 'border-orange-200' },
-    'DataPropertyRange': { icon: '📐', bgColor: 'bg-lime-50', textColor: 'text-lime-800', borderColor: 'border-lime-200' },
-    'SameIndividual': { icon: '👥', bgColor: 'bg-violet-50', textColor: 'text-violet-800', borderColor: 'border-violet-200' },
-    'DifferentIndividuals': { icon: '👤', bgColor: 'bg-fuchsia-50', textColor: 'text-fuchsia-800', borderColor: 'border-fuchsia-200' },
-  };
-  return styles[type] || { icon: '📄', bgColor: 'bg-gray-50', textColor: 'text-gray-800', borderColor: 'border-gray-200' };
+const AXIOM_ICONS: Record<string, string> = {
+  ClassAssertion: '🏷️', ObjectPropertyAssertion: '🔗', DataPropertyAssertion: '📊', SubClassOf: '⊆', EquivalentClasses: '≡',
+  EquivalentObjectProperties: '⇔', SubObjectPropertyOf: '⊑', ObjectPropertyDomain: '🎯', ObjectPropertyRange: '🎪',
+  DataPropertyDomain: '📍', DataPropertyRange: '📐', SameIndividual: '👥', DifferentIndividuals: '👤',
 };
+
+const getAxiomTypeStyle = (type: string): { icon: string } => ({ icon: AXIOM_ICONS[type] || '📄' });
 
 const canExplain = (ax: InferredAxiom): boolean => ax.category === 'conclusion' && !!ax.subjectIri && !!ax.predicateIri;
 
@@ -982,7 +995,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
-      <div className="inline-flex items-center gap-2 px-3 py-2 bg-white border-2 border-gray-200 rounded-lg text-sm hover:border-purple-300 hover:shadow-sm transition-all cursor-default min-w-[80px]">
+      <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm hover:shadow-sm transition-all cursor-default min-w-[80px]" style={rt.card}>
         {onToggle && item.selectable && (
           <input
             type="checkbox"
@@ -991,33 +1004,33 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
             aria-label="Select this conclusion"
           />
         )}
-        <span className="font-semibold text-gray-900 truncate max-w-[200px]" title={displaySubject}>
+        <span className="font-semibold truncate max-w-[200px]" style={rt.value} title={displaySubject}>
           {displaySubject}
         </span>
         {item.object && (
           <>
-            <span className="text-purple-500 font-bold">→</span>
-            <span className="font-semibold text-purple-700 truncate max-w-[200px]" title={item.object}>
+            <span className="font-bold" style={rt.label}>→</span>
+            <span className="font-semibold truncate max-w-[200px]" style={rt.value} title={item.object}>
               {item.object}
             </span>
           </>
         )}
         {onWhy && canExplain(item.axiom) && (
-          <button onClick={() => onWhy(item.axiom)} className="text-xs text-purple-700 hover:underline whitespace-nowrap">Why?</button>
+          <button onClick={() => onWhy(item.axiom)} className="text-xs font-medium whitespace-nowrap" style={rt.link}>Why?</button>
         )}
       </div>
       {showTooltip && item.rawReadable && (
-        <div className="absolute z-50 bottom-full left-0 mb-2 p-3 bg-gray-900 text-white text-xs rounded-lg shadow-xl max-w-md whitespace-pre-wrap break-all">
-          <div className="font-semibold mb-1 text-purple-300">{item.axiomType}</div>
-          <div className="font-mono text-gray-200">{item.rawReadable}</div>
-          <div className="absolute bottom-0 left-4 transform translate-y-1/2 rotate-45 w-2 h-2 bg-gray-900"></div>
+        <div className="absolute z-50 bottom-full left-0 mb-2 p-3 text-xs rounded-lg shadow-xl max-w-md whitespace-pre-wrap break-all" style={rt.tooltip}>
+          <div className="font-semibold mb-1">{item.axiomType}</div>
+          <div className="font-mono">{item.rawReadable}</div>
+          <div className="absolute bottom-0 left-4 transform translate-y-1/2 rotate-45 w-2 h-2" style={{ backgroundColor: 'var(--text-primary)' }}></div>
         </div>
       )}
     </div>
   );
 };
 
-const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, draftMode = false }) => {
   const [explained, setExplained] = useState<InferredAxiom | null>(null);
   const toggleWhy = (ax: InferredAxiom) => setExplained(prev => (prev === ax ? null : ax));
   const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
@@ -1061,7 +1074,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   };
 
   if (!results) return (
-    <div className="p-8 text-center text-gray-400">
+    <div className="p-8 text-center" style={rt.label}>
       <AlertCircle size={48} className="mx-auto mb-4 opacity-50" />
       <p className="text-lg">Run rule execution to see results.</p>
       <p className="text-sm mt-2">Click "Execute All Rules" to run SWRL inference</p>
@@ -1112,45 +1125,45 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   return (
     <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-4">
-      <div className="bg-gradient-to-r from-white to-gray-50 rounded-xl border-2 border-gray-200 p-5 shadow-sm">
-        <h3 className="font-bold mb-4 text-lg flex items-center gap-2" style={{ color: '#1f2937' }}>
-          <BarChart2 size={20} className="text-purple-600" />
+      <div className="rounded-xl p-5 shadow-sm" style={rt.panel}>
+        <h3 className="font-bold mb-4 text-lg flex items-center gap-2" style={rt.heading}>
+          <BarChart2 size={20} />
           Execution Summary
           {results.executionMode && (
-            <span className={`text-xs px-2 py-0.5 rounded-full ${results.executionMode === 'selected' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+            <span className="text-xs px-2 py-0.5 rounded-full" style={rt.chip}>
               {results.executionMode === 'selected' ? 'Selected Rules' : 'All Rules'}
             </span>
           )}
         </h3>
         <div className="grid grid-cols-4 gap-4">
-          <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Status</div>
-            <div className={`text-lg font-bold flex items-center gap-2 ${results.success ? 'text-green-600' : 'text-red-600'}`}>
+          <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
+            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Status</div>
+            <div className="text-lg font-bold flex items-center gap-2" style={rt.value}>
               {results.success ? <Check size={20} /> : <X size={20} />}
               {results.success ? 'Success' : 'Failed'}
             </div>
           </div>
-          <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Time</div>
-            <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{results.executionTimeMs}ms</div>
+          <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
+            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Time</div>
+            <div className="text-lg font-bold" style={rt.value}>{results.executionTimeMs}ms</div>
           </div>
-          <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Rules Run</div>
-            <div className="text-lg font-bold" style={{ color: '#1f2937' }}>{results.totalRulesExecuted}</div>
+          <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
+            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Rules Run</div>
+            <div className="text-lg font-bold" style={rt.value}>{results.totalRulesExecuted}</div>
           </div>
-          <div className="bg-white rounded-lg p-3 border border-gray-100 shadow-sm">
-            <div className="text-xs uppercase tracking-wide mb-1" style={{ color: '#6b7280' }}>Inferred</div>
-            <div className="text-lg font-bold text-purple-600">{results.inferredAxiomsCount}</div>
+          <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
+            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Inferred</div>
+            <div className="text-lg font-bold" style={rt.value}>{results.inferredAxiomsCount}</div>
           </div>
         </div>
 
         {results.executedRuleNames && results.executedRuleNames.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-gray-200">
-            <div className="text-xs uppercase tracking-wide mb-2" style={{ color: '#6b7280' }}>Executed Rules</div>
+          <div className="mt-4 pt-4" style={rt.divider}>
+            <div className="text-xs uppercase tracking-wide mb-2" style={rt.label}>Executed Rules</div>
             <div className="flex flex-wrap gap-2">
               {results.executedRuleNames.map((name, idx) => (
-                <span key={idx} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-50 text-purple-700 text-xs rounded-full border border-purple-200">
-                  <Check size={12} className="text-green-500" />
+                <span key={idx} className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-full" style={rt.chip}>
+                  <Check size={12} style={{ color: 'var(--success)' }} />
                   {name}
                 </span>
               ))}
@@ -1160,24 +1173,24 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
       </div>
 
       {results.status && results.status !== 'COMPLETED' && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <div className="rounded-lg p-3 text-sm" style={rt.bannerWarning}>
           <div className="font-semibold">{results.statusLabel || results.status}</div>
           {results.message && <div className="mt-1">{results.message}</div>}
           {results.consistencyStatement && <div className="mt-1">{results.consistencyStatement}</div>}
         </div>
       )}
       {results.limitations && results.limitations.length > 0 && (
-        <div className="rounded-lg border border-gray-300 bg-gray-50 p-3 text-sm text-gray-800">
+        <div className="rounded-lg p-3 text-sm" style={rt.bannerNote}>
           {results.limitations.map((text, i) => <div key={i}>{text}</div>)}
         </div>
       )}
       {results.success && hasSwrlResults && (
-        <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border-2 border-green-300 overflow-hidden shadow-md">
-          <div className="p-4 border-b border-green-200 flex justify-between items-center">
-            <h3 className="font-bold text-green-800 text-lg flex items-center gap-2">
+        <div className="rounded-xl overflow-hidden shadow-md" style={rt.bannerSuccess}>
+          <div className="p-4 flex justify-between items-center" style={rt.rowBorder}>
+            <h3 className="font-bold text-lg flex items-center gap-2" style={rt.heading}>
               <span className="text-2xl">🎯</span>
               SWRL Rule Results
-              <span className="text-sm font-normal text-green-600">({classAssertions.length} individuals classified)</span>
+              <span className="text-sm font-normal" style={rt.label}>({classAssertions.length} individuals classified)</span>
             </h3>
           </div>
           <div className="p-4">
@@ -1187,12 +1200,12 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                 return (
                   <div
                     key={i}
-                    className="px-3 py-2 bg-white rounded-lg border border-green-200 shadow-sm hover:shadow-md transition-all cursor-default"
+                    className="px-3 py-2 rounded-lg shadow-sm hover:shadow-md transition-all cursor-default" style={rt.card}
                     title={ax.readable || ax.description}
                   >
-                    <span className="font-bold text-green-700">{parsed.subject}</span>
-                    <span className="mx-2 text-gray-400">→</span>
-                    <span className="font-bold text-emerald-600">{parsed.object}</span>
+                    <span className="font-bold" style={rt.value}>{parsed.subject}</span>
+                    <span className="mx-2" style={rt.label}>→</span>
+                    <span className="font-bold" style={rt.value}>{parsed.object}</span>
                   </div>
                 );
               })}
@@ -1202,19 +1215,19 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
       )}
 
       {results.success && !hasSwrlResults && results.inferredAxioms.length > 0 && (
-        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl overflow-hidden">
+        <div className="rounded-xl overflow-hidden" style={rt.bannerWarning}>
           <div 
-            className="p-4 flex items-start gap-3 cursor-pointer hover:bg-yellow-100/50 transition-colors"
+            className="p-4 flex items-start gap-3 cursor-pointer"
             onClick={() => setShowWarning(!showWarning)}
           >
-            <AlertCircle size={24} className="text-yellow-600 mt-0.5 flex-shrink-0" />
+            <AlertCircle size={24} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--warning)' }} />
             <div className="flex-1">
               <div className="flex justify-between items-center">
-                <div className="font-bold text-yellow-800">No SWRL ClassAssertion Results</div>
-                {showWarning ? <ChevronUp size={20} className="text-yellow-600" /> : <ChevronDown size={20} className="text-yellow-600" />}
+                <div className="font-bold" style={rt.heading}>No SWRL ClassAssertion Results</div>
+                {showWarning ? <ChevronUp size={20} style={rt.value} /> : <ChevronDown size={20} style={rt.value} />}
               </div>
               {!showWarning && (
-                 <div className="text-sm text-yellow-700 mt-1">
+                 <div className="text-sm mt-1" style={rt.value}>
                    {results.inferredAxioms.length} general OWL inferences found. Click to see details.
                  </div>
               )}
@@ -1223,15 +1236,15 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           
           {showWarning && (
             <div className="px-4 pb-4 pl-12">
-              <div className="text-sm text-yellow-700 mt-1">
+              <div className="text-sm mt-1" style={rt.value}>
                 Your SWRL rule should create ClassAssertion axioms (e.g., "Emma → Adult"). 
                 The {results.inferredAxioms.length} inferences below are general OWL reasoning results, not from SWRL rules.
                 <br /><br />
                 <strong>Most Common Issue:</strong>
-                <div className="mt-2 p-3 bg-yellow-100 rounded-lg border border-yellow-200">
-                  <span className="font-bold text-yellow-900">The target class doesn't exist!</span>
-                  <p className="text-yellow-800 mt-1">
-                    If your rule is <code className="bg-yellow-200 px-1 rounded">Person(?p) → Adult(?p)</code>, 
+                <div className="mt-2 p-3 rounded-lg" style={rt.card}>
+                  <span className="font-bold">The target class doesn't exist!</span>
+                  <p className="mt-1">
+                    If your rule is <code className="px-1 rounded" style={rt.code}>Person(?p) → Adult(?p)</code>, 
                     you need to <strong>first create the "Adult" class</strong> in your ontology's Classes tab.
                   </p>
                 </div>
@@ -1251,14 +1264,14 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
       {!results.success && results.errorMessage && (() => {
         const err = parseSwrlError(results.errorMessage);
         return (
-          <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4">
+          <div className="rounded-xl p-4" style={rt.bannerError}>
             <div className="flex items-start gap-3">
-              <AlertCircle size={24} className="text-red-600 mt-0.5 flex-shrink-0" />
+              <AlertCircle size={24} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--error)' }} />
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-red-800 text-lg">{err.title}</div>
-                <div className="text-sm text-red-700 mt-1">{err.detail}</div>
+                <div className="font-bold text-lg" style={rt.heading}>{err.title}</div>
+                <div className="text-sm mt-1" style={rt.value}>{err.detail}</div>
                 {err.hint && (
-                  <div className="text-sm text-amber-800 mt-2 bg-amber-50 border border-amber-200 rounded p-2">
+                  <div className="text-sm mt-2 rounded p-2" style={rt.bannerWarning}>
                     💡 {err.hint}
                   </div>
                 )}
@@ -1269,35 +1282,38 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
       })()}
 
       {results.success && results.inferredAxioms.length > 0 && (
-        <div className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden shadow-sm">
-          <div className="p-4 bg-gradient-to-r from-purple-50 to-white border-b-2 border-gray-100 flex flex-col gap-3">
+        <div className="rounded-xl overflow-hidden shadow-sm" style={rt.panel}>
+          <div className="p-4 flex flex-col gap-3" style={rt.panelHeader}>
             <div className="flex justify-between items-center">
-              <h3 className="font-bold text-lg flex items-center gap-2" style={{ color: '#1f2937' }}>
-                <span className="text-purple-600">📚</span>
+              <h3 className="font-bold text-lg flex items-center gap-2" style={rt.heading}>
+                <span>📚</span>
                 All Inferred Axioms
-                <span className="text-sm font-normal" style={{ color: '#6b7280' }}>
+                <span className="text-sm font-normal" style={rt.label}>
                   ({matchedAxioms.length} matching{matchedAxioms.length > filteredAxioms.length ? `, showing ${filteredAxioms.length}` : ''}, {groupedAxioms.size} types)
                 </span>
               </h3>
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: 'var(--surface-3)' }}>
                   <button
                     onClick={() => setViewMode('grouped')}
-                    className={`px-3 py-1.5 text-xs font-medium rounded transition-all ${viewMode === 'grouped' ? 'bg-white shadow text-purple-700' : 'text-gray-600 hover:text-gray-800'}`}
+                    className="px-3 py-1.5 text-xs font-medium rounded transition-all"
+                    style={viewMode === 'grouped' ? { ...rt.button, fontWeight: 700 } : { color: 'var(--text-secondary)' }}
                     title="Grouped by axiom type"
                   >
                     📊 Grouped
                   </button>
                   <button
                     onClick={() => setViewMode('table')}
-                    className={`px-3 py-1.5 text-xs font-medium rounded transition-all ${viewMode === 'table' ? 'bg-white shadow text-purple-700' : 'text-gray-600 hover:text-gray-800'}`}
+                    className="px-3 py-1.5 text-xs font-medium rounded transition-all"
+                    style={viewMode === 'table' ? { ...rt.button, fontWeight: 700 } : { color: 'var(--text-secondary)' }}
                     title="Table view"
                   >
                     📋 Table
                   </button>
                   <button
                     onClick={() => setViewMode('raw')}
-                    className={`px-3 py-1.5 text-xs font-medium rounded transition-all ${viewMode === 'raw' ? 'bg-white shadow text-purple-700' : 'text-gray-600 hover:text-gray-800'}`}
+                    className="px-3 py-1.5 text-xs font-medium rounded transition-all"
+                    style={viewMode === 'raw' ? { ...rt.button, fontWeight: 700 } : { color: 'var(--text-secondary)' }}
                     title="Raw axiom format"
                   >
                     📝 Raw
@@ -1305,17 +1321,17 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                 </div>
                 {viewMode === 'grouped' && (
                   <div className="flex gap-1">
-                    <button onClick={expandAll} className="px-2 py-1 text-xs text-purple-600 hover:bg-purple-50 rounded" title="Expand all">
+                    <button onClick={expandAll} className="px-2 py-1 text-xs rounded" style={rt.button} title="Expand all">
                       <Maximize2 size={14} />
                     </button>
-                    <button onClick={collapseAll} className="px-2 py-1 text-xs text-purple-600 hover:bg-purple-50 rounded" title="Collapse all">
+                    <button onClick={collapseAll} className="px-2 py-1 text-xs rounded" style={rt.button} title="Collapse all">
                       <Minimize2 size={14} />
                     </button>
                   </div>
                 )}
                 <button
                   onClick={() => setShowInferredAxioms(!showInferredAxioms)}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg transition-colors" style={rt.button}
               >
                 {showInferredAxioms ? <EyeOff size={16} /> : <Eye size={16} />}
                 {showInferredAxioms ? 'Hide' : 'Show'}
@@ -1325,25 +1341,25 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           {showInferredAxioms && (
             <div className="px-4 pb-3">
               <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={rt.label} />
                 <input
                   type="text"
                   placeholder="Search axioms... (e.g., Adult, Person, hasAge)"
                   value={searchFilter}
                   onChange={(e) => setSearchFilter(e.target.value)}
-                  className="w-full pl-10 pr-8 py-2 text-sm text-black border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400"
+                  className="w-full pl-10 pr-8 py-2 text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-300" style={rt.input}
                 />
                 {searchFilter && (
                   <button
                     onClick={() => setSearchFilter('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    className="absolute right-3 top-1/2 -translate-y-1/2" style={rt.label}
                   >
                     <X size={14} />
                   </button>
                 )}
               </div>
               {searchFilter && (
-                <div className="mt-2 text-xs text-gray-500">
+                <div className="mt-2 text-xs" style={rt.label}>
                   Found {matchedAxioms.length} axioms matching "{searchFilter}"
                 </div>
               )}
@@ -1354,29 +1370,29 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       <button
                         onClick={selectAllShown}
                         disabled={allShownSelected}
-                        className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                        className="px-3 py-1.5 rounded-lg" style={btn(allShownSelected)}
                       >
                         Select all shown ({matchedConclusions.length})
                       </button>
                       <button
                         onClick={clearSelection}
                         disabled={selectedCount === 0}
-                        className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                        className="px-3 py-1.5 rounded-lg" style={btn(selectedCount === 0)}
                       >
                         Clear
                       </button>
-                      <span className="text-gray-600">{selectedCount} selected</span>
+                      <span style={rt.value}>{selectedCount} selected</span>
                       <button
                         onClick={() => setAddState({ phase: 'confirm' })}
                         disabled={selectedCount === 0}
-                        className="px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50"
+                        className="px-3 py-1.5 rounded-lg font-medium" style={btn(selectedCount === 0, true)}
                       >
                         Add {selectedCount} selected
                       </button>
                     </>
                   ) : addState.phase === 'confirm' ? (
                     <>
-                      <span className="text-gray-700">
+                      <span style={rt.value}>
                         This writes {selectedCount} fact{selectedCount === 1 ? '' : 's'} into the ontology as one change you can undo. Facts that are already there are skipped.
                       </span>
                       <button
@@ -1386,17 +1402,17 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                           if (outcome.ok) setSelectedKeys(new Set());
                           setAddState({ phase: outcome.ok ? 'done' : 'error', message: outcome.message });
                         }}
-                        className="px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700"
+                        className="px-3 py-1.5 rounded-lg font-medium" style={rt.buttonPrimary}
                       >
                         Yes, add them
                       </button>
-                      <button onClick={() => setAddState({ phase: 'idle' })} className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700">Cancel</button>
+                      <button onClick={() => setAddState({ phase: 'idle' })} className="px-3 py-1.5 rounded-lg" style={rt.button}>Cancel</button>
                     </>
                   ) : (
-                    <span className="text-gray-600">Adding…</span>
+                    <span style={rt.value}>Adding…</span>
                   )}
                   {addState.message && (
-                    <span className={addState.phase === 'error' ? 'text-red-700' : 'text-green-700'}>{addState.message}</span>
+                    <span style={rt.value}>{addState.phase === 'error' ? '✗ ' : '✓ '}{addState.message}</span>
                   )}
                 </div>
               )}
@@ -1406,13 +1422,13 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                     <button
                       key={key}
                       onClick={() => { setScopeChoice(key); setVisibleLimit(100); }}
-                      className={`px-3 py-1 rounded-full border ${scope === key ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                      className="px-3 py-1 rounded-full" style={scope === key ? rt.chipOn : rt.button}
                     >
                       {label}
                     </button>
                   ))}
-                  {results.omittedTrivialCount ? <span className="text-gray-500">{results.omittedTrivialCount} trivial same-individual facts hidden</span> : null}
-                  {results.truncated ? <span className="text-amber-700">Only the first {results.inferredAxioms.length} are listed; the rest are cut off.</span> : null}
+                  {results.omittedTrivialCount ? <span style={rt.label}>{results.omittedTrivialCount} trivial same-individual facts hidden</span> : null}
+                  {results.truncated ? <span style={rt.value}>Only the first {results.inferredAxioms.length} are listed; the rest are cut off.</span> : null}
                 </div>
               )}
             </div>
@@ -1425,24 +1441,24 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                 const style = getAxiomTypeStyle(type);
                 const isExpanded = expandedGroups.has(type);
                 return (
-                  <div key={type} className="border-b border-gray-100 last:border-b-0">
+                  <div key={type} style={rt.rowBorder}>
                     <button
                       onClick={() => toggleGroup(type)}
-                      className={`w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors ${style.bgColor}`}
+                      className="w-full p-4 flex items-center justify-between transition-colors" style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)' }}
                     >
                       <div className="flex items-center gap-3">
                         <span className="text-xl">{style.icon}</span>
-                        <span className={`text-sm font-bold ${style.textColor} px-3 py-1 rounded-full ${style.bgColor} border ${style.borderColor}`}>
+                        <span className="text-sm font-bold px-3 py-1 rounded-full" style={rt.chip}>
                           {type}
                         </span>
-                        <span className="text-sm text-gray-600 font-medium">
+                        <span className="text-sm font-medium" style={rt.label}>
                           {items.length} inferred
                         </span>
                       </div>
-                      <ChevronRight size={20} className={`text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                      <ChevronRight size={20} className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`} style={rt.label} />
                     </button>
                     {isExpanded && (
-                      <div className="p-4 pt-2 bg-white">
+                      <div className="p-4 pt-2" style={{ backgroundColor: 'var(--surface-1)' }}>
                         <div className="flex flex-wrap gap-2">
                           {items.map((item, i) => (
                             <AxiomCard key={i} item={item} index={i} selected={selectedKeys.has(item.key)} onToggle={onAdd ? toggleSelected : undefined} onWhy={toggleWhy} />
@@ -1450,7 +1466,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                         </div>
                         {explained && items.some(it => it.axiom === explained) && (
                           <div className="mt-2">
-                            <ExplainPanel projectId={projectId} axiom={explained} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={explained} onClose={() => setExplained(null)} />
                           </div>
                         )}
                       </div>
@@ -1464,24 +1480,24 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           {showInferredAxioms && viewMode === 'table' && (
             <div className="max-h-[70vh] overflow-auto">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0">
+                <thead className="sticky top-0" style={rt.panelHeader}>
                   <tr>
-                    {onAdd && <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b w-8"></th>}
-                    <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">#</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Type</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Subject</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Relation</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b">Object</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-700 border-b"></th>
+                    {onAdd && <th className="px-4 py-3 text-left font-semibold w-8" style={rt.heading}></th>}
+                    <th className="px-4 py-3 text-left font-semibold" style={rt.heading}>#</th>
+                    <th className="px-4 py-3 text-left font-semibold" style={rt.heading}>Type</th>
+                    <th className="px-4 py-3 text-left font-semibold" style={rt.heading}>Subject</th>
+                    <th className="px-4 py-3 text-left font-semibold" style={rt.heading}>Relation</th>
+                    <th className="px-4 py-3 text-left font-semibold" style={rt.heading}>Object</th>
+                    <th className="px-4 py-3 text-left font-semibold" style={rt.heading}></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody style={{ color: 'var(--text-primary)' }}>
                   {filteredAxioms.map((ax, i) => {
                     const parsed = formatInferredAxiom(ax);
                     const style = getAxiomTypeStyle(parsed.type);
                     return (
                       <React.Fragment key={i}>
-                      <tr className="hover:bg-gray-50" title={ax.readable}>
+                      <tr style={rt.rowBorder} title={ax.readable}>
                         {onAdd && (
                           <td className="px-4 py-2">
                             {ax.category === 'conclusion' && (
@@ -1494,25 +1510,25 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                             )}
                           </td>
                         )}
-                        <td className="px-4 py-2 text-gray-500 font-mono text-xs">{i + 1}</td>
+                        <td className="px-4 py-2 font-mono text-xs" style={rt.label}>{i + 1}</td>
                         <td className="px-4 py-2">
-                          <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded ${style.bgColor} ${style.textColor}`}>
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={rt.chip}>
                             {style.icon} {parsed.type}
                           </span>
                         </td>
-                        <td className="px-4 py-2 font-medium text-gray-900 max-w-[200px] truncate">{parsed.subject || '-'}</td>
-                        <td className="px-4 py-2 text-purple-500 font-bold text-center">{parsed.predicate || '→'}</td>
-                        <td className="px-4 py-2 font-medium text-purple-700 max-w-[200px] truncate">{parsed.object || '-'}</td>
+                        <td className="px-4 py-2 font-medium max-w-[200px] truncate" style={rt.value}>{parsed.subject || '-'}</td>
+                        <td className="px-4 py-2 font-bold text-center" style={rt.label}>{parsed.predicate || '→'}</td>
+                        <td className="px-4 py-2 font-medium max-w-[200px] truncate" style={rt.value}>{parsed.object || '-'}</td>
                         <td className="px-4 py-2">
                           {canExplain(ax) && (
-                            <button onClick={() => toggleWhy(ax)} className="text-xs text-purple-700 hover:underline">Why?</button>
+                            <button onClick={() => toggleWhy(ax)} className="text-xs font-medium" style={rt.link}>Why?</button>
                           )}
                         </td>
                       </tr>
                       {explained === ax && (
                         <tr>
                           <td colSpan={onAdd ? 7 : 6} className="px-4 py-2">
-                            <ExplainPanel projectId={projectId} axiom={ax} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={ax} onClose={() => setExplained(null)} />
                           </td>
                         </tr>
                       )}
@@ -1525,8 +1541,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           )}
 
           {showInferredAxioms && matchedAxioms.length > filteredAxioms.length && (
-            <div className="p-3 text-center border-t border-gray-100">
-              <button onClick={() => setVisibleLimit(visibleLimit + 100)} className="px-4 py-1.5 text-sm text-purple-700 bg-purple-50 rounded-lg hover:bg-purple-100">
+            <div className="p-3 text-center" style={rt.divider}>
+              <button onClick={() => setVisibleLimit(visibleLimit + 100)} className="px-4 py-1.5 text-sm rounded-lg" style={rt.button}>
                 Show 100 more ({matchedAxioms.length - filteredAxioms.length} remaining)
               </button>
             </div>
@@ -1537,7 +1553,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               {filteredAxioms.map((ax, i) => {
                 const style = getAxiomTypeStyle(ax.axiomType);
                 return (
-                  <div key={i} className={`p-4 border-b border-gray-100 hover:bg-gray-50 ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
+                  <div key={i} className="p-4" style={{ ...rt.rowBorder, backgroundColor: i % 2 === 0 ? 'var(--surface-1)' : 'var(--surface-2)', color: 'var(--text-primary)' }}>
                     <div className="flex items-center gap-2 mb-2">
                       {onAdd && ax.category === 'conclusion' && (
                         <input
@@ -1547,18 +1563,18 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                           aria-label="Select this conclusion"
                         />
                       )}
-                      <span className="text-gray-400 font-mono text-xs">#{i + 1}</span>
-                      <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded ${style.bgColor} ${style.textColor} border ${style.borderColor}`}>
+                      <span className="font-mono text-xs" style={rt.label}>#{i + 1}</span>
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={rt.chip}>
                         {style.icon} {ax.axiomType}
                       </span>
                       {canExplain(ax) && (
-                        <button onClick={() => toggleWhy(ax)} className="text-xs text-purple-700 hover:underline">Why?</button>
+                        <button onClick={() => toggleWhy(ax)} className="text-xs font-medium" style={rt.link}>Why?</button>
                       )}
                     </div>
-                    <pre className="text-sm text-gray-800 font-mono bg-gray-100 p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all">{ax.readable}</pre>
+                    <pre className="text-sm font-mono p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all" style={rt.code}>{ax.readable}</pre>
                     {explained === ax && (
                       <div className="mt-2">
-                        <ExplainPanel projectId={projectId} axiom={ax} onClose={() => setExplained(null)} />
+                        <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={ax} onClose={() => setExplained(null)} />
                       </div>
                     )}
                   </div>
@@ -1570,10 +1586,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
       )}
 
       {results.success && results.inferredAxiomsCount === 0 && (
-        <div className="bg-gradient-to-r from-yellow-50 to-amber-50 border-2 border-yellow-200 rounded-xl p-6 text-center">
+        <div className="rounded-xl p-6 text-center" style={rt.bannerWarning}>
           <div className="text-4xl mb-3">🔍</div>
-          <p className="text-yellow-800 font-semibold text-lg">No New Axioms Inferred</p>
-          <p className="text-yellow-700 text-sm mt-2">
+          <p className="font-semibold text-lg" style={rt.heading}>No New Axioms Inferred</p>
+          <p className="text-sm mt-2" style={rt.value}>
             The rules executed successfully, but no new knowledge was derived.
             This may happen if the conditions aren't met or axioms already exist.
           </p>
@@ -1588,9 +1604,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
 interface SWRLEditorProps {
   projectId: string;
   context?: PluginContext;
+  draftMode?: boolean;
 }
 
-export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) => {
+export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draftMode = false }) => {
 
   const rulesVersionRef = useRef(0);
   const [rules, setRules] = useState<SwrlRule[]>([]);
@@ -1603,8 +1620,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
-  const [embeddedRules, setEmbeddedRules] = useState<Array<{ name: string; ruleText: string; comment?: string }>>([]);
-  const [copyingEmbedded, setCopyingEmbedded] = useState<string | null>(null);
+  const [unmigrated, setUnmigrated] = useState<UnmigratedRule[]>([]);
+  const [copyingId, setCopyingId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query'>('editor');
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
@@ -1622,6 +1639,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importFileRef = useRef<File | null>(null);
+  const importSessionRef = useRef<ImportSession | null>(null);
+  const [importPreview, setImportPreview] = useState<{ report: ImportReport; fileName: string } | null>(null);
+  const [importRunning, setImportRunning] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const debouncedRuleText = useDebounce(editForm.ruleText, 500);
@@ -1786,23 +1809,22 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     const myVersion = rulesVersionRef.current;
     setIsLoading(true);
     try {
-      const res = await apiClient.get<{ content: SwrlRule[] }>(`/api/swrl/${projectId}/rules`);
+      const res = await apiClient.get<unknown>(withDraft(`/api/ontology/${projectId}/rules`, draftMode));
       if (rulesVersionRef.current === myVersion) {
-        setRules(res.content || []);
-      }
-      try {
-        const embedded = await apiClient.get<Array<{ name: string; ruleText: string; comment?: string }>>(`/api/swrl/${projectId}/rules/embedded`);
-        if (rulesVersionRef.current === myVersion) setEmbeddedRules(Array.isArray(embedded) ? embedded : []);
-      } catch (embeddedError) {
-        console.error('Failed to load rules stored in the ontology:', embeddedError);
-        if (rulesVersionRef.current === myVersion) setEmbeddedRules([]);
+        const parsed = normalizeRulesResponse(res);
+        setRules(parsed.rules);
+        setUnmigrated(parsed.unmigrated);
       }
     } catch (e) {
       console.error('Failed to load rules:', e);
     } finally {
-      if (rulesVersionRef.current === myVersion) setIsLoading(false);
+      setIsLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, draftMode]);
+
+  const announceRuleChange = (op: string) => {
+    window.dispatchEvent(new CustomEvent('ontology:mutated', { detail: { projectId, ops: [op] } }));
+  };
 
   useEffect(() => { loadRules(); }, [loadRules]);
 
@@ -1817,7 +1839,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     const validate = async () => {
       try {
         const res = await apiClient.post<SwrlValidationResult>(
-          `/api/swrl/${projectId}/validate`,
+          withDraft(`/api/swrl/${projectId}/validate`, draftMode),
           { ruleText: debouncedRuleText }
         );
         setValidationResult(res);
@@ -1826,7 +1848,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       }
     };
     validate();
-  }, [debouncedRuleText, projectId, isEditing]);
+  }, [debouncedRuleText, projectId, isEditing, draftMode]);
 
   const filteredRules = useMemo(() => {
     if (!searchQuery.trim()) return rules;
@@ -1876,27 +1898,31 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     setSaveError(null);
 
     try {
+      const body = ruleWriteBody(editForm, (selectedRule ? 'Edited rule ' : 'Added rule ') + editForm.ruleName.trim());
       if (selectedRule) {
         const res = await apiClient.put<SwrlRule>(
-          `/api/swrl/${projectId}/rules/${selectedRule.id}`,
-          editForm
+          withDraft(`/api/ontology/${projectId}/rules/${selectedRule.id}`, draftMode),
+          body
         );
         rulesVersionRef.current++;
-        setRules(rules.map(r => r.id === res.id ? res : r));
-        setSelectedRule(res);
+        const applied = applySavedRule(rules, selectedRule.id, res, editForm);
+        setRules(prev => applySavedRule(prev, selectedRule.id, res, editForm).rules);
+        setSelectedRule(applied.saved);
+        setEditForm(prev => ({ ...prev, ruleName: applied.saved.ruleName }));
       } else {
         const res = await apiClient.post<SwrlRule>(
-          `/api/swrl/${projectId}/rules`,
-          editForm
+          withDraft(`/api/ontology/${projectId}/rules`, draftMode),
+          body
         );
         rulesVersionRef.current++;
         setRules([...rules, res]);
         setSelectedRule(res);
       }
       setIsEditing(false);
+      announceRuleChange(selectedRule ? 'ruleUpdated' : 'ruleAdded');
     } catch (e: any) {
       console.error('Save failed:', e);
-      setSaveError(e?.data?.message || e?.message || 'Failed to save rule — please try again.');
+      setSaveError(friendlyRuleError(e, 'Failed to save rule - please try again.'));
     } finally {
       setIsSaving(false);
     }
@@ -1919,7 +1945,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
     try {
       const res = await apiClient.post<{ changeSetId?: string }>(
-        `/api/ontology/mutations/${projectId}?draft=false`,
+        withDraft(`/api/ontology/mutations/${projectId}`, draftMode),
         {
           ops,
           username: 'SWRL rules',
@@ -1938,35 +1964,31 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     }
   };
 
-  const handleCopyEmbedded = async (embedded: { name: string; ruleText: string; comment?: string }) => {
-    setCopyingEmbedded(embedded.name);
+  const handleMakeLocalCopy = async (rule: SwrlRule) => {
+    setCopyingId(rule.id);
     setSaveError(null);
     try {
-      const taken = new Set(rules.map(r => r.ruleName));
-      let name = embedded.name;
-      if (taken.has(name)) name = `${embedded.name} (from ontology)`;
-      const res = await apiClient.post<SwrlRule>(`/api/swrl/${projectId}/rules`, {
-        ruleName: name,
-        ruleText: embedded.ruleText,
-        comment: embedded.comment || '',
-        category: '',
-        enabled: true
-      });
+      const body = localCopyBody({ ...rule, comment: rule.comment ?? '' }, rules.map(r => r.ruleName));
+      const res = await apiClient.post<SwrlRule>(
+        withDraft(`/api/ontology/${projectId}/rules`, draftMode),
+        { ...body, origin: { source: 'swrl-rules', label: 'Made a local copy of ' + rule.ruleName } }
+      );
       rulesVersionRef.current++;
       setRules(prev => [...prev, res]);
-      setSelectedRule(res);
+      handleSelectRule(res);
+      announceRuleChange('ruleAdded');
     } catch (e: any) {
       console.error('Copy failed:', e);
-      setSaveError(e?.data?.message || e?.message || 'Could not copy this rule into your editable rules.');
+      setSaveError(friendlyRuleError(e, 'Could not make a local copy of this rule.'));
     } finally {
-      setCopyingEmbedded(null);
+      setCopyingId(null);
     }
   };
 
   const handleDelete = async () => {
     if (!confirmDialog.ruleId) return;
     try {
-      await apiClient.delete(`/api/swrl/${projectId}/rules/${confirmDialog.ruleId}`);
+      await apiClient.delete(withDraft(`/api/ontology/${projectId}/rules/${confirmDialog.ruleId}`, draftMode));
       rulesVersionRef.current++;
       setRules(rules.filter(r => r.id !== confirmDialog.ruleId));
       if (selectedRule?.id === confirmDialog.ruleId) {
@@ -1978,8 +2000,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         next.delete(confirmDialog.ruleId);
         return next;
       });
-    } catch (e) {
+      announceRuleChange('ruleDeleted');
+    } catch (e: any) {
       console.error('Delete failed:', e);
+      setSaveError(friendlyRuleError(e, 'Could not delete the rule.'));
     } finally {
       setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' });
     }
@@ -1988,8 +2012,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
   const handleToggleEnabled = async (rule: SwrlRule) => {
     try {
       const res = await apiClient.put<SwrlRule>(
-        `/api/swrl/${projectId}/rules/${rule.id}`,
-        { enabled: !rule.enabled }
+        withDraft(`/api/ontology/${projectId}/rules/${rule.id}`, draftMode),
+        ruleWriteBody(
+          { ruleName: rule.ruleName, ruleText: rule.ruleText, comment: rule.comment || '', category: rule.category || '', enabled: !rule.enabled },
+          (rule.enabled ? 'Turned off rule ' : 'Turned on rule ') + rule.ruleName
+        )
       );
       rulesVersionRef.current++;
       setRules(rules.map(r => r.id === rule.id ? res : r));
@@ -1997,8 +2024,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         setSelectedRule(res);
         setEditForm(prev => ({ ...prev, enabled: res.enabled }));
       }
-    } catch (e) {
+      announceRuleChange('ruleToggled');
+    } catch (e: any) {
       console.error('Toggle failed:', e);
+      setSaveError(friendlyRuleError(e, 'Could not change this rule.'));
     }
   };
 
@@ -2017,7 +2046,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     setActivePanel('results');
 
     try {
-      const res = await apiClient.post<ExecutionResponse>(`/api/ontology/${projectId}/rules/execute`);
+      const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode));
       setExecutionResult(res);
     } catch (e) {
       console.error('Execution failed:', e);
@@ -2043,7 +2072,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     try {
       const ruleIds = Array.from(selectedRuleIds);
       const res = await apiClient.post<ExecutionResponse>(
-        `/api/swrl/${projectId}/execute/selected`,
+        withDraft(`/api/swrl/${projectId}/execute/selected`, draftMode),
         { ruleIds }
       );
       setExecutionResult(res);
@@ -2062,7 +2091,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
 
     try {
       const res = await apiClient.post<ExecutionResponse>(
-        `/api/swrl/${projectId}/rules/${selectedRule.id}/test`
+        withDraft(`/api/swrl/${projectId}/rules/${selectedRule.id}/test`, draftMode)
       );
       setExecutionResult(res);
     } catch (e) {
@@ -2088,37 +2117,97 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
     }, 0);
   };
 
-  const handleExport = async () => {
+  const triggerDownload = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleExportServer = async (format: 'xlsx' | 'json') => {
+    setImportError(null);
     try {
-      const res = await apiClient.get<SwrlRule[]>(`/api/swrl/${projectId}/rules/export`);
-      const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `swrl-rules-${projectId}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const blob = await apiClient.getBlob(withDraft(`/api/ontology/${projectId}/rules/export?format=${format}`, draftMode));
+      triggerDownload(blob, `swrl-rules-${projectId}.${format}`);
     } catch (e) {
       console.error('Export failed:', e);
+      setImportError(importErrorMessage(e));
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    setImportError(null);
+    try {
+      const blob = await apiClient.getBlob(`/api/ontology/${projectId}/rules/template.xlsx`);
+      triggerDownload(blob, 'swrl-rules-template.xlsx');
+    } catch (e) {
+      console.error('Template download failed:', e);
+      setImportError(importErrorMessage(e));
+    }
+  };
+
+  const runImport = async (dryRun: boolean) => {
+    const file = importFileRef.current;
+    const session = importSessionRef.current;
+    if (!file || !session) return;
+    setImportRunning(true);
+    setImportError(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('importId', session.importId);
+      if (!dryRun && importPreview?.report.previewStamp) form.append('previewStamp', importPreview.report.previewStamp);
+      const res = await apiClient.postForm<ImportReport>(
+        withDraft(`/api/ontology/${projectId}/rules/import?dryRun=${dryRun ? 'true' : 'false'}`, draftMode),
+        form
+      );
+      if (dryRun) {
+        setImportPreview({ report: { ...res, dryRun: true }, fileName: file.name });
+        return;
+      }
+      importFileRef.current = null;
+      importSessionRef.current = null;
+      setImportPreview(null);
+      setImportNotice(importOutcomeNotice(res));
+      rulesVersionRef.current++;
+      announceRuleChange('ruleAdded');
+      await loadRules();
+    } catch (err: any) {
+      const stale = staleImportReport(err);
+      if (stale) {
+        setImportPreview({ report: stale, fileName: file.name });
+      } else {
+        if (dryRun) setImportPreview(null);
+        setImportError(importErrorMessage(err));
+      }
+    } finally {
+      setImportRunning(false);
     }
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const content = JSON.parse(ev.target?.result as string);
-        await apiClient.post(`/api/swrl/${projectId}/rules/import`, content);
-        loadRules();
-      } catch (err) {
-        console.error('Import failed:', err);
-      }
-    };
-    reader.readAsText(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file) return;
+    setImportNotice(null);
+    setImportError(null);
+    if (!isImportFile(file.name)) {
+      setImportError('Choose an Excel (.xlsx) or JSON (.json) file.');
+      return;
+    }
+    importSessionRef.current = importSessionFor(importSessionRef.current, file);
+    importFileRef.current = file;
+    setImportPreview(null);
+    await runImport(true);
+  };
+
+  const closeImportPreview = () => {
+    if (importRunning) return;
+    setImportPreview(null);
   };
 
   return (
@@ -2127,17 +2216,23 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-gray-900">SWRL Rule Editor</h1>
-            <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled{embeddedRules.length > 0 ? ` · ${embeddedRules.length} stored in the ontology` : ''}</p>
+            <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-2">
-              <button onClick={handleExport} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Export">
-                <Download size={16} />
+              <button onClick={() => handleExportServer('xlsx')} className="px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg flex items-center gap-1" title="Export Excel">
+                <Download size={14} /> Export Excel
               </button>
-              <button onClick={() => fileInputRef.current?.click()} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Import">
+              <button onClick={() => handleExportServer('json')} className="px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg flex items-center gap-1" title="Export JSON">
+                <Download size={14} /> Export JSON
+              </button>
+              <button onClick={handleDownloadTemplate} className="px-2 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg flex items-center gap-1" title="Download Excel template">
+                <FileText size={14} /> Download Excel template
+              </button>
+              <button onClick={() => fileInputRef.current?.click()} disabled={importRunning} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg disabled:opacity-50" title="Import">
                 <Upload size={16} />
               </button>
-              <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
+              <input ref={fileInputRef} type="file" accept=".xlsx,.json" onChange={handleImport} className="hidden" />
               <button onClick={loadRules} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Refresh">
                 <RefreshCw size={16} />
               </button>
@@ -2164,6 +2259,72 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
           </div>
         </div>
       </header>
+
+      {(importNotice || importError) && (
+        <div className={`px-4 py-2 text-sm border-b ${importError ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'}`} role="status">
+          {importError || importNotice}
+        </div>
+      )}
+
+      {importPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-label="Import preview">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div className="px-5 py-4 border-b border-gray-200">
+              <h2 className="text-base font-bold text-gray-900">Preview, nothing saved</h2>
+              <p className="text-xs text-gray-500 mt-0.5">{importPreview.fileName}</p>
+              <p className="text-sm text-gray-800 mt-2" data-testid="import-summary">{importSummaryLine(importPreview.report, true)}</p>
+              {importPreview.report.message && (
+                <p className="text-sm text-amber-700 mt-1">{importPreview.report.message}</p>
+              )}
+            </div>
+            <div className="px-5 py-3 overflow-y-auto flex-1">
+              {importPreview.report.skipped.length === 0 ? (
+                <p className="text-sm text-gray-500">No rows were skipped.</p>
+              ) : (
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="text-gray-500 border-b border-gray-200">
+                      <th className="py-1 pr-2">Sheet</th>
+                      <th className="py-1 pr-2">Row</th>
+                      <th className="py-1 pr-2">Rule name</th>
+                      <th className="py-1 pr-2">Reason</th>
+                      <th className="py-1">Suggestions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {skippedRowsView(importPreview.report.skipped).map(r => (
+                      <tr key={r.key} className="border-b border-gray-100 align-top">
+                        <td className="py-1 pr-2">{r.sheet}</td>
+                        <td className="py-1 pr-2">{r.row}</td>
+                        <td className="py-1 pr-2">{r.ruleName}</td>
+                        <td className="py-1 pr-2">{r.reason}</td>
+                        <td className="py-1">{r.suggestions}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
+              <button
+                onClick={closeImportPreview}
+                disabled={importRunning}
+                className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => runImport(false)}
+                disabled={!canRunImport(importPreview.report, importRunning)}
+                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2"
+              >
+                {importRunning && <Loader2 size={14} className="animate-spin" />}
+                {importButtonLabel(importPreview.report)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex overflow-hidden">
         <aside className="w-72 bg-white border-r border-gray-200 flex flex-col">
@@ -2215,7 +2376,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
               </div>
             ) : filteredRules.length === 0 ? (
               <div className="p-6 text-center text-gray-400">
-                {searchQuery ? 'No matching rules' : embeddedRules.length > 0 ? 'No saved rules yet' : 'No rules yet'}
+                {searchQuery ? 'No matching rules' : 'No rules yet'}
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
@@ -2229,36 +2390,29 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                     onToggle={() => toggleRuleSelection(rule.id)}
                     onToggleEnabled={() => handleToggleEnabled(rule)}
                     onDelete={() => setConfirmDialog({ isOpen: true, ruleName: rule.ruleName, ruleId: rule.id })}
+                    onMakeLocalCopy={() => handleMakeLocalCopy(rule)}
+                    isCopying={copyingId === rule.id}
                   />
                 ))}
               </div>
             )}
-            {!isLoading && embeddedRules.length > 0 && (
-              <div className="border-t-2 border-gray-200 mt-2">
-                <div className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50">
-                  Stored in the ontology file ({embeddedRules.length})
-                </div>
-                <p className="px-3 py-2 text-[11px] text-gray-500">
-                  These rules are part of the ontology and already apply when you reason. Copy one to edit or run it here.
-                </p>
-                <div className="divide-y divide-gray-100">
-                  {embeddedRules
-                    .filter(r => !searchQuery.trim() || `${r.name} ${r.ruleText}`.toLowerCase().includes(searchQuery.toLowerCase()))
-                    .map(r => (
-                      <div key={r.name} className="px-3 py-2">
-                        <div className="text-sm font-medium text-gray-800 truncate" title={r.name}>{r.name}</div>
-                        <div className="text-[11px] text-gray-500 font-mono break-words line-clamp-2" title={r.ruleText}>{r.ruleText}</div>
-                        <button
-                          onClick={() => handleCopyEmbedded(r)}
-                          disabled={copyingEmbedded === r.name}
-                          className="mt-1 text-xs text-purple-700 hover:underline disabled:opacity-50"
-                        >
-                          {copyingEmbedded === r.name ? 'Copying…' : 'Copy to my rules'}
-                        </button>
-                      </div>
-                    ))}
-                </div>
+            {!isLoading && unmigrated.length > 0 && (
+              <div className="m-3 p-3 text-xs bg-amber-50 border border-amber-200 rounded-lg text-amber-900">
+                <div className="font-semibold">{unmigratedNotice(unmigrated.length)}</div>
+                <ul className="mt-1 space-y-1">
+                  {unmigrated.map((u, i) => (
+                    <li key={u.id || `${u.ruleName}-${i}`}>
+                      <span className="font-medium">{u.ruleName}</span>
+                      {u.error ? <span>: {u.error}</span> : null}
+                    </li>
+                  ))}
+                </ul>
               </div>
+            )}
+            {!isLoading && hasDisabledRule(rules) && (
+              <p className="px-3 py-2 text-[11px] text-gray-500">
+                Disabled rules are saved in the ontology file. Other tools do not know they are disabled and will run them.
+              </p>
             )}
           </div>
         </aside>
@@ -2339,7 +2493,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                   <div className="bg-white rounded-xl border border-gray-200 p-4">
                     <div className="flex items-center justify-between mb-3">
                       <label className="text-sm font-semibold text-gray-700">Rule Name</label>
-                      {!isEditing && selectedRule && (
+                      {!isEditing && selectedRule && !isImportedRule(selectedRule) && (
                         <button
                           onClick={() => setIsEditing(true)}
                           className="px-3 py-1 text-xs font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100"
@@ -2536,9 +2690,24 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
                         {selectedRule ? 'Update' : 'Save'}
                       </button>
                     </div>
+                  ) : selectedRule && isImportedRule(selectedRule) ? (
+                    <div className="flex flex-col gap-3 pt-2">
+                      <div className="text-sm text-gray-600">{sourceLabel(selectedRule)}. This rule is read-only here.</div>
+                      <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} draftMode={draftMode} />
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1" />
+                        <button
+                          onClick={() => handleMakeLocalCopy(selectedRule)}
+                          disabled={copyingId === selectedRule.id}
+                          className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50"
+                        >
+                          Make a local copy
+                        </button>
+                      </div>
+                    </div>
                   ) : selectedRule && (
                     <div className="flex flex-col gap-3 pt-2">
-                    <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} />
+                    <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} draftMode={draftMode} />
                     <div className="flex items-center gap-3">
                       <button
                         onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule.ruleName, ruleId: selectedRule.id })}
@@ -2567,9 +2736,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
               )}
             </div>
           ) : activePanel === 'results' ? (
-            <ResultsPanel projectId={projectId} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} />
+            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} />
           ) : activePanel === 'query' ? (
-            <SQWRLQueryPanel projectId={projectId} context={context!} />
+            <SQWRLQueryPanel projectId={projectId} context={context!} draftMode={draftMode} />
           ) : (
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="text-sm text-gray-600 mb-4">
@@ -2628,7 +2797,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context }) =>
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title="Delete Rule"
-        message={`Are you sure you want to delete "${confirmDialog.ruleName}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete "${confirmDialog.ruleName}"? You can undo this from the history.`}
         onConfirm={handleDelete}
         onCancel={() => setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' })}
         confirmText="Delete"

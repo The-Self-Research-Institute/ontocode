@@ -19,14 +19,10 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
 import java.time.LocalDateTime;
+import java.util.function.Predicate;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import self.research.ontology.swrl.dto.CreateRuleRequest;
-import self.research.ontology.swrl.dto.ImportResult;
-import self.research.ontology.swrl.dto.RuleStatistics;
 
 /**
  * IMPROVED VERSION - Fixed thread safety and memory leaks
@@ -114,24 +110,25 @@ public class SwrlEngineService {
         return new ValidationResult(false, "Unknown class or property '" + missing + "'", suggestions);
     }
 
-    private SkippedRule skippedRule(SwrlRule rule, SWRLParseException e, OWLOntology ontology) {
-        String missing = RuleMessages.unknownName(e.getMessage());
-        if (missing == null) {
-            return new SkippedRule(rule.getRuleName(), "The rule could not be understood: " + e.getMessage());
-        }
-        List<String> close = RuleMessages.closestNames(missing, RuleMessages.namesIn(ontology), 3);
-        return new SkippedRule(rule.getRuleName(), "The rule uses '" + missing + "', which does not exist in this ontology."
-                + (close.isEmpty() ? "" : " Did you mean: " + String.join(", ", close) + "?"));
+    public ValidationResult validateRule(String projectId, String ruleText) {
+        return validate(projectId, ruleText, null, null);
     }
 
-    public ValidationResult validateRule(String projectId, String ruleText) {
+    private OWLOntology fetch(String projectId, String draftUserId) throws OWLOntologyCreationException {
+        return draftUserId == null
+                ? ontologyClient.fetchOntology(projectId)
+                : ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
+    }
+
+    private ValidationResult validate(String projectId, String ruleText, String draftUserId,
+                                      org.swrlapi.core.SWRLAPIRule[] created) {
         long startTime = System.currentTimeMillis();
         engineLog.info("[VALIDATE] Starting validation project={} ruleLength={}", projectId, ruleText.length());
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
         
         try {
             long fetchStart = System.currentTimeMillis();
-            OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+            OWLOntology ontology = fetch(projectId, draftUserId);
             long fetchDuration = System.currentTimeMillis() - fetchStart;
             engineLog.info("[VALIDATE] Ontology fetched in {}ms project={}", fetchDuration, projectId);
 
@@ -141,7 +138,7 @@ public class SwrlEngineService {
             // Use a FRESH isolated engine for validation so that infer() only runs the one
             // rule being validated — not all previously saved/enabled rules in the cached engine.
             long engineStart = System.currentTimeMillis();
-            stripEmbeddedRules(ontology);
+            OntologyRules.removeAll(ontology);
             SWRLRuleEngine validationEngine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
             long engineDuration = System.currentTimeMillis() - engineStart;
             engineLog.info("[VALIDATE] Fresh validation engine created in {}ms project={}", engineDuration, projectId);
@@ -150,7 +147,10 @@ public class SwrlEngineService {
             String resolvedText = resolveEntityNames(ruleText, ontology);
 
             try {
-                validationEngine.createSWRLRule(tempName, resolvedText);
+                org.swrlapi.core.SWRLAPIRule createdRule = validationEngine.createSWRLRule(tempName, resolvedText);
+                if (created != null) {
+                    created[0] = createdRule;
+                }
             } catch (SWRLParseException parseEx) {
                 // SWRLAPI throws SWRLParseException (not a bare Exception) for an unbound
                 // atom predicate too — e.g. "Invalid SWRL atom predicate 'hasAge'" when hasAge
@@ -257,97 +257,114 @@ public class SwrlEngineService {
         return result;
     }
 
-    public List<EmbeddedRule> listEmbeddedRules(String projectId, String draftUserId) throws Exception {
+    public record EmbeddedRule(String id, String ruleName, String name, String ruleText, String comment, String category,
+                               boolean enabled, String source, boolean readOnly) {
+    }
+
+    private static EmbeddedRule embedded(OntologyRules.Entry entry) {
+        return new EmbeddedRule(entry.id(), entry.name(), entry.name(), entry.ruleText(), entry.comment(), entry.category(),
+                entry.enabled(), entry.source(), entry.readOnly());
+    }
+
+    private List<OntologyRules.Entry> listEntries(String projectId, String draftUserId) throws Exception {
         OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
         ensureNamespacePrefixes(projectId, ontology);
+        List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, entry -> true);
         SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
-        org.swrlapi.core.SWRLRuleRenderer renderer = engine.createSWRLRuleRenderer();
-        List<EmbeddedRule> out = new ArrayList<>();
-        for (org.swrlapi.core.SWRLAPIRule rule : engine.getSWRLRules()) {
-            if (rule.isSQWRLQuery()) {
-                continue;
-            }
-            out.add(new EmbeddedRule(rule.getRuleName(), renderer.renderSWRLRule(rule), rule.getComment()));
+        OntologyRules.fillTexts(engine, entries);
+        entries.removeIf(entry -> entry.ruleText() == null);
+        entries.sort(java.util.Comparator.comparing(OntologyRules.Entry::name).thenComparing(OntologyRules.Entry::id));
+        return entries;
+    }
+
+    public List<EmbeddedRule> listEmbeddedRules(String projectId, String draftUserId) throws Exception {
+        return listEntries(projectId, draftUserId).stream().map(SwrlEngineService::embedded).collect(Collectors.toList());
+    }
+
+    public List<SwrlRule> listRulesAsRows(String projectId, String draftUserId) throws Exception {
+        List<SwrlRule> rows = new ArrayList<>();
+        for (OntologyRules.Entry entry : listEntries(projectId, draftUserId)) {
+            SwrlRule row = new SwrlRule(projectId, entry.name(), entry.ruleText());
+            row.setId(entry.id());
+            row.setComment(entry.comment());
+            row.setCategory(entry.category());
+            row.setEnabled(entry.enabled());
+            rows.add(row);
         }
-        out.sort(java.util.Comparator.comparing(EmbeddedRule::name));
-        return out;
+        return rows;
     }
 
-    public record EmbeddedRule(String name, String ruleText, String comment) {
+    public SwrlRule getRule(String projectId, String ruleId) throws Exception {
+        return listRulesAsRows(projectId, null).stream()
+                .filter(rule -> rule.getId().equals(ruleId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
     }
 
-    private static void stripEmbeddedRules(OWLOntology ontology) {
-        Set<SWRLRule> embedded = ontology.getAxioms(AxiomType.SWRL_RULE);
-        if (!embedded.isEmpty()) {
-            ontology.getOWLOntologyManager().removeAxioms(ontology, new HashSet<>(embedded));
+    public RuleStatistics getRuleStatistics(String projectId) throws Exception {
+        List<SwrlRule> all = listRulesAsRows(projectId, null);
+        long enabled = all.stream().filter(SwrlRule::isEnabled).count();
+        String mostUsedCategory = all.stream()
+                .filter(r -> r.getCategory() != null)
+                .collect(Collectors.groupingBy(SwrlRule::getCategory, Collectors.counting()))
+                .entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey)
+                .orElse(null);
+        RuleStatistics stats = new RuleStatistics();
+        stats.setTotalRules(all.size());
+        stats.setEnabledRules(enabled);
+        stats.setDisabledRules(all.size() - enabled);
+        stats.setTotalExecutions(0);
+        stats.setAverageExecutionTime(0);
+        stats.setMostUsedCategory(mostUsedCategory);
+        return stats;
+    }
+
+    public record RuleParse(boolean valid, String axiom, List<String> errors, List<String> suggestions) {
+    }
+
+    public RuleParse parseRule(String projectId, String ruleText, String draftUserId) {
+        org.swrlapi.core.SWRLAPIRule[] created = new org.swrlapi.core.SWRLAPIRule[1];
+        ValidationResult validation = validate(projectId, ruleText, draftUserId, created);
+        List<String> suggestions = validation.getSuggestions() == null ? List.of() : validation.getSuggestions();
+        if (!validation.isValid() || created[0] == null) {
+            String message = validation.getErrorMessage() != null ? validation.getErrorMessage() : "The rule could not be understood";
+            return new RuleParse(false, null, List.of(message), suggestions);
         }
-    }
-
-    public SwrlRule createRule(String projectId, String ruleName, String ruleText,
-                              String comment, String category) {
-        long startTime = System.currentTimeMillis();
-        engineLog.info("[CREATE_RULE] Starting project={} ruleName={}", projectId, ruleName);
-        SwrlRule rule = null;
+        OWLDataFactory factory = org.semanticweb.owlapi.apibinding.OWLManager.getOWLDataFactory();
+        SWRLRule axiom = factory.getSWRLRule(new LinkedHashSet<>(created[0].getBody()), new LinkedHashSet<>(created[0].getHead()));
         try {
-            // Check for duplicate rule name
-            if (ruleRepository.existsByProjectIdAndRuleName(projectId, ruleName)) {
-                throw new IllegalArgumentException("Rule with name '" + ruleName + "' already exists");
-            }
-
-            // Validate rule syntax
-            ValidationResult validation = validateRule(projectId, ruleText);
-            if (!validation.isValid()) {
-                throw new IllegalArgumentException(validation.getErrorMessage());
-            }
-
-            // Create and save rule
-            rule = new SwrlRule(projectId, ruleName, ruleText);
-            rule.setComment(comment);
-            rule.setCategory(category);
-            rule = ruleRepository.save(rule);
-
-            // Add to engine
-            OWLOntology ontology = ontologyClient.fetchOntology(projectId);
-            if (ensureNamespacePrefixes(projectId, ontology)) {
-                engineCache.remove(projectId);
-            }
-            SWRLRuleEngine engine = getOrCreateEngine(projectId, ontology);
-            String resolvedText = resolveEntityNames(ruleText, ontology);
-            engine.createSWRLRule(ruleName, resolvedText);
-
-            logger.info("Created SWRL rule: {} for project: {}", ruleName, projectId);
-
-            if (meterRegistry != null) {
-                meterRegistry.counter("swrl.rules.created",
-                    "projectId", projectId).increment();
-            }
-
-            long totalDuration = System.currentTimeMillis() - startTime;
-            perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} duration={}ms", projectId, ruleName, totalDuration);
-            engineLog.info("[CREATE_RULE] Completed in {}ms project={} rule={}", totalDuration, projectId, ruleName);
-            return rule;
-
-        } catch (Exception e) {
-            // rule is only non-null once ruleRepository.save() above succeeded, so it's
-            // already persisted even though the engine never accepted it (fetchOntology,
-            // namespace setup, or engine.createSWRLRule threw after the save). Left as-is,
-            // that orphaned document would permanently block this rule name via
-            // existsByProjectIdAndRuleName on every future attempt, even though nothing
-            // usable was ever added to the rule engine and the user sees this as a
-            // straightforward failure — roll it back so the name is free to retry.
-            if (rule != null && rule.getId() != null) {
-                try {
-                    ruleRepository.deleteById(rule.getId());
-                } catch (Exception cleanupEx) {
-                    logger.warn("Failed to roll back orphaned rule {} for project {} after create failure",
-                            rule.getId(), projectId, cleanupEx);
-                }
-            }
-            long totalDuration = System.currentTimeMillis() - startTime;
-            logger.error("Failed to create rule {} for project {} after {}ms", ruleName, projectId, totalDuration, e);
-            perfLog.info("[PERF] SWRL_CREATE_RULE project={} rule={} status=error duration={}ms", projectId, ruleName, totalDuration);
-            throw new RuntimeException("Failed to create rule: " + e.getMessage(), e);
+            return new RuleParse(true, functionalSyntax(List.of(axiom)), List.of(), suggestions);
+        } catch (OWLOntologyCreationException | OWLOntologyStorageException e) {
+            return new RuleParse(false, null, List.of("The rule could not be written out: " + e.getMessage()), suggestions);
         }
+    }
+
+    private static String functionalSyntax(Collection<SWRLRule> axioms) throws OWLOntologyCreationException, OWLOntologyStorageException {
+        OWLOntologyManager manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        OWLDataFactory factory = manager.getOWLDataFactory();
+        OWLOntology result = manager.createOntology();
+        Set<OWLEntity> entities = new LinkedHashSet<>();
+        for (SWRLRule axiom : axioms) {
+            manager.addAxiom(result, axiom);
+            axiom.getSignature().stream().filter(entity -> !entity.isBuiltIn()).forEach(entities::add);
+        }
+        entities.forEach(entity -> manager.addAxiom(result, factory.getOWLDeclarationAxiom(entity)));
+        org.semanticweb.owlapi.io.StringDocumentTarget target = new org.semanticweb.owlapi.io.StringDocumentTarget();
+        manager.saveOntology(result, new org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat(), target);
+        return target.toString();
+    }
+
+    public List<SwrlRule> legacyRules(String projectId) {
+        return ruleRepository.findByProjectIdAndMigratedAtIsNull(projectId);
+    }
+
+    public SwrlRule markMigrated(String projectId, String ruleId) {
+        SwrlRule rule = ruleRepository.findByIdAndProjectId(ruleId, projectId)
+                .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
+        rule.setMigratedAt(LocalDateTime.now());
+        return ruleRepository.save(rule);
     }
 
     @CacheEvict(value = "executionResults", key = "#projectId")
@@ -369,37 +386,26 @@ public class SwrlEngineService {
 
             ensureNamespacePrefixes(projectId, ontology);
             long engineStart = System.currentTimeMillis();
-            // Always build a fresh engine from the just-fetched ontology rather than
-            // reusing one cached by projectId — a cached engine wraps whatever
-            // ontology snapshot existed when it was first created, and
-            // ensureNamespacePrefixes() only busts that cache on a brand-new
-            // namespace, not on new individuals/assertions added under a namespace
-            // the engine already knew about. A stale engine here silently reasons
-            // over stale data with no error at all — same class of bug as the
-            // ontology-fetch cache in OntologyClientService.
-            stripEmbeddedRules(ontology);
+            List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
             SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            OntologyRules.fillTexts(engine, entries);
             long engineDuration = System.currentTimeMillis() - engineStart;
             engineLog.info("[EXECUTE] Fresh engine created in {}ms project={}", engineDuration, projectId);
 
-            List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
-            logger.info("Executing {} enabled rules for project: {}", enabledRules.size(), projectId);
-            engineLog.info("[EXECUTE] {} rules to execute project={}", enabledRules.size(), projectId);
-
-            // Clear existing rules from engine
-            engine.getSWRLRules().forEach(rule -> engine.deleteSWRLRule(rule.getRuleName()));
-
+            List<OntologyRules.Entry> enabledRules = new ArrayList<>();
             List<SkippedRule> skipped = new ArrayList<>();
-            // Add enabled rules
-            for (SwrlRule rule : enabledRules) {
-                try {
-                    String resolved = resolveEntityNames(rule.getRuleText(), ontology);
-                    engine.createSWRLRule(rule.getRuleName(), resolved);
-                } catch (SWRLParseException e) {
-                    logger.error("Failed to add rule {}: {}", rule.getRuleName(), e.getMessage());
-                    skipped.add(skippedRule(rule, e, ontology));
+            for (OntologyRules.Entry entry : entries) {
+                if (!entry.enabled()) {
+                    continue;
+                }
+                if (entry.ruleText() == null) {
+                    skipped.add(new SkippedRule(entry.name(), "The rule could not be loaded by the rule engine."));
+                } else {
+                    enabledRules.add(entry);
                 }
             }
+            logger.info("Executing {} enabled rules for project: {}", enabledRules.size(), projectId);
+            engineLog.info("[EXECUTE] {} rules to execute project={}", enabledRules.size(), projectId);
 
             // ✅ FIXED: Execute with timeout
             Set<OWLAxiom> assertedBefore = InferredAxiomPresenter.assertionsOf(ontology);
@@ -409,9 +415,6 @@ public class SwrlEngineService {
 
             logger.info("Executed {} rules in {}ms, inferred {} axioms", 
                        enabledRules.size(), executionTime, inferredAxioms.size());
-
-            // Update rule execution stats
-            updateRuleExecutionStats(enabledRules, executionTime);
 
             InferredAxiomPresenter.Presented presented = InferredAxiomPresenter.present(inferredAxioms, assertedBefore, maxInferredAxioms);
             List<InferredAxiom> formattedAxioms = categorized(presented);
@@ -430,8 +433,7 @@ public class SwrlEngineService {
 
             // Extract executed rule names
             List<String> executedRuleNames = enabledRules.stream()
-                .map(SwrlRule::getRuleName)
-                .filter(name -> skipped.stream().noneMatch(entry -> entry.ruleName().equals(name)))
+                .map(OntologyRules.Entry::name)
                 .collect(Collectors.toList());
 
             ExecutionResult result = new ExecutionResult(
@@ -442,6 +444,7 @@ public class SwrlEngineService {
                 null
             );
             result.setExecutedRuleNames(executedRuleNames);
+            result.setExecutedRuleIds(enabledRules.stream().map(OntologyRules.Entry::id).collect(Collectors.toList()));
             result.setSkippedRules(skipped);
             applyPresentation(result, presented);
             result.setCompletion(skipped.isEmpty() ? "completed" : "completed_with_warnings");
@@ -450,7 +453,7 @@ public class SwrlEngineService {
                     draftUserId == null ? fetched.ontologyRevision() : null,
                     draftUserId != null ? fetched.draftVersion() : null,
                     self.research.ontology.common.preview.RulesFingerprint.of(enabledRules.stream()
-                            .map(rule -> new String[]{rule.getRuleName(), rule.getRuleText()})
+                            .map(rule -> new String[]{rule.name(), rule.ruleText()})
                             .collect(Collectors.toList()))));
             perfLog.info("[PERF] SWRL_EXECUTE project={} rules={} inferred={} duration={}ms status=success",
                     projectId, enabledRules.size(), inferredAxioms.size(), executionTime);
@@ -472,23 +475,13 @@ public class SwrlEngineService {
             
             return failure("timeout", "Execution timed out after " + executionTimeoutSeconds + " seconds");
                 
-        } catch (SWRLBuiltInException e) {
-            long totalDuration = System.currentTimeMillis() - startTime;
-            logger.error("SWRL built-in error for project {} after {}ms", projectId, totalDuration, e);
-            perfLog.info("[PERF] SWRL_EXECUTE project={} status=builtin_error duration={}ms", projectId, totalDuration);
-            engineLog.error("[EXECUTE] Built-in error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
-            
-            if (meterRegistry != null) {
-                meterRegistry.counter("swrl.execution.errors",
-                    "projectId", projectId,
-                    "type", "builtin").increment();
-            }
-            
-            return new ExecutionResult(false, 0, 0, Collections.emptyList(),
-                "Built-in function error: " + RuleMessages.explain(e.getMessage()));
-                
         } catch (Exception e) {
             long totalDuration = System.currentTimeMillis() - startTime;
+            if (e instanceof SWRLBuiltInException) {
+                logger.error("SWRL built-in error for project {} after {}ms", projectId, totalDuration, e);
+                return new ExecutionResult(false, 0, 0, Collections.emptyList(),
+                    "Built-in function error: " + RuleMessages.explain(e.getMessage()));
+            }
             logger.error("Execution error for project {} after {}ms", projectId, totalDuration, e);
             perfLog.info("[PERF] SWRL_EXECUTE project={} status=error duration={}ms error={}", projectId, totalDuration, e.getMessage());
             engineLog.error("[EXECUTE] Error in {}ms project={}: {}", totalDuration, projectId, e.getMessage());
@@ -515,47 +508,41 @@ public class SwrlEngineService {
         try {
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
             ensureNamespacePrefixes(projectId, ontology);
-            // Fresh engine per call — see executeRules() for why the cached
-            // getOrCreateEngine() path is unsafe here.
-            stripEmbeddedRules(ontology);
+            Set<String> requested = new LinkedHashSet<>(ruleIds);
+            List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology,
+                    entry -> entry.enabled() && (requested.contains(entry.id()) || requested.contains(entry.name())));
             SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            OntologyRules.fillTexts(engine, entries);
 
-            // Get the selected rules
-            List<SwrlRule> selectedRules = new ArrayList<>();
-            for (SwrlRule candidate : ruleRepository.findAllById(ruleIds)) {
-                if (projectId.equals(candidate.getProjectId())) {
-                    selectedRules.add(candidate);
+            List<OntologyRules.Entry> selectedRules = new ArrayList<>();
+            List<SkippedRule> skipped = new ArrayList<>();
+            Set<String> matched = new HashSet<>();
+            for (OntologyRules.Entry entry : entries) {
+                boolean chosen = requested.contains(entry.id()) || requested.contains(entry.name());
+                if (!chosen) {
+                    continue;
+                }
+                matched.add(requested.contains(entry.id()) ? entry.id() : entry.name());
+                if (!entry.enabled()) {
+                    skipped.add(new SkippedRule(entry.name(), "This rule is disabled."));
+                } else if (entry.ruleText() == null) {
+                    skipped.add(new SkippedRule(entry.name(), "The rule could not be loaded by the rule engine."));
+                } else {
+                    selectedRules.add(entry);
                 }
             }
-            Set<String> foundIds = selectedRules.stream().map(SwrlRule::getId).collect(Collectors.toSet());
-            List<SkippedRule> notInProject = new ArrayList<>();
-            for (String requested : ruleIds) {
-                if (!foundIds.contains(requested)) {
-                    notInProject.add(new SkippedRule(requested, "This rule was not found in this project."));
+            for (String wanted : requested) {
+                if (!matched.contains(wanted)) {
+                    skipped.add(new SkippedRule(wanted, "This rule was not found in this project."));
                 }
             }
             if (selectedRules.isEmpty()) {
                 ExecutionResult none = failure("failed", "No valid rules found for the given IDs");
-                none.setSkippedRules(notInProject);
+                none.setSkippedRules(skipped);
                 return none;
             }
-            
+
             logger.info("Executing {} selected rules for project: {}", selectedRules.size(), projectId);
-
-            // Clear existing rules from engine
-            engine.getSWRLRules().forEach(rule -> engine.deleteSWRLRule(rule.getRuleName()));
-
-            List<SkippedRule> skipped = new ArrayList<>(notInProject);
-            // Add only selected rules
-            for (SwrlRule rule : selectedRules) {
-                try {
-                    String resolved = resolveEntityNames(rule.getRuleText(), ontology);
-                    engine.createSWRLRule(rule.getRuleName(), resolved);
-                } catch (SWRLParseException e) {
-                    logger.error("Failed to add rule {}: {}", rule.getRuleName(), e.getMessage());
-                    skipped.add(skippedRule(rule, e, ontology));
-                }
-            }
 
             // Execute with timeout
             Set<OWLAxiom> assertedBefore = InferredAxiomPresenter.assertionsOf(ontology);
@@ -565,9 +552,6 @@ public class SwrlEngineService {
 
             logger.info("Executed {} selected rules in {}ms, inferred {} axioms", 
                        selectedRules.size(), executionTime, inferredAxioms.size());
-
-            // Update rule execution stats
-            updateRuleExecutionStats(selectedRules, executionTime);
 
             InferredAxiomPresenter.Presented presented = InferredAxiomPresenter.present(inferredAxioms, assertedBefore, maxInferredAxioms);
             List<InferredAxiom> formattedAxioms = categorized(presented);
@@ -581,8 +565,7 @@ public class SwrlEngineService {
 
             // Extract executed rule names
             List<String> executedRuleNames = selectedRules.stream()
-                .map(SwrlRule::getRuleName)
-                .filter(name -> skipped.stream().noneMatch(entry -> entry.ruleName().equals(name)))
+                .map(OntologyRules.Entry::name)
                 .collect(Collectors.toList());
 
             ExecutionResult result = new ExecutionResult(
@@ -593,6 +576,7 @@ public class SwrlEngineService {
                 null
             );
             result.setExecutedRuleNames(executedRuleNames);
+            result.setExecutedRuleIds(selectedRules.stream().map(OntologyRules.Entry::id).collect(Collectors.toList()));
             result.setSkippedRules(skipped);
             applyPresentation(result, presented);
             result.setCompletion(skipped.isEmpty() ? "completed" : "completed_with_warnings");
@@ -616,45 +600,31 @@ public class SwrlEngineService {
     public RulesExport exportEnabledRulesAsOwl(String projectId, String draftUserId) throws Exception {
         OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
         ensureNamespacePrefixes(projectId, ontology);
-        stripEmbeddedRules(ontology);
+        List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
         SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
-        List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
-        Map<String, Integer> nameCounts = new HashMap<>();
-        enabledRules.forEach(rule -> nameCounts.merge(rule.getRuleName(), 1, Integer::sum));
+        OntologyRules.fillTexts(engine, entries);
 
-        OWLOntologyManager manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
-        OWLDataFactory factory = manager.getOWLDataFactory();
-        OWLOntology result = manager.createOntology();
+        OWLDataFactory factory = org.semanticweb.owlapi.apibinding.OWLManager.getOWLDataFactory();
         List<SkippedRule> skipped = new ArrayList<>();
-        Set<OWLEntity> entities = new LinkedHashSet<>();
-        int index = 0;
-        for (SwrlRule rule : enabledRules) {
-            String engineName = "export-" + index++;
-            try {
-                String resolved = resolveEntityNames(rule.getRuleText(), ontology);
-                org.swrlapi.core.SWRLAPIRule created = engine.createSWRLRule(engineName, resolved);
-                String label = nameCounts.get(rule.getRuleName()) > 1
-                        ? rule.getRuleName() + " (" + rule.getId() + ")"
-                        : rule.getRuleName();
-                SWRLRule axiom = factory.getSWRLRule(
-                        new LinkedHashSet<>(created.getBody()),
-                        new LinkedHashSet<>(created.getHead()),
-                        Collections.singleton(factory.getOWLAnnotation(factory.getRDFSLabel(), factory.getOWLLiteral(label))));
-                manager.addAxiom(result, axiom);
-                axiom.getSignature().stream().filter(entity -> !entity.isBuiltIn()).forEach(entities::add);
-            } catch (SWRLParseException e) {
-                skipped.add(skippedRule(rule, e, ontology));
-            } catch (RuntimeException e) {
-                skipped.add(new SkippedRule(rule.getRuleName(), "The rule could not be understood: " + e.getMessage()));
+        List<SWRLRule> axioms = new ArrayList<>();
+        List<OntologyRules.Entry> exported = new ArrayList<>();
+        for (OntologyRules.Entry entry : entries) {
+            if (!entry.enabled()) {
+                continue;
             }
+            if (entry.ruleText() == null) {
+                skipped.add(new SkippedRule(entry.name(), "The rule could not be loaded by the rule engine."));
+                continue;
+            }
+            axioms.add((SWRLRule) entry.axiom().getAxiomWithoutAnnotations().getAnnotatedAxiom(Collections.singleton(
+                    factory.getOWLAnnotation(factory.getRDFSLabel(), factory.getOWLLiteral(entry.engineName())))));
+            exported.add(entry);
         }
-        entities.forEach(entity -> manager.addAxiom(result, factory.getOWLDeclarationAxiom(entity)));
-        org.semanticweb.owlapi.io.StringDocumentTarget target = new org.semanticweb.owlapi.io.StringDocumentTarget();
-        manager.saveOntology(result, new org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat(), target);
-        String fingerprint = self.research.ontology.common.preview.RulesFingerprint.of(enabledRules.stream()
-                .map(rule -> new String[]{rule.getRuleName(), rule.getRuleText()})
+        String text = functionalSyntax(axioms);
+        String fingerprint = self.research.ontology.common.preview.RulesFingerprint.of(exported.stream()
+                .map(rule -> new String[]{rule.name(), rule.ruleText()})
                 .collect(Collectors.toList()));
-        return new RulesExport(target.toString(), skipped, fingerprint);
+        return new RulesExport(text, skipped, fingerprint);
     }
 
     public String inferOntologyRules(String ontologyText) throws Exception {
@@ -732,80 +702,6 @@ public class SwrlEngineService {
             logger.error("Rule execution timed out for project: {}", projectId);
             throw e;
         }
-    }
-
-    /**
-     * ✅ NEW: Update execution statistics for rules
-     */
-    private void updateRuleExecutionStats(List<SwrlRule> rules, long executionTime) {
-        for (SwrlRule rule : rules) {
-            rule.setExecutionCount(rule.getExecutionCount() + 1);
-            rule.setLastExecutionTime(executionTime);
-            ruleRepository.save(rule);
-        }
-    }
-
-    public List<SwrlRule> getRules(String projectId) {
-        return ruleRepository.findByProjectId(projectId);
-    }
-
-    /**
-     * ✅ NEW: Get single rule (was missing!)
-     */
-    public SwrlRule getRule(String projectId, String ruleId) {
-        return ruleRepository.findByIdAndProjectId(ruleId, projectId)
-            .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
-    }
-
-    public SwrlRule updateRule(String projectId, String ruleId, String ruleText, String comment, 
-                               Boolean enabled, String category) {
-        SwrlRule rule = ruleRepository.findByIdAndProjectId(ruleId, projectId)
-            .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
-
-        if (ruleText != null && !ruleText.equals(rule.getRuleText())) {
-            ValidationResult validation = validateRule(rule.getProjectId(), ruleText);
-            if (!validation.isValid()) {
-                throw new IllegalArgumentException(validation.getErrorMessage());
-            }
-            rule.setRuleText(ruleText);
-        }
-
-        if (comment != null) rule.setComment(comment);
-        if (enabled != null) rule.setEnabled(enabled);
-        if (category != null) rule.setCategory(category);
-
-        rule.setUpdatedAt(LocalDateTime.now());
-        
-        SwrlRule updated = ruleRepository.save(rule);
-        
-        if (meterRegistry != null) {
-            meterRegistry.counter("swrl.rules.updated", 
-                "projectId", rule.getProjectId()).increment();
-        }
-        
-        return updated;
-    }
-
-    public void deleteRule(String projectId, String ruleId) {
-        SwrlRule rule = ruleRepository.findByIdAndProjectId(ruleId, projectId)
-            .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
-
-        try {
-            OWLOntology ontology = ontologyClient.fetchOntology(rule.getProjectId());
-            SWRLRuleEngine engine = getOrCreateEngine(rule.getProjectId(), ontology);
-            engine.deleteSWRLRule(rule.getRuleName());
-        } catch (Exception e) {
-            logger.warn("Failed to remove rule from engine: {}", e.getMessage());
-        }
-
-        ruleRepository.delete(rule);
-        
-        if (meterRegistry != null) {
-            meterRegistry.counter("swrl.rules.deleted", 
-                "projectId", rule.getProjectId()).increment();
-        }
-        
-        logger.info("Deleted rule: {}", ruleId);
     }
 
     /**
@@ -969,37 +865,6 @@ public class SwrlEngineService {
         return result;
     }
 
-    /**
-     * ✅ FIXED: Track access time for cleanup
-     * ✅ ENHANCED: Set up prefix mappings for better SWRL parsing
-     */
-    private SWRLRuleEngine getOrCreateEngine(String projectId, OWLOntology ontology) {
-        engineLastAccess.put(projectId, System.currentTimeMillis());
-        
-        return engineCache.computeIfAbsent(projectId, id -> {
-            logger.info("Creating new SWRL engine for project: {}", projectId);
-
-            stripEmbeddedRules(ontology);
-            SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
-            
-            try {
-                com.google.common.base.Optional<IRI> ontologyIRIOptional = ontology.getOntologyID().getOntologyIRI();
-                if (ontologyIRIOptional.isPresent()) {
-                    logger.info("Ontology base IRI for project {}: {}", projectId, ontologyIRIOptional.get());
-                    logger.info("Classes in ontology: {}", 
-                        ontology.getClassesInSignature().stream()
-                            .map(c -> c.getIRI().getShortForm())
-                            .limit(10)
-                            .collect(Collectors.joining(", ")));
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to log ontology info for project {}: {}", projectId, e.getMessage());
-            }
-            
-            return engine;
-        });
-    }
-
     private List<InferredAxiom> categorized(InferredAxiomPresenter.Presented presented) {
         List<InferredAxiom> out = new ArrayList<>();
         for (OWLAxiom axiom : presented.ordered()) {
@@ -1160,35 +1025,6 @@ public class SwrlEngineService {
     }
 
     /**
-     * Search rules by text
-     */
-    public Page<SwrlRule> searchRules(String projectId, String searchText, Pageable pageable) {
-        return ruleRepository.findByProjectIdAndRuleNameContainingOrRuleTextContaining(
-                projectId, searchText, searchText, pageable);
-    }
-
-    /**
-     * Get rules by category with pagination
-     */
-    public Page<SwrlRule> getRulesByCategory(String projectId, String category, Pageable pageable) {
-        return ruleRepository.findByProjectIdAndCategory(projectId, category, pageable);
-    }
-
-    /**
-     * Get rules by enabled status with pagination
-     */
-    public Page<SwrlRule> getRulesByEnabled(String projectId, Boolean enabled, Pageable pageable) {
-        return ruleRepository.findByProjectIdAndEnabled(projectId, enabled, pageable);
-    }
-
-    /**
-     * Get all rules with pagination
-     */
-    public Page<SwrlRule> getRulesPaginated(String projectId, Pageable pageable) {
-        return ruleRepository.findByProjectId(projectId, pageable);
-    }
-
-    /**
      * Test a single rule without saving
      */
     public ExecutionResult testSingleRule(String projectId, String ruleText) {
@@ -1205,7 +1041,7 @@ public class SwrlEngineService {
 
             OWLOntology ontology = ontologyClient.fetchOntology(projectId);
             ensureNamespacePrefixes(projectId, ontology);
-            stripEmbeddedRules(ontology);
+            OntologyRules.removeAll(ontology);
             SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
 
             // Add and execute the test rule
@@ -1237,143 +1073,18 @@ public class SwrlEngineService {
         }
     }
 
-    /**
-     * Test a single rule by ID
-     */
-    public ExecutionResult testSingleRuleById(String projectId, String ruleId) {
-        SwrlRule rule = ruleRepository.findByIdAndProjectId(ruleId, projectId)
-            .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
-        
-        return testSingleRule(projectId, rule.getRuleText());
-    }
-
-    /**
-     * Create multiple rules at once
-     */
-    public List<SwrlRule> createRulesBatch(String projectId, List<CreateRuleRequest> requests) {
-        List<SwrlRule> createdRules = new ArrayList<>();
-
-        for (CreateRuleRequest request : requests) {
-            try {
-                SwrlRule rule = createRule(projectId, request.getRuleName(),
-                        request.getRuleText(), request.getComment(), request.getCategory());
-                createdRules.add(rule);
-            } catch (Exception e) {
-                logger.error("Failed to create rule in batch: {}", request.getRuleName(), e);
+    public ExecutionResult testSingleRuleById(String projectId, String ruleId) throws Exception {
+        OntologyRules.Entry found = null;
+        for (OntologyRules.Entry entry : listEntries(projectId, null)) {
+            if (entry.id().equals(ruleId)) {
+                found = entry;
+                break;
             }
         }
-
-        logger.info("Batch created {} of {} rules for project {}",
-                createdRules.size(), requests.size(), projectId);
-
-        return createdRules;
-    }
-
-    /**
-     * Delete multiple rules at once
-     */
-    public void deleteRulesBatch(String projectId, List<String> ruleIds) {
-        for (String ruleId : ruleIds) {
-            try {
-                deleteRule(projectId, ruleId);
-            } catch (Exception e) {
-                logger.error("Failed to delete rule in batch: {}", ruleId, e);
-            }
+        if (found == null) {
+            throw new IllegalArgumentException("Rule not found: " + ruleId);
         }
-
-        logger.info("Batch deleted {} rules", ruleIds.size());
-    }
-
-    /**
-     * Import rules from list
-     */
-    public ImportResult importRules(String projectId, List<CreateRuleRequest> requests) {
-        int successCount = 0;
-        int failureCount = 0;
-        List<String> errors = new ArrayList<>();
-
-        for (CreateRuleRequest request : requests) {
-            try {
-                createRule(projectId, request.getRuleName(), request.getRuleText(),
-                        request.getComment(), request.getCategory());
-                successCount++;
-            } catch (Exception e) {
-                failureCount++;
-                errors.add("Failed to import rule '" + request.getRuleName() + "': " + e.getMessage());
-                logger.error("Import failed for rule: {}", request.getRuleName(), e);
-            }
-        }
-
-        logger.info("Import completed for project {}: {} success, {} failures",
-                projectId, successCount, failureCount);
-
-        ImportResult result = new ImportResult();
-        result.setSuccessCount(successCount);
-        result.setFailureCount(failureCount);
-        result.setErrors(errors);
-        return result;
-    }
-
-    /**
-     * Get statistics about rules
-     */
-    public RuleStatistics getRuleStatistics(String projectId) {
-        List<SwrlRule> allRules = ruleRepository.findByProjectId(projectId);
-
-        long totalRules = allRules.size();
-        long enabledRules = allRules.stream().filter(SwrlRule::isEnabled).count();
-        long disabledRules = totalRules - enabledRules;
-        long totalExecutions = allRules.stream()
-                .mapToLong(SwrlRule::getExecutionCount)
-                .sum();
-
-        long averageExecutionTime = (long) allRules.stream()
-                .filter(r -> r.getLastExecutionTime() != null)
-                .mapToLong(SwrlRule::getLastExecutionTime)
-                .average()
-                .orElse(0);
-
-        String mostUsedCategory = allRules.stream()
-                .filter(r -> r.getCategory() != null)
-                .collect(Collectors.groupingBy(SwrlRule::getCategory, Collectors.counting()))
-                .entrySet().stream()
-                .max(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey)
-                .orElse(null);
-
-        RuleStatistics stats = new RuleStatistics();
-        stats.setTotalRules(totalRules);
-        stats.setEnabledRules(enabledRules);
-        stats.setDisabledRules(disabledRules);
-        stats.setTotalExecutions(totalExecutions);
-        stats.setAverageExecutionTime(averageExecutionTime);
-        stats.setMostUsedCategory(mostUsedCategory);
-
-        return stats;
-    }
-
-    /**
-     * Duplicate an existing rule
-     */
-    public SwrlRule duplicateRule(String projectId, String ruleId, String newRuleName) {
-        SwrlRule original = ruleRepository.findByIdAndProjectId(ruleId, projectId)
-                .orElseThrow(() -> new IllegalArgumentException("Rule not found: " + ruleId));
-
-        if (ruleRepository.existsByProjectIdAndRuleName(original.getProjectId(), newRuleName)) {
-            throw new IllegalArgumentException("Rule with name '" + newRuleName + "' already exists");
-        }
-
-        SwrlRule duplicate = new SwrlRule(original.getProjectId(), newRuleName, original.getRuleText());
-        duplicate.setComment(original.getComment());
-        duplicate.setCategory(original.getCategory());
-        duplicate.setEnabled(original.isEnabled());
-
-        duplicate = ruleRepository.save(duplicate);
-
-        logger.info("Duplicated rule {} to {} for project {}",
-                ruleId, newRuleName, original.getProjectId());
-
-        return duplicate;
+        return testSingleRule(projectId, found.ruleText());
     }
 
     /**
@@ -1394,24 +1105,9 @@ public class SwrlEngineService {
             
             final String runName = queryName;
             Future<org.swrlapi.sqwrl.SQWRLResult> future = executorService.submit(() -> {
-                // Create SQWRL query engine
-                stripEmbeddedRules(ontology);
+                OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
                 org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
 
-                // SQWRL queries run on a fresh engine, so load the saved enabled
-                // SWRL rules first. Otherwise queries for inferred classes (for
-                // example HonorsStudent after a GPA rule) return no rows.
-                List<SwrlRule> enabledRules = ruleRepository.findByProjectIdAndEnabled(projectId, true);
-                for (SwrlRule rule : enabledRules) {
-                    try {
-                        String resolvedRule = resolveEntityNames(rule.getRuleText(), ontology);
-                        queryEngine.createSWRLRule(rule.getRuleName(), resolvedRule);
-                    } catch (org.swrlapi.parser.SWRLParseException e) {
-                        logger.warn("Skipping saved SWRL rule '{}' while preparing SQWRL query: {}",
-                                rule.getRuleName(), e.getMessage());
-                    }
-                }
-            
                 logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
             
                 // Execute the query - resolve entity names for non-default namespaces
@@ -1489,26 +1185,36 @@ public class SwrlEngineService {
             + RuleEvidence.CANDIDATE_LIMIT + " candidate bindings. Supported atoms: class, object property, data property and the built-ins "
             + "greaterThan, lessThan, greaterThanOrEqual, lessThanOrEqual, equal, notEqual, add, subtract, multiply, divide, mod, contains, stringConcat.";
 
-    private record EvidenceBase(OWLOntology ontology, RuleEvidence.Facts facts, Map<SwrlRule, org.swrlapi.core.SWRLAPIRule> parsed,
-                                List<String> notes, org.swrlapi.core.SWRLAPIRule extra) {
+    private record EvidenceBase(OWLOntology ontology, RuleEvidence.Facts facts, Map<OntologyRules.Entry, org.swrlapi.core.SWRLAPIRule> parsed,
+                                List<String> notes, org.swrlapi.core.SWRLAPIRule extra, OntologyRules.Entry extraEntry) {
     }
 
-    private EvidenceBase prepareEvidence(String projectId, String draftUserId, SwrlRule extraRule) throws Exception {
+    private EvidenceBase prepareEvidence(String projectId, String draftUserId, String extraRuleId) throws Exception {
         OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
         ensureNamespacePrefixes(projectId, ontology);
-        stripEmbeddedRules(ontology);
         Set<OWLAxiom> asserted = InferredAxiomPresenter.assertionsOf(ontology);
+        List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
         SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
-        engine.getSWRLRules().forEach(rule -> engine.deleteSWRLRule(rule.getRuleName()));
+        OntologyRules.fillTexts(engine, entries);
 
-        Map<SwrlRule, org.swrlapi.core.SWRLAPIRule> parsed = new LinkedHashMap<>();
+        Map<OntologyRules.Entry, org.swrlapi.core.SWRLAPIRule> parsed = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
-        for (SwrlRule rule : ruleRepository.findByProjectIdAndEnabled(projectId, true)) {
-            try {
-                parsed.put(rule, engine.createSWRLRule(rule.getRuleName(), resolveEntityNames(rule.getRuleText(), ontology)));
-            } catch (SWRLParseException e) {
-                notes.add("Rule '" + rule.getRuleName() + "' was skipped because it could not be read: " + e.getMessage());
+        OntologyRules.Entry extraEntry = null;
+        for (OntologyRules.Entry entry : entries) {
+            if (extraRuleId != null && entry.id().equals(extraRuleId)) {
+                extraEntry = entry;
             }
+            if (!entry.enabled()) {
+                continue;
+            }
+            if (entry.ruleText() == null) {
+                notes.add("Rule '" + entry.name() + "' was skipped because it could not be read");
+                continue;
+            }
+            parsed.put(entry, engine.getSWRLRule(entry.engineName()).orElse(null));
+        }
+        if (extraRuleId != null && extraEntry == null) {
+            throw new IllegalArgumentException("Rule not found: " + extraRuleId);
         }
         Set<OWLAxiom> inferred;
         try {
@@ -1517,14 +1223,21 @@ public class SwrlEngineService {
             throw new IllegalStateException("Rule evaluation timed out after " + executionTimeoutSeconds + " seconds");
         }
         org.swrlapi.core.SWRLAPIRule extra = null;
-        if (extraRule != null) {
-            try {
-                extra = engine.createSWRLRule("why-not-" + UUID.randomUUID(), resolveEntityNames(extraRule.getRuleText(), ontology));
-            } catch (SWRLParseException e) {
-                throw new IllegalArgumentException("The rule could not be read: " + e.getMessage());
+        if (extraEntry != null) {
+            if (extraEntry.enabled() && extraEntry.ruleText() != null) {
+                extra = engine.getSWRLRule(extraEntry.engineName()).orElse(null);
+            } else {
+                if (extraEntry.ruleText() == null) {
+                    throw new IllegalArgumentException("The rule could not be read");
+                }
+                try {
+                    extra = engine.createSWRLRule("why-not-" + UUID.randomUUID(), resolveEntityNames(extraEntry.ruleText(), ontology));
+                } catch (SWRLParseException e) {
+                    throw new IllegalArgumentException("The rule could not be read: " + e.getMessage());
+                }
             }
         }
-        return new EvidenceBase(ontology, RuleEvidence.Facts.of(asserted, inferred), parsed, notes, extra);
+        return new EvidenceBase(ontology, RuleEvidence.Facts.of(asserted, inferred), parsed, notes, extra, extraEntry);
     }
 
     private static IRI resolveIri(OWLOntology ontology, String text) {
@@ -1625,8 +1338,8 @@ public class SwrlEngineService {
 
         List<String> notes = new ArrayList<>(base.notes());
         List<ExplainResponse.Justification> justifications = new ArrayList<>();
-        for (Map.Entry<SwrlRule, org.swrlapi.core.SWRLAPIRule> entry : base.parsed().entrySet()) {
-            SwrlRule rule = entry.getKey();
+        for (Map.Entry<OntologyRules.Entry, org.swrlapi.core.SWRLAPIRule> entry : base.parsed().entrySet()) {
+            OntologyRules.Entry rule = entry.getKey();
             List<Map<String, Object>> seeds = new ArrayList<>();
             for (SWRLAtom headAtom : entry.getValue().getHeadAtoms()) {
                 RuleEvidence.Step head;
@@ -1656,7 +1369,7 @@ public class SwrlEngineService {
             try {
                 steps = RuleEvidence.parse(entry.getValue().getBodyAtoms());
             } catch (RuleEvidence.Unsupported e) {
-                notes.add("Rule '" + rule.getRuleName() + "' not explained: unsupported " + e.getMessage());
+                notes.add("Rule '" + rule.name() + "' not explained: unsupported " + e.getMessage());
                 continue;
             }
             Set<String> seen = new HashSet<>();
@@ -1665,7 +1378,7 @@ public class SwrlEngineService {
                 try {
                     solver.run(seed);
                 } catch (RuleEvidence.Unsupported e) {
-                    notes.add("Rule '" + rule.getRuleName() + "' not explained: unsupported " + e.getMessage());
+                    notes.add("Rule '" + rule.name() + "' not explained: unsupported " + e.getMessage());
                     continue;
                 }
                 for (Map<String, Object> binding : solver.solutions) {
@@ -1677,14 +1390,14 @@ public class SwrlEngineService {
                         premises.add(new ExplainResponse.Premise(RuleEvidence.premiseKind(step, binding, facts),
                                 RuleEvidence.instantiate(step, binding)));
                     }
-                    justifications.add(new ExplainResponse.Justification(rule.getRuleName(), rule.getRuleText(),
+                    justifications.add(new ExplainResponse.Justification(rule.name(), rule.ruleText(),
                             shownBinding(binding), premises));
                 }
                 if (solver.limitHit) {
-                    notes.add("Rule '" + rule.getRuleName() + "': the search stopped after " + RuleEvidence.CANDIDATE_LIMIT
+                    notes.add("Rule '" + rule.name() + "': the search stopped after " + RuleEvidence.CANDIDATE_LIMIT
                             + " candidate bindings, so more justifications may exist");
                 } else if (solver.solutions.size() >= 100) {
-                    notes.add("Rule '" + rule.getRuleName() + "': only the first 100 justifications are shown");
+                    notes.add("Rule '" + rule.name() + "': only the first 100 justifications are shown");
                 }
             }
         }
@@ -1712,8 +1425,8 @@ public class SwrlEngineService {
         if (request == null || request.individual() == null || request.individual().isBlank()) {
             throw new IllegalArgumentException("individual is required");
         }
-        SwrlRule rule = getRule(projectId, ruleId);
-        EvidenceBase base = prepareEvidence(projectId, draftUserId, rule);
+        EvidenceBase base = prepareEvidence(projectId, draftUserId, ruleId);
+        OntologyRules.Entry rule = base.extraEntry();
         IRI individual = resolveIri(base.ontology(), request.individual());
         String name = individual.getShortForm();
 
@@ -1734,7 +1447,7 @@ public class SwrlEngineService {
             }
         }
         if (unsupportedReason != null) {
-            return new WhyNotResponse(rule.getRuleName(), name, "unsupported",
+            return new WhyNotResponse(rule.name(), name, "unsupported",
                     "This check cannot evaluate the rule: it uses " + unsupportedReason, Map.of(), unsupportedReport,
                     WHY_NOT_SCOPE, base.notes());
         }
@@ -1756,7 +1469,7 @@ public class SwrlEngineService {
             }
         }
         if (rootVariable == null) {
-            return new WhyNotResponse(rule.getRuleName(), name, "unsupported",
+            return new WhyNotResponse(rule.name(), name, "unsupported",
                     "This check needs a class or property atom with a variable that can stand for the individual, and this rule has none",
                     Map.of(), unsupportedReport, WHY_NOT_SCOPE, base.notes());
         }
@@ -1765,7 +1478,7 @@ public class SwrlEngineService {
         try {
             solver.run(Map.of(rootVariable, individual));
         } catch (RuleEvidence.Unsupported e) {
-            return new WhyNotResponse(rule.getRuleName(), name, "unsupported",
+            return new WhyNotResponse(rule.name(), name, "unsupported",
                     "This check cannot evaluate the rule: " + e.getMessage(), Map.of(), unsupportedReport,
                     WHY_NOT_SCOPE, base.notes());
         }
@@ -1777,12 +1490,12 @@ public class SwrlEngineService {
             for (RuleEvidence.Step step : steps) {
                 atoms.add(new WhyNotResponse.AtomReport(step.text(), "satisfied", RuleEvidence.instantiate(step, binding)));
             }
-            return new WhyNotResponse(rule.getRuleName(), name, "fires",
+            return new WhyNotResponse(rule.name(), name, "fires",
                     "The rule's conditions are all met for " + name, shownBinding(binding), atoms, WHY_NOT_SCOPE, notes);
         }
         RuleEvidence.Failure best = solver.best;
         if (best == null) {
-            return new WhyNotResponse(rule.getRuleName(), name, "incomplete",
+            return new WhyNotResponse(rule.name(), name, "incomplete",
                     "No complete match was found and no failing atom was recorded", Map.of(), unsupportedReport, WHY_NOT_SCOPE, notes);
         }
         for (RuleEvidence.Step step : steps) {
@@ -1803,7 +1516,7 @@ public class SwrlEngineService {
             result = "incomplete";
             summary = "Stopped after " + RuleEvidence.CANDIDATE_LIMIT + " candidate bindings without finding a complete match; closest attempt: " + best.detail();
         }
-        return new WhyNotResponse(rule.getRuleName(), name, result, summary, shownBinding(best.binding()), atoms,
+        return new WhyNotResponse(rule.name(), name, result, summary, shownBinding(best.binding()), atoms,
                 WHY_NOT_SCOPE, notes);
     }
 

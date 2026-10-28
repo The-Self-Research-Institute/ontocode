@@ -1413,6 +1413,10 @@ public class OntologyMergeService {
      */
     private Set<OWLAxiom> getDefiningAxioms(OWLOntology ontology, IRI entityIRI) {
         Set<OWLAxiom> defining = new HashSet<>();
+        if (SwrlRuleKeys.isKey(entityIRI.toString())) {
+            defining.addAll(SwrlRuleKeys.rulesFor(ontology, entityIRI.toString()));
+            return defining;
+        }
 
         // Declaration axioms
         for (OWLDeclarationAxiom ax : ontology.getAxioms(AxiomType.DECLARATION)) {
@@ -1925,6 +1929,13 @@ public class OntologyMergeService {
                 touched.add(iri.toString());
             }
         }
+        Set<String> ruleKeys = new LinkedHashSet<>(SwrlRuleKeys.keysIn(baseline));
+        ruleKeys.addAll(SwrlRuleKeys.keysIn(ours));
+        for (String key : ruleKeys) {
+            if (!SwrlRuleKeys.rulesFor(baseline, key).equals(SwrlRuleKeys.rulesFor(ours, key))) {
+                touched.add(key);
+            }
+        }
         return touched;
     }
 
@@ -1942,7 +1953,12 @@ public class OntologyMergeService {
             case KEEP_TARGET -> {
                 // current main already has their version
             }
-            case MERGE -> addDefiningAxioms(ours, target, entityIRI, manager);
+            case MERGE -> {
+                if (SwrlRuleKeys.isKey(entityIRI.toString())) {
+                    removeDefiningAxioms(target, entityIRI, manager);
+                }
+                addDefiningAxioms(ours, target, entityIRI, manager);
+            }
             case RENAME_SOURCE -> {
                 String suffix = resolution.getRenameSuffix() != null
                         ? resolution.getRenameSuffix() : "_draft";

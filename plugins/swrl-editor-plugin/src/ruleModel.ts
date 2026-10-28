@@ -362,3 +362,283 @@ export function serializeRule(model: SimpleRuleModel): string {
 export function isValidVariableName(name: string): boolean {
   return PLAIN_VAR.test(name);
 }
+
+export interface ListedRule {
+  id: string;
+  ruleName: string;
+  ruleText: string;
+  comment?: string | null;
+  category?: string | null;
+  enabled: boolean;
+  source?: string | null;
+  readOnly?: boolean;
+}
+
+export interface UnmigratedListedRule {
+  id?: string;
+  ruleName: string;
+  ruleText?: string;
+  error?: string;
+}
+
+export function withDraft(path: string, draftMode: boolean): string {
+  if (!draftMode) return path;
+  return path + (path.includes('?') ? '&draft=true' : '?draft=true');
+}
+
+export function normalizeRulesResponse(res: unknown): { rules: ListedRule[]; unmigrated: UnmigratedListedRule[] } {
+  if (Array.isArray(res)) return { rules: res as ListedRule[], unmigrated: [] };
+  const body = (res || {}) as { rules?: unknown; unmigrated?: unknown; content?: unknown };
+  const rules = Array.isArray(body.rules) ? body.rules : Array.isArray(body.content) ? body.content : [];
+  const unmigrated = Array.isArray(body.unmigrated) ? body.unmigrated : [];
+  return { rules: rules as ListedRule[], unmigrated: unmigrated as UnmigratedListedRule[] };
+}
+
+export function unmigratedNotice(count: number): string {
+  return `${count} saved rule${count === 1 ? '' : 's'} could not be moved into the ontology`;
+}
+
+export function hasDisabledRule(rules: { enabled: boolean }[]): boolean {
+  return rules.some(r => !r.enabled);
+}
+
+export function isImportedRule(rule: { readOnly?: boolean; source?: string | null }): boolean {
+  return rule.readOnly === true || (typeof rule.source === 'string' && rule.source !== '');
+}
+
+export function sourceLabel(rule: { source?: string | null }): string {
+  return rule.source ? `From ${rule.source}` : '';
+}
+
+export function localCopyBody(rule: ListedRule, takenNames: Iterable<string>): {
+  ruleName: string;
+  ruleText: string;
+  comment: string;
+  category: string;
+  enabled: boolean;
+} {
+  const taken = new Set(takenNames);
+  const base = `${rule.ruleName} (local copy)`;
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${rule.ruleName} (local copy ${n})`;
+  return {
+    ruleName: name,
+    ruleText: rule.ruleText,
+    comment: `Copied from ${rule.source ?? 'an imported ontology'}`,
+    category: rule.category || '',
+    enabled: true,
+  };
+}
+
+export interface RuleFormValues {
+  ruleName: string;
+  ruleText: string;
+  comment?: string;
+  category?: string;
+  enabled: boolean;
+}
+
+export function ruleWriteBody(form: RuleFormValues, label: string): {
+  ruleName: string;
+  ruleText: string;
+  comment: string;
+  category: string;
+  enabled: boolean;
+  origin: { source: string; label: string };
+} {
+  return {
+    ruleName: form.ruleName.trim(),
+    ruleText: form.ruleText,
+    comment: form.comment || '',
+    category: form.category || '',
+    enabled: form.enabled,
+    origin: { source: 'swrl-rules', label },
+  };
+}
+
+export function friendlyRuleError(e: any, fallback: string): string {
+  const status: number | undefined = e?.status;
+  const data = e?.data;
+  const errors: unknown[] = Array.isArray(data?.errors) ? data.errors : [];
+  const suggestions: unknown[] = Array.isArray(data?.suggestions) ? data.suggestions : [];
+  if (status === 400 || errors.length > 0) {
+    const head = errors.length > 0 ? errors.map(String).join(' ') : (data?.message || e?.message || 'The rule has a problem.');
+    const tail = suggestions.length > 0 ? ' Try this: ' + suggestions.map(String).join(' ') : '';
+    return head + tail;
+  }
+  if (status === 409) {
+    const text = String(data?.message || e?.message || '');
+    if (/duplicate|already|exists|name/i.test(text) && !/stale|changed since|precondition/i.test(text)) {
+      return 'Another rule already has this name. Choose a different name.';
+    }
+    return 'The rules changed since you opened them. Refresh the list, then try again.';
+  }
+  if (status === 404) return 'This rule no longer exists. Refresh the list.';
+  if (status === 503) return 'The rule service is not available right now. Try again in a moment.';
+  return data?.message || e?.message || fallback;
+}
+
+export interface SkippedRow {
+  sheet?: string | null;
+  row?: number | null;
+  ruleName?: string | null;
+  reason?: string | null;
+  kind?: string | null;
+  suggestions?: string[] | null;
+}
+
+export interface ImportedRow {
+  id?: string;
+  ruleName?: string;
+  row?: number | null;
+}
+
+export interface ImportReport {
+  read: number;
+  imported: ImportedRow[];
+  skipped: SkippedRow[];
+  duplicates: number;
+  invalid: number;
+  dryRun?: boolean;
+  previewStamp?: string | null;
+  replayed?: boolean;
+  changeSetId?: string | null;
+  stale?: boolean;
+  message?: string;
+}
+
+export interface SkippedRowView {
+  key: string;
+  sheet: string;
+  row: string;
+  ruleName: string;
+  reason: string;
+  suggestions: string;
+}
+
+export function newImportId(): string {
+  const c: any = (globalThis as any).crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  const hex = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return `${hex(8)}-${hex(4)}-4${hex(3)}-${(8 + Math.floor(Math.random() * 4)).toString(16)}${hex(3)}-${hex(12)}`;
+}
+
+export interface ImportSession {
+  fileName: string;
+  fileSize: number;
+  lastModified: number;
+  importId: string;
+}
+
+export function sameImportFile(
+  session: ImportSession | null,
+  file: { name: string; size: number; lastModified?: number }
+): boolean {
+  return !!session
+    && session.fileName === file.name
+    && session.fileSize === file.size
+    && session.lastModified === (file.lastModified ?? 0);
+}
+
+export function importSessionFor(
+  previous: ImportSession | null,
+  file: { name: string; size: number; lastModified?: number }
+): ImportSession {
+  if (previous && sameImportFile(previous, file)) return previous;
+  return { fileName: file.name, fileSize: file.size, lastModified: file.lastModified ?? 0, importId: newImportId() };
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+export function importSummaryLine(report: Pick<ImportReport, 'read' | 'imported' | 'duplicates' | 'invalid'>, dryRun: boolean): string {
+  const count = Array.isArray(report.imported) ? report.imported.length : 0;
+  return [
+    plural(report.read ?? 0, 'row read', 'rows read'),
+    `${count} ${dryRun ? 'would import' : 'imported'}`,
+    plural(report.duplicates ?? 0, 'duplicate', 'duplicates'),
+    `${report.invalid ?? 0} invalid`,
+  ].join(' · ');
+}
+
+export function skippedRowsView(skipped: SkippedRow[] | null | undefined): SkippedRowView[] {
+  return (skipped || []).map((s, i) => ({
+    key: `${s.sheet ?? ''}-${s.row ?? ''}-${i}`,
+    sheet: s.sheet ? String(s.sheet) : '',
+    row: s.row == null ? '' : String(s.row),
+    ruleName: s.ruleName ? String(s.ruleName) : '',
+    reason: s.reason ? String(s.reason) : 'Skipped',
+    suggestions: Array.isArray(s.suggestions) ? s.suggestions.map(String).join(', ') : '',
+  }));
+}
+
+export function importButtonLabel(report: Pick<ImportReport, 'imported'>): string {
+  const n = Array.isArray(report.imported) ? report.imported.length : 0;
+  return `Import ${plural(n, 'rule', 'rules')}`;
+}
+
+export function canRunImport(report: Pick<ImportReport, 'imported'> | null, running: boolean): boolean {
+  return !!report && !running && report.imported.length > 0;
+}
+
+export function importOutcomeNotice(report: ImportReport): string {
+  if (report.replayed) return 'This import was already done';
+  return importSummaryLine(report, false);
+}
+
+export function isStaleImport(e: any): boolean {
+  return e?.status === 409 && !!e?.data && (e.data.stale === true || Array.isArray(e.data.imported));
+}
+
+export function staleImportReport(e: any): ImportReport | null {
+  if (!isStaleImport(e)) return null;
+  const d = e.data;
+  return {
+    read: Number(d.read) || 0,
+    imported: Array.isArray(d.imported) ? d.imported : [],
+    skipped: Array.isArray(d.skipped) ? d.skipped : [],
+    duplicates: Number(d.duplicates) || 0,
+    invalid: Number(d.invalid) || 0,
+    dryRun: true,
+    previewStamp: d.previewStamp ?? null,
+    stale: true,
+    message: String(d.message || 'The rules changed since the preview. Review the new result, then import again.'),
+  };
+}
+
+export function importErrorMessage(e: any): string {
+  const status = e?.status;
+  const msg = e?.data?.message || e?.message || '';
+  if (status === 413) return 'This file is too large to import.';
+  if (status === 400) return msg || 'This file could not be read.';
+  return friendlyRuleError(e, 'The import failed - please try again.');
+}
+
+export function isImportFile(name: string): boolean {
+  return /\.(xlsx|json)$/i.test(name);
+}
+
+export function applySavedRule<T extends { id: string; ruleName: string }>(
+  rules: T[],
+  selectedId: string | null,
+  res: Partial<T> | null | undefined,
+  form: { ruleName: string; ruleText: string; comment?: string; category?: string; enabled: boolean }
+): { rules: T[]; saved: T } {
+  const current = rules.find(r => r.id === (selectedId ?? res?.id));
+  const merged = {
+    ...(current || {}),
+    ruleText: form.ruleText,
+    comment: form.comment || '',
+    category: form.category || '',
+    enabled: form.enabled,
+    ...(res || {}),
+    ruleName: (res && res.ruleName) || form.ruleName.trim(),
+    id: (res && res.id) || selectedId || '',
+  } as unknown as T;
+  const exists = rules.some(r => r.id === merged.id || r.id === selectedId);
+  const next = exists
+    ? rules.map(r => (r.id === merged.id || r.id === selectedId ? merged : r))
+    : [...rules, merged];
+  return { rules: next, saved: merged };
+}

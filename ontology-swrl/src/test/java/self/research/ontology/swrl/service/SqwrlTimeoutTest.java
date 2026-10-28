@@ -16,10 +16,16 @@ class SqwrlTimeoutTest {
     void aSqwrlQueryThatRunsPastTheLimitFailsWithAClearMessage() throws Exception {
         TriageHarness harness = new TriageHarness();
         ReflectionTestUtils.setField(harness.service, "executionTimeoutSeconds", 1);
-        Mockito.when(harness.repository.findByProjectIdAndEnabled(TriageHarness.PROJECT, true)).thenAnswer(invocation -> {
-            Thread.sleep(5000);
-            return java.util.List.of();
+        java.util.concurrent.ExecutorService real = java.util.concurrent.Executors.newCachedThreadPool();
+        java.util.concurrent.ExecutorService slow = Mockito.mock(java.util.concurrent.ExecutorService.class);
+        Mockito.when(slow.submit(Mockito.<java.util.concurrent.Callable<Object>>any())).thenAnswer(invocation -> {
+            java.util.concurrent.Callable<Object> work = invocation.getArgument(0);
+            return real.submit(() -> {
+                Thread.sleep(5000);
+                return work.call();
+            });
         });
+        ReflectionTestUtils.setField(harness.service, "executorService", slow);
 
         long start = System.currentTimeMillis();
         SwrlEngineService.SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "slow", null);
