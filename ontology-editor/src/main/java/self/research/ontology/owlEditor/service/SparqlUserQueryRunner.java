@@ -65,6 +65,12 @@ public final class SparqlUserQueryRunner {
 
     public static SparqlUserQueryResult run(RepositoryConnection conn, SparqlQueryGuard.Checked checked,
                                             Collection<String> graphs, int graphCap, SparqlResultLimits limits) {
+        return run(conn, checked, graphs, graphCap, limits, null);
+    }
+
+    public static SparqlUserQueryResult run(RepositoryConnection conn, SparqlQueryGuard.Checked checked,
+                                            Collection<String> graphs, int graphCap, SparqlResultLimits limits,
+                                            SparqlResultLimits retain) {
         SimpleDataset dataset = dataset(graphs);
         switch (checked.kind()) {
             case SELECT: {
@@ -72,7 +78,7 @@ public final class SparqlUserQueryRunner {
                 q.setDataset(dataset);
                 q.setIncludeInferred(false);
                 q.setMaxExecutionTime(QUERY_TIMEOUT_SECONDS);
-                return selectOf(q, limits);
+                return selectOf(q, limits, retain);
             }
             case ASK: {
                 BooleanQuery q = conn.prepareBooleanQuery(checked.text());
@@ -90,10 +96,13 @@ public final class SparqlUserQueryRunner {
         }
     }
 
-    private static SparqlUserQueryResult selectOf(TupleQuery q, SparqlResultLimits limits) {
+    private static SparqlUserQueryResult selectOf(TupleQuery q, SparqlResultLimits limits, SparqlResultLimits retain) {
         List<BindingSet> rows = new ArrayList<>();
         List<String> vars = new ArrayList<>();
         SparqlResultLimits.Counter counter = limits.counter();
+        SparqlResultLimits.Counter retained = retain == null ? null : retain.counter();
+        boolean retaining = true;
+        long seen = 0;
         boolean truncated = false;
         try (TupleQueryResult rs = q.evaluate()) {
             vars.addAll(rs.getBindingNames());
@@ -103,10 +112,15 @@ public final class SparqlUserQueryRunner {
                     truncated = true;
                     break;
                 }
-                rows.add(row);
+                seen++;
+                if (retaining && (retained == null || retained.tryAdd(row))) {
+                    rows.add(row);
+                } else {
+                    retaining = false;
+                }
             }
         }
-        return new SparqlUserQueryResult.Select(vars, rows, truncated);
+        return new SparqlUserQueryResult.Select(vars, rows, truncated, seen);
     }
 
     private static SparqlUserQueryResult.Graph constructOf(RepositoryConnection conn, String text,

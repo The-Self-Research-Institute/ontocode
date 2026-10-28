@@ -8,7 +8,12 @@ import java.util.Map;
 
 public sealed interface SparqlUserQueryResult {
 
-    record Select(List<String> vars, List<BindingSet> rows, boolean truncated) implements SparqlUserQueryResult {
+    record Select(List<String> vars, List<BindingSet> rows, boolean truncated, long totalRows)
+            implements SparqlUserQueryResult {
+        public Select(List<String> vars, List<BindingSet> rows, boolean truncated) {
+            this(vars, rows, truncated, rows.size());
+        }
+
         public Select(List<String> vars, List<BindingSet> rows) {
             this(vars, rows, false);
         }
