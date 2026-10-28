@@ -162,6 +162,7 @@ class SparqlQueryControllerResponseTest {
             assertEquals("graph", json.get("type").asText());
             assertEquals(c[1], json.get("format").asText());
             assertEquals(4, json.get("tripleCount").asInt());
+            assertEquals(4, json.get("totalTriples").asInt());
             assertFalse(json.get("truncated").asBoolean());
             assertNull(response.getHeaders().getFirst("X-Ontocode-Truncated"));
             assertEquals(4, Rio.parse(new StringReader(json.get("content").asText()), "http://b/", (RDFFormat) c[2]).size());
@@ -181,6 +182,8 @@ class SparqlQueryControllerResponseTest {
         ResponseEntity<?> response = run("CONSTRUCT {?s ?p ?o} WHERE {?s ?p ?o}", "turtle", null);
         JsonNode json = body(response);
         assertTrue(json.get("truncated").asBoolean());
+        assertEquals(3, json.get("tripleCount").asInt());
+        assertFalse(json.has("totalTriples"));
         assertEquals("true", response.getHeaders().getFirst("X-Ontocode-Truncated"));
         assertEquals(3, Rio.parse(new StringReader(json.get("content").asText()), "http://b/", RDFFormat.TURTLE).size());
     }

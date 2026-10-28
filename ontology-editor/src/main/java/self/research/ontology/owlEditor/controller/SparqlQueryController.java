@@ -118,8 +118,9 @@ public class SparqlQueryController {
                                List<Map<String, Map<String, String>>> bindings, long executionTime) {}
     record SparqlBooleanResponse(String type, @com.fasterxml.jackson.annotation.JsonProperty("boolean") boolean value,
                                  long executionTime) {}
-    record SparqlGraphResponse(String type, String format, String content, long tripleCount, boolean truncated,
-                               long executionTime) {}
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    record SparqlGraphResponse(String type, String format, String content, long tripleCount, Long totalTriples,
+                               boolean truncated, long executionTime) {}
 
     public static final String TRUNCATED_HEADER = "X-Ontocode-Truncated";
 
@@ -143,7 +144,8 @@ public class SparqlQueryController {
             if (result instanceof SparqlUserQueryResult.Graph graph) {
                 String content = SparqlGraphSerializer.serialize(graph.statements(), graph.namespaces(), format);
                 SparqlGraphResponse body = new SparqlGraphResponse("graph", SparqlGraphSerializer.formatName(format),
-                        content, graph.statements().size(), graph.truncated(), System.currentTimeMillis() - startTime);
+                        content, graph.statements().size(), graph.truncated() ? null : (long) graph.statements().size(),
+                        graph.truncated(), System.currentTimeMillis() - startTime);
                 ResponseEntity.BodyBuilder ok = ResponseEntity.ok();
                 if (graph.truncated()) {
                     ok.header(TRUNCATED_HEADER, "true");
