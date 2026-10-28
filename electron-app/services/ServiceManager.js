@@ -75,6 +75,7 @@ const pendingTraining = [];
 let trainingTimer = null;
 let trainingActive = false;
 const STARTUP_HEALTH_TIMEOUT_MS = 300000;
+const FUSEKI_QUERY_TIMEOUT_MS = 120000;
 
 const DEFAULT_PORTS = {
     mongo:   27117,
@@ -565,7 +566,7 @@ async function startFuseki() {
     fuseki:name "ontocode" ;
     fuseki:endpoint [ fuseki:operation fuseki:query ;
                       fuseki:name "query" ;
-                      ja:context [ ja:cxtName "arq:queryTimeout" ; ja:cxtValue "120000,120000" ] ] ;
+                      ja:context [ ja:cxtName "arq:queryTimeout" ; ja:cxtValue "${FUSEKI_QUERY_TIMEOUT_MS},${FUSEKI_QUERY_TIMEOUT_MS}" ] ] ;
     fuseki:endpoint [ fuseki:operation fuseki:update ; fuseki:name "update" ] ;
     fuseki:endpoint [ fuseki:operation fuseki:gsp-r ;  fuseki:name "get"    ] ;
     fuseki:endpoint [ fuseki:operation fuseki:gsp-rw ; fuseki:name "data"   ] ;
@@ -590,6 +591,7 @@ async function startFuseki() {
         '-jar', jar,
         '--port', String(FUSEKI_PORT),
         '--localhost',
+        `--timeout=${FUSEKI_QUERY_TIMEOUT_MS},${FUSEKI_QUERY_TIMEOUT_MS}`,
         '--config', configFile,
     ];
 
