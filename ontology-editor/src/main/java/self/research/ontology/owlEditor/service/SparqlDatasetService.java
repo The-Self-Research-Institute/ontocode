@@ -1279,11 +1279,14 @@ public class SparqlDatasetService {
             // Inject FROM clause if not present.
             // ASK queries legally omit the WHERE keyword (ASK { } is valid SPARQL), so we
             // cannot rely on finding WHERE — fall back to injecting FROM before the opening brace.
-            if (!sparqlQuery.toUpperCase().contains("FROM")) {
+            if (!SparqlText.hasFromClause(sparqlQuery)) {
                 String fromClause = forceGraphUri != null
                         ? "FROM <" + forceGraphUri + ">"
                         : buildFromClause(conn, projectId);
-                if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
+                String scoped = SparqlText.withAskDataset(sparqlQuery, fromClause);
+                if (scoped != null) {
+                    sparqlQuery = scoped;
+                } else if (SparqlText.hasKeyword(sparqlQuery, "WHERE")) {
                     sparqlQuery = SparqlText.replaceFirstKeyword(sparqlQuery, "WHERE", fromClause + " WHERE");
                 } else {
                     // ASK { ... } without WHERE — insert FROM <graph> WHERE before the body brace
