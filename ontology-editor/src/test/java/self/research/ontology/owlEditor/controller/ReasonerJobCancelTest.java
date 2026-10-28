@@ -48,11 +48,13 @@ class ReasonerJobCancelTest {
         ReflectionTestUtils.setField(dlQueryJobs, "reasonerWorkerClient", workerClient);
         ReflectionTestUtils.setField(dlQueryJobs, "reasoningJobRelayService", relay);
         ReflectionTestUtils.setField(dlQueryJobs, "reasonerWorkerEnabled", true);
+        ReflectionTestUtils.setField(dlQueryJobs, "jobAccess", JobAccessTestSupport.desktopJobAccess());
 
         reasoner = new ReasonerController();
         ReflectionTestUtils.setField(reasoner, "reasonerWorkerClient", workerClient);
         ReflectionTestUtils.setField(reasoner, "reasoningJobRelayService", relay);
         ReflectionTestUtils.setField(reasoner, "reasonerWorkerEnabled", true);
+        ReflectionTestUtils.setField(reasoner, "jobAccess", JobAccessTestSupport.desktopJobAccess());
 
         relay.rememberSubmittedJob("j1", "P1", null, "REASONER_SNAPSHOT", Map.of("status", "PROCESSING"));
     }
@@ -61,11 +63,11 @@ class ReasonerJobCancelTest {
     void dlQueryCancelStopsTheRelayedJobSoPollsEnd() {
         when(workerClient.cancelJob("j1")).thenReturn(Map.of("success", true, "cancelled", true));
 
-        ResponseEntity<Map<String, Object>> response = dlQueryJobs.cancelJob("j1");
+        ResponseEntity<Map<String, Object>> response = dlQueryJobs.cancelJob("j1", JobAccessTestSupport.desktopRequest());
 
         assertEquals(200, response.getStatusCode().value());
         assertEquals(true, response.getBody().get("cancelled"));
-        Map<String, Object> poll = dlQueryJobs.getJob("j1").getBody();
+        Map<String, Object> poll = dlQueryJobs.getJob("j1", JobAccessTestSupport.desktopRequest()).getBody();
         assertEquals("FAILED", poll.get("status"));
         assertEquals(DLQueryJobController.STOPPED_MESSAGE, poll.get("error"));
     }
@@ -74,7 +76,7 @@ class ReasonerJobCancelTest {
     void sharedJobThatTheWorkerKeepsRunningIsLeftAloneForOtherRequesters() {
         when(workerClient.cancelJob("j1")).thenReturn(Map.of("success", true, "cancelled", false));
 
-        Map<String, Object> body = dlQueryJobs.cancelJob("j1").getBody();
+        Map<String, Object> body = dlQueryJobs.cancelJob("j1", JobAccessTestSupport.desktopRequest()).getBody();
 
         assertEquals(false, body.get("cancelled"));
         assertEquals(DLQueryJob.Status.PROCESSING, relay.getJob("j1").getStatus());
@@ -85,8 +87,8 @@ class ReasonerJobCancelTest {
         ReflectionTestUtils.setField(dlQueryJobs, "reasonerWorkerEnabled", false);
         ReflectionTestUtils.setField(reasoner, "reasonerWorkerEnabled", false);
 
-        assertEquals(Map.of("success", true, "cancelled", false), dlQueryJobs.cancelJob("j1").getBody());
-        assertEquals(Map.of("success", true, "cancelled", false), reasoner.cancelReasonerJob("P1", "j1").getBody());
+        assertEquals(Map.of("success", true, "cancelled", false), dlQueryJobs.cancelJob("j1", JobAccessTestSupport.desktopRequest()).getBody());
+        assertEquals(Map.of("success", true, "cancelled", false), reasoner.cancelReasonerJob("P1", "j1", JobAccessTestSupport.desktopRequest()).getBody());
         verify(workerClient, never()).cancelJob(anyString());
     }
 
@@ -94,7 +96,7 @@ class ReasonerJobCancelTest {
     void projectRouteCancelsTheJobAndStopsTheRelayedCopy() {
         when(workerClient.cancelJob("j1")).thenReturn(Map.of("success", true, "cancelled", true));
 
-        ResponseEntity<Map<String, Object>> response = reasoner.cancelReasonerJob("P1", "j1");
+        ResponseEntity<Map<String, Object>> response = reasoner.cancelReasonerJob("P1", "j1", JobAccessTestSupport.desktopRequest());
 
         assertEquals(200, response.getStatusCode().value());
         assertEquals(true, response.getBody().get("cancelled"));
@@ -104,7 +106,7 @@ class ReasonerJobCancelTest {
 
     @Test
     void projectRouteRefusesAJobThatBelongsToAnotherProject() {
-        ResponseEntity<Map<String, Object>> response = reasoner.cancelReasonerJob("OTHER", "j1");
+        ResponseEntity<Map<String, Object>> response = reasoner.cancelReasonerJob("OTHER", "j1", JobAccessTestSupport.desktopRequest());
 
         assertEquals(404, response.getStatusCode().value());
         verify(workerClient, never()).cancelJob(anyString());
@@ -115,7 +117,7 @@ class ReasonerJobCancelTest {
     void projectRouteCancelsJobsTheRelayDoesNotKnow() {
         when(workerClient.cancelJob("hier-1")).thenReturn(Map.of("success", true, "cancelled", true));
 
-        Map<String, Object> body = reasoner.cancelReasonerJob("P1", "hier-1").getBody();
+        Map<String, Object> body = reasoner.cancelReasonerJob("P1", "hier-1", JobAccessTestSupport.desktopRequest()).getBody();
 
         assertEquals(true, body.get("cancelled"));
         verify(workerClient).cancelJob("hier-1");

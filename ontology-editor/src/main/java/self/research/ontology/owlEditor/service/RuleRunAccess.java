@@ -53,7 +53,7 @@ public class RuleRunAccess {
         return new Decision(200, userId.get());
     }
 
-    private boolean localDesktop(HttpServletRequest request) {
+    public boolean localDesktop(HttpServletRequest request) {
         String remote = request.getRemoteAddr();
         return desktopMode && ("127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote) || "::1".equals(remote));
     }

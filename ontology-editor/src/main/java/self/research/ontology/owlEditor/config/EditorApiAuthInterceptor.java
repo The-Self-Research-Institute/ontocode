@@ -1,9 +1,6 @@
 package self.research.ontology.owlEditor.config;
 
 import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -18,7 +15,6 @@ import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.repository.AssistantSessionRepository;
 import self.research.ontology.owlEditor.service.ProjectAccessService;
 
-import javax.crypto.SecretKey;
 import java.util.List;
 import java.util.Map;
 
@@ -74,7 +70,7 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
 
         String path = request.getRequestURI();
-        if (isPublicPath(path) || isOwnerUpload(request, method, path)) {
+        if (isPublicPath(path)) {
             return true;
         }
 
@@ -89,14 +85,25 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         }
 
         try {
-            String jwtEmail = verifiedSubject(authHeader);
+            Claims claims = EditorJwtVerifier.verify(jwtSecret, authHeader.substring(7));
+            String jwtEmail = claims.getSubject();
             request.setAttribute(VERIFIED_EMAIL_ATTRIBUTE, jwtEmail);
+
+            String uploadOwner = uploadOwnerEmail(request, method, path);
+            if (uploadOwner != null && !uploadOwner.equalsIgnoreCase(jwtEmail)
+                    && !Boolean.TRUE.equals(claims.get("isAdmin", Boolean.class))) {
+                log.warn("Denied {} {} - {} tried to upload on behalf of {}", method, path, jwtEmail, uploadOwner);
+                writeError(response, HttpServletResponse.SC_FORBIDDEN,
+                        "{\"error\":\"You can only upload on your own behalf\"}");
+                return false;
+            }
 
             String projectId = pathVariable(request, "projectId");
             if (projectId == null) {
                 projectId = assistantSessionProjectId(path);
             }
             if (projectId != null && !projectAccessService.hasProjectAccess(projectId, jwtEmail)
+                    && !isNewProjectUpload(uploadOwner, projectId)
                     && (requireJwt || projectAccessService.projectExists(projectId))) {
                 log.warn("Denied {} {} — {} has no access to project {}", method, path, jwtEmail, projectId);
                 writeError(response, HttpServletResponse.SC_FORBIDDEN,
@@ -131,23 +138,16 @@ public class EditorApiAuthInterceptor implements HandlerInterceptor {
         return false;
     }
 
-    private static boolean isOwnerUpload(HttpServletRequest request, String method, String path) {
-        return HttpMethod.POST.matches(method) && path.contains("/api/ontology/upload/")
-                && request.getParameter("ownerEmail") != null && !request.getParameter("ownerEmail").isBlank();
+    private static String uploadOwnerEmail(HttpServletRequest request, String method, String path) {
+        if (!HttpMethod.POST.matches(method) || !path.contains("/api/ontology/upload/")) {
+            return null;
+        }
+        String owner = request.getParameter("ownerEmail");
+        return owner == null || owner.isBlank() ? null : owner.trim();
     }
 
-    private String verifiedSubject(String authHeader) {
-        byte[] keyBytes = Decoders.BASE64.decode(jwtSecret);
-        SecretKey key = Keys.hmacShaKeyFor(keyBytes);
-        Claims claims = Jwts.parser()
-                .verifyWith(key)
-                .build()
-                .parseSignedClaims(authHeader.substring(7).trim())
-                .getPayload();
-        if (claims.getSubject() == null || claims.getSubject().isBlank()) {
-            throw new IllegalArgumentException("missing subject");
-        }
-        return claims.getSubject();
+    private boolean isNewProjectUpload(String uploadOwner, String projectId) {
+        return uploadOwner != null && !projectAccessService.projectExists(projectId);
     }
 
     private String assistantSessionProjectId(String path) {

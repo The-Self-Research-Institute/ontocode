@@ -52,4 +52,20 @@ public class ProjectAccessService {
                 Criteria.where("members").elemMatch(Criteria.where("email").regex(sameEmail))));
         return mongoTemplate.exists(query, ProjectDocument.class, "projects");
     }
+
+    public boolean isProjectOwner(String projectId, String email) {
+        if (projectId == null || projectId.isBlank() || email == null || email.isBlank()) {
+            return false;
+        }
+        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
+        if (direct.isPresent() && email.equalsIgnoreCase(direct.get().getOwnerEmail())) {
+            return true;
+        }
+        int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
+        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
+        java.util.regex.Pattern sameEmail = java.util.regex.Pattern.compile(
+                "^" + java.util.regex.Pattern.quote(email.trim()) + "$", java.util.regex.Pattern.CASE_INSENSITIVE);
+        Query query = new Query(Criteria.where("projectId").is(parentProjectId).and("ownerEmail").regex(sameEmail));
+        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
+    }
 }

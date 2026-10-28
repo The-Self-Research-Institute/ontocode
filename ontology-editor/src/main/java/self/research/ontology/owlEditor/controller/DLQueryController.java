@@ -4,6 +4,7 @@ import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +17,7 @@ import self.research.ontology.owlEditor.service.DLQueryQueueManager;
 import self.research.ontology.owlEditor.service.DLQueryQueueProcessor;
 import self.research.ontology.owlEditor.service.DLQueryService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.JobAccess;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
@@ -44,6 +46,9 @@ public class DLQueryController {
     private DLQueryService dlQueryService;
 
     @Autowired
+    private JobAccess jobAccess;
+
+    @Autowired
     private DLQueryQueueManager dlQueryQueueManager;
 
     @Autowired(required = false)
@@ -64,7 +69,8 @@ public class DLQueryController {
     @PostMapping("/{projectId}/dl-query")
     public ResponseEntity<Map<String, Object>> executeDLQuery(
             @PathVariable String projectId,
-            @RequestBody DLQueryRequest request
+            @RequestBody DLQueryRequest request,
+            HttpServletRequest httpRequest
     ) {
         try {
             if (request.getExpression() == null || request.getExpression().isBlank()) {
@@ -96,6 +102,7 @@ public class DLQueryController {
                     ));
                 }
                 String jobId = stringOrNull(worker.get("jobId"));
+                jobAccess.register(httpRequest, jobId, projectId);
                 reasoningJobRelayService.rememberSubmittedJob(
                         jobId, projectId, request.getExpression().trim(), "DL_QUERY", worker);
 
@@ -122,6 +129,7 @@ public class DLQueryController {
                     request.getQueryTypes(),
                     request.getUserEmail(),
                     draftUserId);
+            jobAccess.register(httpRequest, job.getJobId(), projectId);
             if (dlQueryQueueProcessor != null) {
                 dlQueryQueueProcessor.processNext();
             }
