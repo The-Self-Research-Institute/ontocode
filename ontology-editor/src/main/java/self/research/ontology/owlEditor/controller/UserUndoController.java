@@ -347,6 +347,7 @@ public class UserUndoController {
         Map<String, Object> state = new HashMap<>();
         state.put("undo", undoService.nextUndo(projectId, draft, who));
         state.put("redo", undoService.nextRedo(projectId, draft, who));
+        state.put("serverTime", java.time.Instant.now().toString());
         return state;
     }
 
