@@ -115,8 +115,8 @@ class RuleRunAxiomsControllerTest {
     }
 
     @Test
-    void publicRunIsReadableByAnotherProjectMember() {
-        assertEquals(200, get("p", publicRun, 0, 50, "conclusions", null, false, as("bob", "bob@x.org")).getStatusCode().value());
+    void runIsGoneForAnotherProjectMemberEvenWithTheRunId() {
+        assertEquals(410, get("p", publicRun, 0, 50, "conclusions", null, false, as("bob", "bob@x.org")).getStatusCode().value());
     }
 
     @Test
@@ -184,5 +184,15 @@ class RuleRunAxiomsControllerTest {
         String id = small.put("p", "ann", false, full.conclusions(), full.structure());
         assertTrue(small.find(id).orElseThrow().capped());
         assertEquals(100, small.find(id).orElseThrow().conclusions().size());
+    }
+
+    @Test
+    void ownerGetsTheirPublicRun() {
+        assertEquals(200, ann(publicRun, 0, 50, "conclusions", null).getStatusCode().value());
+    }
+
+    @Test
+    void forbiddenUserCannotProbeForExistence() {
+        assertEquals(403, get("p", "no-such-run", 0, 50, "conclusions", null, false, as("eve", "eve@x.org")).getStatusCode().value());
     }
 }

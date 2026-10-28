@@ -108,4 +108,32 @@ class RuleRunStoreTest {
         String small = store.put("p", "u", false, assertions(2), List.of());
         assertFalse(store.find(small).orElseThrow().capped());
     }
+
+    @Test
+    void concurrentPutsStayWithinTheBounds() throws Exception {
+        RuleRunStore store = new RuleRunStore(Clock.systemUTC(), Duration.ofMinutes(15), 5, 20, 100, 100);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+        List<java.util.concurrent.Future<?>> tasks = new ArrayList<>();
+        for (int t = 0; t < 8; t++) {
+            String user = "u" + t;
+            tasks.add(pool.submit(() -> {
+                for (int i = 0; i < 50; i++) {
+                    String id = store.put("p", user, false, assertions(3), List.of());
+                    store.find(id);
+                }
+            }));
+        }
+        for (java.util.concurrent.Future<?> task : tasks) {
+            task.get();
+        }
+        pool.shutdown();
+        assertTrue(store.size() <= 20);
+    }
+
+    @Test
+    void unknownAndNullIdsAreEmpty() {
+        RuleRunStore store = new RuleRunStore(new FakeClock(), Duration.ofMinutes(15), 5, 50, 100, 100);
+        assertFalse(store.find("nope").isPresent());
+        assertFalse(store.find(null).isPresent());
+    }
 }

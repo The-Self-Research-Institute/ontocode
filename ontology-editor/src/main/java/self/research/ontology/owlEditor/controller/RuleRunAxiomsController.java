@@ -45,7 +45,7 @@ public class RuleRunAxiomsController {
             return ResponseEntity.status(decision.status()).body(Map.of("message", message));
         }
         Optional<RuleRunStore.Run> found = store.find(runId).filter(run -> run.projectId().equals(projectId)
-                && run.draft() == draft && (!run.draft() || run.ownerId().equals(decision.userId())));
+                && run.draft() == draft && run.ownerId().equals(decision.userId()));
         if (found.isEmpty()) {
             return ResponseEntity.status(410).body(Map.of("message", EXPIRED));
         }
