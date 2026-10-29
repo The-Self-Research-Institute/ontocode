@@ -258,7 +258,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-GPL v3 License - see [LICENSE](LICENSE)
+MIT License - see [LICENSE](../../LICENSE)
 
 ## Citation
 

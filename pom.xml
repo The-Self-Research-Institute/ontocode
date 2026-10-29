@@ -12,6 +12,14 @@
 
     <name>Ontology Platform</name>
 
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <modules>
         <module>shared/common-models</module>
         <module>shared/common-utils</module>

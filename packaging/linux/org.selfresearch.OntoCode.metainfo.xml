@@ -4,7 +4,7 @@
   <name>OntoCode Studio</name>
   <summary>OWL ontology editor with reasoning and visualization</summary>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>AGPL-3.0-only</project_license>
+  <project_license>MIT</project_license>
   <developer id="org.selfresearch">
     <name>The Self Research Institute</name>
   </developer>

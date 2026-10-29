@@ -1,6 +1,7 @@
 {
   "name": "ontocode-scripts",
   "version": "1.0.0",
+  "license": "MIT",
   "description": "Database cleanup and plugin management scripts for OntoCode",
   "scripts": {
     "clear-all": "node clear-databases.js",

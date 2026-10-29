@@ -177,4 +177,4 @@ To build and run the extension yourself, see [Developing the VS Code extension](
 
 ## 📄 License
 
-[AGPL-3.0](./LICENSE)
+[MIT](./LICENSE)

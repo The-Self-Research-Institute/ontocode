@@ -4,7 +4,7 @@
   "description": "Edit, query and reason over OWL/RDF ontologies: SPARQL, reasoner, graph view, AI-assisted edits with undo and team collaboration. Free plan, no card.",
   "version": "1.2.7",
   "publisher": "SelfResearchInstitute",
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "icon": "images/icon.png",
   "homepage": "https://ontocode.selfresearch.org",
   "bugs": {
