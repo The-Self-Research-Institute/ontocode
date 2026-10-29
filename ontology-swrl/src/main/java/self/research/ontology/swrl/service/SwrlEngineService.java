@@ -49,8 +49,8 @@ public class SwrlEngineService {
     @Value("${swrl.owl2rl.max-axioms:5000}")
     private int owl2rlMaxAxioms = 5000;
 
-    @Value("${swrl.owl2rl.max-ontology-axioms:8000}")
-    private int owl2rlMaxOntologyAxioms = 8000;
+    @Value("${swrl.owl2rl.max-ontology-axioms:5000}")
+    private int owl2rlMaxOntologyAxioms = 5000;
 
     @Value("${swrl.execution-timeout-seconds:30}")
     private int executionTimeoutSeconds;
