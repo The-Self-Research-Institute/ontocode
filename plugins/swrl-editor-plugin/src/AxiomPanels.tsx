@@ -257,7 +257,7 @@ export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draft
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-3" data-testid="owl2rl-panel">
       <p className="text-sm" style={rt.label}>
-        OWL 2 RL is a standard set of reasoning rules. Computing the closure works out every fact that follows from the ontology (inferred facts), which can take a while on large ontologies.
+        OWL 2 RL is a standard set of reasoning rules. Computing the closure works out every fact that follows from the ontology (inferred facts), which can take a while on large ontologies. Very large ontologies (over about 5,000 axioms) are refused to protect the server.
       </p>
       <div>
         <button

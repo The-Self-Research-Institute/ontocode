@@ -3024,6 +3024,16 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         <Trash2 size={14} /> Delete
                       </button>
                       <div className="flex-1" />
+                      {selectedRule && (
+                        <button
+                          onClick={() => handleCloneRule(selectedRule)}
+                          disabled={isCloning || isSaving}
+                          title="Make a copy of this rule under a new name"
+                          className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {isCloning ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />} Clone
+                        </button>
+                      )}
                       <button
                         onClick={handleTestRule}
                         disabled={!selectedRule || !editForm.ruleText.trim() || isExecuting || isSaving}
