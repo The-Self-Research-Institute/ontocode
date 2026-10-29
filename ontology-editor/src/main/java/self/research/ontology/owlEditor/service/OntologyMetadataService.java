@@ -776,27 +776,12 @@ public class OntologyMetadataService {
     public List<Map<String, Object>> getGeneralClassAxioms(String projectId) {
         migrateLegacyGciStrings(projectId);
 
-        List<Map<String, Object>> gcis = new ArrayList<>();
         try {
-            OWLOntology ont = manchesterExpressionService.loadOntology(projectId);
-            for (OWLSubClassOfAxiom ax : ont.getAxioms(AxiomType.SUBCLASS_OF, Imports.INCLUDED)) {
-                OWLClassExpression subCls = ax.getSubClass();
-                if (!subCls.isAnonymous()) {
-                    continue; 
-            }
-            OWLClassExpression superCls = ax.getSuperClass();
-            String subText = OwlApiQuerySupport.classExpressionToManchester(ont, subCls);
-            String superText = OwlApiQuerySupport.classExpressionToManchester(ont, superCls);
-                Map<String, Object> gci = new LinkedHashMap<>();
-                gci.put("subClass", subText);
-                gci.put("superClass", superText);
-                gci.put("value", subText + " SubClassOf " + superText);
-                gcis.add(gci);
-            }
+            return GeneralClassAxioms.describe(manchesterExpressionService.loadOntology(projectId));
         } catch (Exception e) {
             log.error("Error fetching general class axioms for project " + projectId, e);
+            return new ArrayList<>();
         }
-        return gcis;
     }
 
     /**
@@ -933,7 +918,10 @@ public class OntologyMetadataService {
             }
         }
 
-        // Real blank-node GCI (id is STR(?sub) from queries)
+        if (deleteListedGCI(projectId, gciValue, draft, userId, username)) {
+            return;
+        }
+
         String blankNodeId = gciValue;
         if (gciValue.contains(" SubClassOf ")) {
             String subPart = gciValue.split(" SubClassOf ", 2)[0].trim();
@@ -947,6 +935,16 @@ public class OntologyMetadataService {
                             "deleteAxiom", blankNodeId, null, null, null, null,
                             null, null, null, null, null, null, null, null, null));
             applyRecorded(projectId, userId, username, draft, ops);
+        }
+    }
+
+    private boolean deleteListedGCI(String projectId, String gciValue, boolean draft, String userId, String username) {
+        try {
+            return generalClassAxiomService.deleteGeneralClassAxiom(projectId, gciValue, draft, userId, username);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not delete the general class axiom: " + e.getMessage(), e);
         }
     }
 

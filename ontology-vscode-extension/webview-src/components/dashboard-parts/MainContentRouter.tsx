@@ -1089,11 +1089,12 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                         className="text-[10px] font-mono break-all"
                                         style={{ color: "var(--text-tertiary)" }}
                                       >
-                                        SubClassOf: {axiom.superClass || axiom.superClassIri}
+                                        {(axiom as any).type || "SubClassOf"}: {axiom.superClass || axiom.superClassIri}
                                       </div>
                                     )}
                                   </div>
                                   <div className="flex gap-1 flex-shrink-0">
+                                    {(!(axiom as any).type || (axiom as any).type === "SubClassOf") && (
                                     <button
                                       onClick={() => handleEditAxiom(idx)}
                                       className="p-1 rounded"
@@ -1102,6 +1103,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                     >
                                       <Edit2 size={12} />
                                     </button>
+                                    )}
                                     <button
                                       onClick={() => handleDeleteAxiom(idx)}
                                       className="p-1 rounded"

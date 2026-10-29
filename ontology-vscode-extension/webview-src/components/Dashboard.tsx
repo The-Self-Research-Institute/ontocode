@@ -1347,6 +1347,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       superClassIri?: string;
       superClassLabel?: string;
       definition?: string;
+      type?: string;
     }>
   >([]);
   const [ontologyAnnotations, setOntologyAnnotations] = useState<
@@ -4138,6 +4139,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 definition: axiom.subClass || axiom.definition || "",
                 superClassIri: axiom.superClass || axiom.superClassIri || "",
                 subExpression: axiom.subClass || axiom.subExpression || "",
+                type: axiom.type,
               }))
               : [],
           );
@@ -5641,6 +5643,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           definition: axiom.subClass || axiom.definition || "",
           superClassIri: axiom.superClass || axiom.superClassIri || "",
           subExpression: axiom.subClass || axiom.subExpression || "",
+          type: axiom.type,
         }))
         : [];
       setGeneralClassAxioms(mappedData);
@@ -8289,6 +8292,7 @@ const updateItemInState = useCallback(
                   definition: axiom.subClass || axiom.definition || "",
                   superClassIri: axiom.superClass || axiom.superClassIri || "",
                   subExpression: axiom.subClass || axiom.subExpression || "",
+                  type: axiom.type,
                 }))
                 : [];
               setGeneralClassAxioms(gcis);
@@ -15575,10 +15579,10 @@ const updateItemInState = useCallback(
                                 key={axiom.id || `${axiom.subExpression}-${idx}`}
                                 axiom={{
                                   id: axiom.id || `gci_${idx}`,
-                                  type: "SubClassOf",
-                                  definition: `${axiom.subExpression || axiom.definition || "Anonymous class expression"} SubClassOf ${axiom.superClassIri || axiom.superClass || ""}`,
+                                  type: axiom.type || "SubClassOf",
+                                  definition: axiom.value || `${axiom.subExpression || axiom.definition || "Anonymous class expression"} SubClassOf ${axiom.superClassIri || axiom.superClass || ""}`,
                                 } as any}
-                                onEditClick={isViewOnlyMember ? undefined : () => handleEditAxiom(idx)}
+                                onEditClick={isViewOnlyMember || (axiom.type && axiom.type !== "SubClassOf") ? undefined : () => handleEditAxiom(idx)}
                                 onDelete={isViewOnlyMember ? undefined : () => handleDeleteAxiom(idx)}
                                 isViewOnly={isViewOnlyMember}
                                 onViewOnlyAction={handleViewOnlyAction}

@@ -343,6 +343,7 @@ final class OntologyMetrics {
             axiomTypes.put("dataPropertyAssertionAxiomCount", AxiomType.DATA_PROPERTY_ASSERTION);
             axiomTypes.put("annotationAssertionAxiomCount", AxiomType.ANNOTATION_ASSERTION);
             axiomTypes.forEach((key, type) -> metadata.put(key, ontology.getAxiomCount(type, imp)));
+            metadata.put("axioms", GeneralClassAxioms.describe(ontology));
 
             log.debug("[OwlApiDesktop] Fuseki sync pending for {} — entity and axiom counts from live model (classes={}, axioms={})",
                     projectId, classes, metadata.get("axiomCount"));

@@ -207,7 +207,7 @@ final class OntologyExporter {
 
         AtomicFileWrite.write(exportPath, outputStream -> {
             try {
-                manager.saveOntology(ontology, documentFormat, outputStream);
+                ManchesterGeneralAxiomWriter.save(manager, ontology, documentFormat, outputStream);
             } catch (OWLOntologyStorageException e) {
                 log.error("OWL API failed to save ontology in {} format for project {}: {}", format, projectId, e.getMessage());
                 throw new IOException("Failed to export ontology in format: " + format + " — " + e.getMessage(), e);
@@ -240,7 +240,7 @@ final class OntologyExporter {
         }
         java.io.ByteArrayOutputStream outputStream = new java.io.ByteArrayOutputStream();
         try {
-            manager.saveOntology(ontology, documentFormat, outputStream);
+            ManchesterGeneralAxiomWriter.save(manager, ontology, documentFormat, outputStream);
         } catch (OWLOntologyStorageException e) {
             throw new IOException("Failed to convert ontology to format: " + format + " — " + e.getMessage(), e);
         }

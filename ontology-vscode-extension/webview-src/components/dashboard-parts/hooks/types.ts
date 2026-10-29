@@ -90,6 +90,7 @@ export interface GeneralClassAxiom {
   superClassIri?: string;
   superClassLabel?: string;
   definition?: string;
+  type?: string;
 }
 
 export interface ProjectImportStatus {

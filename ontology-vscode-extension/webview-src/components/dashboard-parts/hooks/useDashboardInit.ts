@@ -463,6 +463,7 @@ export function useDashboardInit(state: DashboardState) {
             definition: axiom.subClass || axiom.definition || "",
             superClassIri: axiom.superClass || axiom.superClassIri || "",
             subExpression: axiom.subClass || axiom.subExpression || "",
+            type: axiom.type,
           }))
           : [];
         setGeneralClassAxioms(mappedGciData);
@@ -1507,6 +1508,7 @@ export function useDashboardInit(state: DashboardState) {
           definition: axiom.subClass || axiom.definition || "",
           superClassIri: axiom.superClass || axiom.superClassIri || "",
           subExpression: axiom.subClass || axiom.subExpression || "",
+          type: axiom.type,
         }))
         : [];
       setGeneralClassAxioms(mappedData);
