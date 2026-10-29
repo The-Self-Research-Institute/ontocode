@@ -261,6 +261,36 @@ public class SwrlController {
         }
     }
 
+    @GetMapping("/{projectId}/axioms/asserted")
+    public ResponseEntity<?> getAssertedAxioms(@PathVariable String projectId,
+                                               @RequestParam(defaultValue = "false") boolean draft,
+                                               @RequestParam(required = false) String userId,
+                                               @RequestParam(required = false) String search,
+                                               @RequestParam(required = false) String type,
+                                               @RequestParam(defaultValue = "0") int page,
+                                               @RequestParam(defaultValue = "50") int pageSize) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to list the axioms of a private draft"));
+        }
+        if (page < 0) {
+            return ResponseEntity.badRequest().body(createErrorResponse("page cannot be negative"));
+        }
+        try {
+            return ResponseEntity.ok(swrlEngineService.listAssertedAxioms(projectId, draft ? userId : null, search, type, page, pageSize));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(createErrorResponse(e.getMessage()));
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT).body(createErrorResponse("Listing the axioms timed out"));
+        } catch (self.research.ontology.swrl.service.OntologyTooLargeException e) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(createErrorResponse(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Failed to list the asserted axioms of project {}", projectId, e);
+            return ResponseEntity.status(500).body(createErrorResponse("Could not read the axioms of the ontology"));
+        }
+    }
+
     @GetMapping(value = "/{projectId}/rules/owl")
     public ResponseEntity<?> getRulesAsOwl(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "false") boolean draft,

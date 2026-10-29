@@ -98,6 +98,10 @@ public class SwrlEngineService {
     private volatile ExecutionGate executionGate;
     private volatile ExecutionGate validationGate;
     private final ValidationCache validationCache = new ValidationCache();
+    private final ValidationCache assertedCache = new ValidationCache();
+
+    @Value("${ontocode.capacity.swrl-asserted.max-scan:" + AssertedAxiomLister.DEFAULT_MAX_SCAN + "}")
+    private long assertedMaxScan = AssertedAxiomLister.DEFAULT_MAX_SCAN;
 
     private long taskBudgetSeconds() {
         return (long) executionTimeoutSeconds + Math.max(0, fetchAllowanceSeconds);
@@ -460,6 +464,29 @@ public class SwrlEngineService {
 
     public List<EmbeddedRule> listEmbeddedRules(String projectId, String draftUserId) throws Exception {
         return listEntries(projectId, draftUserId).stream().map(SwrlEngineService::embedded).collect(Collectors.toList());
+    }
+
+    public AssertedAxiomLister.Page listAssertedAxioms(String projectId, String draftUserId, String search, String axiomType,
+                                                       int page, int pageSize) throws Exception {
+        AxiomType<?> type = AssertedAxiomLister.parseType(axiomType);
+        return admitted(validationGate(), () -> {
+            OWLOntology ontology = assertedOntology(projectId, draftUserId);
+            return AssertedAxiomLister.list(ontology, search, type, page, pageSize, assertedMaxScan);
+        });
+    }
+
+    private OWLOntology assertedOntology(String projectId, String draftUserId) throws OWLOntologyCreationException {
+        String stamp = ontologyClient.currentStamp(projectId, draftUserId);
+        ValidationCache.Key key = new ValidationCache.Key(projectId, draftUserId, OwnerContext.current());
+        ValidationCache.Entry hit = stamp == null ? null : assertedCache.get(key, stamp);
+        if (hit != null) {
+            return hit.ontology;
+        }
+        OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
+        if (stamp != null) {
+            assertedCache.put(key, stamp, ontology, null, ontologyClient.maxAxioms());
+        }
+        return ontology;
     }
 
     public List<SwrlRule> listRulesAsRows(String projectId, String draftUserId) throws Exception {
@@ -1134,53 +1161,7 @@ public class SwrlEngineService {
     }
 
     private InferredAxiom formatInferredAxiom(OWLAxiom axiom) {
-        String axiomType = axiom.getAxiomType().getName();
-        String description = axiom.toString();
-        String readable = formatAxiomReadable(axiom);
-
-        String subjectIri = null;
-        String predicateIri = null;
-        String objectIri = null;
-        String objectLiteral = null;
-        String literalDatatypeIri = null;
-        String literalLangTag = null;
-
-        if (axiom instanceof OWLClassAssertionAxiom classAssertion) {
-            OWLIndividual individual = classAssertion.getIndividual();
-            OWLClassExpression classExpr = classAssertion.getClassExpression();
-            if (individual.isNamed() && !classExpr.isAnonymous()) {
-                subjectIri = individual.asOWLNamedIndividual().getIRI().toString();
-                predicateIri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-                objectIri = classExpr.asOWLClass().getIRI().toString();
-            }
-        } else if (axiom instanceof OWLObjectPropertyAssertionAxiom objectAssertion) {
-            OWLIndividual subject = objectAssertion.getSubject();
-            OWLIndividual object = objectAssertion.getObject();
-            if (subject.isNamed() && object.isNamed() && !objectAssertion.getProperty().isAnonymous()) {
-                subjectIri = subject.asOWLNamedIndividual().getIRI().toString();
-                predicateIri = objectAssertion.getProperty().asOWLObjectProperty().getIRI().toString();
-                objectIri = object.asOWLNamedIndividual().getIRI().toString();
-            }
-        } else if (axiom instanceof OWLDataPropertyAssertionAxiom dataAssertion) {
-            OWLIndividual subject = dataAssertion.getSubject();
-            if (subject.isNamed() && !dataAssertion.getProperty().isAnonymous()) {
-                subjectIri = subject.asOWLNamedIndividual().getIRI().toString();
-                predicateIri = dataAssertion.getProperty().asOWLDataProperty().getIRI().toString();
-                OWLLiteral literal = dataAssertion.getObject();
-                objectLiteral = literal.getLiteral();
-                literalDatatypeIri = literal.getDatatype().getIRI().toString();
-                literalLangTag = literal.hasLang() ? literal.getLang() : null;
-            }
-        }
-
-        return new InferredAxiom(axiomType, description, readable,
-                subjectIri, predicateIri, objectIri, objectLiteral, literalDatatypeIri, literalLangTag);
-    }
-
-    private String formatAxiomReadable(OWLAxiom axiom) {
-        return axiom.toString()
-            .replace("http://www.w3.org/2002/07/owl#", "owl:")
-            .replace("http://purl.obolibrary.org/obo/", "");
+        return InferredAxiomPresenter.format(axiom);
     }
 
     /**
