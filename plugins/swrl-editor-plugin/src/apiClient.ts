@@ -95,6 +95,7 @@ class ApiClient {
       const err: any = new Error(detail || `Request failed (${response.status})`);
       err.status = response.status;
       err.data = data;
+      err.retryAfter = response.headers.get('Retry-After');
       throw err;
     }
 

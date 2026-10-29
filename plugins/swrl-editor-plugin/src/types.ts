@@ -124,6 +124,7 @@ export interface ExecutionResponse {
   truncated?: boolean;
   runId?: string;
   counts?: { conclusions: number; structure: number; omittedTrivial?: number };
+  skippedRules?: Array<string | { ruleName?: string; name?: string; ruleId?: string; reason?: string }>;
 }
 
 export interface AxiomsPageResponse {

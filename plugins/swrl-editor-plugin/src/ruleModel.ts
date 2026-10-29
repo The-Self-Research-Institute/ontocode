@@ -762,3 +762,117 @@ export function pageErrorMessage(e: any): string {
   const detail = e?.data?.message || e?.message;
   return detail ? `Could not load this page: ${detail}` : 'Could not load this page. Try again.';
 }
+
+export function cloneRuleBody(rule: { ruleName: string; ruleText: string; comment?: string | null; category?: string | null; enabled: boolean }, takenNames: Iterable<string>): {
+  ruleName: string;
+  ruleText: string;
+  comment: string;
+  category: string;
+  enabled: boolean;
+} {
+  const taken = new Set(takenNames);
+  let name = `${rule.ruleName} (copy)`;
+  for (let n = 2; taken.has(name); n++) name = `${rule.ruleName} (copy ${n})`;
+  return {
+    ruleName: name,
+    ruleText: rule.ruleText,
+    comment: rule.comment || '',
+    category: rule.category || '',
+    enabled: rule.enabled,
+  };
+}
+
+export const ASSERTED_PAGE_SIZE = 50;
+export const ASSERTED_MAX_WINDOW = 20000;
+export const ASSERTED_TYPES = ['ClassAssertion', 'ObjectPropertyAssertion', 'DataPropertyAssertion', 'SubClassOf', 'SubObjectPropertyOf', 'ObjectPropertyDomain', 'ObjectPropertyRange', 'DataPropertyDomain', 'DataPropertyRange', 'DisjointClasses', 'EquivalentClasses', 'AnnotationAssertion'];
+
+export function assertedAxiomsPath(
+  projectId: string,
+  opts: { page: number; pageSize: number; search: string; type: string },
+  draftMode: boolean
+): string {
+  const params = new URLSearchParams();
+  params.set('page', String(opts.page));
+  params.set('pageSize', String(opts.pageSize));
+  const q = opts.search.trim();
+  if (q) params.set('search', q);
+  if (opts.type) params.set('type', opts.type);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/axioms/asserted?${params.toString()}`, draftMode);
+}
+
+export function canGoNextAssertedPage(page: number, pageSize: number, total: number): boolean {
+  return (page + 1) * pageSize < total && (page + 2) * pageSize <= ASSERTED_MAX_WINDOW;
+}
+
+export function retryAfterSeconds(e: any): number | null {
+  const fromBody = Number(e?.data?.retryAfterSeconds);
+  if (Number.isFinite(fromBody) && fromBody > 0) return Math.ceil(fromBody);
+  const fromHeader = Number(e?.retryAfter);
+  if (Number.isFinite(fromHeader) && fromHeader > 0) return Math.ceil(fromHeader);
+  return null;
+}
+
+export function busyMessage(e: any): string {
+  const secs = retryAfterSeconds(e);
+  return secs
+    ? `The server is busy with other work. Try again in about ${secs} second${secs === 1 ? '' : 's'}.`
+    : 'The server is busy with other work. Try again in a moment.';
+}
+
+export function axiomListErrorMessage(e: any): string {
+  const status = e?.status;
+  if (status === 429) return busyMessage(e);
+  if (status === 400) return e?.data?.message || e?.message || 'Narrow the search or type.';
+  if (status === 413) return 'This ontology is too large to list this way. Narrow the search or type.';
+  if (status === 504) return 'This took too long and was stopped. Narrow the search or type, then try again.';
+  const detail = e?.data?.message || e?.message;
+  return detail ? `Could not load the axioms: ${detail}` : 'Could not load the axioms. Try again.';
+}
+
+export const OWL2RL_PAGE_SIZE = 50;
+export const OWL2RL_EXPIRED_MESSAGE = 'These results have expired. Compute the closure again.';
+
+export function owl2rlStartPath(
+  projectId: string,
+  opts: { pageSize: number; type: string; filter: string },
+  draftMode: boolean
+): string {
+  const params = new URLSearchParams();
+  params.set('pageSize', String(opts.pageSize));
+  if (opts.type) params.set('type', opts.type);
+  const f = opts.filter.trim();
+  if (f) params.set('filter', f);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl?${params.toString()}`, draftMode);
+}
+
+export function owl2rlRunPath(
+  projectId: string,
+  runId: string,
+  opts: { page: number; pageSize: number; type: string; filter: string },
+  draftMode: boolean
+): string {
+  const params = new URLSearchParams();
+  params.set('page', String(opts.page));
+  params.set('pageSize', String(opts.pageSize));
+  if (opts.type) params.set('type', opts.type);
+  const f = opts.filter.trim();
+  if (f) params.set('filter', f);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl/runs/${encodeURIComponent(runId)}?${params.toString()}`, draftMode);
+}
+
+export function owl2rlErrorMessage(e: any): string {
+  const status = e?.status;
+  if (status === 410 || e?.data?.expired) return OWL2RL_EXPIRED_MESSAGE;
+  if (status === 429) return e?.data?.message || busyMessage(e);
+  if (status === 413) return 'This ontology is too large to compute the OWL 2 RL closure.';
+  if (status === 504) return 'The computation took too long and was stopped.';
+  const detail = e?.data?.message || e?.message;
+  return detail ? `Could not compute the closure: ${detail}` : 'Could not compute the closure. Try again.';
+}
+
+export function owl2rlTruncationNote(r: { truncated?: boolean; returnedCount?: number; derivedCount?: number }): string | null {
+  if (!r.truncated) return null;
+  return `Showing the first ${formatCount(r.returnedCount ?? 0)} of ${formatCount(r.derivedCount ?? 0)}.`;
+}
+
+export const OWL2RL_UNSUPPORTED_NOTE = 'This engine does not apply some standard rules, such as property chains. The closure may be missing some conclusions.';

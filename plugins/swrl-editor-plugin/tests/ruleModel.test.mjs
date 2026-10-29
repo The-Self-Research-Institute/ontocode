@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, ruleFromResponse, needsValidation, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE } from '../src/ruleModel.ts';
+import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, ruleFromResponse, needsValidation, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE, cloneRuleBody, assertedAxiomsPath, canGoNextAssertedPage, axiomListErrorMessage, busyMessage, owl2rlStartPath, owl2rlRunPath, owl2rlErrorMessage, owl2rlTruncationNote, OWL2RL_EXPIRED_MESSAGE } from '../src/ruleModel.ts';
 
 const DEMO = [
   ['Senior', 'Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)', true],
@@ -367,4 +367,46 @@ test('needsValidation skips empty and unchanged text', () => {
   assert.equal(needsValidation(' a -> b ', 'a -> b'), false);
   assert.equal(needsValidation('a -> c', 'a -> b'), true);
   assert.equal(needsValidation('a -> c', null), true);
+});
+
+test('clone naming adds (copy), then (copy 2), (copy 3), skipping taken names', () => {
+  const rule = { ruleName: 'Senior', ruleText: 'a -> b', comment: 'c', category: 'x', enabled: false };
+  assert.equal(cloneRuleBody(rule, ['Senior']).ruleName, 'Senior (copy)');
+  assert.equal(cloneRuleBody(rule, ['Senior', 'Senior (copy)']).ruleName, 'Senior (copy 2)');
+  assert.equal(cloneRuleBody(rule, ['Senior', 'Senior (copy)', 'Senior (copy 2)']).ruleName, 'Senior (copy 3)');
+  assert.equal(cloneRuleBody(rule, ['Senior (copy)']).ruleName, 'Senior (copy 2)');
+  const body = cloneRuleBody(rule, []);
+  assert.deepEqual([body.ruleText, body.comment, body.category, body.enabled], ['a -> b', 'c', 'x', false]);
+  assert.equal(cloneRuleBody({ ruleName: 'A', ruleText: 't', enabled: true }, []).comment, '');
+});
+
+test('asserted axioms path carries page, size, search, type and draft', () => {
+  const p = assertedAxiomsPath('p 1', { page: 2, pageSize: 50, search: ' dog ', type: 'ClassAssertion' }, true);
+  assert.equal(p, '/api/swrl/p%201/axioms/asserted?page=2&pageSize=50&search=dog&type=ClassAssertion&draft=true');
+  assert.equal(assertedAxiomsPath('p', { page: 0, pageSize: 50, search: '  ', type: '' }, false), '/api/swrl/p/axioms/asserted?page=0&pageSize=50');
+});
+
+test('asserted next page stops at the total and at the 20000 window', () => {
+  assert.equal(canGoNextAssertedPage(0, 50, 50), false);
+  assert.equal(canGoNextAssertedPage(0, 50, 51), true);
+  assert.equal(canGoNextAssertedPage(398, 50, 100000), true);
+  assert.equal(canGoNextAssertedPage(399, 50, 100000), false);
+});
+
+test('axiom list errors are friendly', () => {
+  assert.match(axiomListErrorMessage({ status: 429, data: { retryAfterSeconds: 3 } }), /about 3 seconds/);
+  assert.match(axiomListErrorMessage({ status: 429, retryAfter: '1' }), /about 1 second\./);
+  assert.match(busyMessage({}), /in a moment/);
+  assert.equal(axiomListErrorMessage({ status: 400, data: { message: 'Too deep: narrow the search or type' } }), 'Too deep: narrow the search or type');
+  assert.match(axiomListErrorMessage({ status: 413 }), /too large/);
+  assert.match(axiomListErrorMessage({ status: 504 }), /too long/);
+});
+
+test('owl2rl paths and messages', () => {
+  assert.equal(owl2rlStartPath('p', { pageSize: 50, type: '', filter: '' }, false), '/api/swrl/p/owl2rl?pageSize=50');
+  assert.equal(owl2rlRunPath('p', 'r1', { page: 1, pageSize: 50, type: 'SubClassOf', filter: 'x' }, true), '/api/swrl/p/owl2rl/runs/r1?page=1&pageSize=50&type=SubClassOf&filter=x&draft=true');
+  assert.equal(owl2rlErrorMessage({ status: 410, data: { expired: true } }), OWL2RL_EXPIRED_MESSAGE);
+  assert.equal(owl2rlErrorMessage({ status: 429, data: { busy: true, message: 'Busy now' } }), 'Busy now');
+  assert.equal(owl2rlTruncationNote({ truncated: false }), null);
+  assert.equal(owl2rlTruncationNote({ truncated: true, returnedCount: 1000, derivedCount: 5000 }), 'Showing the first 1,000 of 5,000.');
 });

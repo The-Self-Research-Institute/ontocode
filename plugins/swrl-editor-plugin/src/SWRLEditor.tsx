@@ -11,10 +11,12 @@ import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
 import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
 import { rt, btn } from './resultsTheme';
+import { ControlPanel } from './ControlPanel';
+import { AssertedAxiomsPanel, Owl2RlPanel } from './AxiomPanels';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
 import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
-import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
 import type { AxiomKind } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
@@ -1891,7 +1893,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
   const [unmigrated, setUnmigrated] = useState<UnmigratedRule[]>([]);
   const [copyingId, setCopyingId] = useState<string | null>(null);
-  const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query'>('editor');
+  const cloneInFlightRef = useRef(false);
+  const [isCloning, setIsCloning] = useState(false);
+  const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query' | 'control' | 'asserted' | 'owl2rl'>('editor');
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
   const [searchQuery, setSearchQuery] = useState('');
@@ -2278,6 +2282,30 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     }
   };
 
+  const handleCloneRule = async (rule: SwrlRule) => {
+    if (cloneInFlightRef.current) return;
+    cloneInFlightRef.current = true;
+    setIsCloning(true);
+    setSaveError(null);
+    try {
+      const body = cloneRuleBody({ ...rule, comment: rule.comment ?? '' }, rules.map(r => r.ruleName));
+      const res = ruleFromResponse<SwrlRule>(await apiClient.post<unknown>(
+        withDraft(`/api/ontology/${projectId}/rules`, draftMode),
+        ruleWriteBody(body, 'Cloned rule ' + rule.ruleName)
+      ));
+      rulesVersionRef.current++;
+      setRules(prev => [...prev, res]);
+      handleSelectRule(res);
+      announceRuleChange('ruleAdded');
+    } catch (e: any) {
+      console.error('Clone failed:', e);
+      setSaveError(friendlyRuleError(e, 'Could not clone this rule.'));
+    } finally {
+      cloneInFlightRef.current = false;
+      setIsCloning(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!confirmDialog.ruleId) return;
     try {
@@ -2338,7 +2366,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
-    setActivePanel('results');
+    setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
       const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode));
@@ -2365,7 +2393,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
-    setActivePanel('results');
+    setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
       const ruleIds = Array.from(selectedRuleIds);
@@ -2389,7 +2417,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     setIsExecuting(true);
     setIsTesting(true);
     setExecutionResult(null);
-    setActivePanel('results');
+    setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
       const res = await apiClient.post<ExecutionResponse>(
@@ -2781,6 +2809,22 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
             >
               <Search size={14} /> SQWRL Query
             </button>
+            {([
+              ['control', 'Control', Zap, 'Run the rules and see a summary of the last run'],
+              ['asserted', 'Asserted Axioms', List, 'Asserted means typed into the ontology, as opposed to worked out by a reasoner'],
+              ['owl2rl', 'OWL 2 RL', Sparkles, 'Work out every fact that follows from the ontology using the standard OWL 2 RL rules'],
+            ] as const).map(([id, label, Icon, hint]) => (
+              <button
+                key={id}
+                onClick={() => setActivePanel(id)}
+                title={hint}
+                className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  activePanel === id ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Icon size={14} /> {label}
+              </button>
+            ))}
           </div>
 
           {activePanel === 'editor' ? (
@@ -3019,6 +3063,14 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         >
                           Make a local copy
                         </button>
+                        <button
+                          onClick={() => handleCloneRule(selectedRule)}
+                          disabled={isCloning}
+                          title="Make a copy of this rule under a new name"
+                          className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50"
+                        >
+                          Clone
+                        </button>
                       </div>
                     </div>
                   ) : selectedRule && (
@@ -3032,6 +3084,14 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         <Trash2 size={14} /> Delete
                       </button>
                       <div className="flex-1" />
+                      <button
+                        onClick={() => handleCloneRule(selectedRule)}
+                        disabled={isCloning}
+                        title="Make a copy of this rule under a new name"
+                        className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {isCloning ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />} Clone
+                      </button>
                       <button
                         onClick={handleTestRule}
                         disabled={!editForm.ruleText.trim() || isExecuting}
@@ -3053,6 +3113,20 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
             </div>
           ) : activePanel === 'results' ? (
             <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} />
+          ) : activePanel === 'control' ? (
+            <ControlPanel
+              result={executionResult}
+              isExecuting={isExecuting}
+              enabledCount={enabledCount}
+              selectedCount={selectedRuleIds.size}
+              onRunAll={handleExecuteAll}
+              onRunSelected={handleExecuteSelected}
+              onClear={() => setExecutionResult(null)}
+            />
+          ) : activePanel === 'asserted' ? (
+            <AssertedAxiomsPanel projectId={projectId} draftMode={draftMode} />
+          ) : activePanel === 'owl2rl' ? (
+            <Owl2RlPanel projectId={projectId} draftMode={draftMode} />
           ) : activePanel === 'query' ? (
             <SQWRLQueryPanel projectId={projectId} context={context!} draftMode={draftMode} />
           ) : (
