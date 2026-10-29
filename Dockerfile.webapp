@@ -22,14 +22,17 @@ COPY plugins /plugins
 
 # Build production bundle (reads .env.production for VITE_CLOUD_GATEWAY_URL)
 RUN npm run build
+RUN sed -n 's/^VITE_CLOUD_GATEWAY_URL=//p' .env.production | head -1 | tr -d '\r"' | sed -E 's#^(https?://[^/]+).*#\1#' > /api-origin.txt; test -f /api-origin.txt
 
 # ── Runtime: nginx serving static files ──────────────────────────────────────
 FROM nginx:alpine
 
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /api-origin.txt /tmp/api-origin.txt
 
-RUN echo 'add_header X-Content-Type-Options "nosniff" always; add_header Referrer-Policy "no-referrer" always; add_header X-Frame-Options "DENY" always; add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; connect-src '"'"'self'"'"' https: wss: https://api.stripe.com; frame-src https://js.stripe.com https://hooks.stripe.com; object-src '"'"'none'"'"'; base-uri '"'"'self'"'"'; form-action '"'"'self'"'"'; frame-ancestors '"'"'none'"'"'" always;' > /etc/nginx/security-headers.conf
+RUN echo 'add_header X-Content-Type-Options "nosniff" always; add_header Referrer-Policy "no-referrer" always; add_header X-Frame-Options "DENY" always; add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' https://js.stripe.com __API_ORIGIN__; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; connect-src '"'"'self'"'"' https: wss: https://api.stripe.com; frame-src https://js.stripe.com https://hooks.stripe.com; object-src '"'"'none'"'"'; base-uri '"'"'self'"'"'; form-action '"'"'self'"'"'; frame-ancestors '"'"'none'"'"'" always;' > /etc/nginx/security-headers.conf
+RUN sed -i "s#__API_ORIGIN__#$(cat /tmp/api-origin.txt)#" /etc/nginx/security-headers.conf
 
 # nginx config for SPA routing
 RUN echo 'server { \
