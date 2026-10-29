@@ -46,11 +46,40 @@ describe("Include inferred switch", () => {
     expect(post.mock.calls[0][1]).toEqual({ query: "SELECT ?s ?p ?o WHERE {\n  ?s ?p ?o\n} LIMIT 10", pageSize: 100 });
   });
 
-  it("is disabled with a tooltip when the reasoner has not run", async () => {
+  it("stays clickable with a first-use tooltip when nothing has been computed", async () => {
     await mount({ available: false }, vi.fn());
     const inferred = button("Include inferred")!;
-    expect(inferred.disabled).toBe(true);
-    expect(inferred.title).toBe("Run the reasoner first");
+    expect(inferred.disabled).toBe(false);
+    expect(inferred.title).toContain("The first use computes them");
+  });
+
+  it("stays clickable with a changed-ontology tooltip when the snapshot is stale", async () => {
+    await mount({ available: false, stale: true }, vi.fn());
+    const inferred = button("Include inferred")!;
+    expect(inferred.disabled).toBe(false);
+    expect(inferred.title).toContain("The ontology changed since the inferred facts were computed");
+  });
+
+  it("keeps the inferred choice and sends refresh with a progress line when no snapshot exists", async () => {
+    let release: (v: any) => void = () => {};
+    const post = vi.fn((..._a: any[]) => new Promise((resolve) => { release = resolve; }));
+    await mount({ available: false }, post);
+    await click("Include inferred");
+    expect(button("Include inferred")!.getAttribute("aria-pressed")).toBe("true");
+    await click("Execute");
+    expect(post.mock.calls[0][1]).toMatchObject({ includeInferred: true, refresh: true });
+    expect(host.textContent).toContain("Computing the inferred facts. This can take up to a minute.");
+    await act(async () => release({ head: { vars: [] }, results: [], inferred: { used: true, computedAt: Date.now(), layers: ["owl"] } }));
+    expect(host.textContent).not.toContain("Computing the inferred facts.");
+  });
+
+  it("does not send refresh when a snapshot exists", async () => {
+    localStorage.setItem("sparql.includeInferred.p1", "inferred");
+    const post = vi.fn(async (..._a: any[]) => ({ head: { vars: [] }, results: [] }));
+    await mount(okStatus, post);
+    await click("Execute");
+    expect(post.mock.calls[0][1].includeInferred).toBe(true);
+    expect(post.mock.calls[0][1].refresh).toBeUndefined();
   });
 
   it("is disabled when the ontology is too large", async () => {

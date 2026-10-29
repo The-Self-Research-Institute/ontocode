@@ -13,8 +13,8 @@ import {
 import type { ResultsMeta, ResultsSort } from './resultsPaging';
 import { buildExportTable, toCsv, toTsv, buildJsonBindings } from './exportColumns';
 import {
-  INCLUDED_ITEMS, NOT_INCLUDED_ITEMS, buildRequestBody, canRefresh, countsText, effectiveMode, infoLine,
-  loadMode, mapConflict, partialMessages, saveMode, statusUrl, switchState, usedInferred
+  COMPUTING_TEXT, INCLUDED_ITEMS, NOT_INCLUDED_ITEMS, buildRequestBody, canRefresh, countsText, effectiveMode, infoLine,
+  loadMode, mapConflict, needsCompute, partialMessages, saveMode, statusUrl, switchState, usedInferred
 } from './inferredState';
 import type { ConflictKind, InferenceMode, InferenceStatus, InferredInfo } from './inferredState';
 
@@ -118,6 +118,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [queryName, setQueryName] = useState('New Query');
   const [results, setResults] = useState<SparqlQueryResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [computing, setComputing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPrefixesVisible, setPrefixesVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -369,7 +370,9 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       return;
     }
     const format = formatOverride ?? graphFormat;
+    const computeFirst = activeMode === 'inferred' && needsCompute(status);
     setIsLoading(true);
+    setComputing(computeFirst || (refresh && activeMode === 'inferred'));
     clearResults();
     setError(null);
     setConflict(null);
@@ -378,7 +381,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       const base: { query: string; format?: GraphFormat; pageSize?: number } = { query: queryText };
       if (isGraphForm(form)) base.format = format;
       if (form === 'select') base.pageSize = pageSize;
-      const body = buildRequestBody(base, activeMode, refresh);
+      const body = buildRequestBody(base, activeMode, refresh || computeFirst);
       const response = await apiClient.post<any>(
         `/api/sparql/query/${projectId}${draftMode ? '?draft=true' : ''}`,
         body
@@ -433,6 +436,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       }
     } finally {
       setIsLoading(false);
+      setComputing(false);
       refreshStatus();
     }
   };
@@ -743,6 +747,13 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                 style={{ borderColor: 'var(--warning, #f59e0b)', backgroundColor: 'var(--surface-2)' }}
               >
                 {UPDATE_HINT}
+              </div>
+            )}
+
+            {isLoading && computing && (
+              <div data-testid="computing-inferred" className="p-3 border rounded-lg text-sm flex items-center gap-2" style={{ backgroundColor: 'var(--surface-2)' }}>
+                <Loader2 size={16} className="animate-spin" />
+                <span>{COMPUTING_TEXT}</span>
               </div>
             )}
 

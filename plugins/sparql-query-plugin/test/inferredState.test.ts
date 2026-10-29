@@ -2,17 +2,35 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   switchState, effectiveMode, relativeTime, layersText, infoLine, partialMessages, countsText,
-  mapConflict, buildRequestBody, statusUrl, usedInferred, loadMode, saveMode, canRefresh, storageKey
+  mapConflict, needsCompute, buildRequestBody, statusUrl, usedInferred, loadMode, saveMode, canRefresh, storageKey
 } from '../src/inferredState.ts';
 
-test('switch is enabled until status says unavailable or too large', () => {
+test('switch is disabled only when the ontology is too large', () => {
   assert.equal(switchState(null).disabled, false);
   assert.equal(switchState({ available: true }).disabled, false);
-  assert.deepEqual(switchState({ available: false }), { disabled: true, tooltip: 'Run the reasoner first' });
+  assert.deepEqual(switchState({ available: false }), {
+    disabled: false,
+    tooltip: 'Also search facts worked out by the reasoner. The first use computes them and can take up to a minute.'
+  });
+  assert.deepEqual(switchState({ available: false, stale: true }), {
+    disabled: false,
+    tooltip: 'The ontology changed since the inferred facts were computed. Running the query computes them again.'
+  });
+  assert.deepEqual(switchState({ available: false, tooLarge: true }), { disabled: true, tooltip: 'Too large to include inferred facts' });
   assert.deepEqual(switchState({ available: true, tooLarge: true }), { disabled: true, tooltip: 'Too large to include inferred facts' });
-  assert.equal(effectiveMode('inferred', { available: false }), 'asserted');
+  assert.equal(effectiveMode('inferred', { available: false }), 'inferred');
+  assert.equal(effectiveMode('inferred', { available: false, stale: true }), 'inferred');
+  assert.equal(effectiveMode('inferred', { available: true, tooLarge: true }), 'asserted');
   assert.equal(effectiveMode('inferred', { available: true }), 'inferred');
   assert.equal(effectiveMode('asserted', { available: true }), 'asserted');
+});
+
+test('a first compute is needed only when no snapshot exists and the ontology is not too large', () => {
+  assert.equal(needsCompute({ available: false }), true);
+  assert.equal(needsCompute({ available: false, stale: true }), true);
+  assert.equal(needsCompute({ available: false, tooLarge: true }), false);
+  assert.equal(needsCompute({ available: true }), false);
+  assert.equal(needsCompute(null), false);
 });
 
 test('relative time in plain words', () => {
@@ -69,7 +87,7 @@ test('maps 409 bodies from several client error shapes', () => {
 
 test('needsReasoning without a message uses plain wording per reason', () => {
   const none = mapConflict({ needsReasoning: true, reason: 'none' }) as any;
-  assert.ok(none.message.includes('Run the reasoner first'));
+  assert.ok(none.message.includes('have not been computed yet'));
   const timeout = mapConflict({ needsReasoning: true, reason: 'timeout' }) as any;
   assert.ok(timeout.message.includes('took too long'));
   assert.equal(canRefresh('too_large'), false);
