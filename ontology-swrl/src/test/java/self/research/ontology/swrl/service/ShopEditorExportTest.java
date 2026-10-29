@@ -33,9 +33,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class PizzaEditorExportTest {
+class ShopEditorExportTest {
 
-    private static final String NEW_RULE = "Pizza(?p) ^ hasTopping(?p, ?t) ^ MeatTopping(?t) -> MeatyPizzaByRule(?p)";
+    private static final String NEW_RULE = "Customer(?c) ^ placedOrder(?c, ?o) -> RegularCustomer(?c)";
 
     private HttpServer server;
     private final AtomicReference<byte[]> body = new AtomicReference<>();
@@ -43,7 +43,7 @@ class PizzaEditorExportTest {
 
     @BeforeEach
     void start() throws Exception {
-        serve("/pizza_editor_export.rdf");
+        serve("/shop_editor_export.rdf");
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             requested.set(exchange.getRequestURI().toString());
@@ -67,7 +67,7 @@ class PizzaEditorExportTest {
     }
 
     private static String text(String resource) throws Exception {
-        try (var in = PizzaEditorExportTest.class.getResourceAsStream(resource)) {
+        try (var in = ShopEditorExportTest.class.getResourceAsStream(resource)) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
@@ -108,7 +108,7 @@ class PizzaEditorExportTest {
     }
 
     private static SwrlEngineService serviceWithoutNormalizing() throws Exception {
-        String document = text("/pizza_editor_export.rdf");
+        String document = text("/shop_editor_export.rdf");
         return serviceServing(() -> parsedWithoutNormalizing(document));
     }
 
@@ -120,7 +120,7 @@ class PizzaEditorExportTest {
 
     @Test
     void theRuleServiceParserReadsTheEditorsPlainStringsAsPlainLiteralsAndTheEngineThenFailsOnThem() throws Exception {
-        OWLOntology raw = parsedWithoutNormalizing(text("/pizza_editor_export.rdf"));
+        OWLOntology raw = parsedWithoutNormalizing(text("/shop_editor_export.rdf"));
 
         List<OWLLiteral> ssn = ssnValues(raw);
         assertEquals(4, ssn.size());
@@ -129,7 +129,7 @@ class PizzaEditorExportTest {
         SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(raw);
         Exception failure = assertThrows(Exception.class, engine::infer);
         String message = String.valueOf(failure.getMessage());
-        assertTrue(message.contains("MultipleSSNRule") && message.contains("PlainLiteral"), message);
+        assertTrue(message.contains("DuplicateSSNRule") && message.contains("PlainLiteral"), message);
     }
 
     @Test
@@ -144,7 +144,7 @@ class PizzaEditorExportTest {
 
     @Test
     void theInternalTurtleExportAndTheDesktopTurtleExportAreNormalizedToo() throws Exception {
-        for (String resource : List.of("/pizza_editor_export.ttl", "/pizza_desktop_export.ttl")) {
+        for (String resource : List.of("/shop_editor_export.ttl", "/shop_desktop_export.ttl")) {
             serve(resource);
             OWLOntology ontology = client().fetchOntologyWithStamp("p1", null).ontology();
 
@@ -158,11 +158,11 @@ class PizzaEditorExportTest {
 
     @Test
     void literalsWithALanguageTagKeepTheirLanguage() throws Exception {
-        OWLOntology ontology = parsedWithoutNormalizing(text("/pizza_editor_export.rdf"));
+        OWLOntology ontology = parsedWithoutNormalizing(text("/shop_editor_export.rdf"));
         var df = ontology.getOWLOntologyManager().getOWLDataFactory();
         var property = df.getOWLDataProperty(IRI.create("urn:t#label"));
         var subject = df.getOWLNamedIndividual(IRI.create("urn:t#a"));
-        ontology.getOWLOntologyManager().addAxiom(ontology, df.getOWLDataPropertyAssertionAxiom(property, subject, df.getOWLLiteral("pizza", "it")));
+        ontology.getOWLOntologyManager().addAxiom(ontology, df.getOWLDataPropertyAssertionAxiom(property, subject, df.getOWLLiteral("shop", "it")));
         ontology.getOWLOntologyManager().addAxiom(ontology, df.getOWLDataPropertyAssertionAxiom(property, subject, df.getOWLLiteral("plain", "")));
 
         PlainLiteralNormalizer.apply(ontology);
@@ -170,7 +170,7 @@ class PizzaEditorExportTest {
         List<OWLLiteral> labels = ontology.getAxioms(AxiomType.DATA_PROPERTY_ASSERTION).stream()
                 .filter(axiom -> axiom.getProperty().equals(property)).map(OWLDataPropertyAssertionAxiom::getObject).toList();
         assertEquals(2, labels.size());
-        assertTrue(labels.stream().anyMatch(literal -> literal.hasLang("it") && literal.getLiteral().equals("pizza")), labels.toString());
+        assertTrue(labels.stream().anyMatch(literal -> literal.hasLang("it") && literal.getLiteral().equals("shop")), labels.toString());
         assertTrue(labels.stream().anyMatch(literal -> literal.getDatatype().isString() && literal.getLiteral().equals("plain")), labels.toString());
     }
 
@@ -178,20 +178,20 @@ class PizzaEditorExportTest {
     void theEightEmbeddedRulesAreListedAutomaticallyWithNameCommentTextAndEnabledState() throws Exception {
         List<SwrlEngineService.EmbeddedRule> rules = service().listEmbeddedRules("p1", null);
 
-        assertEquals(List.of("HotDiscountRule", "InvalidDiscountRule", "LessSpicyDiscountRule", "MeatyPizzaRule",
-                "MultipleSSNRule", "SpicinessMismatchRule", "TestHotDiscountRule", "VeryHighCalorieRule"),
+        assertEquals(List.of("ActiveCustomerRule", "BigSpenderQuery", "BonusRule", "DuplicateSSNRule", "LoyalCustomerRule",
+                "PremiumCustomerRule", "RegularCustomerRule", "SeniorEmployeeRule"),
                 rules.stream().map(SwrlEngineService.EmbeddedRule::name).toList());
         assertTrue(rules.stream().allMatch(rule -> rule.ruleText().contains(" -> ")), rules.toString());
-        assertTrue(rules.stream().filter(rule -> !rule.name().equals("TestHotDiscountRule"))
+        assertTrue(rules.stream().filter(rule -> !rule.name().equals("BigSpenderQuery"))
                 .allMatch(rule -> rule.ruleText().contains(" ^ ")), rules.toString());
-        SwrlEngineService.EmbeddedRule ssn = rules.stream().filter(rule -> rule.name().equals("MultipleSSNRule")).findFirst().orElseThrow();
-        assertEquals("Test/data quality: an employee with two different ssn values.", ssn.comment());
+        SwrlEngineService.EmbeddedRule ssn = rules.stream().filter(rule -> rule.name().equals("DuplicateSSNRule")).findFirst().orElseThrow();
+        assertEquals("Data quality: an employee with two different ssn values.", ssn.comment());
         assertTrue(ssn.ruleText().contains("swrlb:notEqual(?s1, ?s2)"), ssn.ruleText());
         assertTrue(ssn.enabled());
-        SwrlEngineService.EmbeddedRule query = rules.stream().filter(rule -> rule.name().equals("TestHotDiscountRule")).findFirst().orElseThrow();
+        SwrlEngineService.EmbeddedRule query = rules.stream().filter(rule -> rule.name().equals("BigSpenderQuery")).findFirst().orElseThrow();
         assertFalse(query.enabled());
         assertTrue(query.notice().contains("SQWRL"), query.notice());
-        assertEquals(7, rules.stream().filter(SwrlEngineService.EmbeddedRule::enabled).count());
+        assertEquals(6, rules.stream().filter(SwrlEngineService.EmbeddedRule::enabled).count());
     }
 
     @Test
@@ -203,7 +203,7 @@ class PizzaEditorExportTest {
 
     @Test
     void theRuleTextCanAlsoBeWrittenWithoutTheRuleEngine() throws Exception {
-        OWLOntology ontology = parsedWithoutNormalizing(text("/pizza_editor_export.rdf"));
+        OWLOntology ontology = parsedWithoutNormalizing(text("/shop_editor_export.rdf"));
         SWRLRule ssn = ontology.getAxioms(AxiomType.SWRL_RULE).stream()
                 .filter(rule -> rule.toString().contains("notEqual")).findFirst().orElseThrow();
 
@@ -215,7 +215,7 @@ class PizzaEditorExportTest {
 
     @Test
     void swrlaIsRuleEnabledFalseListsTheRuleAsDisabledAndExecuteAllSkipsIt() throws Exception {
-        String edited = text("/pizza_editor_export.rdf").replaceFirst(">true</swrla:isRuleEnabled>", ">false</swrla:isRuleEnabled>");
+        String edited = text("/shop_editor_export.rdf").replaceFirst(">true</swrla:isRuleEnabled>", ">false</swrla:isRuleEnabled>");
         SwrlEngineService service = serviceServing(() -> {
             OWLOntology ontology = parsedWithoutNormalizing(edited);
             PlainLiteralNormalizer.apply(ontology);
@@ -225,9 +225,9 @@ class PizzaEditorExportTest {
         List<SwrlEngineService.EmbeddedRule> rules = service.listEmbeddedRules("p1", null);
         ExecutionResult result = service.executeRules("p1");
 
-        assertEquals(1, rules.stream().filter(rule -> !rule.enabled() && !rule.name().equals("TestHotDiscountRule")).count(), rules.toString());
+        assertEquals(2, rules.stream().filter(rule -> !rule.enabled() && !rule.name().equals("BigSpenderQuery")).count(), rules.toString());
         assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
-        assertEquals(6, result.getExecutedRuleNames().size(), result.getExecutedRuleNames().toString());
+        assertEquals(5, result.getExecutedRuleNames().size(), result.getExecutedRuleNames().toString());
     }
 
     @Test
@@ -261,7 +261,7 @@ class PizzaEditorExportTest {
         ExecutionResult result = service().executeRules("p1");
 
         assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
-        assertEquals(7, result.getExecutedRuleNames().size(), result.getExecutedRuleNames().toString());
+        assertEquals(6, result.getExecutedRuleNames().size(), result.getExecutedRuleNames().toString());
         assertTrue(result.getSkippedRules().isEmpty(), result.getSkippedRules().toString());
         assertTrue(result.getInferredAxiomsCount() > 0);
         assertFalse(result.getInferredAxioms().isEmpty());
@@ -274,10 +274,10 @@ class PizzaEditorExportTest {
         assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
         assertEquals("completed_with_warnings", result.getCompletion());
         assertEquals(1, result.getSkippedRules().size(), result.getSkippedRules().toString());
-        assertEquals("MultipleSSNRule", result.getSkippedRules().get(0).ruleName());
-        assertTrue(result.getSkippedRules().get(0).reason().startsWith("Rule MultipleSSNRule could not run: "), result.getSkippedRules().get(0).reason());
-        assertEquals(6, result.getExecutedRuleNames().size(), result.getExecutedRuleNames().toString());
-        assertFalse(result.getExecutedRuleNames().contains("MultipleSSNRule"));
+        assertEquals("DuplicateSSNRule", result.getSkippedRules().get(0).ruleName());
+        assertTrue(result.getSkippedRules().get(0).reason().startsWith("Rule DuplicateSSNRule could not run: "), result.getSkippedRules().get(0).reason());
+        assertEquals(5, result.getExecutedRuleNames().size(), result.getExecutedRuleNames().toString());
+        assertFalse(result.getExecutedRuleNames().contains("DuplicateSSNRule"));
         assertTrue(result.getInferredAxiomsCount() > 0);
     }
 
@@ -285,14 +285,14 @@ class PizzaEditorExportTest {
     void theSameHoldsForTheSelectedRulesPath() throws Exception {
         SwrlEngineService service = serviceWithoutNormalizing();
         List<String> ids = service.listEmbeddedRules("p1", null).stream()
-                .filter(rule -> rule.name().equals("MultipleSSNRule") || rule.name().equals("HotDiscountRule"))
+                .filter(rule -> rule.name().equals("DuplicateSSNRule") || rule.name().equals("PremiumCustomerRule"))
                 .map(SwrlEngineService.EmbeddedRule::id).toList();
 
         ExecutionResult result = service.executeSelectedRules("p1", ids);
 
         assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
-        assertEquals(List.of("HotDiscountRule"), result.getExecutedRuleNames());
-        assertEquals("MultipleSSNRule", result.getSkippedRules().get(0).ruleName());
+        assertEquals(List.of("PremiumCustomerRule"), result.getExecutedRuleNames());
+        assertEquals("DuplicateSSNRule", result.getSkippedRules().get(0).ruleName());
     }
 
     @Test
@@ -305,7 +305,7 @@ class PizzaEditorExportTest {
         assertTrue(requested.get().contains("draft=true") && requested.get().contains("userId=u1"), requested.get());
         assertEquals(8, rules.size());
         assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
-        assertEquals(7, result.getExecutedRuleNames().size());
+        assertEquals(6, result.getExecutedRuleNames().size());
         assertTrue(service.validateRule("p1", NEW_RULE, "u1").isValid());
     }
 }

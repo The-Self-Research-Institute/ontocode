@@ -1,0 +1,466 @@
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix : <http://example.org/shop#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix swrl: <http://www.w3.org/2003/11/swrl#> .
+@prefix swrla: <http://swrl.stanford.edu/ontologies/3.3/swrla.owl#> .
+
+<http://example.org/shop> a owl:Ontology .
+
+swrla:isRuleEnabled a owl:AnnotationProperty .
+
+:placedOrder a owl:ObjectProperty .
+
+:fullName a owl:DatatypeProperty .
+
+:ssn a owl:DatatypeProperty .
+
+:totalSpent a owl:DatatypeProperty .
+
+:yearsOfService a owl:DatatypeProperty .
+
+:ActiveCustomer a owl:Class .
+
+:BonusEligible a owl:Class .
+
+:Customer a owl:Class .
+
+:Employee a owl:Class .
+
+:EmployeeWithMultipleSSN a owl:Class .
+
+:LoyalCustomer a owl:Class .
+
+:Order a owl:Class .
+
+:PremiumCustomer a owl:Class .
+
+:RegularCustomer a owl:Class .
+
+:SeniorEmployee a owl:Class .
+
+:Alice a owl:NamedIndividual, :Customer;
+  :placedOrder :Order1;
+  :fullName "Alice Archer";
+  :totalSpent 1500 .
+
+:Bob a owl:NamedIndividual, :Customer;
+  :totalSpent 250 .
+
+:Carol a owl:NamedIndividual, :Customer;
+  :placedOrder :Order2;
+  :totalSpent 700 .
+
+:Dave a owl:NamedIndividual, :Employee;
+  :fullName "Dave Dunn";
+  :ssn "111-22-3333", "111-22-4444";
+  :yearsOfService 8 .
+
+:Erin a owl:NamedIndividual, :Employee;
+  :ssn "222-33-4444";
+  :yearsOfService 2 .
+
+:Frank a owl:NamedIndividual, :Employee;
+  :ssn "333445555";
+  :yearsOfService 35 .
+
+:Order1 a owl:NamedIndividual .
+
+:Order2 a owl:NamedIndividual .
+
+:c a swrl:Variable .
+
+:o a swrl:Variable .
+
+:t a swrl:Variable .
+
+:e a swrl:Variable .
+
+:s1 a swrl:Variable .
+
+:s2 a swrl:Variable .
+
+:y a swrl:Variable .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a1 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "A customer who placed an order is active.";
+  rdfs:label "ActiveCustomerRule";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a2;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a6 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a2 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a3;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a4 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a3 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a4 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a5;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a5 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :placedOrder;
+  swrl:argument1 :c;
+  swrl:argument2 :o .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a6 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a7;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a7 a swrl:ClassAtom;
+  swrl:classPredicate :ActiveCustomer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a8 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Customers who spent more than 200 are loyal customers.";
+  rdfs:label "LoyalCustomerRule";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a9;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a17 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a9 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a10;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a11 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a10 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a11 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a12;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a13 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a12 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :totalSpent;
+  swrl:argument1 :c;
+  swrl:argument2 :t .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a13 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a14;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a14 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a15 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a15 a rdf:List;
+  rdf:first :t;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a16 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a16 a rdf:List;
+  rdf:first 200;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a17 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a18;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a18 a swrl:ClassAtom;
+  swrl:classPredicate :LoyalCustomer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a19 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Same condition as the loyal customer rule, a different conclusion.";
+  rdfs:label "RegularCustomerRule";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a20;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a28 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a20 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a21;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a22 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a21 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a22 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a23;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a24 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a23 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :totalSpent;
+  swrl:argument1 :c;
+  swrl:argument2 :t .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a24 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a25;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a25 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a26 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a26 a rdf:List;
+  rdf:first :t;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a27 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a27 a rdf:List;
+  rdf:first 200;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a28 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a29;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a29 a swrl:ClassAtom;
+  swrl:classPredicate :RegularCustomer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a30 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Query: list customers who spent more than 500 and how much.";
+  rdfs:label "BigSpenderQuery";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a31;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a39 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a31 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a32;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a33 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a32 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a33 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a34;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a35 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a34 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :totalSpent;
+  swrl:argument1 :c;
+  swrl:argument2 :t .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a35 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a36;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a36 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a37 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a37 a rdf:List;
+  rdf:first :t;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a38 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a38 a rdf:List;
+  rdf:first 500;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a39 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a40;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a40 a swrl:BuiltinAtom;
+  swrl:builtin <http://sqwrl.stanford.edu/ontologies/built-ins/3.4/sqwrl.owl#select>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a41 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a41 rdf:first :c;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a42 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a42 rdf:first :t;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a43 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Data quality: an employee with two different ssn values.";
+  rdfs:label "DuplicateSSNRule";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a44;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a54 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a44 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a45;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a46 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a45 a swrl:ClassAtom;
+  swrl:classPredicate :Employee;
+  swrl:argument1 :e .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a46 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a47;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a48 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a47 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :ssn;
+  swrl:argument1 :e;
+  swrl:argument2 :s1 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a48 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a49;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a50 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a49 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :ssn;
+  swrl:argument1 :e;
+  swrl:argument2 :s2 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a50 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a51;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a51 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#notEqual>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a52 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a52 rdf:first :s1;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a53 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a53 rdf:first :s2;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a54 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a55;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a55 a swrl:ClassAtom;
+  swrl:classPredicate :EmployeeWithMultipleSSN;
+  swrl:argument1 :e .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a56 a swrl:Imp;
+  swrla:isRuleEnabled false;
+  rdfs:comment "Switched off: employees with more than 30 years of service are senior.";
+  rdfs:label "SeniorEmployeeRule";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a57;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a65 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a57 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a58;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a59 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a58 a swrl:ClassAtom;
+  swrl:classPredicate :Employee;
+  swrl:argument1 :e .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a59 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a60;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a61 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a60 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :yearsOfService;
+  swrl:argument1 :e;
+  swrl:argument2 :y .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a61 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a62;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a62 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a63 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a63 a rdf:List;
+  rdf:first :y;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a64 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a64 a rdf:List;
+  rdf:first 30;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a65 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a66;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a66 a swrl:ClassAtom;
+  swrl:classPredicate :SeniorEmployee;
+  swrl:argument1 :e .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a67 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Employees with at least 5 years of service get a bonus.";
+  rdfs:label "BonusRule";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a68;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a76 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a68 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a69;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a70 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a69 a swrl:ClassAtom;
+  swrl:classPredicate :Employee;
+  swrl:argument1 :e .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a70 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a71;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a72 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a71 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :yearsOfService;
+  swrl:argument1 :e;
+  swrl:argument2 :y .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a72 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a73;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a73 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThanOrEqual>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a74 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a74 a rdf:List;
+  rdf:first :y;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a75 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a75 a rdf:List;
+  rdf:first 5;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a76 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a77;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a77 a swrl:ClassAtom;
+  swrl:classPredicate :BonusEligible;
+  swrl:argument1 :e .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a78 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Customers who spent more than 1000 are premium customers.";
+  rdfs:label "PremiumCustomerRule";
+  swrl:body _:6bc901f9a6f14c7d92bf381f02efb94a79;
+  swrl:head _:6bc901f9a6f14c7d92bf381f02efb94a87 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a79 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a80;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a81 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a80 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a81 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a82;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a83 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a82 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :totalSpent;
+  swrl:argument1 :c;
+  swrl:argument2 :t .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a83 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a84;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a84 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:6bc901f9a6f14c7d92bf381f02efb94a85 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a85 a rdf:List;
+  rdf:first :t;
+  rdf:rest _:6bc901f9a6f14c7d92bf381f02efb94a86 .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a86 a rdf:List;
+  rdf:first 1000;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a87 a swrl:AtomList;
+  rdf:first _:6bc901f9a6f14c7d92bf381f02efb94a88;
+  rdf:rest rdf:nil .
+
+_:6bc901f9a6f14c7d92bf381f02efb94a88 a swrl:ClassAtom;
+  swrl:classPredicate :PremiumCustomer;
+  swrl:argument1 :c .
