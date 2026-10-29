@@ -2,7 +2,9 @@ package self.research.ontology.swrl.service;
 
 import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLDataFactory;
+import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLDataPropertyAssertionAxiom;
+import org.semanticweb.owlapi.model.OWLNegativeDataPropertyAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
@@ -15,6 +17,7 @@ import org.semanticweb.owlapi.model.SWRLRule;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -28,16 +31,26 @@ final class PlainLiteralNormalizer {
         OWLOntologyManager manager = ontology.getOWLOntologyManager();
         OWLDataFactory df = manager.getOWLDataFactory();
         int changed = 0;
-        List<OWLDataPropertyAssertionAxiom> plain = new ArrayList<>();
+        Set<OWLAxiom> stale = new HashSet<>();
+        Set<OWLAxiom> typed = new HashSet<>();
         for (OWLDataPropertyAssertionAxiom axiom : ontology.getAxioms(AxiomType.DATA_PROPERTY_ASSERTION)) {
             if (isPlain(axiom.getObject())) {
-                plain.add(axiom);
+                stale.add(axiom);
+                typed.add(df.getOWLDataPropertyAssertionAxiom(axiom.getProperty(), axiom.getSubject(),
+                        typed(df, axiom.getObject()), axiom.getAnnotations()));
             }
         }
-        for (OWLDataPropertyAssertionAxiom axiom : plain) {
-            manager.removeAxiom(ontology, axiom);
-            manager.addAxiom(ontology, df.getOWLDataPropertyAssertionAxiom(axiom.getProperty(), axiom.getSubject(), typed(df, axiom.getObject())));
-            changed++;
+        for (OWLNegativeDataPropertyAssertionAxiom axiom : ontology.getAxioms(AxiomType.NEGATIVE_DATA_PROPERTY_ASSERTION)) {
+            if (isPlain(axiom.getObject())) {
+                stale.add(axiom);
+                typed.add(df.getOWLNegativeDataPropertyAssertionAxiom(axiom.getProperty(), axiom.getSubject(),
+                        typed(df, axiom.getObject()), axiom.getAnnotations()));
+            }
+        }
+        if (!stale.isEmpty()) {
+            manager.removeAxioms(ontology, stale);
+            manager.addAxioms(ontology, typed);
+            changed += stale.size();
         }
         List<SWRLRule> rules = new ArrayList<>(ontology.getAxioms(AxiomType.SWRL_RULE));
         for (SWRLRule rule : rules) {

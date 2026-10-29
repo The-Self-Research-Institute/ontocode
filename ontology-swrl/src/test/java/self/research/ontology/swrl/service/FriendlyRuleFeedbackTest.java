@@ -70,9 +70,11 @@ class FriendlyRuleFeedbackTest {
 
         ExecutionResult result = harness.service.executeRules(TriageHarness.PROJECT);
 
-        assertFalse(result.isSuccess());
-        assertEquals("failed", result.getCompletion());
-        String message = result.getErrorMessage();
+        assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
+        assertEquals("completed_with_warnings", result.getCompletion());
+        assertEquals("Bad maths", result.getSkippedRules().get(0).ruleName());
+        String message = result.getSkippedRules().get(0).reason();
+        assertTrue(message.startsWith("Rule Bad maths could not run: "), message);
         assertTrue(message.contains("needs a whole number"), message);
         assertTrue(message.contains("Technical detail:"), message);
     }

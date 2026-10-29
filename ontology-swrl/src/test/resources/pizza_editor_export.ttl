@@ -1,0 +1,821 @@
+@prefix : <http://www.semanticweb.org/pizzatutorial/ontologies/2020/PizzaTutorial#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix swrl: <http://www.w3.org/2003/11/swrl#> .
+@prefix swrla: <http://swrl.stanford.edu/ontologies/3.3/swrla.owl#> .
+
+<http://www.semanticweb.org/pizzatutorial/ontologies/2020/PizzaTutorial> a owl:Ontology .
+
+swrla:isRuleEnabled a owl:AnnotationProperty .
+
+:hasBase a owl:ObjectProperty .
+
+:hasIngredient a owl:ObjectProperty .
+
+:hasSpiciness a owl:ObjectProperty .
+
+:hasSpicinessPreference a owl:ObjectProperty .
+
+:hasTopping a owl:ObjectProperty .
+
+:isBaseOf a owl:ObjectProperty .
+
+:isIngredientOf a owl:ObjectProperty, owl:FunctionalProperty .
+
+:isMilderThan a owl:ObjectProperty .
+
+:isSpicierThan a owl:ObjectProperty, owl:TransitiveProperty .
+
+:isToppingOf a owl:ObjectProperty .
+
+:purchasedByCustomer a owl:ObjectProperty, owl:FunctionalProperty .
+
+:purchasedPizza a owl:ObjectProperty .
+
+:hasCaloricContent a owl:DatatypeProperty .
+
+:hasDiscount a owl:DatatypeProperty .
+
+:hasPhone a owl:DatatypeProperty .
+
+:numberOfPizzasPurchased a owl:DatatypeProperty .
+
+:ssn a owl:DatatypeProperty .
+
+:AmericanaHotPizza a owl:Class;
+  rdfs:subClassOf :NamedPizza .
+
+:AmericanaPizza a owl:Class;
+  rdfs:subClassOf :NamedPizza .
+
+:AnchovyTopping a owl:Class;
+  rdfs:subClassOf :SeafoodTopping .
+
+:CaperTopping a owl:Class;
+  rdfs:subClassOf :VegetableTopping .
+
+:CheeseTopping a owl:Class;
+  rdfs:subClassOf :PizzaTopping .
+
+:CheesyPizza a owl:Class .
+
+:Customer a owl:Class .
+
+:DeepPanBase a owl:Class;
+  rdfs:subClassOf :PizzaBase .
+
+:Employee a owl:Class .
+
+:GreenPepperTopping a owl:Class;
+  rdfs:subClassOf :PepperTopping .
+
+:HamTopping a owl:Class;
+  rdfs:subClassOf :MeatTopping .
+
+:HighCaloriePizza a owl:Class .
+
+:HotVeggiePizza a owl:Class .
+
+:InterestingPizza a owl:Class .
+
+:JalapenoPepperTopping a owl:Class;
+  rdfs:subClassOf :PepperTopping .
+
+:LowCaloriePizza a owl:Class .
+
+:MargheritaPizza a owl:Class;
+  rdfs:subClassOf :NamedPizza .
+
+:MeatTopping a owl:Class;
+  rdfs:subClassOf :PizzaTopping .
+
+:MediumVeggiePizza a owl:Class .
+
+:MozzarellaTopping a owl:Class;
+  rdfs:subClassOf :CheeseTopping .
+
+:MushroomTopping a owl:Class;
+  rdfs:subClassOf :VegetableTopping .
+
+:NamedPizza a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:OliveTopping a owl:Class;
+  rdfs:subClassOf :VegetableTopping .
+
+:ParmesanTopping a owl:Class;
+  rdfs:subClassOf :CheeseTopping .
+
+:PepperTopping a owl:Class;
+  rdfs:subClassOf :VegetableTopping .
+
+:PepperoniTopping a owl:Class;
+  rdfs:subClassOf :MeatTopping .
+
+:Person a owl:Class .
+
+:Pizza a owl:Class .
+
+:PizzaBase a owl:Class .
+
+:PizzaTopping a owl:Class .
+
+:PrawnTopping a owl:Class;
+  rdfs:subClassOf :SeafoodTopping .
+
+:RedPepperTopping a owl:Class;
+  rdfs:subClassOf :PepperTopping .
+
+:SalamiTopping a owl:Class;
+  rdfs:subClassOf :MeatTopping .
+
+:SeafoodTopping a owl:Class;
+  rdfs:subClassOf :PizzaTopping .
+
+:SohoPizza a owl:Class;
+  rdfs:subClassOf :NamedPizza .
+
+:Spiciness a owl:Class .
+
+:SpicyBeefTopping a owl:Class;
+  rdfs:subClassOf :MeatTopping .
+
+:SpicyPizza a owl:Class .
+
+:ThinAndCrispyBase a owl:Class;
+  rdfs:subClassOf :PizzaBase .
+
+:TomatoTopping a owl:Class;
+  rdfs:subClassOf :VegetableTopping .
+
+:TunaTopping a owl:Class;
+  rdfs:subClassOf :SeafoodTopping .
+
+:VegetableTopping a owl:Class;
+  rdfs:subClassOf :PizzaTopping .
+
+:VegetarianPizza a owl:Class .
+
+:AmericanaHotPizza1 a owl:NamedIndividual, :AmericanaHotPizza;
+  :hasCaloricContent 767 .
+
+:AmericanaHotPizza2 a owl:NamedIndividual, :AmericanaHotPizza;
+  :hasCaloricContent 675 .
+
+:AmericanaHotPizza3 a owl:NamedIndividual, :AmericanaHotPizza .
+
+:AmericanaPizza1 a owl:NamedIndividual, :AmericanaPizza;
+  :hasCaloricContent 723 .
+
+:AmericanaPizza2 a owl:NamedIndividual, :AmericanaPizza;
+  :hasCaloricContent 543 .
+
+:CheesyPizza1 a owl:NamedIndividual, :CheesyPizza;
+  :hasCaloricContent 378 .
+
+:Chef a owl:NamedIndividual, :Employee;
+  :hasPhone "415-555-1234";
+  :ssn "333-22-2334", "333-22-4444" .
+
+:ChicagoAmericanaHotPizza1 a owl:NamedIndividual, :AmericanaHotPizza .
+
+:CustomPizza1 a owl:NamedIndividual, :Pizza;
+  :hasTopping :OliveTopping1, :SpicyBeefTopping1 .
+
+:CustomPizza2 a owl:NamedIndividual, :Pizza;
+  :hasTopping :GreenPepperTopping2, :MushroomTopping2 .
+
+:Customer1 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Hot;
+  :purchasedPizza :AmericanaHotPizza1, :AmericanaHotPizza2;
+  :hasPhone "555-111-3332";
+  :numberOfPizzasPurchased 2 .
+
+:Customer10 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Mild;
+  :hasDiscount 2.0;
+  :hasPhone "555-111-3335";
+  :numberOfPizzasPurchased 1 .
+
+:Customer2 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Medium;
+  :purchasedPizza :CustomPizza2, :MargheritaPizza1;
+  :hasPhone "555-1113342";
+  :numberOfPizzasPurchased 2 .
+
+:Customer3 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Mild;
+  :purchasedPizza :MargheritaPizza2, :SohoPizza1;
+  :numberOfPizzasPurchased 2 .
+
+:Customer4 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Hot;
+  :purchasedPizza :AmericanaHotPizza3, :HotVeggiePizza1;
+  :hasPhone "555-111-3339";
+  :numberOfPizzasPurchased 3 .
+
+:Customer5 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Medium;
+  :purchasedPizza :AmericanaPizza1, :MediumVeggiePizza1;
+  :hasPhone "555-111-3339";
+  :numberOfPizzasPurchased 2 .
+
+:Customer6 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Medium;
+  :purchasedPizza :AmericanaPizza2;
+  :hasPhone "555-111-3338";
+  :numberOfPizzasPurchased 1 .
+
+:Customer7 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Mild;
+  :purchasedPizza :CheesyPizza1;
+  :hasPhone "555-111-3337";
+  :numberOfPizzasPurchased 1 .
+
+:Customer8 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Hot;
+  :purchasedPizza :ChicagoAmericanaHotPizza1, :CustomPizza1;
+  :hasPhone "555-111-3336";
+  :numberOfPizzasPurchased 2 .
+
+:Customer9 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Hot;
+  :purchasedPizza :HotVeggiePizza3;
+  :hasPhone "555-111-3334";
+  :numberOfPizzasPurchased 1 .
+
+:GreenPepperTopping2 a owl:NamedIndividual, :GreenPepperTopping .
+
+:Hot a owl:NamedIndividual;
+  :isSpicierThan :Medium .
+
+:HotVeggiePizza1 a owl:NamedIndividual, :HotVeggiePizza .
+
+:HotVeggiePizza2 a owl:NamedIndividual, :HotVeggiePizza;
+  :purchasedByCustomer :Customer4 .
+
+:HotVeggiePizza3 a owl:NamedIndividual, :HotVeggiePizza .
+
+:Manager a owl:NamedIndividual, :Employee;
+  :hasPhone "123-345-4567", "415-5554567";
+  :ssn "321-23-4532" .
+
+:MargheritaPizza1 a owl:NamedIndividual, :MargheritaPizza;
+  :hasCaloricContent 263 .
+
+:MargheritaPizza2 a owl:NamedIndividual, :MargheritaPizza;
+  :hasCaloricContent 376 .
+
+:Medium a owl:NamedIndividual;
+  :isSpicierThan :Mild .
+
+:MediumVeggiePizza1 a owl:NamedIndividual, :MediumVeggiePizza .
+
+:Mild a owl:NamedIndividual, :Spiciness .
+
+:MushroomTopping2 a owl:NamedIndividual, :MushroomTopping .
+
+:OliveTopping1 a owl:NamedIndividual, :OliveTopping .
+
+:SohoPizza1 a owl:NamedIndividual, :SohoPizza;
+  :hasCaloricContent 342 .
+
+:SohoPizza2 a owl:NamedIndividual, :SohoPizza;
+  :purchasedByCustomer :Customer10;
+  :hasCaloricContent 322 .
+
+:SpicyBeefTopping1 a owl:NamedIndividual, :SpicyBeefTopping .
+
+:Waiter1 a owl:NamedIndividual, :Employee;
+  :hasPhone "123-234-3434";
+  :ssn "123456666" .
+
+:Waiter2 a owl:NamedIndividual, :Employee .
+
+:c a swrl:Variable .
+
+:np a swrl:Variable .
+
+:spr a swrl:Variable .
+
+_:8e83047f445b4a808b6bd92a2f685482130 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Provide a special discount for customers who prefer hot pizzas";
+  rdfs:label "LessSpicyDiscountRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482131;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482143 .
+
+_:8e83047f445b4a808b6bd92a2f685482131 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482132;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482133 .
+
+_:8e83047f445b4a808b6bd92a2f685482132 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:8e83047f445b4a808b6bd92a2f685482133 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482134;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482135 .
+
+_:8e83047f445b4a808b6bd92a2f685482134 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :numberOfPizzasPurchased;
+  swrl:argument1 :c;
+  swrl:argument2 :np .
+
+_:8e83047f445b4a808b6bd92a2f685482135 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482136;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482137 .
+
+_:8e83047f445b4a808b6bd92a2f685482136 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :hasSpicinessPreference;
+  swrl:argument1 :c;
+  swrl:argument2 :spr .
+
+_:8e83047f445b4a808b6bd92a2f685482137 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482138;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482139 .
+
+_:8e83047f445b4a808b6bd92a2f685482138 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :isMilderThan;
+  swrl:argument1 :spr;
+  swrl:argument2 :Hot .
+
+_:8e83047f445b4a808b6bd92a2f685482139 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482140;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482140 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:8e83047f445b4a808b6bd92a2f685482141 .
+
+_:8e83047f445b4a808b6bd92a2f685482141 a rdf:List;
+  rdf:first :np;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482142 .
+
+_:8e83047f445b4a808b6bd92a2f685482142 a rdf:List;
+  rdf:first 1;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482143 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482144;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482144 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :hasDiscount;
+  swrl:argument1 :c;
+  swrl:argument2 0.1 .
+
+_:8e83047f445b4a808b6bd92a2f685482145 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Provide a special discount for customers who prefer hot pizzas";
+  rdfs:label "HotDiscountRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482146;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482156 .
+
+_:8e83047f445b4a808b6bd92a2f685482146 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482147;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482148 .
+
+_:8e83047f445b4a808b6bd92a2f685482147 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:8e83047f445b4a808b6bd92a2f685482148 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482149;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482150 .
+
+_:8e83047f445b4a808b6bd92a2f685482149 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :numberOfPizzasPurchased;
+  swrl:argument1 :c;
+  swrl:argument2 :np .
+
+_:8e83047f445b4a808b6bd92a2f685482150 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482151;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482152 .
+
+_:8e83047f445b4a808b6bd92a2f685482151 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :hasSpicinessPreference;
+  swrl:argument1 :c;
+  swrl:argument2 :Hot .
+
+_:8e83047f445b4a808b6bd92a2f685482152 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482153;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482153 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:8e83047f445b4a808b6bd92a2f685482154 .
+
+_:8e83047f445b4a808b6bd92a2f685482154 a rdf:List;
+  rdf:first :np;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482155 .
+
+_:8e83047f445b4a808b6bd92a2f685482155 a rdf:List;
+  rdf:first 1;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482156 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482157;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482157 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :hasDiscount;
+  swrl:argument1 :c;
+  swrl:argument2 0.2 .
+
+_:8e83047f445b4a808b6bd92a2f685482158 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Provide a special discount for customers who prefer hot pizzas (for testing)";
+  rdfs:label "TestHotDiscountRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482159;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482169 .
+
+_:8e83047f445b4a808b6bd92a2f685482159 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482160;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482161 .
+
+_:8e83047f445b4a808b6bd92a2f685482160 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:8e83047f445b4a808b6bd92a2f685482161 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482162;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482163 .
+
+_:8e83047f445b4a808b6bd92a2f685482162 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :numberOfPizzasPurchased;
+  swrl:argument1 :c;
+  swrl:argument2 :np .
+
+_:8e83047f445b4a808b6bd92a2f685482163 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482164;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482165 .
+
+_:8e83047f445b4a808b6bd92a2f685482164 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :hasSpicinessPreference;
+  swrl:argument1 :c;
+  swrl:argument2 :Hot .
+
+_:8e83047f445b4a808b6bd92a2f685482165 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482166;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482166 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:8e83047f445b4a808b6bd92a2f685482167 .
+
+_:8e83047f445b4a808b6bd92a2f685482167 a rdf:List;
+  rdf:first :np;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482168 .
+
+_:8e83047f445b4a808b6bd92a2f685482168 a rdf:List;
+  rdf:first 1;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482169 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482170;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482170 a swrl:BuiltinAtom;
+  swrl:builtin <http://sqwrl.stanford.edu/ontologies/built-ins/3.4/sqwrl.owl#select>;
+  swrl:arguments _:8e83047f445b4a808b6bd92a2f685482171 .
+
+_:8e83047f445b4a808b6bd92a2f685482171 rdf:first :c;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482172 .
+
+_:8e83047f445b4a808b6bd92a2f685482172 rdf:first :np;
+  rdf:rest rdf:nil .
+
+:MeatyPizza a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:MeatyPizzaByRule a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:SeafoodPizza a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:NonVegetarianPizza a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:ThinCrustPizza a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:VeryHighCaloriePizza a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:VeryHighCaloriePizzaByRule a owl:Class;
+  rdfs:subClassOf :Pizza .
+
+:SpiceLoverCustomer a owl:Class;
+  rdfs:subClassOf :Customer .
+
+:SpicyPizzaCustomer a owl:Class;
+  rdfs:subClassOf :Customer .
+
+:MultiPizzaCustomer a owl:Class;
+  rdfs:subClassOf :Customer .
+
+:LoyalCustomer a owl:Class;
+  rdfs:subClassOf :Customer .
+
+:SpicinessMismatchCustomer a owl:Class;
+  rdfs:subClassOf :Customer .
+
+:InvalidDiscountCustomer a owl:Class;
+  rdfs:subClassOf :Customer .
+
+:EmployeeWithMultipleSSN a owl:Class;
+  rdfs:subClassOf :Employee .
+
+:TestDeepPanBase1 a owl:NamedIndividual, :DeepPanBase .
+
+:TestThinBase1 a owl:NamedIndividual, :ThinAndCrispyBase .
+
+:TestJalapenoTopping1 a owl:NamedIndividual, :JalapenoPepperTopping .
+
+:TestTunaTopping1 a owl:NamedIndividual, :TunaTopping .
+
+:TestPizza1 a owl:NamedIndividual, :Pizza;
+  :hasBase :TestDeepPanBase1;
+  :hasTopping :TestJalapenoTopping1 .
+
+:TestPizza2 a owl:NamedIndividual, :Pizza;
+  :hasBase :TestThinBase1;
+  :hasTopping :TestTunaTopping1;
+  :hasCaloricContent 710 .
+
+:TestCustomer1 a owl:NamedIndividual, :Customer;
+  :hasSpicinessPreference :Mild;
+  :purchasedPizza :TestPizza1, :TestPizza2;
+  :hasPhone "555-000-0001";
+  :numberOfPizzasPurchased 2 .
+
+:cal a swrl:Variable .
+
+:d a swrl:Variable .
+
+:e a swrl:Variable .
+
+:p a swrl:Variable .
+
+:s a swrl:Variable .
+
+:s1 a swrl:Variable .
+
+:s2 a swrl:Variable .
+
+:t a swrl:Variable .
+
+_:8e83047f445b4a808b6bd92a2f685482231 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Test: SWRL counterpart of GCI-1. Fires only on asserted named toppings (DL-safe), so it finds fewer pizzas than MeatyPizza.";
+  rdfs:label "MeatyPizzaRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482232;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482238 .
+
+_:8e83047f445b4a808b6bd92a2f685482232 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482233;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482234 .
+
+_:8e83047f445b4a808b6bd92a2f685482233 a swrl:ClassAtom;
+  swrl:classPredicate :Pizza;
+  swrl:argument1 :p .
+
+_:8e83047f445b4a808b6bd92a2f685482234 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482235;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482236 .
+
+_:8e83047f445b4a808b6bd92a2f685482235 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :hasTopping;
+  swrl:argument1 :p;
+  swrl:argument2 :t .
+
+_:8e83047f445b4a808b6bd92a2f685482236 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482237;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482237 a swrl:ClassAtom;
+  swrl:classPredicate :MeatTopping;
+  swrl:argument1 :t .
+
+_:8e83047f445b4a808b6bd92a2f685482238 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482239;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482239 a swrl:ClassAtom;
+  swrl:classPredicate :MeatyPizzaByRule;
+  swrl:argument1 :p .
+
+_:8e83047f445b4a808b6bd92a2f685482240 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Test: SWRL counterpart of GCI-6. Should give the same individuals as VeryHighCaloriePizza.";
+  rdfs:label "VeryHighCalorieRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482241;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482249 .
+
+_:8e83047f445b4a808b6bd92a2f685482241 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482242;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482243 .
+
+_:8e83047f445b4a808b6bd92a2f685482242 a swrl:ClassAtom;
+  swrl:classPredicate :Pizza;
+  swrl:argument1 :p .
+
+_:8e83047f445b4a808b6bd92a2f685482243 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482244;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482245 .
+
+_:8e83047f445b4a808b6bd92a2f685482244 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :hasCaloricContent;
+  swrl:argument1 :p;
+  swrl:argument2 :cal .
+
+_:8e83047f445b4a808b6bd92a2f685482245 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482246;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482246 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThanOrEqual>;
+  swrl:arguments _:8e83047f445b4a808b6bd92a2f685482247 .
+
+_:8e83047f445b4a808b6bd92a2f685482247 a rdf:List;
+  rdf:first :cal;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482248 .
+
+_:8e83047f445b4a808b6bd92a2f685482248 a rdf:List;
+  rdf:first 700;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482249 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482250;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482250 a swrl:ClassAtom;
+  swrl:classPredicate :VeryHighCaloriePizzaByRule;
+  swrl:argument1 :p .
+
+_:8e83047f445b4a808b6bd92a2f685482251 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Test: customer prefers something milder than Hot but purchased a SpicyPizza. Uses inferred isMilderThan (inverse of transitive isSpicierThan) and inferred SpicyPizza.";
+  rdfs:label "SpicinessMismatchRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482252;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482262 .
+
+_:8e83047f445b4a808b6bd92a2f685482252 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482253;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482254 .
+
+_:8e83047f445b4a808b6bd92a2f685482253 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:8e83047f445b4a808b6bd92a2f685482254 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482255;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482256 .
+
+_:8e83047f445b4a808b6bd92a2f685482255 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :hasSpicinessPreference;
+  swrl:argument1 :c;
+  swrl:argument2 :s .
+
+_:8e83047f445b4a808b6bd92a2f685482256 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482257;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482258 .
+
+_:8e83047f445b4a808b6bd92a2f685482257 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :isMilderThan;
+  swrl:argument1 :s;
+  swrl:argument2 :Hot .
+
+_:8e83047f445b4a808b6bd92a2f685482258 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482259;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482260 .
+
+_:8e83047f445b4a808b6bd92a2f685482259 a swrl:IndividualPropertyAtom;
+  swrl:propertyPredicate :purchasedPizza;
+  swrl:argument1 :c;
+  swrl:argument2 :p .
+
+_:8e83047f445b4a808b6bd92a2f685482260 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482261;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482261 a swrl:ClassAtom;
+  swrl:classPredicate :SpicyPizza;
+  swrl:argument1 :p .
+
+_:8e83047f445b4a808b6bd92a2f685482262 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482263;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482263 a swrl:ClassAtom;
+  swrl:classPredicate :SpicinessMismatchCustomer;
+  swrl:argument1 :c .
+
+_:8e83047f445b4a808b6bd92a2f685482264 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Test/data quality: a discount above 1.0 (100%) is invalid.";
+  rdfs:label "InvalidDiscountRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482265;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482273 .
+
+_:8e83047f445b4a808b6bd92a2f685482265 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482266;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482267 .
+
+_:8e83047f445b4a808b6bd92a2f685482266 a swrl:ClassAtom;
+  swrl:classPredicate :Customer;
+  swrl:argument1 :c .
+
+_:8e83047f445b4a808b6bd92a2f685482267 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482268;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482269 .
+
+_:8e83047f445b4a808b6bd92a2f685482268 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :hasDiscount;
+  swrl:argument1 :c;
+  swrl:argument2 :d .
+
+_:8e83047f445b4a808b6bd92a2f685482269 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482270;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482270 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#greaterThan>;
+  swrl:arguments _:8e83047f445b4a808b6bd92a2f685482271 .
+
+_:8e83047f445b4a808b6bd92a2f685482271 a rdf:List;
+  rdf:first :d;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482272 .
+
+_:8e83047f445b4a808b6bd92a2f685482272 a rdf:List;
+  rdf:first 1.0;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482273 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482274;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482274 a swrl:ClassAtom;
+  swrl:classPredicate :InvalidDiscountCustomer;
+  swrl:argument1 :c .
+
+_:8e83047f445b4a808b6bd92a2f685482275 a swrl:Imp;
+  swrla:isRuleEnabled true;
+  rdfs:comment "Test/data quality: an employee with two different ssn values.";
+  rdfs:label "MultipleSSNRule";
+  swrl:body _:8e83047f445b4a808b6bd92a2f685482276;
+  swrl:head _:8e83047f445b4a808b6bd92a2f685482286 .
+
+_:8e83047f445b4a808b6bd92a2f685482276 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482277;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482278 .
+
+_:8e83047f445b4a808b6bd92a2f685482277 a swrl:ClassAtom;
+  swrl:classPredicate :Employee;
+  swrl:argument1 :e .
+
+_:8e83047f445b4a808b6bd92a2f685482278 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482279;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482280 .
+
+_:8e83047f445b4a808b6bd92a2f685482279 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :ssn;
+  swrl:argument1 :e;
+  swrl:argument2 :s1 .
+
+_:8e83047f445b4a808b6bd92a2f685482280 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482281;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482282 .
+
+_:8e83047f445b4a808b6bd92a2f685482281 a swrl:DatavaluedPropertyAtom;
+  swrl:propertyPredicate :ssn;
+  swrl:argument1 :e;
+  swrl:argument2 :s2 .
+
+_:8e83047f445b4a808b6bd92a2f685482282 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482283;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482283 a swrl:BuiltinAtom;
+  swrl:builtin <http://www.w3.org/2003/11/swrlb#notEqual>;
+  swrl:arguments _:8e83047f445b4a808b6bd92a2f685482284 .
+
+_:8e83047f445b4a808b6bd92a2f685482284 a rdf:List;
+  rdf:first :s1;
+  rdf:rest _:8e83047f445b4a808b6bd92a2f685482285 .
+
+_:8e83047f445b4a808b6bd92a2f685482285 a rdf:List;
+  rdf:first :s2;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482286 a swrl:AtomList;
+  rdf:first _:8e83047f445b4a808b6bd92a2f685482287;
+  rdf:rest rdf:nil .
+
+_:8e83047f445b4a808b6bd92a2f685482287 a swrl:ClassAtom;
+  swrl:classPredicate :EmployeeWithMultipleSSN;
+  swrl:argument1 :e .

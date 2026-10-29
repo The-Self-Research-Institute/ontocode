@@ -7,7 +7,21 @@ import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.OWLEntity;
+import org.semanticweb.owlapi.model.OWLIndividual;
+import org.semanticweb.owlapi.model.OWLObject;
+import org.semanticweb.owlapi.model.SWRLArgument;
 import org.semanticweb.owlapi.model.SWRLAtom;
+import org.semanticweb.owlapi.model.SWRLClassAtom;
+import org.semanticweb.owlapi.model.SWRLDArgument;
+import org.semanticweb.owlapi.model.SWRLDataPropertyAtom;
+import org.semanticweb.owlapi.model.SWRLDataRangeAtom;
+import org.semanticweb.owlapi.model.SWRLDifferentIndividualsAtom;
+import org.semanticweb.owlapi.model.SWRLIndividualArgument;
+import org.semanticweb.owlapi.model.SWRLLiteralArgument;
+import org.semanticweb.owlapi.model.SWRLObjectPropertyAtom;
+import org.semanticweb.owlapi.model.SWRLSameIndividualAtom;
+import org.semanticweb.owlapi.model.SWRLVariable;
 import org.semanticweb.owlapi.model.SWRLBuiltInAtom;
 import org.semanticweb.owlapi.model.SWRLRule;
 import org.swrlapi.core.SWRLAPIRule;
@@ -32,6 +46,7 @@ public final class OntologyRules {
     public static final IRI ENABLED = IRI.create(NAMESPACE + "enabled");
     public static final IRI CATEGORY = IRI.create(NAMESPACE + "category");
     public static final IRI RULE_ID = IRI.create(NAMESPACE + "ruleId");
+    public static final IRI PROTEGE_ENABLED = IRI.create("http://swrl.stanford.edu/ontologies/3.3/swrla.owl#isRuleEnabled");
 
     private static final String SQWRL_BUILT_INS = "http://sqwrl.stanford.edu/ontologies/built-ins/";
 
@@ -47,10 +62,12 @@ public final class OntologyRules {
         private final boolean enabled;
         private final String source;
         private final SWRLRule axiom;
+        private final boolean query;
         private String ruleText;
+        private boolean textFromFallback;
 
         Entry(String id, String name, String engineName, String comment, String category, boolean enabled,
-              String source, SWRLRule axiom) {
+              String source, SWRLRule axiom, boolean query) {
             this.id = id;
             this.name = name;
             this.engineName = engineName;
@@ -59,6 +76,7 @@ public final class OntologyRules {
             this.enabled = enabled;
             this.source = source;
             this.axiom = axiom;
+            this.query = query;
         }
 
         public String id() { return id; }
@@ -71,6 +89,8 @@ public final class OntologyRules {
         public boolean readOnly() { return source != null; }
         public SWRLRule axiom() { return axiom; }
         public String ruleText() { return ruleText; }
+        public boolean query() { return query; }
+        public boolean textFromFallback() { return textFromFallback; }
     }
 
     public static boolean isSqwrlQuery(SWRLRule rule) {
@@ -89,6 +109,9 @@ public final class OntologyRules {
 
     public static boolean isDisabled(SWRLRule rule) {
         String value = annotation(rule, ENABLED);
+        if (value == null) {
+            value = annotation(rule, PROTEGE_ENABLED);
+        }
         if (value == null) {
             return false;
         }
@@ -142,10 +165,14 @@ public final class OntologyRules {
         return null;
     }
 
-    private record Raw(SWRLRule axiom, String id, String name, String source) {
+    private record Raw(SWRLRule axiom, String id, String name, String source, boolean query) {
     }
 
     public static List<Entry> collect(OWLOntology root) {
+        return collect(root, false);
+    }
+
+    public static List<Entry> collect(OWLOntology root, boolean includeQueries) {
         List<OWLOntology> order = new ArrayList<>();
         order.add(root);
         for (OWLOntology member : root.getImportsClosure()) {
@@ -162,19 +189,29 @@ public final class OntologyRules {
                 source = iri.isPresent() ? iri.get().toString() : member.getOntologyID().toString();
             }
             List<SWRLRule> rules = new ArrayList<>(member.getAxioms(AxiomType.SWRL_RULE));
-            rules.sort(java.util.Comparator.comparing(r -> r.getAxiomWithoutAnnotations().toString()));
+            rules.sort(java.util.Comparator.comparing((SWRLRule r) -> r.getAxiomWithoutAnnotations().toString())
+                    .thenComparing(SWRLRule::toString));
+            Set<String> seenInMember = new HashSet<>();
             for (SWRLRule rule : rules) {
-                if (isSqwrlQuery(rule)) {
+                boolean query = isSqwrlQuery(rule);
+                if (query && !includeQueries) {
                     continue;
                 }
                 String explicit = annotation(rule, RULE_ID);
                 String id = explicit != null && !explicit.isBlank() ? explicit.trim() : stableId(rule);
+                if (!seenInMember.add(id)) {
+                    String base = id;
+                    int copy = 2;
+                    while (!seenInMember.add(id = base + "-" + copy)) {
+                        copy++;
+                    }
+                }
                 if (!seenIds.add(id)) {
                     continue;
                 }
                 String label = label(rule);
                 String name = label != null ? label : "Rule " + stableId(rule).substring(5, 13);
-                raws.add(new Raw(rule, id, name, source));
+                raws.add(new Raw(rule, id, name, source, query));
             }
         }
         Map<String, Integer> counts = new HashMap<>();
@@ -183,13 +220,17 @@ public final class OntologyRules {
         for (Raw raw : raws) {
             String engineName = counts.get(raw.name()) > 1 ? raw.name() + " (" + raw.id() + ")" : raw.name();
             entries.add(new Entry(raw.id(), raw.name(), engineName, comment(raw.axiom()), annotation(raw.axiom(), CATEGORY),
-                    !isDisabled(raw.axiom()), raw.source(), raw.axiom()));
+                    !raw.query() && !isDisabled(raw.axiom()), raw.source(), raw.axiom(), raw.query()));
         }
         return entries;
     }
 
     public static List<Entry> prepare(OWLOntology root, Predicate<Entry> active) {
-        List<Entry> entries = collect(root);
+        return prepare(root, active, false);
+    }
+
+    public static List<Entry> prepare(OWLOntology root, Predicate<Entry> active, boolean includeQueries) {
+        List<Entry> entries = collect(root, includeQueries);
         OWLOntologyManager manager = root.getOWLOntologyManager();
         OWLDataFactory factory = manager.getOWLDataFactory();
         for (OWLOntology member : root.getImportsClosure()) {
@@ -202,14 +243,23 @@ public final class OntologyRules {
             if (!active.test(entry)) {
                 continue;
             }
-            Set<OWLAnnotation> annotations = new LinkedHashSet<>();
-            annotations.add(factory.getOWLAnnotation(factory.getRDFSLabel(), factory.getOWLLiteral(entry.engineName())));
-            if (entry.comment() != null && !entry.comment().isEmpty()) {
-                annotations.add(factory.getOWLAnnotation(factory.getRDFSComment(), factory.getOWLLiteral(entry.comment())));
-            }
-            manager.addAxiom(root, entry.axiom().getAxiomWithoutAnnotations().getAnnotatedAxiom(annotations));
+            manager.addAxiom(root, engineAxiom(factory, entry));
         }
         return entries;
+    }
+
+    private static SWRLRule engineAxiom(OWLDataFactory factory, Entry entry) {
+        Set<OWLAnnotation> annotations = new LinkedHashSet<>();
+        annotations.add(factory.getOWLAnnotation(factory.getRDFSLabel(), factory.getOWLLiteral(entry.engineName())));
+        if (entry.comment() != null && !entry.comment().isEmpty()) {
+            annotations.add(factory.getOWLAnnotation(factory.getRDFSComment(), factory.getOWLLiteral(entry.comment())));
+        }
+        return (SWRLRule) entry.axiom().getAxiomWithoutAnnotations().getAnnotatedAxiom(annotations);
+    }
+
+    public static void drop(OWLOntology root, Entry entry) {
+        OWLOntologyManager manager = root.getOWLOntologyManager();
+        manager.removeAxiom(root, engineAxiom(manager.getOWLDataFactory(), entry));
     }
 
     public static void removeAll(OWLOntology root) {
@@ -220,12 +270,90 @@ public final class OntologyRules {
         SWRLRuleRenderer renderer = engine.createSWRLRuleRenderer();
         Map<String, String> byName = new HashMap<>();
         for (SWRLAPIRule rule : engine.getSWRLRules()) {
-            if (!rule.isSQWRLQuery()) {
-                byName.put(rule.getRuleName(), renderer.renderSWRLRule(rule));
-            }
+            byName.put(rule.getRuleName(), renderer.renderSWRLRule(rule));
         }
         for (Entry entry : entries) {
             entry.ruleText = byName.get(entry.engineName());
         }
+    }
+
+    public static void fillFallbackTexts(List<Entry> entries) {
+        for (Entry entry : entries) {
+            if (entry.ruleText == null) {
+                entry.ruleText = fallbackText(entry.axiom);
+                entry.textFromFallback = true;
+            }
+        }
+    }
+
+    static String fallbackText(SWRLRule rule) {
+        return atoms(rule.getBody()) + " -> " + atoms(rule.getHead());
+    }
+
+    private static String atoms(Set<SWRLAtom> atoms) {
+        List<String> parts = new ArrayList<>();
+        for (SWRLAtom atom : atoms) {
+            parts.add(atomText(atom));
+        }
+        return String.join(" ^ ", parts);
+    }
+
+    private static String atomText(SWRLAtom atom) {
+        if (atom instanceof SWRLClassAtom classAtom) {
+            return term(classAtom.getPredicate()) + "(" + argument(classAtom.getArgument()) + ")";
+        }
+        if (atom instanceof SWRLObjectPropertyAtom property) {
+            return term(property.getPredicate()) + "(" + argument(property.getFirstArgument()) + ", " + argument(property.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLDataPropertyAtom property) {
+            return term(property.getPredicate()) + "(" + argument(property.getFirstArgument()) + ", " + argument(property.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLBuiltInAtom builtIn) {
+            List<String> arguments = new ArrayList<>();
+            for (SWRLDArgument argument : builtIn.getArguments()) {
+                arguments.add(argument(argument));
+            }
+            String name = shortName(builtIn.getPredicate().toString());
+            String prefix = builtIn.getPredicate().toString().contains("swrlb#") ? "swrlb:" : "";
+            return prefix + name + "(" + String.join(", ", arguments) + ")";
+        }
+        if (atom instanceof SWRLSameIndividualAtom same) {
+            return "sameAs(" + argument(same.getFirstArgument()) + ", " + argument(same.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLDifferentIndividualsAtom different) {
+            return "differentFrom(" + argument(different.getFirstArgument()) + ", " + argument(different.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLDataRangeAtom range) {
+            return range.getPredicate().toString() + "(" + argument(range.getArgument()) + ")";
+        }
+        return atom.toString();
+    }
+
+    private static String term(OWLObject expression) {
+        if (expression instanceof OWLEntity entity) {
+            return shortName(entity.getIRI().toString());
+        }
+        return expression.toString();
+    }
+
+    private static String argument(SWRLArgument argument) {
+        if (argument instanceof SWRLVariable variable) {
+            return "?" + shortName(variable.getIRI().toString());
+        }
+        if (argument instanceof SWRLIndividualArgument individual) {
+            OWLIndividual value = individual.getIndividual();
+            return value.isNamed() ? shortName(value.asOWLNamedIndividual().getIRI().toString()) : value.toString();
+        }
+        if (argument instanceof SWRLLiteralArgument literal) {
+            OWLLiteral value = literal.getLiteral();
+            return value.getDatatype().isString() || value.isRDFPlainLiteral()
+                    ? "\"" + value.getLiteral() + "\"" : value.getLiteral();
+        }
+        return argument.toString();
+    }
+
+    private static String shortName(String iri) {
+        int cut = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+        return cut >= 0 && cut < iri.length() - 1 ? iri.substring(cut + 1) : iri;
     }
 }

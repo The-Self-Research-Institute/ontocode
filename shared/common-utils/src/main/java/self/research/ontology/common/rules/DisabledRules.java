@@ -17,6 +17,7 @@ public final class DisabledRules {
     public static final IRI ENABLED = IRI.create(NAMESPACE + "enabled");
     public static final IRI CATEGORY = IRI.create(NAMESPACE + "category");
     public static final IRI RULE_ID = IRI.create(NAMESPACE + "ruleId");
+    public static final IRI PROTEGE_ENABLED = IRI.create("http://swrl.stanford.edu/ontologies/3.3/swrla.owl#isRuleEnabled");
 
     private DisabledRules() {
     }
@@ -25,13 +26,23 @@ public final class DisabledRules {
         if (!(axiom instanceof SWRLRule)) {
             return false;
         }
+        Boolean protege = null;
         for (OWLAnnotation annotation : axiom.annotationsAsList()) {
-            if (ENABLED.equals(annotation.getProperty().getIRI()) && annotation.getValue() instanceof OWLLiteral literal) {
-                String text = literal.getLiteral().trim();
-                return "false".equalsIgnoreCase(text) || "0".equals(text);
+            if (annotation.getValue() instanceof OWLLiteral literal) {
+                if (ENABLED.equals(annotation.getProperty().getIRI())) {
+                    return off(literal);
+                }
+                if (PROTEGE_ENABLED.equals(annotation.getProperty().getIRI())) {
+                    protege = off(literal);
+                }
             }
         }
-        return false;
+        return protege != null && protege;
+    }
+
+    private static boolean off(OWLLiteral literal) {
+        String text = literal.getLiteral().trim();
+        return "false".equalsIgnoreCase(text) || "0".equals(text);
     }
 
     public static int strip(OWLOntology ontology) {

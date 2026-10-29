@@ -421,21 +421,39 @@ public class SwrlEngineService {
     }
 
     public record EmbeddedRule(String id, String ruleName, String name, String ruleText, String comment, String category,
-                               boolean enabled, String source, boolean readOnly) {
+                               boolean enabled, String source, boolean readOnly, String notice) {
+        public EmbeddedRule(String id, String ruleName, String name, String ruleText, String comment, String category,
+                            boolean enabled, String source, boolean readOnly) {
+            this(id, ruleName, name, ruleText, comment, category, enabled, source, readOnly, null);
+        }
     }
 
+    private static final String QUERY_NOTICE = "This is a SQWRL query. It is listed here but is not run as a rule.";
+    private static final String UNCHECKED_NOTICE = "This rule is shown as stored in the ontology. The rule engine could not load it, so it cannot be run until it is fixed.";
+
     private static EmbeddedRule embedded(OntologyRules.Entry entry) {
-        return new EmbeddedRule(entry.id(), entry.name(), entry.name(), entry.ruleText(), entry.comment(), entry.category(),
-                entry.enabled(), entry.source(), entry.readOnly());
+        String notice = entry.query() ? QUERY_NOTICE : entry.textFromFallback() ? UNCHECKED_NOTICE : null;
+        String category = entry.category() == null && entry.query() ? "SQWRL query" : entry.category();
+        return new EmbeddedRule(entry.id(), entry.name(), entry.name(), entry.ruleText(), entry.comment(), category,
+                entry.enabled(), entry.source(), entry.readOnly(), notice);
     }
 
     private List<OntologyRules.Entry> listEntries(String projectId, String draftUserId) throws Exception {
         OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
-        ensureNamespacePrefixes(projectId, ontology);
-        List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, entry -> true);
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
-        OntologyRules.fillTexts(engine, entries);
-        entries.removeIf(entry -> entry.ruleText() == null);
+        try {
+            ensureNamespacePrefixes(projectId, ontology);
+        } catch (RuntimeException e) {
+            logger.warn("Could not register the prefixes while listing the rules of project {}: {}", projectId, e.getMessage());
+        }
+        List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, entry -> true, true);
+        try {
+            SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            OntologyRules.fillTexts(engine, entries);
+        } catch (RuntimeException e) {
+            logger.warn("The rule engine could not load the rules of project {}, listing them from the ontology instead: {}",
+                    projectId, e.getMessage());
+        }
+        OntologyRules.fillFallbackTexts(entries);
         entries.sort(java.util.Comparator.comparing(OntologyRules.Entry::name).thenComparing(OntologyRules.Entry::id));
         return entries;
     }
@@ -615,8 +633,11 @@ public class SwrlEngineService {
 
         // ✅ FIXED: Execute with timeout
         Set<OWLAxiom> assertedBefore = InferredAxiomPresenter.assertionsOf(ontology);
-        Set<OWLAxiom> inferredAxioms = runInference(engine, projectId);
-        
+        Inferred inferred = inferKeepingGoodRules(projectId, ontology, engine, enabledRules);
+        Set<OWLAxiom> inferredAxioms = inferred.axioms();
+        enabledRules = inferred.ran();
+        skipped.addAll(inferred.failed());
+
         long executionTime = System.currentTimeMillis() - startTime;
 
         logger.info("Executed {} rules in {}ms, inferred {} axioms", 
@@ -735,8 +756,11 @@ public class SwrlEngineService {
 
         // Execute with timeout
         Set<OWLAxiom> assertedBefore = InferredAxiomPresenter.assertionsOf(ontology);
-        Set<OWLAxiom> inferredAxioms = runInference(engine, projectId);
-        
+        Inferred inferred = inferKeepingGoodRules(projectId, ontology, engine, selectedRules);
+        Set<OWLAxiom> inferredAxioms = inferred.axioms();
+        selectedRules = inferred.ran();
+        skipped.addAll(inferred.failed());
+
         long executionTime = System.currentTimeMillis() - startTime;
 
         logger.info("Executed {} selected rules in {}ms, inferred {} axioms", 
@@ -848,6 +872,62 @@ public class SwrlEngineService {
      * axioms even when it fired correctly; that is not an error. Both sets are
      * combined below since either can legitimately contain rule output.
      */
+    private static final int MAX_RULE_RETRIES = 3;
+    private static final java.util.regex.Pattern FAILING_RULE_INVOKE = java.util.regex.Pattern.compile("invoker\\.invoke\\(\"((?:[^\"\\\\]|\\\\.)*)\"");
+    private static final java.util.regex.Pattern FAILING_RULE_IN = java.util.regex.Pattern.compile("in rule ([^:]+?):");
+
+    private record Inferred(Set<OWLAxiom> axioms, List<OntologyRules.Entry> ran, List<SkippedRule> failed) {
+    }
+
+    private static String chainMessage(Throwable error) {
+        StringBuilder text = new StringBuilder();
+        for (Throwable current = error; current != null && text.length() < 4000; current = current.getCause() == current ? null : current.getCause()) {
+            if (current.getMessage() != null) {
+                text.append(current.getMessage()).append('\n');
+            }
+        }
+        return text.toString();
+    }
+
+    private static OntologyRules.Entry failingRule(String message, List<OntologyRules.Entry> candidates) {
+        for (java.util.regex.Pattern pattern : List.of(FAILING_RULE_INVOKE, FAILING_RULE_IN)) {
+            java.util.regex.Matcher matcher = pattern.matcher(message);
+            while (matcher.find()) {
+                String name = matcher.group(1).replace("\\\"", "\"");
+                for (OntologyRules.Entry candidate : candidates) {
+                    if (candidate.engineName().equals(name)) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private Inferred inferKeepingGoodRules(String projectId, OWLOntology ontology, SWRLRuleEngine first,
+                                           List<OntologyRules.Entry> candidates) {
+        List<OntologyRules.Entry> ran = new ArrayList<>(candidates);
+        List<SkippedRule> failed = new ArrayList<>();
+        SWRLRuleEngine engine = first;
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return new Inferred(runInference(engine, projectId), ran, failed);
+            } catch (RuntimeException e) {
+                String message = chainMessage(e);
+                OntologyRules.Entry culprit = attempt < MAX_RULE_RETRIES ? failingRule(message, ran) : null;
+                if (culprit == null) {
+                    throw e;
+                }
+                logger.warn("Rule {} failed in project {}, running the others without it: {}", culprit.name(), projectId, e.getMessage());
+                String reason = e.getMessage() != null ? e.getMessage() : message;
+                failed.add(new SkippedRule(culprit.name(), "Rule " + culprit.name() + " could not run: " + RuleMessages.explain(reason)));
+                ran.remove(culprit);
+                OntologyRules.drop(ontology, culprit);
+                engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            }
+        }
+    }
+
     private Set<OWLAxiom> runInference(SWRLRuleEngine engine, String projectId) {
         engine.infer();
 
