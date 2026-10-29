@@ -714,7 +714,7 @@ public class AuthController {
                     })
                     .collect(Collectors.toList());
 
-            List<Map<String, Object>> projects = projectRepository.findByOwnerId(userId).stream()
+            List<Map<String, Object>> projects = ownedAuthProjects(userId).stream()
                     .map(p -> {
                         List<Map<String, Object>> otherMembers = p.getMembers().stream()
                                 .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
@@ -739,6 +739,12 @@ public class AuthController {
             log.error("Error computing account deletion impact", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to compute deletion impact: " + e.getMessage()));
         }
+    }
+
+    private List<Project> ownedAuthProjects(String userId) {
+        return projectRepository.findByOwnerId(userId).stream()
+                .filter(p -> p.getProjectId() != null && !p.getProjectId().contains("--"))
+                .collect(Collectors.toList());
     }
 
     public static class OwnershipResolution {
@@ -786,7 +792,7 @@ public class AuthController {
             }
 
             List<Workspace> ownedWorkspaces = workspaceRepository.findByOwnerId(userId);
-            List<Project> ownedProjects = projectRepository.findByOwnerId(userId);
+            List<Project> ownedProjects = ownedAuthProjects(userId);
 
             if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
                 try {
@@ -800,10 +806,7 @@ public class AuthController {
             for (Workspace workspace : ownedWorkspaces) {
                 boolean hasOtherMembers = workspace.getMembers().stream()
                         .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
-                if (hasOtherMembers) {
-                    workspaceService.deleteWorkspace(workspace.getWorkspaceId(), userId);
-                } else {
-                    workspaceService.hardDeleteWorkspaceCompletely(workspace.getWorkspaceId(), userId);
+                if (!hasOtherMembers) {
                     hardDeletedWorkspaceIds.add(workspace.getWorkspaceId());
                 }
             }
@@ -814,15 +817,28 @@ public class AuthController {
                 }
                 boolean hasOtherMembers = project.getMembers().stream()
                         .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
-                if (hasOtherMembers) {
-                    projectService.deleteProject(project.getProjectId(), userId);
+                try {
+                    if (hasOtherMembers) {
+                        projectService.deleteProject(project.getProjectId(), userId);
+                    } else {
+                        projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+                    }
+                } catch (SecurityException | IllegalStateException e) {
+                    log.warn("Skipping project {} during account deletion for {}: {}",
+                            project.getProjectId(), email, e.getMessage());
+                }
+            }
+
+            for (Workspace workspace : ownedWorkspaces) {
+                if (hardDeletedWorkspaceIds.contains(workspace.getWorkspaceId())) {
+                    workspaceService.hardDeleteWorkspaceCompletely(workspace.getWorkspaceId(), userId);
                 } else {
-                    projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+                    workspaceService.deleteWorkspace(workspace.getWorkspaceId(), userId);
                 }
             }
 
             for (Project project : projectRepository.findByMembers_UserId(userId)) {
-                if (!project.getOwnerId().equals(userId)) {
+                if (!userId.equals(project.getOwnerId())) {
                     project.removeMember(userId);
                     projectRepository.save(project);
                 }
