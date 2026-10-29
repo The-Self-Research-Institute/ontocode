@@ -1299,6 +1299,13 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     setExpandedGroups(new Set());
   };
 
+  if (!results && isExecuting) return (
+    <div className="p-8 text-center flex flex-col items-center gap-3" style={rt.label}>
+      <Loader2 size={32} className="animate-spin" />
+      <p className="text-lg">Running rules…</p>
+    </div>
+  );
+
   if (!results) return (
     <div className="p-8 text-center" style={rt.label}>
       <AlertCircle size={48} className="mx-auto mb-4 opacity-50" />
@@ -1876,6 +1883,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const saveInFlightRef = useRef(false);
+  const runInFlightRef = useRef(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
   const [unmigrated, setUnmigrated] = useState<UnmigratedRule[]>([]);
@@ -2066,6 +2077,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const loadRules = useCallback(async () => {
     const myVersion = rulesVersionRef.current;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const res = await apiClient.get<unknown>(withDraft(`/api/ontology/${projectId}/rules`, draftMode));
       if (rulesVersionRef.current === myVersion) {
@@ -2075,6 +2087,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       }
     } catch (e) {
       console.error('Failed to load rules:', e);
+      setLoadError(friendlyRuleError(e, 'Could not load the rules.'));
     } finally {
       setIsLoading(false);
     }
@@ -2137,6 +2150,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   }, [rules, searchQuery]);
 
   const enabledCount = rules.filter(r => r.enabled).length;
+  const rulesCountText = isLoading ? 'Loading rules…' : loadError ? 'Rules unavailable' : `${enabledCount} of ${rules.length} rules enabled`;
 
   const handleSelectRule = (rule: SwrlRule) => {
     setSelectedRule(rule);
@@ -2170,6 +2184,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
   const handleSave = async () => {
     if (!editForm.ruleName.trim() || !editForm.ruleText.trim()) return;
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     setIsSaving(true);
     setSaveError(null);
 
@@ -2200,6 +2216,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       console.error('Save failed:', e);
       setSaveError(friendlyRuleError(e, 'Failed to save rule - please try again.'));
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   };
@@ -2317,6 +2334,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   };
 
   const handleExecuteAll = async () => {
+    if (runInFlightRef.current) return;
+    runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
     setActivePanel('results');
@@ -2335,12 +2354,15 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         inferredAxioms: []
       } as ExecutionResponse);
     } finally {
+      runInFlightRef.current = false;
       setIsExecuting(false);
     }
   };
 
   const handleExecuteSelected = async () => {
     if (selectedRuleIds.size === 0) return;
+    if (runInFlightRef.current) return;
+    runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
     setActivePanel('results');
@@ -2355,13 +2377,17 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     } catch (e) {
       console.error('Execution failed:', e);
     } finally {
+      runInFlightRef.current = false;
       setIsExecuting(false);
     }
   };
 
   const handleTestRule = async () => {
     if (!selectedRule) return;
+    if (runInFlightRef.current) return;
+    runInFlightRef.current = true;
     setIsExecuting(true);
+    setIsTesting(true);
     setExecutionResult(null);
     setActivePanel('results');
 
@@ -2373,6 +2399,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     } catch (e) {
       console.error('Test failed:', e);
     } finally {
+      runInFlightRef.current = false;
+      setIsTesting(false);
       setIsExecuting(false);
     }
   };
@@ -2492,7 +2520,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-gray-900">SWRL Rule Editor</h1>
-            <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled</p>
+            <p className="text-xs text-gray-500">{rulesCountText}</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-2">
@@ -2526,11 +2554,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
             )}
             <button
               onClick={handleExecuteAll}
-              disabled={isExecuting || enabledCount === 0}
+              disabled={isExecuting || isLoading || enabledCount === 0}
               className="flex items-center gap-2 px-4 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:bg-purple-300"
             >
               {isExecuting ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-              Execute All ({enabledCount})
+              {isExecuting && !isTesting ? 'Executing…' : `Execute All (${enabledCount})`}
             </button>
           </div>
         </div>
@@ -2647,8 +2675,19 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
           <div className="flex-1 overflow-y-auto">
             {isLoading ? (
-              <div className="flex items-center justify-center p-8">
+              <div className="flex flex-col items-center justify-center gap-2 p-8 text-sm text-gray-500">
                 <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
+                Loading rules…
+              </div>
+            ) : loadError ? (
+              <div className="p-6 flex flex-col items-center gap-3 text-center text-sm text-red-700" role="alert">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={14} />
+                  {loadError}
+                </div>
+                <button onClick={loadRules} className="px-3 py-1.5 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100">
+                  Retry
+                </button>
               </div>
             ) : filteredRules.length === 0 ? (
               <div className="p-6 text-center text-gray-400">
@@ -2935,7 +2974,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                     <div className="flex items-center gap-3 pt-2">
                       <button
                         onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule?.ruleName || '', ruleId: selectedRule?.id || '' })}
-                        disabled={!selectedRule}
+                        disabled={!selectedRule || isSaving}
                         className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 disabled:opacity-50 flex items-center gap-2"
                       >
                         <Trash2 size={14} /> Delete
@@ -2943,17 +2982,18 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                       <div className="flex-1" />
                       <button
                         onClick={handleTestRule}
-                        disabled={!selectedRule || !editForm.ruleText.trim()}
+                        disabled={!selectedRule || !editForm.ruleText.trim() || isExecuting || isSaving}
                         className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
                       >
-                        <Play size={14} /> Test
+                        {isTesting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} {isTesting ? 'Testing…' : 'Test'}
                       </button>
                       <button
+                        disabled={isSaving}
                         onClick={() => {
                           setIsEditing(false);
                           if (selectedRule) handleSelectRule(selectedRule);
                         }}
-                        className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+                        className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -2963,7 +3003,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2"
                       >
                         {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        {selectedRule ? 'Update' : 'Save'}
+                        {isSaving ? 'Saving…' : selectedRule ? 'Update' : 'Save'}
                       </button>
                     </div>
                   ) : selectedRule && isImportedRule(selectedRule) ? (
@@ -2994,10 +3034,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                       <div className="flex-1" />
                       <button
                         onClick={handleTestRule}
-                        disabled={!editForm.ruleText.trim()}
+                        disabled={!editForm.ruleText.trim() || isExecuting}
                         className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
                       >
-                        <Play size={14} /> Test
+                        {isTesting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} {isTesting ? 'Testing…' : 'Test'}
                       </button>
                       <button
                         onClick={() => setIsEditing(true)}
