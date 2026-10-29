@@ -2,7 +2,7 @@
   "name": "ontocode-studio",
   "displayName": "OntoCode Studio",
   "description": "Edit, query and reason over OWL/RDF ontologies: SPARQL, reasoner, graph view, AI-assisted edits with undo and team collaboration. Free plan, no card.",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "publisher": "SelfResearchInstitute",
   "license": "MIT",
   "icon": "images/icon.png",

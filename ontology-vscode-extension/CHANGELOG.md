@@ -2,6 +2,24 @@
 
 All notable changes to OntoCode Studio are listed here, newest first. The same notes appear in the app under What's new.
 
+## [1.2.8] - 2026-10-29
+
+**SPARQL and SWRL**
+
+- SPARQL — Include inferred now works on a new project. The first use computes the inferred facts, and later queries use them straight away. CONSTRUCT returns graphs, and results are paged with a filter and sort.
+- SPARQL — The results panel fills the tab, and its drag handle resizes in the natural direction.
+- SWRL — Execute lists what the rules conclude first. The Test button shows only what that rule adds, saved rules keep their id after the first save, and checking a rule while typing is faster.
+- SQWRL — Results are paged with a filter and sort, and very large results are cut with a notice.
+
+**Plugins and desktop**
+
+- Plugins — The plugin tabs load again in the web app.
+- Desktop — The app keeps within half of the computer's memory, cleans up leftover processes, rotates its logs and checks free disk space. The Description panel shows the full ancestor chain, and the add class dialog says Local Mode.
+
+**License**
+
+- License — OntoCode is released under the MIT License.
+
 ## [1.2.7] - 2026-10-26
 
 **macOS desktop app**

@@ -18,6 +18,23 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.8-beta.1",
+    webVersion: "1.2.8",
+    date: "October 29, 2026",
+    title: "SPARQL and SWRL improvements, plugin loading and the MIT License",
+    highlights: [
+      "SPARQL — Include inferred now works on a new project. The first use computes the inferred facts, and later queries use them straight away. CONSTRUCT returns graphs, and results are paged with a filter and sort.",
+      "SPARQL — The results panel fills the tab, and its drag handle resizes in the natural direction.",
+      "SWRL — Execute lists what the rules conclude first. The Test button shows only what that rule adds, saved rules keep their id after the first save, and checking a rule while typing is faster.",
+      "SQWRL — Results are paged with a filter and sort, and very large results are cut with a notice.",
+      "Plugins — The plugin tabs load again in the web app.",
+      "Desktop — The app keeps within half of the computer's memory, cleans up leftover processes, rotates its logs and checks free disk space. The Description panel shows the full ancestor chain, and the add class dialog says Local Mode.",
+      "License — OntoCode is released under the MIT License.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.7-beta.1",
     webVersion: "1.2.7",
     date: "October 26, 2026",
