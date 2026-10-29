@@ -460,7 +460,7 @@ public class RuleService {
             IRI property = annotation.getProperty().getIRI();
             if (annotation.getProperty().isLabel() || annotation.getProperty().isComment()
                     || DisabledRules.CATEGORY.equals(property) || DisabledRules.RULE_ID.equals(property)
-                    || DisabledRules.ENABLED.equals(property)) {
+                    || DisabledRules.ENABLED.equals(property) || DisabledRules.SWRLA_ENABLED.equals(property)) {
                 continue;
             }
             keep.add(annotation);

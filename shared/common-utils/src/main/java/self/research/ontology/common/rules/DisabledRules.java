@@ -17,7 +17,7 @@ public final class DisabledRules {
     public static final IRI ENABLED = IRI.create(NAMESPACE + "enabled");
     public static final IRI CATEGORY = IRI.create(NAMESPACE + "category");
     public static final IRI RULE_ID = IRI.create(NAMESPACE + "ruleId");
-    public static final IRI PROTEGE_ENABLED = IRI.create("http://swrl.stanford.edu/ontologies/3.3/swrla.owl#isRuleEnabled");
+    public static final IRI SWRLA_ENABLED = IRI.create("http://swrl.stanford.edu/ontologies/3.3/swrla.owl#isRuleEnabled");
 
     private DisabledRules() {
     }
@@ -26,23 +26,22 @@ public final class DisabledRules {
         if (!(axiom instanceof SWRLRule)) {
             return false;
         }
-        Boolean protege = null;
-        for (OWLAnnotation annotation : axiom.annotationsAsList()) {
-            if (annotation.getValue() instanceof OWLLiteral literal) {
-                if (ENABLED.equals(annotation.getProperty().getIRI())) {
-                    return off(literal);
-                }
-                if (PROTEGE_ENABLED.equals(annotation.getProperty().getIRI())) {
-                    protege = off(literal);
-                }
-            }
+        Boolean own = flag(axiom, ENABLED);
+        if (own != null) {
+            return !own;
         }
-        return protege != null && protege;
+        Boolean protege = flag(axiom, SWRLA_ENABLED);
+        return protege != null && !protege;
     }
 
-    private static boolean off(OWLLiteral literal) {
-        String text = literal.getLiteral().trim();
-        return "false".equalsIgnoreCase(text) || "0".equals(text);
+    public static Boolean flag(OWLAxiom axiom, IRI property) {
+        for (OWLAnnotation annotation : axiom.annotationsAsList()) {
+            if (property.equals(annotation.getProperty().getIRI()) && annotation.getValue() instanceof OWLLiteral literal) {
+                String text = literal.getLiteral().trim();
+                return !("false".equalsIgnoreCase(text) || "0".equals(text));
+            }
+        }
+        return null;
     }
 
     public static int strip(OWLOntology ontology) {

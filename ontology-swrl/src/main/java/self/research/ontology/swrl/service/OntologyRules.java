@@ -46,7 +46,7 @@ public final class OntologyRules {
     public static final IRI ENABLED = IRI.create(NAMESPACE + "enabled");
     public static final IRI CATEGORY = IRI.create(NAMESPACE + "category");
     public static final IRI RULE_ID = IRI.create(NAMESPACE + "ruleId");
-    public static final IRI PROTEGE_ENABLED = IRI.create("http://swrl.stanford.edu/ontologies/3.3/swrla.owl#isRuleEnabled");
+    public static final IRI SWRLA_ENABLED = IRI.create("http://swrl.stanford.edu/ontologies/3.3/swrla.owl#isRuleEnabled");
 
     private static final String SQWRL_BUILT_INS = "http://sqwrl.stanford.edu/ontologies/built-ins/";
 
@@ -108,13 +108,15 @@ public final class OntologyRules {
     }
 
     public static boolean isDisabled(SWRLRule rule) {
-        String value = annotation(rule, ENABLED);
-        if (value == null) {
-            value = annotation(rule, PROTEGE_ENABLED);
+        String own = annotation(rule, ENABLED);
+        if (own != null) {
+            return isFalse(own);
         }
-        if (value == null) {
-            return false;
-        }
+        String protege = annotation(rule, SWRLA_ENABLED);
+        return protege != null && isFalse(protege);
+    }
+
+    private static boolean isFalse(String value) {
         String text = value.trim();
         return "false".equalsIgnoreCase(text) || "0".equals(text);
     }
