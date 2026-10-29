@@ -30,6 +30,18 @@ let realTimeSyncEnabled = true;
 // and the user has not yet started their draft copy. The callback fires so Dashboard can show the dialog.
 let draftEditBlocked = false;
 let onDraftEditBlocked: (() => void) | null = null;
+let onPublicEditDisabled: (() => void) | null = null;
+
+export const PUBLIC_EDIT_DISABLED_MESSAGE =
+  'The project owner turned off public editing. Switch to Draft Mode to make your changes.';
+
+export function publicEditDisabledError(err: any): Error | null {
+  if (err?.status !== 403 || err?.data?.code !== 'PUBLIC_EDIT_DISABLED') return null;
+  if (onPublicEditDisabled) onPublicEditDisabled();
+  const e = new Error(PUBLIC_EDIT_DISABLED_MESSAGE);
+  (e as any).reason = 'draftRequired';
+  return e;
+}
 
 /** True when edits should go to the per-user draft graph (private mode). */
 export function isPrivateEditMode(): boolean {
@@ -44,6 +56,10 @@ export const ontologyMutationService = {
   setRealTimeSync(enabled: boolean) {
     realTimeSyncEnabled = enabled;
     console.log(`[MutationService] Real-time sync ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  },
+
+  setPublicEditDisabledHandler(handler: (() => void) | null) {
+    onPublicEditDisabled = handler;
   },
 
   /** Block/unblock direct edits when a project requires Draft Mode for members. */
@@ -97,6 +113,8 @@ export const ontologyMutationService = {
       // can drop their caches and refetch.
       announceMutationApplied(projectId, ops, response?.changeSetId, useDraft);
     } catch (err: any) {
+      const publicOff = publicEditDisabledError(err);
+      if (publicOff) throw publicOff;
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
         const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
         (e as any).reason = 'requiresUpgrade';
@@ -876,6 +894,8 @@ export const ontologyMutationService = {
         { ...params, userId: actor.userId, username: actor.username },
       );
     } catch (err: any) {
+      const publicOff = publicEditDisabledError(err);
+      if (publicOff) throw publicOff;
       if (err?.status === 403 && err?.data?.requiresUpgrade) {
         const e = new Error('Your current plan is Free. Upgrade to Pro to edit ontologies.');
         (e as any).reason = 'requiresUpgrade';

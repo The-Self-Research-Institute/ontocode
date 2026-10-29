@@ -85,17 +85,12 @@ public class OntologyCrudController {
             ));
         }
 
-        // Enforce requireDraftForMembers: silently redirect public mutations to draft if the
-        // project owner has turned on draft-only mode and this user is not the owner.
         if (!draft && !desktopMode) {
             String userId = RequestActor.of(httpRequest, request.userId(), request.username()).userId();
-            if (metadataService.isRequireDraftForMembers(projectId)) {
-                String ownerEmail = metadataService.getOwnerEmail(projectId).orElse(null);
-                if (!userId.equals(ownerEmail)) {
-                    log.info("[MUTATION] requireDraftForMembers is on — redirecting public mutation to draft for user {} on project {}",
-                            userId, projectId);
-                    draft = true;
-                }
+            if (self.research.ontology.owlEditor.service.PublicEditGuard.blocks(metadataService, projectId, userId)) {
+                log.info("[MUTATION] public editing is off — rejecting public mutation from user {} on project {}",
+                        userId, projectId);
+                return self.research.ontology.owlEditor.service.PublicEditGuard.rejection();
             }
         }
 

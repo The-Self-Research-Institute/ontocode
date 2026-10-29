@@ -9,7 +9,9 @@ import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.OntologyMutationService.MutationOp;
+import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
+import self.research.ontology.owlEditor.service.PublicEditGuard;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,6 +37,7 @@ public class EntityRelationController {
     private final DraftTrackingService draftTrackingService;
     private final ProjectWriteLockRegistry lockRegistry;
     private final ExactChangeRecorder exactRecorder;
+    private final ProjectMetadataService metadataService;
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
@@ -42,11 +45,13 @@ public class EntityRelationController {
     public EntityRelationController(OntologyMutationService mutationService,
                                     DraftTrackingService draftTrackingService,
                                     ProjectWriteLockRegistry lockRegistry,
-                                    ExactChangeRecorder exactRecorder) {
+                                    ExactChangeRecorder exactRecorder,
+                                    ProjectMetadataService metadataService) {
         this.mutationService = mutationService;
         this.draftTrackingService = draftTrackingService;
         this.lockRegistry = lockRegistry;
         this.exactRecorder = exactRecorder;
+        this.metadataService = metadataService;
     }
 
     @PutMapping("/{projectId}/relation")
@@ -65,6 +70,11 @@ public class EntityRelationController {
                 return ResponseEntity.badRequest().body(Map.of("success", false, "message", "No operations generated for request"));
             }
             String userId = resolveUserId(req, httpRequest, draft);
+            if (!draft && !desktopMode && PublicEditGuard.blocks(metadataService, projectId, userId)) {
+                log.info("[RELATION] public editing is off — rejecting public edit from user {} on project {}",
+                        userId, projectId);
+                return PublicEditGuard.rejection();
+            }
             String username = req.username() != null ? req.username() : userId;
             String changeSetId = lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, draft,
                     userId, username, ops, () -> {

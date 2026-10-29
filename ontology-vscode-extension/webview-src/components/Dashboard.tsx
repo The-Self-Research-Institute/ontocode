@@ -1713,6 +1713,17 @@ const Dashboard: React.FC<DashboardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
   }, [projectId, pullPending.refresh]);
 
+  useEffect(() => {
+    if (!projectId) return;
+    ontologyMutationService.setPublicEditDisabledHandler(() => {
+      setRequireDraftForMembers(true);
+      setShowProPromptType('draftRequired');
+      const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
+      void loadDraftSettings(projectId, effectiveUserId);
+    });
+    return () => ontologyMutationService.setPublicEditDisabledHandler(null);
+  }, [projectId, user?.userId, user?.username, loadDraftSettings, setRequireDraftForMembers]);
+
   const refreshOpenPRCount = useCallback(async () => {
     if (!projectId) return;
     try {
