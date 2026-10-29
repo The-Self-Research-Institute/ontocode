@@ -135,6 +135,7 @@ import {
 import { useCollaboration } from "../contexts/CollaborationContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useSubscription } from "../hooks/useSubscription";
+import { useProjectDraftSettings } from "../hooks/useProjectDraftSettings";
 import EntityHierarchy from "./EntityHierarchy";
 import ClassEditor from "./details/ClassEditor";
 import PropertyEditor from "./details/PropertyEditor";
@@ -1520,8 +1521,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
   const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
   const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
-  const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
-  const [isProjectOwner, setIsProjectOwner] = useState(false);
+  const {
+    requireDraftForMembers,
+    isProjectOwner,
+    setRequireDraftForMembers,
+    loadDraftSettings,
+    resetDraftSettings,
+  } = useProjectDraftSettings(projectId);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
   const [showPRsModal, setShowPRsModal] = useState(false);
   const [pendingPRCount, setPendingPRCount] = useState(0);
@@ -4814,18 +4820,18 @@ const Dashboard: React.FC<DashboardProps> = ({
 
             if (currentProjectId && !isNonWorkspaceMode && !isShared) {
               const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
-              draftTrackingService.getDraftSettings(currentProjectId, effectiveUserId)
-                .then(({ requireDraftForMembers: rdm, isOwner }) => {
-                  setRequireDraftForMembers(rdm);
-                  setIsProjectOwner(isOwner);
-                  refreshOpenPRCount();
-                  if ((rdm || isProjectDraftEditorRoleRef.current) && !isOwner && !isProjectViewerRoleRef.current) {
-                    if (shouldApplyDirectly) {
-                      ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
-                    }
+              void loadDraftSettings(currentProjectId, effectiveUserId).then((settings) => {
+                if (!settings) return;
+                const { requireDraftForMembers: rdm, isOwner } = settings;
+                refreshOpenPRCount();
+                if ((rdm || isProjectDraftEditorRoleRef.current) && !isOwner && !isProjectViewerRoleRef.current) {
+                  if (shouldApplyDirectly) {
+                    ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
                   }
-                })
-                .catch(() => undefined);
+                }
+              });
+            } else {
+              resetDraftSettings();
             }
 
             if (isDesktop() && !isShared) {
