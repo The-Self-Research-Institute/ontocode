@@ -64,6 +64,64 @@ final class InferredAxiomPresenter {
         return new Presented(kept, new HashSet<>(conclusions), conclusions.size(), structure.size(), trivial, truncated);
     }
 
+    static Presented presentNew(Set<OWLAxiom> inferred, Set<OWLAxiom> existing, int limit) {
+        List<OWLAxiom> conclusions = new ArrayList<>();
+        List<OWLAxiom> structure = new ArrayList<>();
+        int trivial = 0;
+        for (OWLAxiom axiom : inferred) {
+            if (isTrivialSame(axiom) || isThingAssertion(axiom) || isTopOrBottomSubclass(axiom) || isSchemaNoise(axiom)) {
+                trivial++;
+            } else if (!existing.contains(axiom.getAxiomWithoutAnnotations())) {
+                (isAssertion(axiom) ? conclusions : structure).add(axiom);
+            }
+        }
+        Comparator<OWLAxiom> order = Comparator.comparing((OWLAxiom a) -> a.getAxiomType().getName()).thenComparing(Object::toString);
+        conclusions.sort(order);
+        structure.sort(order);
+        List<OWLAxiom> kept = new ArrayList<>(conclusions);
+        kept.addAll(structure);
+        boolean truncated = kept.size() > limit;
+        if (truncated) {
+            kept = new ArrayList<>(kept.subList(0, Math.max(limit, 0)));
+        }
+        return new Presented(kept, new HashSet<>(conclusions), conclusions.size(), structure.size(), trivial, truncated);
+    }
+
+    private static boolean isSchemaNoise(OWLAxiom axiom) {
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLDeclarationAxiom) {
+            return true;
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLNaryClassAxiom n) {
+            return n.getClassExpressions().size() < 2;
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLNaryPropertyAxiom<?> n) {
+            return n.getProperties().size() < 2;
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLSubObjectPropertyOfAxiom sub) {
+            return sub.getSubProperty().equals(sub.getSuperProperty());
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLSubDataPropertyOfAxiom sub) {
+            return sub.getSubProperty().equals(sub.getSuperProperty());
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLObjectPropertyDomainAxiom d) {
+            return d.getDomain().isOWLThing();
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLObjectPropertyRangeAxiom r) {
+            return r.getRange().isOWLThing();
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLDataPropertyDomainAxiom d) {
+            return d.getDomain().isOWLThing();
+        }
+        return false;
+    }
+
+    private static boolean isTopOrBottomSubclass(OWLAxiom axiom) {
+        return axiom instanceof org.semanticweb.owlapi.model.OWLSubClassOfAxiom sub
+                && !sub.getSubClass().isAnonymous() && !sub.getSuperClass().isAnonymous()
+                && (sub.getSuperClass().isOWLThing() || sub.getSubClass().isOWLNothing()
+                || sub.getSubClass().equals(sub.getSuperClass()));
+    }
+
     private static boolean isAssertion(OWLAxiom axiom) {
         if (axiom instanceof OWLClassAssertionAxiom a) {
             return a.getIndividual().isNamed() && !a.getClassExpression().isAnonymous() && !placeholder(a.getIndividual().toString());

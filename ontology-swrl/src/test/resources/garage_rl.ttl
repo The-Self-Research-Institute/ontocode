@@ -1,0 +1,29 @@
+@prefix : <http://example.org/garage#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://example.org/garage> a owl:Ontology .
+
+:Vehicle a owl:Class .
+:Car a owl:Class ; rdfs:subClassOf :Vehicle .
+:Hatchback a owl:Class ; rdfs:subClassOf :Car .
+:Driver a owl:Class .
+:City a owl:Class .
+
+:drives a owl:ObjectProperty ; rdfs:domain :Driver ; rdfs:range :Vehicle .
+:drivenBy a owl:ObjectProperty ; owl:inverseOf :drives .
+:livesIn a owl:ObjectProperty .
+:ownedBy a owl:ObjectProperty .
+:registeredIn a owl:ObjectProperty ;
+    owl:propertyChainAxiom ( :ownedBy :livesIn ) .
+:partOf a owl:ObjectProperty, owl:TransitiveProperty .
+:servesAs a owl:ObjectProperty, owl:SymmetricProperty .
+
+:ann a owl:NamedIndividual ; :drives :bolt ; :livesIn :oslo .
+:bolt a owl:NamedIndividual, :Hatchback ; :ownedBy :ann .
+:oslo a owl:NamedIndividual, :City .
+:wheel a owl:NamedIndividual ; :partOf :axle .
+:axle a owl:NamedIndividual ; :partOf :bolt .
+:bolt :servesAs :taxi .

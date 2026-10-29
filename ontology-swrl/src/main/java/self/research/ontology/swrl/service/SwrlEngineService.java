@@ -46,6 +46,12 @@ public class SwrlEngineService {
     @Value("${swrl.max-inferred-axioms:1000}")
     private int maxInferredAxioms;
 
+    @Value("${swrl.owl2rl.max-axioms:5000}")
+    private int owl2rlMaxAxioms = 5000;
+
+    @Value("${swrl.owl2rl.max-ontology-axioms:8000}")
+    private int owl2rlMaxOntologyAxioms = 8000;
+
     @Value("${swrl.execution-timeout-seconds:30}")
     private int executionTimeoutSeconds;
 
@@ -953,6 +959,72 @@ public class SwrlEngineService {
                 engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
             }
         }
+    }
+
+    public record Owl2RlResult(boolean success, String completion, String errorMessage, long executionTimeMs,
+                               int derivedCount, boolean truncated, int maxAxioms, int omittedTrivialCount,
+                               Map<String, Integer> typeCounts, List<InferredAxiom> axioms,
+                               self.research.ontology.common.preview.PreviewStamp stamp, List<String> unsupportedRules) {
+    }
+
+    private static Owl2RlResult owl2rlFailure(String completion, String message, int maxAxioms) {
+        return new Owl2RlResult(false, completion, message, 0, 0, false, maxAxioms, 0, Map.of(), List.of(), null, List.of());
+    }
+
+    public Owl2RlResult deriveOwl2Rl(String projectId, String draftUserId) {
+        long startTime = System.currentTimeMillis();
+        int cap = Math.max(1, owl2rlMaxAxioms);
+        try {
+            return admitted(() -> runOwl2Rl(projectId, draftUserId, startTime, cap));
+        } catch (TimeoutException e) {
+            long totalDuration = System.currentTimeMillis() - startTime;
+            logger.error("OWL 2 RL run timed out for project: {} after {}ms", projectId, totalDuration);
+            perfLog.info("[PERF] SWRL_OWL2RL project={} status=timeout duration={}ms", projectId, totalDuration);
+            return owl2rlFailure("timeout", "Execution timed out after " + taskBudgetSeconds() + " seconds", cap);
+        } catch (SwrlBusyException e) {
+            throw e;
+        } catch (OntologyTooLargeException e) {
+            return owl2rlFailure("failed", e.getMessage(), cap);
+        } catch (Exception e) {
+            logger.error("OWL 2 RL run failed for project {}", projectId, e);
+            return owl2rlFailure("failed", "Execution error: " + RuleMessages.explain(e.getMessage()), cap);
+        }
+    }
+
+    private Owl2RlResult runOwl2Rl(String projectId, String draftUserId, long startTime, int cap) throws Exception {
+        OntologyClientService.FetchedOntology fetched = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId);
+        OWLOntology ontology = fetched.ontology();
+        OntologyRules.removeAll(ontology);
+        if (owl2rlMaxOntologyAxioms > 0 && ontology.getAxiomCount() > owl2rlMaxOntologyAxioms) {
+            throw new OntologyTooLargeException(owl2rlMaxOntologyAxioms);
+        }
+        Set<OWLAxiom> existing = new HashSet<>();
+        for (OWLAxiom axiom : ontology.getAxioms(org.semanticweb.owlapi.model.parameters.Imports.INCLUDED)) {
+            existing.add(axiom.getAxiomWithoutAnnotations());
+        }
+        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        List<String> unsupported = engine.getOWL2RLEngine().getUnsupportedRules().stream()
+                .map(rule -> rule.name().toLowerCase(Locale.ROOT).replace('_', '-')).sorted().collect(Collectors.toList());
+        Set<OWLAxiom> derived = runInference(engine, projectId);
+        InferredAxiomPresenter.Presented presented = InferredAxiomPresenter.presentNew(derived, existing, Integer.MAX_VALUE);
+        Map<String, Integer> typeCounts = new TreeMap<>();
+        List<OWLAxiom> all = presented.ordered();
+        boolean truncated = all.size() > cap;
+        List<OWLAxiom> kept = truncated ? all.subList(0, cap) : all;
+        List<InferredAxiom> formatted = categorized(new InferredAxiomPresenter.Presented(kept, presented.conclusions(),
+                presented.conclusionCount(), presented.structureCount(), presented.omittedTrivial(), truncated));
+        int total = presented.conclusionCount() + presented.structureCount();
+        long executionTime = System.currentTimeMillis() - startTime;
+        for (OWLAxiom axiom : all) {
+            typeCounts.merge(axiom.getAxiomType().getName(), 1, Integer::sum);
+        }
+        perfLog.info("[PERF] SWRL_OWL2RL project={} derived={} returned={} duration={}ms status=success",
+                projectId, total, formatted.size(), executionTime);
+        return new Owl2RlResult(true, "completed", null, executionTime, total, truncated, cap,
+                presented.omittedTrivial(), typeCounts, formatted,
+                new self.research.ontology.common.preview.PreviewStamp(
+                        draftUserId == null ? fetched.ontologyRevision() : null,
+                        draftUserId != null ? fetched.draftVersion() : null, null), unsupported);
     }
 
     private Set<OWLAxiom> runInference(SWRLRuleEngine engine, String projectId) {

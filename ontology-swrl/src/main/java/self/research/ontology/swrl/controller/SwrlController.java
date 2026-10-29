@@ -45,6 +45,12 @@ public class SwrlController {
     @org.springframework.beans.factory.annotation.Value("${ontocode.capacity.swrl-execute.sqwrl-max-page-bytes:8388608}")
     private long sqwrlMaxPageBytes = 8L * 1024 * 1024;
 
+    @org.springframework.beans.factory.annotation.Value("${swrl.owl2rl.page-size:100}")
+    private int owl2rlPageSize = 100;
+
+    @org.springframework.beans.factory.annotation.Value("${swrl.owl2rl.max-page-size:500}")
+    private int owl2rlMaxPageSize = 500;
+
     @org.springframework.beans.factory.annotation.Value("${ontocode.internal.token:ontocode-internal}")
     private String internalToken;
 
@@ -705,6 +711,136 @@ public class SwrlController {
         body.put("filteredRows", page.filteredRows());
         body.put("storedRows", entry.rows().size());
         body.put("pageBytesCapped", page.pageBytesCapped());
+        return ResponseEntity.ok(body);
+    }
+
+    private static final List<String> OWL2RL_COLUMNS = List.of("axiomType", "category", "readable", "description",
+            "subjectIri", "predicateIri", "objectIri", "objectLiteral", "literalDatatypeIri", "literalLangTag");
+
+    private int clampOwl2RlPageSize(Integer requested) {
+        int max = Math.max(1, owl2rlMaxPageSize);
+        int size = requested != null && requested > 0 ? requested : owl2rlPageSize;
+        return Math.min(Math.max(1, size), max);
+    }
+
+    private static Map<String, String> owl2RlRow(InferredAxiom axiom) {
+        Map<String, String> row = new java.util.LinkedHashMap<>();
+        row.put("axiomType", axiom.getAxiomType());
+        row.put("category", axiom.getCategory());
+        row.put("readable", axiom.getReadable());
+        row.put("description", axiom.getDescription());
+        row.put("subjectIri", axiom.getSubjectIri());
+        row.put("predicateIri", axiom.getPredicateIri());
+        row.put("objectIri", axiom.getObjectIri());
+        row.put("objectLiteral", axiom.getObjectLiteral());
+        row.put("literalDatatypeIri", axiom.getLiteralDatatypeIri());
+        row.put("literalLangTag", axiom.getLiteralLangTag());
+        return row;
+    }
+
+    private Map<String, Object> owl2RlPage(self.research.ontology.swrl.service.SqwrlResultStore.Entry entry, int page,
+                                           int pageSize, String type, String filter) {
+        List<Map<String, String>> rows = entry.rows();
+        if (type != null && !type.isBlank()) {
+            rows = rows.stream().filter(row -> type.equals(row.get("axiomType"))).toList();
+        }
+        self.research.ontology.swrl.service.SqwrlResultStore.Entry view = new self.research.ontology.swrl.service.SqwrlResultStore.Entry(
+            entry.id(), entry.projectId(), entry.ownerId(), entry.createdAt(), entry.columns(), rows, entry.estimatedBytes(), entry.meta());
+        int safePage = Math.max(0, page);
+        long offset = (long) safePage * pageSize;
+        self.research.ontology.swrl.service.SqwrlPager.Page slice = self.research.ontology.swrl.service.SqwrlPager.page(
+            view, filter, null, false, (int) Math.min(offset, Integer.MAX_VALUE), pageSize, sqwrlMaxPageBytes);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("page", safePage);
+        body.put("pageSize", pageSize);
+        body.put("filteredCount", slice.filteredRows());
+        body.put("totalPages", (slice.filteredRows() + pageSize - 1) / pageSize);
+        body.put("pageBytesCapped", slice.pageBytesCapped());
+        body.put("axioms", slice.rows());
+        return body;
+    }
+
+    @PostMapping("/{projectId}/owl2rl")
+    public ResponseEntity<?> deriveOwl2Rl(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId,
+            @RequestParam(required = false) Integer pageSize,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String filter) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to run on a private draft"));
+        }
+        try {
+            SwrlEngineService.Owl2RlResult result = swrlEngineService.deriveOwl2Rl(projectId, draft ? userId : null);
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("success", result.success());
+            body.put("completion", result.completion());
+            body.put("errorMessage", result.errorMessage());
+            body.put("executionTimeMs", result.executionTimeMs());
+            body.put("derivedCount", result.derivedCount());
+            body.put("returnedCount", result.axioms().size());
+            body.put("truncated", result.truncated());
+            body.put("maxAxioms", result.maxAxioms());
+            body.put("omittedTrivialCount", result.omittedTrivialCount());
+            body.put("typeCounts", result.typeCounts());
+            body.put("stamp", result.stamp());
+            body.put("unsupportedRules", result.unsupportedRules());
+            if (!result.success()) {
+                body.put("runId", null);
+                body.put("page", 0);
+                body.put("pageSize", clampOwl2RlPageSize(pageSize));
+                body.put("filteredCount", 0);
+                body.put("totalPages", 0);
+                body.put("pageBytesCapped", false);
+                body.put("axioms", List.of());
+                return ResponseEntity.ok(body);
+            }
+            List<Map<String, String>> rows = result.axioms().stream().map(SwrlController::owl2RlRow).toList();
+            self.research.ontology.swrl.service.SqwrlResultStore.Meta meta = new self.research.ontology.swrl.service.SqwrlResultStore.Meta(
+                "owl2rl", "", result.executionTimeMs(), result.derivedCount(), !result.truncated(), result.truncated(),
+                result.maxAxioms(), false);
+            java.util.Optional<self.research.ontology.swrl.service.SqwrlResultStore.Entry> stored = sqwrlResults.put(
+                projectId, self.research.ontology.swrl.service.OwnerContext.current(), OWL2RL_COLUMNS, rows, meta);
+            int size = clampOwl2RlPageSize(pageSize);
+            self.research.ontology.swrl.service.SqwrlResultStore.Entry entry = stored.orElseGet(() ->
+                new self.research.ontology.swrl.service.SqwrlResultStore.Entry(null, projectId, "", Instant.now(),
+                    OWL2RL_COLUMNS, rows, 0, meta));
+            body.put("runId", stored.map(self.research.ontology.swrl.service.SqwrlResultStore.Entry::id).orElse(null));
+            body.putAll(owl2RlPage(entry, 0, size, type, filter));
+            return ResponseEntity.ok(body);
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
+        } catch (Exception e) {
+            logger.error("Failed to derive OWL 2 RL axioms for project: {}", projectId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(createErrorResponse("Execution failed: " + e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{projectId}/owl2rl/runs/{runId}")
+    public ResponseEntity<?> owl2RlRun(
+            @PathVariable String projectId,
+            @PathVariable String runId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(required = false) Integer pageSize,
+            @RequestParam(required = false) String type,
+            @RequestParam(required = false) String filter) {
+        java.util.Optional<self.research.ontology.swrl.service.SqwrlResultStore.Entry> found =
+            sqwrlResults.find(runId, projectId, self.research.ontology.swrl.service.OwnerContext.current());
+        if (found.isEmpty() || !"owl2rl".equals(found.get().meta().queryName())) {
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("expired", true);
+            body.put("message", "This result has expired. Run it again.");
+            return ResponseEntity.status(HttpStatus.GONE).body(body);
+        }
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("runId", runId);
+        body.put("derivedCount", found.get().meta().totalRows());
+        body.put("returnedCount", found.get().rows().size());
+        body.put("truncated", found.get().meta().truncated());
+        body.put("maxAxioms", found.get().meta().rowLimit());
+        body.putAll(owl2RlPage(found.get(), page, clampOwl2RlPageSize(pageSize), type, filter));
         return ResponseEntity.ok(body);
     }
 
