@@ -213,7 +213,17 @@ public class SwrlEngineService {
         String missing = RuleMessages.unknownName(exceptionMessage);
         if (missing == null) return null;
         List<String> suggestions = new ArrayList<>();
-        List<String> close = RuleMessages.closestNames(missing, RuleMessages.namesIn(ontology), 3);
+        int colon = missing.indexOf(':');
+        if (colon > 0 && BuiltInCatalog.isLibraryPrefix(missing.substring(0, colon))) {
+            String prefix = missing.substring(0, colon);
+            List<String> similar = RuleMessages.closestNames(missing.substring(colon + 1), BuiltInCatalog.namesIn(prefix), 3);
+            if (!similar.isEmpty()) {
+                suggestions.add("Did you mean: " + similar.stream().map(name -> prefix + ":" + name).collect(Collectors.joining(", ")) + "?");
+            }
+            suggestions.add("The Built-ins tab lists every function the rule engine supports.");
+            return new ValidationResult(false, "Unknown function '" + missing + "'", suggestions);
+        }
+        List<String> close =RuleMessages.closestNames(missing, RuleMessages.namesIn(ontology), 3);
         if (!close.isEmpty()) {
             suggestions.add("Did you mean: " + String.join(", ", close) + "?");
         }
@@ -907,6 +917,7 @@ public class SwrlEngineService {
     private static final int MAX_RULE_RETRIES = 3;
     private static final java.util.regex.Pattern FAILING_RULE_INVOKE = java.util.regex.Pattern.compile("invoker\\.invoke\\(\"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final java.util.regex.Pattern FAILING_RULE_IN = java.util.regex.Pattern.compile("in rule ([^:]+?):");
+    private static final java.util.regex.Pattern FAILING_RULE_CONSEQUENCE = java.util.regex.Pattern.compile("Exception executing consequence for rule \"((?:[^\"\\\\]|\\\\.)*)\"");
 
     private record Inferred(Set<OWLAxiom> axioms, List<OntologyRules.Entry> ran, List<SkippedRule> failed) {
     }
@@ -922,7 +933,7 @@ public class SwrlEngineService {
     }
 
     private static OntologyRules.Entry failingRule(String message, List<OntologyRules.Entry> candidates) {
-        for (java.util.regex.Pattern pattern : List.of(FAILING_RULE_INVOKE, FAILING_RULE_IN)) {
+        for (java.util.regex.Pattern pattern : List.of(FAILING_RULE_INVOKE, FAILING_RULE_CONSEQUENCE, FAILING_RULE_IN)) {
             java.util.regex.Matcher matcher = pattern.matcher(message);
             while (matcher.find()) {
                 String name = matcher.group(1).replace("\\\"", "\"");
@@ -1467,12 +1478,12 @@ public class SwrlEngineService {
         } catch (org.swrlapi.parser.SWRLParseException e) {
             logger.error("SQWRL parse error: {}", e.getMessage());
             return new SqwrlQueryResult(false, queryName, queryText, 0, null, null, 
-                "Query syntax error: " + e.getMessage());
+                "Query syntax error: " + RuleMessages.explain(e.getMessage()));
                 
         } catch (org.swrlapi.sqwrl.exceptions.SQWRLException e) {
             logger.error("SQWRL execution error: {}", e.getMessage());
             return new SqwrlQueryResult(false, queryName, queryText, 0, null, null, 
-                "Query execution error: " + e.getMessage());
+                "Query execution error: " + RuleMessages.explain(e.getMessage()));
                 
         } catch (SwrlBusyException e) {
             throw e;
@@ -1492,6 +1503,9 @@ public class SwrlEngineService {
         OWLOntology ontology = ontologyClient.fetchOntology(projectId);
         ensureNamespacePrefixes(projectId, ontology);
         OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
+        if (PlainLiteralNormalizer.needsDoubleNumbers(queryText)) {
+            PlainLiteralNormalizer.numbersAsDouble(ontology);
+        }
         org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
 
         logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);

@@ -17,12 +17,20 @@ import org.semanticweb.owlapi.model.SWRLRule;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
 
 import java.util.ArrayList;
+import java.util.regex.Pattern;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
 final class PlainLiteralNormalizer {
+
+    private static final Pattern DOUBLE_ONLY_AGGREGATE = Pattern.compile("sqwrl:(sum|avg|median)\\s*\\(");
+    private static final Set<OWL2Datatype> EXACT_NUMBERS = Set.of(OWL2Datatype.XSD_INTEGER, OWL2Datatype.XSD_INT,
+            OWL2Datatype.XSD_LONG, OWL2Datatype.XSD_SHORT, OWL2Datatype.XSD_BYTE, OWL2Datatype.XSD_DECIMAL,
+            OWL2Datatype.XSD_FLOAT, OWL2Datatype.XSD_NON_NEGATIVE_INTEGER, OWL2Datatype.XSD_POSITIVE_INTEGER,
+            OWL2Datatype.XSD_NON_POSITIVE_INTEGER, OWL2Datatype.XSD_NEGATIVE_INTEGER, OWL2Datatype.XSD_UNSIGNED_INT,
+            OWL2Datatype.XSD_UNSIGNED_LONG, OWL2Datatype.XSD_UNSIGNED_SHORT, OWL2Datatype.XSD_UNSIGNED_BYTE);
 
     private PlainLiteralNormalizer() {
     }
@@ -64,6 +72,35 @@ final class PlainLiteralNormalizer {
             }
         }
         return changed;
+    }
+
+    static boolean needsDoubleNumbers(String queryText) {
+        return queryText != null && DOUBLE_ONLY_AGGREGATE.matcher(queryText).find();
+    }
+
+    static int numbersAsDouble(OWLOntology ontology) {
+        OWLOntologyManager manager = ontology.getOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        Set<OWLAxiom> stale = new HashSet<>();
+        Set<OWLAxiom> converted = new HashSet<>();
+        for (OWLDataPropertyAssertionAxiom axiom : ontology.getAxioms(AxiomType.DATA_PROPERTY_ASSERTION)) {
+            OWLLiteral literal = axiom.getObject();
+            if (!literal.getDatatype().isBuiltIn() || !EXACT_NUMBERS.contains(literal.getDatatype().getBuiltInDatatype())) {
+                continue;
+            }
+            try {
+                double value = Double.parseDouble(literal.getLiteral().trim());
+                stale.add(axiom);
+                converted.add(df.getOWLDataPropertyAssertionAxiom(axiom.getProperty(), axiom.getSubject(),
+                        df.getOWLLiteral(value), axiom.getAnnotations()));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        if (!stale.isEmpty()) {
+            manager.removeAxioms(ontology, stale);
+            manager.addAxioms(ontology, converted);
+        }
+        return stale.size();
     }
 
     private static Set<SWRLAtom> retype(OWLDataFactory df, Set<SWRLAtom> atoms) {

@@ -398,7 +398,7 @@ public class DesktopHierarchyService {
             ont.subClassAxiomsForSubClass(current).forEach(ax -> {
                 OWLClassExpression superCe = ax.getSuperClass();
                 if (superCe.isAnonymous()) {
-                    addAnonymousAncestor(ont, current, superCe, seenAncestorKeys, anonymousAncestorAxioms);
+                    addAnonymousAncestor(ont, current, superCe, seenAncestorKeys, anonymousAncestorAxioms, false);
                 } else if (!superCe.isOWLThing() && !superCe.isOWLNothing()) {
                     OWLClass superNamed = superCe.asOWLClass();
                     if (isAncestor && !superNamed.equals(cls)) {
@@ -413,7 +413,7 @@ public class DesktopHierarchyService {
                 ont.equivalentClassesAxioms(current)
                         .flatMap(ax -> ax.classExpressions())
                         .filter(OWLClassExpression::isAnonymous)
-                        .forEach(ce -> addAnonymousAncestor(ont, current, ce, seenAncestorKeys, anonymousAncestorAxioms));
+                        .forEach(ce -> addAnonymousAncestor(ont, current, ce, seenAncestorKeys, anonymousAncestorAxioms, true));
             }
         }
         details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
@@ -767,7 +767,7 @@ public class DesktopHierarchyService {
     }
 
     private void addAnonymousAncestor(OWLOntology ont, OWLClass ancestor, OWLClassExpression superCe,
-                                      Set<String> seenKeys, List<Map<String, String>> out) {
+                                      Set<String> seenKeys, List<Map<String, String>> out, boolean fromDefinition) {
         String superKey = superCe.toString();
         if (!seenKeys.add(ancestor.getIRI() + "|" + superKey)) {
             return;
@@ -777,6 +777,9 @@ public class DesktopHierarchyService {
         entry.put("type", "SubClassOf");
         entry.put("ancestorIri", ancestor.getIRI().toString());
         entry.put("navigable", "false");
+        if (fromDefinition) {
+            entry.put("fromDefinition", "true");
+        }
         String manchester = classExpressionToManchester(ont, superCe);
         entry.put("manchester", manchester);
         entry.put("definition", manchester);

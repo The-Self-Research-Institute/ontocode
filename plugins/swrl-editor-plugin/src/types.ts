@@ -86,6 +86,8 @@ export interface BuiltInInfo {
   description: string;
   signature: string;
   example?: string;
+  status?: 'ok' | 'caution' | 'unavailable';
+  note?: string;
 }
 
 export interface InferredAxiom {

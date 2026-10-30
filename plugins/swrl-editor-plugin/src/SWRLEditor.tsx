@@ -12,10 +12,11 @@ import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
 import { rt, btn } from './resultsTheme';
 import { ControlPanel } from './ControlPanel';
+import { SWRL_BUILTINS, SWRL_BUILTINS_QUICK, BUILT_IN_PREFIXES } from './builtinCatalog';
 import { AssertedAxiomsPanel, Owl2RlPanel } from './AxiomPanels';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
-import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
+import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, InferredAxiom, AxiomsPageResponse } from './types';
 import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle } from './ruleModel';
 import type { AxiomKind } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
@@ -106,128 +107,6 @@ const RULE_TEMPLATES = [
   },
 ];
 
-const SWRL_BUILTINS_QUICK = [
-  { category: 'Compare', items: ['swrlb:equal', 'swrlb:notEqual', 'swrlb:lessThan', 'swrlb:greaterThan', 'swrlb:lessThanOrEqual', 'swrlb:greaterThanOrEqual'] },
-  { category: 'Math', items: ['swrlb:add', 'swrlb:subtract', 'swrlb:multiply', 'swrlb:divide', 'swrlb:abs', 'swrlb:round'] },
-  { category: 'String', items: ['swrlb:stringConcat', 'swrlb:contains', 'swrlb:startsWith', 'swrlb:endsWith', 'swrlb:matches'] },
-];
-
-const SWRL_BUILTINS: BuiltInCategory[] = [
-  {
-    prefix: 'swrlb',
-    name: 'Core Comparisons',
-    description: 'Standard SWRL built-in predicates for comparisons',
-    builtIns: [
-      { name: 'equal', fullName: 'swrlb:equal', description: 'True if arguments are equal', signature: 'swrlb:equal(?x, ?y)', example: 'swrlb:equal(?age, 18)' },
-      { name: 'notEqual', fullName: 'swrlb:notEqual', description: 'True if arguments are not equal', signature: 'swrlb:notEqual(?x, ?y)', example: 'swrlb:notEqual(?x, ?y)' },
-      { name: 'lessThan', fullName: 'swrlb:lessThan', description: 'True if first arg < second arg', signature: 'swrlb:lessThan(?x, ?y)', example: 'swrlb:lessThan(?age, 18)' },
-      { name: 'lessThanOrEqual', fullName: 'swrlb:lessThanOrEqual', description: 'True if first arg <= second arg', signature: 'swrlb:lessThanOrEqual(?x, ?y)', example: 'swrlb:lessThanOrEqual(?score, 100)' },
-      { name: 'greaterThan', fullName: 'swrlb:greaterThan', description: 'True if first arg > second arg', signature: 'swrlb:greaterThan(?x, ?y)', example: 'swrlb:greaterThan(?age, 18)' },
-      { name: 'greaterThanOrEqual', fullName: 'swrlb:greaterThanOrEqual', description: 'True if first arg >= second arg', signature: 'swrlb:greaterThanOrEqual(?x, ?y)', example: 'swrlb:greaterThanOrEqual(?score, 50)' },
-    ]
-  },
-  {
-    prefix: 'swrlb',
-    name: 'Math Operations',
-    description: 'Standard arithmetic operations',
-    builtIns: [
-      { name: 'add', fullName: 'swrlb:add', description: 'Binds first arg to sum of remaining args', signature: 'swrlb:add(?result, ?x, ?y)', example: 'swrlb:add(?total, ?a, ?b)' },
-      { name: 'subtract', fullName: 'swrlb:subtract', description: 'Binds first arg to difference', signature: 'swrlb:subtract(?result, ?x, ?y)', example: 'swrlb:subtract(?diff, ?x, ?y)' },
-      { name: 'multiply', fullName: 'swrlb:multiply', description: 'Binds first arg to product', signature: 'swrlb:multiply(?result, ?x, ?y)', example: 'swrlb:multiply(?product, ?a, ?b)' },
-      { name: 'divide', fullName: 'swrlb:divide', description: 'Binds first arg to quotient', signature: 'swrlb:divide(?result, ?x, ?y)', example: 'swrlb:divide(?ratio, ?x, ?y)' },
-      { name: 'mod', fullName: 'swrlb:mod', description: 'Binds first arg to remainder', signature: 'swrlb:mod(?result, ?x, ?y)', example: 'swrlb:mod(?rem, ?x, 2)' },
-      { name: 'pow', fullName: 'swrlb:pow', description: 'Binds first arg to x^y', signature: 'swrlb:pow(?result, ?x, ?y)', example: 'swrlb:pow(?square, ?x, 2)' },
-      { name: 'abs', fullName: 'swrlb:abs', description: 'Binds first arg to absolute value', signature: 'swrlb:abs(?result, ?x)', example: 'swrlb:abs(?pos, ?val)' },
-      { name: 'ceiling', fullName: 'swrlb:ceiling', description: 'Rounds up to nearest integer', signature: 'swrlb:ceiling(?result, ?x)', example: 'swrlb:ceiling(?ceil, ?val)' },
-      { name: 'floor', fullName: 'swrlb:floor', description: 'Rounds down to nearest integer', signature: 'swrlb:floor(?result, ?x)', example: 'swrlb:floor(?floor, ?val)' },
-      { name: 'round', fullName: 'swrlb:round', description: 'Rounds to nearest integer', signature: 'swrlb:round(?result, ?x)', example: 'swrlb:round(?rounded, ?val)' },
-    ]
-  },
-  {
-    prefix: 'swrlb',
-    name: 'String Operations',
-    description: 'String manipulation and matching',
-    builtIns: [
-      { name: 'stringConcat', fullName: 'swrlb:stringConcat', description: 'Concatenates strings', signature: 'swrlb:stringConcat(?result, ?s1, ?s2)', example: 'swrlb:stringConcat(?full, ?first, ?last)' },
-      { name: 'stringLength', fullName: 'swrlb:stringLength', description: 'Returns string length', signature: 'swrlb:stringLength(?result, ?s)', example: 'swrlb:stringLength(?len, ?name)' },
-      { name: 'substring', fullName: 'swrlb:substring', description: 'Extracts substring', signature: 'swrlb:substring(?result, ?s, ?start, ?len)', example: 'swrlb:substring(?sub, ?s, 0, 3)' },
-      { name: 'contains', fullName: 'swrlb:contains', description: 'True if string contains substring', signature: 'swrlb:contains(?s, ?sub)', example: 'swrlb:contains(?name, "John")' },
-      { name: 'containsIgnoreCase', fullName: 'swrlb:containsIgnoreCase', description: 'True if string contains substring (case-insensitive)', signature: 'swrlb:containsIgnoreCase(?s, ?sub)', example: 'swrlb:containsIgnoreCase(?name, "john")' },
-      { name: 'startsWith', fullName: 'swrlb:startsWith', description: 'True if string starts with prefix', signature: 'swrlb:startsWith(?s, ?prefix)', example: 'swrlb:startsWith(?name, "Dr.")' },
-      { name: 'endsWith', fullName: 'swrlb:endsWith', description: 'True if string ends with suffix', signature: 'swrlb:endsWith(?s, ?suffix)', example: 'swrlb:endsWith(?email, ".edu")' },
-      { name: 'upperCase', fullName: 'swrlb:upperCase', description: 'Converts to uppercase', signature: 'swrlb:upperCase(?result, ?s)', example: 'swrlb:upperCase(?upper, ?name)' },
-      { name: 'lowerCase', fullName: 'swrlb:lowerCase', description: 'Converts to lowercase', signature: 'swrlb:lowerCase(?result, ?s)', example: 'swrlb:lowerCase(?lower, ?name)' },
-      { name: 'matches', fullName: 'swrlb:matches', description: 'True if string matches regex', signature: 'swrlb:matches(?s, ?pattern)', example: 'swrlb:matches(?email, ".*@.*\\\\.com")' },
-      { name: 'replace', fullName: 'swrlb:replace', description: 'Replaces pattern in string', signature: 'swrlb:replace(?result, ?s, ?pattern, ?replacement)', example: 'swrlb:replace(?clean, ?s, " ", "_")' },
-    ]
-  },
-  {
-    prefix: 'swrlb',
-    name: 'Date & Time',
-    description: 'Temporal operations',
-    builtIns: [
-      { name: 'date', fullName: 'swrlb:date', description: 'Creates xsd:date', signature: 'swrlb:date(?result, ?y, ?m, ?d, ?tz)', example: 'swrlb:date(?d, 2024, 1, 15, "")' },
-      { name: 'time', fullName: 'swrlb:time', description: 'Creates xsd:time', signature: 'swrlb:time(?result, ?h, ?m, ?s, ?tz)', example: 'swrlb:time(?t, 14, 30, 0, "")' },
-      { name: 'dateTime', fullName: 'swrlb:dateTime', description: 'Creates xsd:dateTime', signature: 'swrlb:dateTime(?result, ?y, ?m, ?d, ?h, ?min, ?s, ?tz)', example: 'swrlb:dateTime(?dt, 2024, 1, 15, 14, 30, 0, "")' },
-      { name: 'yearMonthDuration', fullName: 'swrlb:yearMonthDuration', description: 'Creates duration (years/months)', signature: 'swrlb:yearMonthDuration(?result, ?y, ?m)', example: 'swrlb:yearMonthDuration(?dur, 1, 6)' },
-      { name: 'dayTimeDuration', fullName: 'swrlb:dayTimeDuration', description: 'Creates duration (days/time)', signature: 'swrlb:dayTimeDuration(?result, ?d, ?h, ?m, ?s)', example: 'swrlb:dayTimeDuration(?dur, 2, 12, 0, 0)' },
-    ]
-  },
-  {
-    prefix: 'swrlm',
-    name: 'Advanced Math',
-    description: 'Extended mathematical operations (Trig, Log, Exp)',
-    builtIns: [
-      { name: 'sqrt', fullName: 'swrlm:sqrt', description: 'Square root', signature: 'swrlm:sqrt(?result, ?x)', example: 'swrlm:sqrt(?root, ?val)' },
-      { name: 'log', fullName: 'swrlm:log', description: 'Natural logarithm', signature: 'swrlm:log(?result, ?x)', example: 'swrlm:log(?ln, ?val)' },
-      { name: 'log10', fullName: 'swrlm:log10', description: 'Base-10 logarithm', signature: 'swrlm:log10(?result, ?x)', example: 'swrlm:log10(?log, ?val)' },
-      { name: 'exp', fullName: 'swrlm:exp', description: 'Exponential function (e^x)', signature: 'swrlm:exp(?result, ?x)', example: 'swrlm:exp(?e, ?val)' },
-      { name: 'sin', fullName: 'swrlm:sin', description: 'Sine function (radians)', signature: 'swrlm:sin(?result, ?x)', example: 'swrlm:sin(?s, ?angle)' },
-      { name: 'cos', fullName: 'swrlm:cos', description: 'Cosine function (radians)', signature: 'swrlm:cos(?result, ?x)', example: 'swrlm:cos(?c, ?angle)' },
-      { name: 'tan', fullName: 'swrlm:tan', description: 'Tangent function (radians)', signature: 'swrlm:tan(?result, ?x)', example: 'swrlm:tan(?t, ?angle)' },
-      { name: 'asin', fullName: 'swrlm:asin', description: 'Arc sine', signature: 'swrlm:asin(?result, ?x)', example: 'swrlm:asin(?angle, ?val)' },
-      { name: 'acos', fullName: 'swrlm:acos', description: 'Arc cosine', signature: 'swrlm:acos(?result, ?x)', example: 'swrlm:acos(?angle, ?val)' },
-      { name: 'atan', fullName: 'swrlm:atan', description: 'Arc tangent', signature: 'swrlm:atan(?result, ?x)', example: 'swrlm:atan(?angle, ?val)' },
-      { name: 'toDegrees', fullName: 'swrlm:toDegrees', description: 'Convert radians to degrees', signature: 'swrlm:toDegrees(?result, ?rad)', example: 'swrlm:toDegrees(?deg, ?rad)' },
-      { name: 'toRadians', fullName: 'swrlm:toRadians', description: 'Convert degrees to radians', signature: 'swrlm:toRadians(?result, ?deg)', example: 'swrlm:toRadians(?rad, ?deg)' },
-      { name: 'eval', fullName: 'swrlm:eval', description: 'Evaluates math expression', signature: 'swrlm:eval(?result, "expr", ?vars...)', example: 'swrlm:eval(?r, "x^2 + y", ?x, ?y)' },
-    ]
-  },
-  {
-    prefix: 'temporal',
-    name: 'Temporal Intervals',
-    description: 'Allen temporal interval relations',
-    builtIns: [
-      { name: 'equals', fullName: 'temporal:equals', description: 'Intervals are equal', signature: 'temporal:equals(?i1, ?i2)', example: 'temporal:equals(?period1, ?period2)' },
-      { name: 'before', fullName: 'temporal:before', description: 'First interval before second', signature: 'temporal:before(?i1, ?i2)', example: 'temporal:before(?start, ?end)' },
-      { name: 'after', fullName: 'temporal:after', description: 'First interval after second', signature: 'temporal:after(?i1, ?i2)', example: 'temporal:after(?end, ?start)' },
-      { name: 'meets', fullName: 'temporal:meets', description: 'First interval meets second', signature: 'temporal:meets(?i1, ?i2)', example: 'temporal:meets(?phase1, ?phase2)' },
-      { name: 'overlaps', fullName: 'temporal:overlaps', description: 'Intervals overlap', signature: 'temporal:overlaps(?i1, ?i2)', example: 'temporal:overlaps(?event1, ?event2)' },
-      { name: 'contains', fullName: 'temporal:contains', description: 'First contains second', signature: 'temporal:contains(?i1, ?i2)', example: 'temporal:contains(?parent, ?child)' },
-      { name: 'during', fullName: 'temporal:during', description: 'First during second', signature: 'temporal:during(?i1, ?i2)', example: 'temporal:during(?meeting, ?workday)' },
-      { name: 'starts', fullName: 'temporal:starts', description: 'First starts second', signature: 'temporal:starts(?i1, ?i2)', example: 'temporal:starts(?intro, ?presentation)' },
-      { name: 'finishes', fullName: 'temporal:finishes', description: 'First finishes second', signature: 'temporal:finishes(?i1, ?i2)', example: 'temporal:finishes(?outro, ?presentation)' },
-    ]
-  },
-  {
-    prefix: 'sqwrl',
-    name: 'SQWRL Query',
-    description: 'Query result selection and aggregation',
-    builtIns: [
-      { name: 'select', fullName: 'sqwrl:select', description: 'Select variables for output', signature: 'sqwrl:select(?vars...)', example: 'sqwrl:select(?person, ?age)' },
-      { name: 'selectDistinct', fullName: 'sqwrl:selectDistinct', description: 'Select distinct values', signature: 'sqwrl:selectDistinct(?vars...)', example: 'sqwrl:selectDistinct(?class)' },
-      { name: 'count', fullName: 'sqwrl:count', description: 'Count matching results', signature: 'sqwrl:count(?var)', example: 'sqwrl:count(?person)' },
-      { name: 'min', fullName: 'sqwrl:min', description: 'Minimum value', signature: 'sqwrl:min(?var)', example: 'sqwrl:min(?age)' },
-      { name: 'max', fullName: 'sqwrl:max', description: 'Maximum value', signature: 'sqwrl:max(?var)', example: 'sqwrl:max(?salary)' },
-      { name: 'sum', fullName: 'sqwrl:sum', description: 'Sum of values', signature: 'sqwrl:sum(?var)', example: 'sqwrl:sum(?amount)' },
-      { name: 'avg', fullName: 'sqwrl:avg', description: 'Average of values', signature: 'sqwrl:avg(?var)', example: 'sqwrl:avg(?score)' },
-      { name: 'orderBy', fullName: 'sqwrl:orderBy', description: 'Order results', signature: 'sqwrl:orderBy(?var)', example: 'sqwrl:orderBy(?name)' },
-      { name: 'orderByDescending', fullName: 'sqwrl:orderByDescending', description: 'Order results descending', signature: 'sqwrl:orderByDescending(?var)', example: 'sqwrl:orderByDescending(?age)' },
-      { name: 'limit', fullName: 'sqwrl:limit', description: 'Limit number of results', signature: 'sqwrl:limit(?n)', example: 'sqwrl:limit(10)' },
-    ]
-  }
-];
-
 const extractLocalName = (uri: string): string => {
   if (!uri) return uri;
   const cleanUri = uri.replace(/^<|>$/g, '');
@@ -244,7 +123,6 @@ type OntologySchemaNames = {
   dataProperties: Set<string>;
 };
 
-const BUILT_IN_PREFIXES = new Set(['swrlb', 'swrlm', 'sqwrl', 'temporal']);
 const isBuiltinPredicate = (predicate: string) => {
   const prefix = predicate.includes(':') ? predicate.split(':')[0] : '';
   return BUILT_IN_PREFIXES.has(prefix);
@@ -342,11 +220,13 @@ interface RuleListItemProps {
   onDelete: () => void;
   onMakeLocalCopy: () => void;
   isCopying: boolean;
+  busyAction?: 'delete' | 'toggle' | 'copy' | null;
 }
 
 const RuleListItem: React.FC<RuleListItemProps> = ({ 
-  rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete, onMakeLocalCopy, isCopying
+  rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete, onMakeLocalCopy, isCopying, busyAction = null
 }) => {
+  const busy = busyAction !== null;
   const imported = isImportedRule(rule);
   const { title, tooltip } = ruleTitle(rule);
   return (
@@ -386,7 +266,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
           <div className="text-[11px] text-gray-600 truncate" title={sourceLabel(rule)}>{sourceLabel(rule)}</div>
           <button
             onClick={onMakeLocalCopy}
-            disabled={isCopying}
+            disabled={isCopying || busy}
             className="mt-0.5 text-xs text-purple-700 hover:underline disabled:opacity-50"
           >
             {isCopying ? 'Copying...' : 'Make a local copy'}
@@ -400,6 +280,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
       <button
         onClick={onToggleEnabled}
+        disabled={busy}
         className={`p-1.5 rounded-md transition-colors ${
           rule.enabled 
             ? 'bg-green-100 text-green-600 hover:bg-green-200' 
@@ -407,14 +288,15 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
         }`}
         title={rule.enabled ? 'Enabled - Click to disable' : 'Disabled - Click to enable'}
       >
-        {rule.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+        {busyAction === 'toggle' ? <Loader2 size={14} className="animate-spin" /> : rule.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
       </button>
       <button
         onClick={onDelete}
-        className="p-1.5 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50 opacity-60 group-hover:opacity-100 transition-all"
+        disabled={busy}
+        className="p-1.5 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50 opacity-60 group-hover:opacity-100 disabled:opacity-60 disabled:hover:bg-transparent transition-all flex items-center gap-1 text-xs"
         title="Delete rule"
       >
-        <Trash2 size={14} />
+        {busyAction === 'delete' ? <><Loader2 size={14} className="animate-spin" /> Deleting…</> : <Trash2 size={14} />}
       </button>
     </div>
     )}
@@ -722,13 +604,13 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
   const queryExamples = [
     { label: 'All Persons with Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)' },
     { label: 'Adults (age > 18)', query: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> sqwrl:select(?p, ?age) ^ sqwrl:orderBy(?age)' },
-    { label: 'Count Persons', query: 'Person(?p) -> sqwrl:select(?p) ^ sqwrl:count(?p)' },
-    { label: 'Average Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p) ^ sqwrl:avg(?age)' },
+    { label: 'Count Persons', query: 'Person(?p) -> sqwrl:count(?p)' },
+    { label: 'Average Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:avg(?age)' },
     { label: 'Min/Max Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:min(?age) ^ sqwrl:max(?age)' },
   ];
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="flex flex-col h-full min-h-0 bg-gray-50">
       <div className="p-4 border-b border-gray-300 flex justify-between items-center">
         <h3 className="text-lg font-semibold text-gray-800">SQWRL Query</h3>
         <select 
@@ -742,7 +624,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
           ))}
         </select>
       </div>
-      <div className="p-4 flex-grow flex flex-col gap-4">
+      <div className="p-4 flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
         <textarea 
           className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-black placeholder-gray-500"
           value={query} 
@@ -753,7 +635,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
           {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} Execute Query
         </button>
         
-        <div className="flex-grow overflow-auto border-2 border-gray-300 rounded-lg bg-white">
+        <div className="flex-1 min-h-0 overflow-auto border-2 border-gray-300 rounded-lg bg-white" style={{ minHeight: '18rem' }}>
           {!results ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-500 p-4">
               <HelpCircle size={32} className="mb-2 opacity-50" />
@@ -860,7 +742,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
               {!expired && filteredCount === 0 && (runId ? serverPage !== null : true) && (
                 <div className="p-4 text-sm text-center" style={rt.muted}>No rows match the filter.</div>
               )}
-              <div className="p-2 flex flex-wrap items-center gap-2 text-xs" style={rt.panelHeader}>
+              <div className="p-2 flex flex-wrap items-center gap-2 text-xs sticky bottom-0" style={rt.panelHeader}>
                 <span data-testid="sqwrl-showing">{showingText(filteredCount, storedRows, safePage, pageSize)}</span>
                 <span className="ml-auto flex items-center gap-1">
                   <button onClick={() => setPage(0)} disabled={safePage === 0} className="px-2 py-1 rounded" style={btn(safePage === 0)} aria-label="First page">First</button>
@@ -1199,7 +1081,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
   const [showInferredAxioms, setShowInferredAxioms] = useState(true);
   const [viewMode, setViewMode] = useState<'grouped' | 'table' | 'raw'>('grouped');
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [searchFilter, setSearchFilter] = useState('');
   const [showWarning, setShowWarning] = useState(false);
   const [scopeChoice, setScopeChoice] = useState<'conclusions' | 'structure' | 'all' | null>(null);
@@ -1281,25 +1163,20 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     setSelectedMap(prev => toggleSelection(prev, ax));
   };
 
+  useEffect(() => {
+    setCollapsedGroups(new Set());
+  }, [results]);
+
   const toggleGroup = (type: string) => {
-    const newExpanded = new Set(expandedGroups);
-    if (newExpanded.has(type)) {
-      newExpanded.delete(type);
-    } else {
-      newExpanded.add(type);
-    }
-    setExpandedGroups(newExpanded);
-  };
-
-  const expandAll = () => {
-    if (results) {
-      const allTypes = new Set(results.inferredAxioms.map(ax => formatInferredAxiom(ax).type));
-      setExpandedGroups(allTypes);
-    }
-  };
-
-  const collapseAll = () => {
-    setExpandedGroups(new Set());
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
   };
 
   if (!results && isExecuting) return (
@@ -1347,6 +1224,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const pagerNext = nextOffset(offset, pageTotal);
 
   const groupedAxioms = groupAxiomsByType(filteredAxioms);
+  const expandAll = () => setCollapsedGroups(new Set());
+  const collapseAll = () => setCollapsedGroups(new Set(groupedAxioms.keys()));
   
   const classAssertions = results.inferredAxioms.filter(ax => {
     const parsed = formatInferredAxiom(ax);
@@ -1554,10 +1433,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                 </div>
                 {viewMode === 'grouped' && (
                   <div className="flex gap-1">
-                    <button onClick={expandAll} className="px-2 py-1 text-xs rounded" style={rt.button} title="Expand all">
+                    <button onClick={expandAll} disabled={groupedAxioms.size === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Expand all" aria-label="Expand all">
                       <Maximize2 size={14} />
                     </button>
-                    <button onClick={collapseAll} className="px-2 py-1 text-xs rounded" style={rt.button} title="Collapse all">
+                    <button onClick={collapseAll} disabled={groupedAxioms.size === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Collapse all" aria-label="Collapse all">
                       <Minimize2 size={14} />
                     </button>
                   </div>
@@ -1688,11 +1567,12 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             <div className="max-h-[70vh] overflow-y-auto">
               {Array.from(groupedAxioms.entries()).map(([type, items]) => {
                 const style = getAxiomTypeStyle(type);
-                const isExpanded = expandedGroups.has(type);
+                const isExpanded = !collapsedGroups.has(type);
                 return (
                   <div key={type} style={rt.rowBorder}>
                     <button
                       onClick={() => toggleGroup(type)}
+                      aria-expanded={isExpanded}
                       className="w-full p-4 flex items-center justify-between transition-colors" style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)' }}
                     >
                       <div className="flex items-center gap-3">
@@ -1888,6 +1768,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const [isExecuting, setIsExecuting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
   const saveInFlightRef = useRef(false);
   const runInFlightRef = useRef(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
@@ -1900,6 +1781,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const cloneInFlightRef = useRef(false);
   const [isCloning, setIsCloning] = useState(false);
+  const [busyRules, setBusyRules] = useState<Record<string, 'delete' | 'toggle' | 'copy'>>({});
+  const busyRulesRef = useRef<Set<string>>(new Set());
   const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query' | 'control' | 'asserted' | 'owl2rl'>('editor');
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
@@ -2048,25 +1931,25 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         
         generated.push({
           name: `Count ${cls}`,
-          template: `${cls}(?x) -> sqwrl:select(?x) ^ sqwrl:count(?x)`,
+          template: `${cls}(?x) -> sqwrl:count(?x)`,
           description: `Count total number of ${cls} instances`
         });
         
         generated.push({
           name: `${cls} Min ${prop}`,
-          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:min(?val)`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:min(?val)`,
           description: `Find minimum ${prop} value in ${cls}`
         });
         
         generated.push({
           name: `${cls} Max ${prop}`,
-          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:max(?val)`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:max(?val)`,
           description: `Find maximum ${prop} value in ${cls}`
         });
         
         generated.push({
           name: `${cls} Avg ${prop}`,
-          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?x) ^ sqwrl:avg(?val)`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:avg(?val)`,
           description: `Calculate average ${prop} for all ${cls}`
         });
       }
@@ -2266,8 +2149,26 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     }
   };
 
+  const startRuleBusy = (id: string, action: 'delete' | 'toggle' | 'copy') => {
+    if (busyRulesRef.current.has(id)) return false;
+    busyRulesRef.current.add(id);
+    setBusyRules(prev => ({ ...prev, [id]: action }));
+    return true;
+  };
+
+  const endRuleBusy = (id: string) => {
+    busyRulesRef.current.delete(id);
+    setBusyRules(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
   const handleMakeLocalCopy = async (rule: SwrlRule) => {
+    if (!startRuleBusy(rule.id, 'copy')) return;
     setCopyingId(rule.id);
+    setRowError(null);
     setSaveError(null);
     try {
       const body = localCopyBody({ ...rule, comment: rule.comment ?? '' }, rules.map(r => r.ruleName));
@@ -2281,8 +2182,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       announceRuleChange('ruleAdded');
     } catch (e: any) {
       console.error('Copy failed:', e);
-      setSaveError(friendlyRuleError(e, 'Could not make a local copy of this rule.'));
+      setRowError(friendlyRuleError(e, 'Could not make a local copy of this rule.'));
     } finally {
+      endRuleBusy(rule.id);
       setCopyingId(null);
     }
   };
@@ -2312,30 +2214,40 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   };
 
   const handleDelete = async () => {
-    if (!confirmDialog.ruleId) return;
+    const ruleId = confirmDialog.ruleId;
+    if (!ruleId) return;
+    setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' });
+    if (!startRuleBusy(ruleId, 'delete')) return;
+    setRowError(null);
     try {
-      await apiClient.delete(withDraft(`/api/ontology/${projectId}/rules/${confirmDialog.ruleId}`, draftMode));
+      try {
+        await apiClient.delete(withDraft(`/api/ontology/${projectId}/rules/${ruleId}`, draftMode));
+      } catch (e: any) {
+        if (e?.status !== 404) throw e;
+      }
       rulesVersionRef.current++;
-      setRules(rules.filter(r => r.id !== confirmDialog.ruleId));
-      if (selectedRule?.id === confirmDialog.ruleId) {
+      setRules(prev => prev.filter(r => r.id !== ruleId));
+      if (selectedRule?.id === ruleId) {
         setSelectedRule(null);
         setEditForm({ ruleName: '', ruleText: '', comment: '', category: '', enabled: true });
       }
       setSelectedRuleIds(prev => {
         const next = new Set(prev);
-        next.delete(confirmDialog.ruleId);
+        next.delete(ruleId);
         return next;
       });
       announceRuleChange('ruleDeleted');
     } catch (e: any) {
       console.error('Delete failed:', e);
-      setSaveError(friendlyRuleError(e, 'Could not delete the rule.'));
+      setRowError(friendlyRuleError(e, 'Could not delete the rule.'));
     } finally {
-      setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' });
+      endRuleBusy(ruleId);
     }
   };
 
   const handleToggleEnabled = async (rule: SwrlRule) => {
+    if (!startRuleBusy(rule.id, 'toggle')) return;
+    setRowError(null);
     try {
       const res = ruleFromResponse<SwrlRule>(await apiClient.put<unknown>(
         withDraft(`/api/ontology/${projectId}/rules/${rule.id}`, draftMode),
@@ -2345,7 +2257,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         )
       ));
       rulesVersionRef.current++;
-      setRules(rules.map(r => r.id === rule.id ? res : r));
+      setRules(prev => prev.map(r => r.id === rule.id ? res : r));
       if (selectedRule?.id === rule.id) {
         setSelectedRule(res);
         setEditForm(prev => ({ ...prev, enabled: res.enabled }));
@@ -2353,7 +2265,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       announceRuleChange('ruleToggled');
     } catch (e: any) {
       console.error('Toggle failed:', e);
-      setSaveError(friendlyRuleError(e, 'Could not change this rule.'));
+      setRowError(friendlyRuleError(e, 'Could not change this rule.'));
+    } finally {
+      endRuleBusy(rule.id);
     }
   };
 
@@ -2728,6 +2642,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
+                {rowError && (
+                  <div className="px-3 py-2 flex items-start gap-2 text-xs bg-red-50 text-red-700" role="alert">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                    {rowError}
+                  </div>
+                )}
                 {filteredRules.map(rule => (
                   <RuleListItem
                     key={rule.id}
@@ -2740,6 +2660,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                     onDelete={() => setConfirmDialog({ isOpen: true, ruleName: rule.ruleName, ruleId: rule.id })}
                     onMakeLocalCopy={() => handleMakeLocalCopy(rule)}
                     isCopying={copyingId === rule.id}
+                    busyAction={busyRules[rule.id] ?? null}
                   />
                 ))}
               </div>
@@ -3153,7 +3074,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
           ) : (
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="text-sm text-gray-600 mb-4">
-                <p>SWRL built-in predicates. Click a built-in to insert it into your rule.</p>
+                <p>Functions you can use in rules and queries. Click one to insert it into your rule. Functions marked "Not available" are listed so you know they exist, but the rule engine cannot run them.</p>
               </div>
               {SWRL_BUILTINS.map(category => (
                 <div key={category.name} className="border border-gray-200 rounded-lg overflow-hidden">
@@ -3173,7 +3094,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         <div
                           key={builtin.name}
                           onClick={() => {
-                            if (isEditing) {
+                            if (isEditing && builtin.status !== 'unavailable') {
                               setEditForm(prev => ({
                                 ...prev,
                                 ruleText: prev.ruleText + (prev.ruleText ? ' ^ ' : '') + builtin.signature
@@ -3181,13 +3102,15 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                               setActivePanel('editor');
                             }
                           }}
-                          className={`p-3 hover:bg-purple-50 transition-colors ${isEditing ? 'cursor-pointer' : 'cursor-default'}`}
+                          className={`p-3 transition-colors ${builtin.status === 'unavailable' ? 'opacity-60 cursor-not-allowed' : `hover:bg-purple-50 ${isEditing ? 'cursor-pointer' : 'cursor-default'}`}`}
+                          data-testid={`builtin-${builtin.fullName}`}
                         >
                           <div className="flex items-center justify-between mb-1">
                             <code className="text-sm font-mono bg-purple-100 text-purple-800 px-2 py-0.5 rounded border border-purple-200">{builtin.fullName}</code>
-                            {isEditing && <span className="text-xs text-gray-400">Click to insert</span>}
+                            {builtin.status === 'unavailable' ? <span className="text-xs text-red-600">Not available</span> : builtin.status === 'caution' ? <span className="text-xs text-amber-600">Works with limits</span> : isEditing && <span className="text-xs text-gray-400">Click to insert</span>}
                           </div>
                           <p className="text-xs text-gray-600 mb-1">{builtin.description}</p>
+                          {builtin.note && <p className="text-xs text-amber-700 mb-1">{builtin.note}</p>}
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{builtin.signature}</span>
                             {builtin.example && (

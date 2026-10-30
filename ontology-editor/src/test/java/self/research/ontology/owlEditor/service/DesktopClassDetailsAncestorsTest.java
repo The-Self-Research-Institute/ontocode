@@ -74,4 +74,11 @@ class DesktopClassDetailsAncestorsTest {
     void doesNotListTheClassOwnDirectParentOnItsOwn() throws Exception {
         assertTrue(ancestors().stream().noneMatch(e -> e.get("ancestorIri").endsWith("#Leaf") && "true".equals(e.get("navigable"))));
     }
+
+    @Test
+    void marksEntriesThatCameFromAnEquivalentClassDefinition() throws Exception {
+        List<Map<String, String>> list = ancestors();
+        assertTrue(list.stream().anyMatch(e -> e.get("ancestorIri").endsWith("#Great") && "true".equals(e.get("fromDefinition"))), list.toString());
+        assertTrue(list.stream().filter(e -> e.get("ancestorIri").endsWith("#Grand")).noneMatch(e -> e.containsKey("fromDefinition")), list.toString());
+    }
 }

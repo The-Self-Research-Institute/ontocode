@@ -16,6 +16,7 @@ import { useCollaboration } from '../../contexts/CollaborationContext';
 import type { TreeNode, Axiom, ClassUsage, AxiomUsage, Individual, SelectableItem } from '../../types';
 import { dispatchCollaborationNavigate } from '../../utils/collaborationNavigation';
 import { readerUserId } from '../../utils/mutationActor';
+import { buildLabelLookup, describeInheritance, type AncestorEntry } from '../../utils/ancestorInheritance';
 import { normalizeReasonerType } from '../dashboard-parts/dashboardUtils';
 import { cachedUnsatisfiable } from '../../services/reasonerSnapshotScope';
 
@@ -2326,6 +2327,35 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 onViewOnlyAction={onViewOnlyAction}
                 projectId={projectId}
                 parentEntityIri={item.id}
+                renderRowFooter={(axiom) => {
+                  const labelFor = buildLabelLookup(classDetails?.subClassOfAxioms, classDetails?.anonymousAncestorAxioms);
+                  const info = describeInheritance(axiom as unknown as AncestorEntry, item.id, classDetails?.label || item.label, labelFor);
+                  if (!info) return null;
+                  return (
+                    <div
+                      className="px-3 pb-1.5 text-[11px]"
+                      style={{ color: 'var(--text-tertiary)' }}
+                      data-testid="ancestor-origin"
+                    >
+                      {info.kind === 'asserted' ? (
+                        <span>Stated on this class</span>
+                      ) : (
+                        <span>
+                          {info.fromDefinition ? 'From the definition of ' : 'Inherited from '}
+                          <button
+                            type="button"
+                            className="underline"
+                            style={{ color: 'var(--accent)' }}
+                            onClick={() => info.fromIri && handleNavigate(info.fromIri, 'class')}
+                          >
+                            {info.fromLabel}
+                          </button>
+                          {info.note ? <span className="block">{info.note}</span> : null}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }}
               />
 
               <div className="relative">
