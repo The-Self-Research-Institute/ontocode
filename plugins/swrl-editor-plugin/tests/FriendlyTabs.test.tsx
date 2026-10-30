@@ -25,9 +25,11 @@ let root: Root;
 
 const text = () => container.textContent || '';
 
+const RUN_ALL = /^Run rules$|^Running…$/;
+
 function button(label: RegExp | string) {
   const found = Array.from(container.querySelectorAll('button')).find(b =>
-    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test(b.textContent || '')
+    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test((b.textContent || '').trim())
   );
   if (!found) throw new Error('button not found: ' + label);
   return found as HTMLButtonElement;
@@ -74,7 +76,7 @@ describe('friendly axiom rows', () => {
       items: [{ axiomType: 'ClassAssertion', readable: 'ann is a Patient', description: 'ClassAssertion(<http://example.org/clinic#Patient> <http://example.org/clinic#ann>)' }],
     });
     await render(<AssertedAxiomsPanel projectId="p1" draftMode={false} />);
-    expect(text()).toContain('Asserted axioms are the statements typed into the ontology.');
+    expect(text()).toContain('Existing facts are the statements already in the ontology.');
     const sentence = Array.from(container.querySelectorAll('li span')).find(e => e.textContent === 'ann is a Patient') as HTMLElement;
     expect(sentence.getAttribute('title')).toContain('<http://example.org/clinic#ann>');
     expect(container.querySelector('[data-testid="axiom-details"]')).toBeNull();
@@ -147,7 +149,7 @@ describe('rule titles and run time', () => {
   });
 });
 
-describe('Control tab rules list and last run', () => {
+describe('the rule checklist on the Run and results screen', () => {
   const RULES = [
     { id: 'a', ruleName: 'Senior', ruleText: 'Patient(?p) -> Senior(?p)', enabled: true },
     { id: 'b', ruleName: 'Old rule', ruleText: 'Patient(?p) -> Child(?p)', enabled: false },
@@ -159,47 +161,75 @@ describe('Control tab rules list and last run', () => {
   async function open() {
     api.get.mockResolvedValue({ rules: RULES });
     await render(<SWRLEditor projectId="p1" />);
-    await click(button('Control'));
+    await click(button(/^Run and results/));
+    await click(button('Choose which rules'));
   }
 
   const rowOf = (id: string) => container.querySelector(`[data-testid="control-rule-${id}"]`) as HTMLElement;
   const box = (id: string) => rowOf(id).querySelector('input') as HTMLInputElement;
 
-  it('lists every rule with state badges, a readable title for unnamed rules, and counts in the buttons', async () => {
+  it('lists every rule with markers only for the unusual states and a readable title for unnamed rules', async () => {
     await open();
     expect(container.querySelectorAll('li[data-testid^="control-rule-"]').length).toBe(4);
-    expect(rowOf('a').textContent).toContain('Enabled');
+    expect(rowOf('a').textContent).not.toContain('Enabled');
+    expect(rowOf('a').textContent).toContain('Patient(?p) -> Senior(?p)');
     expect(rowOf('b').textContent).toContain('Disabled');
     expect(rowOf('c').textContent).toContain('SQWRL query');
     expect(rowOf('d').textContent).toContain('Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThan(?a, 65)');
     expect(rowOf('d').textContent).not.toContain('Rule 12fc4201');
     expect((rowOf('d').querySelector('label') as HTMLElement).title).toContain('Rule 12fc4201');
-    expect(button(/Run rules/).textContent).toContain('(3)');
-    expect(button(/Run rules/).disabled).toBe(true);
-    expect(button(/Run selected/).textContent).toContain('(0)');
-    expect(button(/Run selected/).disabled).toBe(true);
-    expect(text()).toContain('Tick rules below to run only those.');
+    expect(container.querySelector('[data-testid="control-scope-line"]')?.textContent).toBe('2 rules will run(all enabled rules)');
+    expect(container.querySelector('[data-testid="control-rule-search"]')).toBeNull();
   });
 
-  it('keeps ticks in sync with the left list and the header button, and blocks disabled and query rows', async () => {
+  it('shows a search box only for more than 8 rules and filters by name', async () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({ id: `m${i}`, ruleName: `Rule number ${i}`, ruleText: `Patient(?p) -> C${i}(?p)`, enabled: true }));
+    api.get.mockResolvedValue({ rules: many });
+    await render(<SWRLEditor projectId="p1" />);
+    await click(button(/^Run and results/));
+    await click(button('Choose which rules'));
+    const search = container.querySelector('[data-testid="control-rule-search"]') as HTMLInputElement;
+    expect(search).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(search, 'number 3');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(container.querySelectorAll('li[data-testid^="control-rule-"]').length).toBe(1);
+  });
+
+  it('shows the empty state with a button to the Rules tab', async () => {
+    api.get.mockResolvedValue({ rules: [] });
+    await render(<SWRLEditor projectId="p1" />);
+    await click(button(/^Run and results/));
+    expect(text()).toContain('No rules yet. Create one on the Rules tab, or import an Excel file.');
+    expect(container.querySelector('[data-testid="control-run"]')).toBeNull();
+    await click(button('Go to the Rules tab'));
+    expect(container.querySelector('[data-testid="control-panel"]')).toBeNull();
+  });
+
+  it('keeps ticks in the checklist, updates the counter and the button, and blocks disabled and query rows', async () => {
     await open();
     expect(box('b').disabled).toBe(true);
     expect(box('c').disabled).toBe(true);
     await click(box('a'));
     expect(box('a').checked).toBe(true);
-    expect(button(/Run selected/).textContent).toContain('(1)');
-    expect(button(/Run 1 Selected/)).toBeTruthy();
-    await click(button('Select all enabled'));
-    expect(button(/Run selected/).textContent).toContain('(2)');
+    expect(button('Run 1 selected rule').disabled).toBe(false);
+    expect(text()).toContain('1 of 2 selected');
+    await click(button('Select all'));
+    expect(button('Run 2 selected rules')).toBeTruthy();
     expect(box('b').checked).toBe(false);
     await click(button('Select none'));
-    expect(button(/Run selected/).textContent).toContain('(0)');
-    const leftBox = container.querySelector('aside input[type="checkbox"]') as HTMLInputElement;
-    await click(leftBox);
-    expect(button(/Run selected/).textContent).toContain('(1)');
+    expect(button('Run rules')).toBeTruthy();
   });
 
-  it('says what ran, splits the counts, agrees with the Results badge, and explains each rule after a run', async () => {
+  it('has no rule ticks in the Rules tab list', async () => {
+    api.get.mockResolvedValue({ rules: RULES });
+    await render(<SWRLEditor projectId="p1" />);
+    expect(container.querySelectorAll('aside input[type="checkbox"]').length).toBe(0);
+  });
+
+  it('says what ran once in the results, marks rules that ran or were skipped, and lists the skipped reasons', async () => {
     api.post.mockResolvedValue({
       ...base, executionMode: 'all', executedRuleNames: ['Senior', 'Rule 12fc4201'], inferredAxiomsCount: 5,
       conclusionCount: 3, structureCount: 2, rounds: 2, engineVersions: { reasoner: '1.0' },
@@ -209,23 +239,23 @@ describe('Control tab rules list and last run', () => {
       ],
     });
     await open();
-    await click(button('Load ontology and rules'));
-    await click(button(/Run rules \(/));
+    await click(button('Run rules'));
     const summary = container.querySelector('[data-testid="control-summary"]') as HTMLElement;
-    expect(summary.textContent).toContain('Ran all enabled rules just now');
-    expect(summary.textContent).toContain('5 inferred facts: 3 facts about individuals, 2 class relationships');
-    expect(summary.textContent).toContain('Completed with warnings: 2 rules were skipped.');
-    expect(summary.textContent).toContain('2 rounds');
-    expect(summary.textContent).toContain('reasoner 1.0');
-    expect(summary.textContent).toContain('Old rule: This rule is disabled');
-    expect(summary.textContent).toContain('Count them: This is a SQWRL query. It is not run as a rule');
+    expect(summary.textContent).toContain('Completed with warnings');
+    expect(summary.textContent).toContain('in 9 ms, from 2 rules, just now');
+    expect(summary.textContent).toContain('From your rules (3)');
+    expect(summary.textContent).toContain('Standard reasoning (2)');
+    expect(summary.textContent).toContain('2 rules were skipped.');
     const badge = Array.from(container.querySelectorAll('span')).find(e => /^5$/.test(e.textContent || '') && (e.className || '').includes('rounded-full'));
     expect(badge).toBeTruthy();
     expect(rowOf('a').textContent).toContain('Ran');
-    expect(rowOf('b').textContent).toContain('Skipped: This rule is disabled');
-    expect(rowOf('c').textContent).toContain('Skipped: This is a SQWRL query');
+    expect(rowOf('b').textContent).toContain('Disabled');
+    expect(rowOf('c').textContent).toContain('SQWRL query');
     const toggle = summary.querySelector('[data-testid="control-skipped"] button') as HTMLElement;
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    await click(toggle);
+    expect(summary.textContent).toContain('Old rule: This rule is disabled');
+    expect(summary.textContent).toContain('Count them: This is a SQWRL query. It is not run as a rule');
     await click(toggle);
     expect(summary.textContent).not.toContain('Old rule: This rule is disabled');
   });
@@ -237,26 +267,21 @@ describe('Control tab rules list and last run', () => {
     });
     await open();
     await click(box('a'));
-    await click(button(/Run selected/));
+    await click(button('Run 1 selected rule'));
     expect(api.post.mock.calls[0][0]).toContain('/api/swrl/p1/execute/selected');
     const summary = container.querySelector('[data-testid="control-summary"]') as HTMLElement;
-    expect(summary.textContent).toContain('Ran 1 selected rule just now');
-    expect(rowOf('d').textContent).toContain('Could not run: bad atom');
-  });
-
-  it('sends one request for a double click', async () => {
-    const gate = deferred();
-    api.post.mockReturnValue(gate.promise);
-    await open();
-    await click(button('Load ontology and rules'));
-    await act(async () => {
-      const b = button(/Run rules \(/);
-      b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(api.post).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      gate.resolve({ ...base, executionMode: 'all' });
-    });
+    expect(summary.textContent).toContain('in 9 ms, from 1 rule, just now');
+    expect(rowOf('d').textContent).toContain('Could not run');
+    await click(summary.querySelector('[data-testid="control-skipped"] button') as HTMLElement);
+    expect(summary.textContent).toContain('Could not run: bad atom');
   });
 });
+
+async function goMore(label: RegExp) {
+  await click(button('More'));
+  await click(button(label));
+}
+
+async function showAll() {
+  await click(container.querySelector('[data-testid="facts-show-all"]') as HTMLElement);
+}

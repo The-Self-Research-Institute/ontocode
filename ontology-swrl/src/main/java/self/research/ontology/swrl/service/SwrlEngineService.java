@@ -1813,7 +1813,7 @@ public class SwrlEngineService {
             notes.add("asserted fact");
         } else if (present) {
             status = "origin_only";
-            notes.add("Produced by OWL reasoning or a rule this explanation cannot evaluate");
+            notes.add("None of your rules produced this fact. It comes from the standard reasoning the engine always applies, for example \"a Customer is also a Person because Customer is a kind of Person\". It is not an error.");
         } else {
             status = "not_found";
             notes.add("This is not an asserted fact and the engine does not derive it, so there is nothing to explain");

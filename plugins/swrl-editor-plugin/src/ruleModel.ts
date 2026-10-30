@@ -888,9 +888,9 @@ export const OWL2RL_UNSUPPORTED_NOTE = 'This engine does not apply some standard
 
 export const OWL2RL_CATEGORY_LABELS = { conclusion: 'Facts about individuals', structure: 'Class relationships' } as const;
 
-export const ASSERTED_NOTE = 'Asserted axioms are the statements typed into the ontology.';
+export const ASSERTED_NOTE = 'Existing facts are the statements already in the ontology.';
 
-export const INFERRED_NOTE = 'Inferred axioms are worked out by the rules and are not saved in the ontology until you add them.';
+export const INFERRED_NOTE = 'New facts are worked out by the rules and are not saved in the ontology until you add them.';
 
 const UNSUPPORTED_RULE_NAMES: Record<string, string> = {
   'prp-spo2': 'property chains',
@@ -1081,39 +1081,24 @@ export function loadLogLines(summary: TransferSummary): string[] {
   const skipped = skippedInfo({ skippedRules: summary.skippedRules });
   return [
     'Ontology and rules checked successfully.',
-    countLine(summary.rulesExported, 'Number of rules that will be sent to the rule engine'),
-    countLine(summary.classDeclarations, 'Number of classes that will be sent'),
-    countLine(summary.individualDeclarations, 'Number of individuals that will be sent'),
     countLine(summary.objectPropertyDeclarations, 'Number of object properties that will be sent'),
     countLine(summary.dataPropertyDeclarations, 'Number of data properties that will be sent'),
-    countLine(summary.totalAxioms, 'Total number of axioms that will be sent'),
     ...skippedLogLines(skipped),
     `The check took ${formatCount(summary.elapsedMs)} millisecond(s).`,
     LOAD_STEP_NOTE,
-    'Press the Run rules button to run the rules.',
+    'Press the Run button to run the rules.',
   ];
-}
-
-function inferredLogLine(run: RunLike): string {
-  const split = inferredSplit(run);
-  const head = `Number of inferred facts: ${formatCount(inferredTotal(run))}`;
-  return split ? `${head} (${formatCount(split.facts)} about individuals, ${formatCount(split.relationships)} class relationships)` : head;
 }
 
 export function runLogLines(run: RunLike & { executionTimeMs?: number; errorMessage?: string | null }): string[] {
   if (!run.success) {
     return [`The rules could not be run: ${run.errorMessage || 'unknown problem'}`];
   }
-  const ran = run.executedRuleNames?.length ?? run.totalRulesExecuted ?? 0;
   return [
     'Rules ran successfully.',
-    `Number of rules run: ${formatCount(ran)}`,
     ...skippedLogLines(skippedInfo(run)),
-    inferredLogLine(run),
     `The run took ${formatCount(run.executionTimeMs ?? 0)} millisecond(s).`,
-    'Look at the Inferred Axioms tab to see the inferred facts.',
-    'Press the Add inferred facts to ontology button to save them in the ontology.',
-  ];
+      ];
 }
 
 export interface FactOp {

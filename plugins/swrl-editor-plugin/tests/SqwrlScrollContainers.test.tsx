@@ -41,7 +41,11 @@ describe('SQWRL Query tab scrolling', () => {
     await act(async () => {
       root.render(<SWRLEditor projectId="p1" />);
     });
-    const tab = Array.from(container.querySelectorAll('button')).find(b => (b.textContent || '').trim() === 'SQWRL Query') as HTMLButtonElement;
+    const more = container.querySelector('[data-testid="more-menu"]') as HTMLElement;
+    await act(async () => {
+      more.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const tab = container.querySelector('[data-testid="more-menu-query"]') as HTMLElement;
     await act(async () => {
       tab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });

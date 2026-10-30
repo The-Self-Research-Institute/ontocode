@@ -36,9 +36,11 @@ let root: Root;
 
 const text = () => container.textContent || '';
 
+const RUN_ALL = /^Run rules$|^Running…$/;
+
 function button(label: RegExp | string) {
   const found = Array.from(container.querySelectorAll('button')).find(b =>
-    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test(b.textContent || '')
+    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test((b.textContent || '').trim())
   );
   if (!found) throw new Error('button not found: ' + label);
   return found as HTMLButtonElement;
@@ -170,10 +172,9 @@ function expandedStates() {
 async function runAndOpenResults(response: unknown) {
   api.post.mockResolvedValue(response);
   await mount();
-  await click(button('Control'));
-  await click(button('Load ontology and rules'));
-  await click(button(/Run rules \(/));
-  await click(button(/Inferred Axioms/));
+  await click(button(/^Run and results/));
+  await click(button(RUN_ALL));
+  await click(container.querySelector('[data-testid="facts-view-standard"]') as HTMLElement);
 }
 
 const plainRun = (axioms = AXIOMS) => ({
@@ -209,10 +210,9 @@ describe('result group accordions', () => {
     await click(labelled('Collapse all'));
     expect(expandedStates()).toEqual(['false', 'false']);
     api.post.mockResolvedValue(plainRun([item('ClassAssertion', 'z'), item('ObjectPropertyAssertion', 'y')]));
-    await click(button('Control'));
-    await click(button('Load ontology and rules'));
-    await click(button(/Run rules \(/));
-    await click(button(/Inferred Axioms/));
+    await click(container.querySelector('[data-testid="details-menu"]') as HTMLElement);
+    await click(container.querySelector('[data-testid="details-menu-again"]') as HTMLElement);
+    await click(container.querySelector('[data-testid="facts-view-standard"]') as HTMLElement);
     expect(expandedStates()).toEqual(['true', 'true']);
   });
 
@@ -251,3 +251,12 @@ describe('result group accordions', () => {
     expect(labelled('Collapse all').disabled).toBe(true);
   });
 });
+
+async function goMore(label: RegExp) {
+  await click(button('More'));
+  await click(button(label));
+}
+
+async function showAll() {
+  await click(container.querySelector('[data-testid="facts-show-all"]') as HTMLElement);
+}

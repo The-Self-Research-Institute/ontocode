@@ -54,7 +54,7 @@ function text() {
 
 function button(label: RegExp | string) {
   const found = Array.from(container.querySelectorAll('button')).find(b =>
-    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test(b.textContent || '')
+    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test((b.textContent || '').trim())
   );
   if (!found) throw new Error('button not found: ' + label);
   return found as HTMLButtonElement;
@@ -166,17 +166,18 @@ describe('save busy state', () => {
 });
 
 describe('execute and test busy state', () => {
-  it('shows Executing and sends one request on double click', async () => {
+  it('shows Running and sends one request on double click', async () => {
     const run = deferred();
     api.post.mockReturnValue(run.promise);
     await mount();
-    await doubleClick(button(/Execute All/));
+    await click(button(/^Run and results/));
+    await doubleClick(button('Run rules'));
     expect(api.post).toHaveBeenCalledTimes(1);
-    expect(text()).toContain('Executing…');
+    expect(button('Running…').disabled).toBe(true);
     await act(async () => {
       run.resolve(RUN_RESULT);
     });
-    expect(text()).not.toContain('Executing…');
+    expect(text()).not.toContain('Running…');
   });
 
   it('shows a running state for a rule test and sends one request on double click', async () => {
@@ -185,13 +186,12 @@ describe('execute and test busy state', () => {
     await mount();
     const row = Array.from(container.querySelectorAll('*')).find(e => e.children.length === 0 && e.textContent === 'Senior') as HTMLElement;
     await click(row);
-    await doubleClick(button('Test'));
+    await doubleClick(button('Try it'));
     expect(api.post).toHaveBeenCalledTimes(1);
-    expect(text()).toContain('Running rules…');
-    expect(button(/Execute All|Executing…/).disabled).toBe(true);
+    expect(button('Running…').disabled).toBe(true);
     await act(async () => {
       run.resolve(RUN_RESULT);
     });
-    expect(text()).not.toContain('Running rules…');
+    expect(text()).not.toContain('Running…');
   });
 });

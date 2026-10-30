@@ -36,9 +36,11 @@ let root: Root;
 
 const text = () => container.textContent || '';
 
+const RUN_ALL = /^Run rules$|^Running…$/;
+
 function button(label: RegExp | string) {
   const found = Array.from(container.querySelectorAll('button')).find(b =>
-    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test(b.textContent || '')
+    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test((b.textContent || '').trim())
   );
   if (!found) throw new Error('button not found: ' + label);
   return found as HTMLButtonElement;
@@ -86,8 +88,9 @@ describe('Clone', () => {
     const save = deferred();
     api.post.mockReturnValue(save.promise);
     await selectRule();
+    await click(container.querySelector('[data-testid="more-actions"]') as HTMLElement);
     await act(async () => {
-      const b = button('Clone');
+      const b = container.querySelector('[data-testid="more-actions-clone"]') as HTMLElement;
       b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -104,12 +107,13 @@ describe('Clone', () => {
   it('shows the duplicate name error when the server refuses', async () => {
     api.post.mockRejectedValue(Object.assign(new Error('exists'), { status: 409, data: { message: 'exists' } }));
     await selectRule();
-    await click(button('Clone'));
+    await click(container.querySelector('[data-testid="more-actions"]') as HTMLElement);
+    await click(container.querySelector('[data-testid="more-actions-clone"]') as HTMLElement);
     expect(text()).toContain('Another rule already has this name');
   });
 });
 
-describe('Control tab', () => {
+describe('Run and results tab', () => {
   it('runs all through the existing call and shows the summary with skipped rules', async () => {
     api.get.mockResolvedValue({ rules: [RULE] });
     api.post.mockResolvedValue({
@@ -125,21 +129,23 @@ describe('Control tab', () => {
       skippedRules: [{ ruleName: 'Bad', reason: 'unsupported atom' }],
     });
     await render(<SWRLEditor projectId="p1" />);
-    await click(button('Control'));
-    expect(text()).toContain('Nothing has been run yet.');
-    await click(button('Load ontology and rules'));
-    await click(button(/Run rules \(/));
+    await click(button(/^Run and results/));
+    await click(button(RUN_ALL));
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(text()).toContain('Completed with warnings');
+    await click(container.querySelector('[data-testid="details-menu"]') as HTMLElement);
+    await click(container.querySelector('[data-testid="details-menu-technical"]') as HTMLElement);
     expect(text()).toContain('2 rounds');
     expect(text()).toContain('reasoner 1.0');
+    await click(button('See why'));
     expect(text()).toContain('Bad: unsupported atom');
-    await click(button(/Clear results/));
-    expect(text()).toContain('Nothing has been run yet.');
+    await click(container.querySelector('[data-testid="details-menu"]') as HTMLElement);
+    await click(container.querySelector('[data-testid="details-menu-clear"]') as HTMLElement);
+    expect(text()).not.toContain('Completed with warnings');
   });
 });
 
-describe('Asserted Axioms tab', () => {
+describe('Existing facts tab', () => {
   const page0 = { total: 120, page: 0, pageSize: 50, truncated: false, items: [item('ClassAssertion', 'Rex is a Dog')] };
 
   it('loads page zero, shows readable text with a type badge, and pages forward', async () => {
@@ -187,7 +193,7 @@ describe('Asserted Axioms tab', () => {
   });
 });
 
-describe('OWL 2 RL tab', () => {
+describe('Standard reasoning tab', () => {
   const ok = {
     success: true,
     completion: 'completed',
@@ -282,3 +288,12 @@ describe('OWL 2 RL tab', () => {
     expect(text()).toContain('Showing the first 1,000 of 5,000');
   });
 });
+
+async function goMore(label: RegExp) {
+  await click(button('More'));
+  await click(button(label));
+}
+
+async function showAll() {
+  await click(container.querySelector('[data-testid="facts-show-all"]') as HTMLElement);
+}

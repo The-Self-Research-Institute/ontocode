@@ -23,11 +23,24 @@ let container: HTMLDivElement;
 let root: Root;
 
 const text = () => container.textContent || '';
-const logText = () => (container.querySelector('[data-testid="control-log"]') as HTMLElement).textContent || '';
+const logText = () => {
+  if (!container.querySelector('[data-testid="control-log"]')) {
+    act(() => {
+      (container.querySelector('[data-testid="details-menu"]') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    act(() => {
+      (container.querySelector('[data-testid="details-menu-technical"]') as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+  }
+  return (container.querySelector('[data-testid="control-log"]') as HTMLElement).textContent || '';
+};
+
+const BANNED_NAMES = new RegExp([['prot', 'ege'].join(''), ['dro', 'ols'].join('')].join('|'), 'i');
+const RUN_ALL = /^Run rules$|^Running…$/;
 
 function button(label: RegExp | string) {
   const found = Array.from(container.querySelectorAll('button')).find(b =>
-    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test(b.textContent || '')
+    typeof label === 'string' ? (b.textContent || '').trim() === label : label.test((b.textContent || '').trim())
   );
   if (!found) throw new Error('button not found: ' + label);
   return found as HTMLButtonElement;
@@ -67,7 +80,7 @@ const SUMMARY = {
 
 const TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const fact = (n: number) => ({
-  axiomType: 'ClassAssertion', category: 'conclusion', description: `ClassAssertion(<http://x#Senior> <http://x#p${n}>)`, readable: `p${n} is a Senior`,
+  axiomType: 'ClassAssertion', category: 'conclusion', description: `ClassAssertion(<http://x#Senior> <http://x#p${n}>)`, readable: `ClassAssertion(<http://x#Senior> <http://x#p${n}>)`,
   subjectIri: `http://x#p${n}`, predicateIri: TYPE, objectIri: 'http://x#Senior',
 });
 const relation = {
@@ -100,12 +113,17 @@ async function open(run: unknown = RUN) {
   await act(async () => {
     root.render(<SWRLEditor projectId="p1" />);
   });
-  await click(button('Control'));
+  await click(button(/^Run and results/));
 }
 
-const load = () => click(button('Load ontology and rules'));
-const run = () => click(button(/Run rules \(/));
-const add = () => click(button('Add inferred facts to ontology'));
+async function menu(id: string, item: string) {
+  await click(container.querySelector(`[data-testid="${id}"]`) as HTMLElement);
+  await click(container.querySelector(`[data-testid="${id}-${item}"]`) as HTMLElement);
+}
+
+const load = () => menu('details-menu', 'check');
+const run = () => click(button(RUN_ALL));
+const add = () => click(button(/^Add [\d,]+ facts? to the ontology…/));
 const mutationCalls = () => api.post.mock.calls.filter(c => String(c[0]).includes('/mutations/'));
 
 beforeEach(() => {
@@ -122,78 +140,233 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('the three step buttons', () => {
-  it('enable in order: load first, then run, then add after a run with results', async () => {
+describe('the Run and results screen', () => {
+  it('starts with the scope line, the helper sentence and one big Run rules button', async () => {
     await open();
-    expect(button('Load ontology and rules').disabled).toBe(false);
-    expect(button(/Run rules \(/).disabled).toBe(true);
-    expect(button('Add inferred facts to ontology').disabled).toBe(true);
-    await load();
-    expect(button(/Run rules \(/).disabled).toBe(false);
-    expect(button('Add inferred facts to ontology').disabled).toBe(true);
-    await run();
-    expect(button('Add inferred facts to ontology').disabled).toBe(false);
+    expect(container.querySelector('[data-testid="control-scope-line"]')?.textContent).toBe('2 rules will run(all enabled rules)');
+    expect(button('Run rules').disabled).toBe(false);
+    expect(container.querySelector('[data-testid="control-helper"]')?.textContent).toBe('Nothing is saved until you add the results to your ontology.');
+    expect(container.querySelector('[data-testid="control-rules"]')).toBeNull();
+    expect(container.querySelector('[data-testid="control-summary"]')).toBeNull();
+    expect(container.querySelector('[data-testid="control-add"]')).toBeNull();
   });
 
-  it('names each button plainly and keeps the Protege name in the tooltip', async () => {
+  it('runs without the optional check', async () => {
     await open();
-    expect(button('Load ontology and rules').title).toContain('OWL+SWRL->Drools');
-    expect(button('Load ontology and rules').title).toContain('built fresh');
-    expect(button(/Run rules \(/).title).toContain('Run Drools');
-    expect(button('Add inferred facts to ontology').title).toContain('Drools->OWL');
-  });
-
-  it('keeps Add off when the run found nothing', async () => {
-    await open({ ...RUN, inferredAxioms: [], inferredAxiomsCount: 0, conclusionCount: 0, structureCount: 0 });
-    await load();
     await run();
-    expect(button('Add inferred facts to ontology').disabled).toBe(true);
+    expect(api.get.mock.calls.some(c => String(c[0]).includes('transfer-summary'))).toBe(false);
+    expect(button(/^Add 2 facts to the ontology…/).disabled).toBe(false);
   });
 
-  it('sends one request for a double click on Load and shows it busy', async () => {
+  it('opens the rule checklist from Choose which rules and changes the button to the selected count', async () => {
+    await open();
+    await click(button('Choose which rules'));
+    expect(container.querySelector('[data-testid="control-selected-count"]')?.textContent).toBe('0 of 2 selected');
+    await click(container.querySelector('[data-testid="control-rule-a"] input') as HTMLElement);
+    expect(button('Run 1 selected rule')).toBeTruthy();
+    expect(container.querySelector('[data-testid="control-scope-line"]')?.textContent).toBe('1 rule will run(selected rules)');
+    await click(button('Select all'));
+    expect(button('Run 2 selected rules')).toBeTruthy();
+    await click(button('Select none'));
+    expect(button('Run rules')).toBeTruthy();
+    await click(button('Hide the rule list'));
+    expect(container.querySelector('[data-testid="control-rules"]')).toBeNull();
+  });
+
+  it('runs only the ticked rules when some are ticked and all enabled rules otherwise', async () => {
+    await open();
+    await click(button('Choose which rules'));
+    await click(container.querySelector('[data-testid="control-rule-a"] input') as HTMLElement);
+    await click(button('Run 1 selected rule'));
+    expect(api.post.mock.calls[0][0]).toContain('/api/swrl/p1/execute/selected');
+    await menu('details-menu', 'clear');
+    await click(button('Select none'));
+    await click(button('Run rules'));
+    expect(api.post.mock.calls[1][0]).not.toContain('/execute/selected');
+  });
+
+  it('shows no Enabled badge on normal rows and the selected counter', async () => {
+    await open();
+    await click(button('Choose which rules'));
+    expect(container.querySelector('[data-testid="control-rule-a"]')?.textContent).not.toContain('Enabled');
+    expect(text()).toContain('0 of 2 selected');
+  });
+
+  it('shows Running with a spinner while the run is in flight and keeps the button disabled', async () => {
+    await open();
     const gate = deferred();
-    await open();
-    routes({ '/api/swrl/p1/transfer-summary': gate.promise });
+    api.post.mockReturnValue(gate.promise);
+    await click(button('Run rules'));
+    expect(button('Running…').disabled).toBe(true);
+    expect(button('Running…').querySelector('.animate-spin')).toBeTruthy();
     await act(async () => {
-      const b = button('Load ontology and rules');
-      b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      gate.resolve(RUN);
     });
-    expect(api.get.mock.calls.filter(c => String(c[0]).includes('transfer-summary')).length).toBe(1);
-    expect(button('Load ontology and rules').disabled).toBe(true);
-    expect(button('Load ontology and rules').querySelector('.animate-spin')).toBeTruthy();
-    await act(async () => {
-      gate.resolve(SUMMARY);
-    });
-    expect(button('Load ontology and rules').disabled).toBe(false);
+    expect(container.querySelector('[data-testid="control-summary"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="control-helper"]')).toBeNull();
   });
 
-  it('sends one request for a double click on Run', async () => {
+  it('sends one request for a double click on Run rules', async () => {
     await open();
-    await load();
     const gate = deferred();
     api.post.mockReturnValue(gate.promise);
     await act(async () => {
-      const b = button(/Run rules \(/);
+      const b = button('Run rules');
       b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(api.post).toHaveBeenCalledTimes(1);
-    expect(button(/Run rules \(/).disabled).toBe(true);
     await act(async () => {
       gate.resolve(RUN);
     });
-    expect(button(/Run rules \(/).disabled).toBe(false);
   });
 
-  it('runs only the ticked rules from the Run rules button when some are ticked', async () => {
+  it('shows the big number, the time line, the next step and the first facts after a run', async () => {
     await open();
-    await load();
-    const box = container.querySelector('[data-testid="control-rule-a"] input') as HTMLInputElement;
-    await click(box);
-    expect(button(/Run rules \(/).textContent).toContain('(1)');
     await run();
-    expect(api.post.mock.calls[0][0]).toContain('/api/swrl/p1/execute/selected');
+    expect(container.querySelector('[data-testid="control-stat-facts"]')?.textContent).toBe('2');
+    expect(container.querySelector('[data-testid="control-status"]')?.textContent).toContain('new facts found');
+    expect(container.querySelector('[data-testid="control-scope"]')?.textContent).toMatch(/^in 242 ms, from 2 rules/);
+    expect(container.querySelector('[data-testid="control-next-step"]')?.textContent).toBe('Add them to your ontology to keep them.');
+    expect(container.querySelector('[data-testid="facts-preview"]')).toBeTruthy();
+    expect(button('Choose which to add')).toBeTruthy();
+    expect(container.querySelector('[data-testid="control-status"]')?.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('keeps the result line and the Add button in a sticky bar', async () => {
+    await open();
+    await run();
+    const sticky = container.querySelector('[data-testid="control-sticky"]') as HTMLElement;
+    expect(sticky.className).toContain('sticky');
+    expect(sticky.querySelector('[data-testid="control-add"]')).toBeTruthy();
+    expect(sticky.querySelector('[data-testid="control-status"]')).toBeTruthy();
+  });
+
+  it('shows one yellow line for skipped rules that expands to the reasons, and the Completed with warnings label', async () => {
+    await open();
+    await run();
+    expect(container.querySelector('[data-testid="control-warn-label"]')?.textContent).toBe('Completed with warnings');
+    expect(container.querySelector('[data-testid="control-skipped"]')?.textContent).toContain('1 rule was skipped.');
+    expect(text()).not.toContain('Old: This rule is disabled');
+    await click(button('See why'));
+    expect(text()).toContain('Old: This rule is disabled');
+  });
+
+  it('shows Completed without a warning line or a skipped list when nothing was skipped', async () => {
+    await open({ ...RUN, skippedRules: [] });
+    await run();
+    expect(container.querySelector('[data-testid="control-warn-label"]')).toBeNull();
+    expect(container.querySelector('[data-testid="control-skipped"]')).toBeNull();
+  });
+
+  it('shows Failed with the message and no Add button', async () => {
+    await open({ success: false, errorMessage: 'Built-in function error', executionTimeMs: 1, totalRulesExecuted: 0, inferredAxiomsCount: 0, inferredAxioms: [] });
+    await run();
+    expect(container.querySelector('[data-testid="control-status-text"]')?.textContent).toBe('Failed');
+    expect(text()).toContain('Built-in function error');
+    expect(container.querySelector('[data-testid="control-add"]')).toBeNull();
+  });
+
+  it('points to the next action when the run found nothing', async () => {
+    await open({ ...RUN, inferredAxioms: [], inferredAxiomsCount: 0, conclusionCount: 0, structureCount: 0 });
+    await run();
+    expect(container.querySelector('[data-testid="control-next-step"]')?.textContent).toBe('No new facts. Try ticking more rules, or see Standard reasoning.');
+    expect(button(/^Add 0 facts to the ontology…/).disabled).toBe(true);
+    expect(container.querySelector('[data-testid="control-add-reason"]')?.textContent).toContain('no new facts');
+  });
+
+  it('shows the segmented control with both counts and reveals standard reasoning only when chosen', async () => {
+    await open();
+    await run();
+    expect(container.querySelector('[data-testid="facts-view-rules"]')?.textContent).toBe('From your rules (2)');
+    expect(container.querySelector('[data-testid="facts-view-standard"]')?.textContent).toBe('Standard reasoning (1)');
+    expect(container.querySelector('[data-testid="section-rules"]')).toBeNull();
+    await showAll();
+    expect(container.querySelector('[data-testid="facts-preview"]')).toBeNull();
+    expect(container.querySelector('[data-testid="section-rules"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="section-structure"]')).toBeNull();
+    await click(container.querySelector('[data-testid="facts-view-standard"]') as HTMLElement);
+    expect(container.querySelector('[data-testid="section-structure"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="section-rules"]')).toBeNull();
+    await click(container.querySelector('[data-testid="facts-view-rules"]') as HTMLElement);
+    expect(container.querySelector('[data-testid="section-rules"]')).toBeTruthy();
+  });
+
+  it('opens the whole list for Choose which to add so rows can be ticked', async () => {
+    await open();
+    await run();
+    await click(button('Choose which to add'));
+    expect(container.querySelectorAll('input[aria-label="Select this conclusion"]').length).toBeGreaterThan(0);
+  });
+
+  it('has no Execute All or Selected buttons on the Rules screen', async () => {
+    routes();
+    await act(async () => {
+      root.render(<SWRLEditor projectId="p1" />);
+    });
+    const labels = Array.from(container.querySelectorAll('button')).map(b => (b.textContent || '').trim());
+    expect(labels.some(l => /Execute All|Selected/.test(l))).toBe(false);
+  });
+});
+
+describe('the Details menu and the technical details', () => {
+  it('lists the technical details, the optional check, run again, clear results and the explanation guide', async () => {
+    await open();
+    await run();
+    await click(container.querySelector('[data-testid="details-menu"]') as HTMLElement);
+    const list = container.querySelector('[data-testid="details-menu-list"]') as HTMLElement;
+    for (const label of ['Technical details', 'Check what will be sent', 'Run again', 'Clear results', 'How facts are explained']) {
+      expect(list.textContent).toContain(label);
+    }
+  });
+
+  it('is the only place for Run again and Clear results', async () => {
+    await open();
+    await run();
+    expect(button('Choose which to add')).toBeTruthy();
+    expect(Array.from(container.querySelectorAll('button')).some(b => (b.textContent || '').trim() === 'Run again')).toBe(false);
+    await menu('details-menu', 'again');
+    expect(api.post).toHaveBeenCalledTimes(2);
+    await menu('details-menu', 'clear');
+    expect(container.querySelector('[data-testid="control-summary"]')).toBeNull();
+    expect(button('Run rules')).toBeTruthy();
+  });
+
+  it('keeps the technical details closed until asked, then shows the log with Clear log', async () => {
+    await open();
+    await run();
+    expect(container.querySelector('[data-testid="control-log"]')).toBeNull();
+    await menu('details-menu', 'technical');
+    expect(container.querySelector('[data-testid="control-log-section"]')?.textContent).toMatch(/Technical details \(\d+ lines\)/);
+    expect(logText()).toContain('Rules ran successfully.');
+    expect(button('Clear log')).toBeTruthy();
+    await click(button('Hide'));
+    expect(container.querySelector('[data-testid="control-log"]')).toBeNull();
+  });
+
+  it('shows the counts of the optional check and the engine line', async () => {
+    await open({ ...RUN, rounds: 2, engineVersions: { reasoner: '1.0' } });
+    await run();
+    await load();
+    expect(container.querySelector('[data-testid="control-check-summary"]')?.textContent).toBe('Sends 8 rules, 57 classes, 45 individuals, 378 axioms');
+    expect(container.querySelector('[data-testid="control-engine"]')?.textContent).toBe('2 rounds · Engine: reasoner 1.0');
+  });
+
+  it('sends one request for a double click on the check and shows it busy', async () => {
+    const gate = deferred();
+    await open();
+    routes({ '/api/swrl/p1/transfer-summary': gate.promise });
+    await click(container.querySelector('[data-testid="details-menu"]') as HTMLElement);
+    await act(async () => {
+      const item = container.querySelector('[data-testid="details-menu-check"]') as HTMLElement;
+      item.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(api.get.mock.calls.filter(c => String(c[0]).includes('transfer-summary')).length).toBe(1);
+    expect(container.querySelector('[data-testid="control-check-summary"]')?.textContent).toBe('Checking…');
+    await act(async () => {
+      gate.resolve(SUMMARY);
+    });
+    expect(container.querySelector('[data-testid="control-check-summary"]')?.textContent).toContain('Sends 8 rules');
   });
 
   it('asks for the draft copy when editing a private draft', async () => {
@@ -202,52 +375,50 @@ describe('the three step buttons', () => {
     await act(async () => {
       root.render(<SWRLEditor projectId="p1" draftMode />);
     });
-    await click(button('Control'));
+    await click(button(/^Run and results/));
     await load();
     expect(api.get.mock.calls.some(c => c[0] === '/api/swrl/p1/transfer-summary?draft=true')).toBe(true);
+  });
+
+  it('names no engine or tool in any tooltip', async () => {
+    await open();
+    await run();
+    for (const b of Array.from(container.querySelectorAll('button'))) expect(b.title).not.toMatch(BANNED_NAMES);
   });
 });
 
 describe('the log', () => {
-  it('prints the load step in plain words with the real numbers', async () => {
+  it('prints the check in plain words without repeating the counts the summary shows', async () => {
     await open();
     await load();
     const log = logText();
     expect(log).toContain('Ontology and rules checked successfully.');
-    expect(log).toContain('Number of rules that will be sent to the rule engine: 8');
-    expect(log).toContain('Number of classes that will be sent: 57');
-    expect(log).toContain('Number of individuals that will be sent: 45');
     expect(log).toContain('Number of object properties that will be sent: 12');
     expect(log).toContain('Number of data properties that will be sent: 5');
-    expect(log).toContain('Total number of axioms that will be sent: 378');
+    expect(log).not.toContain('Number of classes that will be sent');
     expect(log).toContain('Skipped rule Count them: This is a SQWRL query. It is not run as a rule');
     expect(log).toContain('The check took 177 millisecond(s).');
     expect(log).toContain('built fresh every time');
-    expect(log).toContain('Press the Run rules button to run the rules.');
   });
 
-  it('prints the run step with rules run, skipped rules, the split, the time and the next hint', async () => {
+  it('prints the run with skipped rules and the time, without repeating the counts the card shows', async () => {
     await open();
-    await load();
     await run();
     const log = logText();
     expect(log).toContain('Rules ran successfully.');
-    expect(log).toContain('Number of rules run: 2');
     expect(log).toContain('Skipped rule Old: This rule is disabled');
-    expect(log).toContain('Number of inferred facts: 3 (2 about individuals, 1 class relationships)');
     expect(log).toContain('The run took 242 millisecond(s).');
-    expect(log).toContain('Look at the Inferred Axioms tab');
-    expect(log).toContain('Press the Add inferred facts to ontology button');
+    expect(log).not.toContain('Number of inferred facts');
+    expect(log).not.toContain('Number of rules run');
   });
 
-  it('puts the newest line last, survives a tab switch, and clears on request', async () => {
+  it('keeps the newest line last, survives a tab switch, and clears on request', async () => {
     await open();
-    await load();
     await run();
     const lines = logText().split('\n');
-    expect(lines[lines.length - 1]).toContain('Add inferred facts to ontology');
-    await click(button('Asserted Axioms'));
-    await click(button('Control'));
+    expect(lines[lines.length - 1]).toContain('The run took');
+    await click(button(/^Rules$/));
+    await click(button(/^Run and results/));
     expect(logText()).toContain('Rules ran successfully.');
     await click(button('Clear log'));
     expect(logText()).toContain('Nothing has happened yet.');
@@ -258,9 +429,8 @@ describe('the log', () => {
     routes({ '/api/swrl/p1/transfer-summary': Promise.reject(Object.assign(new Error('busy'), { status: 429 })) });
     await load();
     expect(logText()).toContain('The rule engine is busy. Try again in a moment.');
-    expect(button(/Run rules \(/).disabled).toBe(true);
+    expect(button('Run rules').disabled).toBe(false);
     routes();
-    await load();
     api.post.mockResolvedValue({ success: false, errorMessage: 'Built-in function error', executionTimeMs: 1, totalRulesExecuted: 0, inferredAxiomsCount: 0, inferredAxioms: [] });
     await run();
     expect(logText()).toContain('The rules could not be run: Built-in function error');
@@ -310,7 +480,8 @@ describe('adding the inferred facts', () => {
     expect(calls[0][1].precondition).toEqual(RUN.stamp);
     expect(calls[0][1].origin.source).toBe('swrl-rules');
     expect(logText()).toContain('Added 2 facts to the ontology. You can undo this from the history.');
-    expect(button('Add inferred facts to ontology').disabled).toBe(true);
+    expect(container.querySelector('[data-testid="control-add-notice"]')?.textContent).toContain('Added 2 facts');
+    expect(button(/^Add [\d,]+ facts? to the ontology…/).disabled).toBe(true);
   });
 
   it('includes class relationships as subclass statements when the box is ticked', async () => {
@@ -329,7 +500,7 @@ describe('adding the inferred facts', () => {
     await act(async () => {
       root.render(<SWRLEditor projectId="p1" draftMode />);
     });
-    await click(button('Control'));
+    await click(button(/^Run and results/));
     await load();
     await run();
     await add();
@@ -343,7 +514,9 @@ describe('adding the inferred facts', () => {
     await add();
     await click(button('Yes, add them'));
     expect(logText()).toContain('Public editing is off');
-    expect(button('Add inferred facts to ontology').disabled).toBe(false);
+    expect(container.querySelector('[data-testid="control-add-notice"]')?.textContent).toContain('Public editing is off');
+    expect(container.querySelector('[data-testid="control-add-notice"]')?.getAttribute('role')).toBe('alert');
+    expect(button(/^Add [\d,]+ facts? to the ontology…/).disabled).toBe(false);
   });
 
   it('refuses a second click while the write is in flight', async () => {
@@ -379,7 +552,7 @@ describe('adding the inferred facts', () => {
     await act(async () => {
       root.render(<SWRLEditor projectId="p1" />);
     });
-    await click(button('Control'));
+    await click(button(/^Run and results/));
     await load();
     await run();
     await add();
@@ -399,46 +572,146 @@ describe('adding the inferred facts', () => {
     const before = api.get.mock.calls.filter(c => String(c[0]).includes('/axioms/asserted')).length;
     await add();
     await click(button('Yes, add them'));
-    await click(button('Asserted Axioms'));
+    await goMore(/^Existing facts/);
     expect(api.get.mock.calls.filter(c => String(c[0]).includes('/axioms/asserted')).length).toBeGreaterThan(before);
   });
 });
 
-describe('tabs and wording', () => {
-  it('has separate Asserted Axioms and Inferred Axioms tabs and no Results tab', async () => {
+describe('tabs, the More menu and wording', () => {
+  const tabLabels = () => Array.from(container.querySelectorAll('[role="tab"], [data-testid="more-menu"]')).map(b => (b.textContent || '').trim());
+
+  it('has Rules, Run and results and More, and no run buttons in the page header', async () => {
     await open();
+    expect(tabLabels()).toEqual(['Rules', 'Run and results', 'More']);
     const labels = Array.from(container.querySelectorAll('button')).map(b => (b.textContent || '').trim());
-    expect(labels).toContain('Inferred Axioms');
-    expect(labels).toContain('Asserted Axioms');
-    expect(labels).toContain('OWL 2 RL');
-    expect(labels).not.toContain('Results');
+    expect(labels).not.toContain('Control');
+    expect(labels).not.toContain('Inferred Axioms');
+    expect(labels).not.toContain('Asserted Axioms');
+    expect(labels.some(l => /Execute All|Run \d+ Selected/.test(l))).toBe(false);
   });
 
-  it('keeps the count badge on the Inferred Axioms tab and explains each tab in one sentence', async () => {
+  it('lists the More items with their one-line descriptions and the classic layout switch', async () => {
     await open();
-    await load();
+    await click(button('More'));
+    const list = container.querySelector('[data-testid="more-menu-list"]') as HTMLElement;
+    for (const text of ['Existing facts', 'What is already stated in the ontology', 'Standard reasoning', 'Facts the ontology implies with no rules', 'Ask a question (query)', 'Write a query and get a table', 'Function help', 'Functions a rule can use', 'Classic layout']) {
+      expect(list.textContent).toContain(text);
+    }
+  });
+
+  it('shows the count of existing facts once the menu has been opened', async () => {
+    await open();
+    routes({ '/api/swrl/p1/axioms/asserted?page=0&pageSize=1&draft=false': Promise.resolve({ total: 280, page: 0, pageSize: 1, items: [] }) });
+    api.get.mockImplementation((url: string) => {
+      if (url.includes('/axioms/asserted')) return Promise.resolve({ total: 280, page: 0, pageSize: 1, items: [] });
+      return Promise.resolve({ rules: RULES });
+    });
+    await click(button('More'));
+    expect(container.querySelector('[data-testid="more-menu-asserted"]')?.textContent).toContain('Existing facts (280)');
+  });
+
+  it('opens one item with a breadcrumb and a way back to Run and results', async () => {
+    await open();
+    await click(button('More'));
+    await click(container.querySelector('[data-testid="more-menu-owl2rl"]') as HTMLElement);
+    expect(container.querySelector('[data-testid="more-breadcrumb"]')?.textContent).toContain('Standard reasoning');
+    expect(container.querySelector('[data-testid="owl2rl-panel"]')).toBeTruthy();
+    await click(container.querySelector('[data-testid="more-back"]') as HTMLElement);
+    expect(container.querySelector('[data-testid="control-panel"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="more-breadcrumb"]')).toBeNull();
+  });
+
+  it('opens Function help and Ask a question (query) from the More menu', async () => {
+    await open();
+    await click(button('More'));
+    await click(container.querySelector('[data-testid="more-menu-reference"]') as HTMLElement);
+    expect(text()).toContain('Functions you can use in rules and queries.');
+    await click(container.querySelector('[data-testid="more-back"]') as HTMLElement);
+    await click(button('More'));
+    await click(container.querySelector('[data-testid="more-menu-query"]') as HTMLElement);
+    expect(container.querySelector('[data-testid="more-breadcrumb"]')?.textContent).toContain('Ask a question (query)');
+  });
+
+  it('closes the menu with Escape', async () => {
+    await open();
+    await click(button('More'));
+    expect(container.querySelector('[data-testid="more-menu-list"]')).toBeTruthy();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="more-menu-list"]')).toBeNull();
+  });
+
+  it('keeps the count badge on the Run and results tab and explains New facts and Existing facts', async () => {
+    await open();
     await run();
-    const tab = button(/Inferred Axioms/);
-    expect(tab.textContent).toContain('3');
-    await click(tab);
-    expect(text()).toContain('Inferred axioms are worked out by the rules and are not saved in the ontology until you add them.');
-    await click(button('Asserted Axioms'));
-    expect(text()).toContain('Asserted axioms are the statements typed into the ontology.');
+    expect(button(/^Run and results/).textContent).toContain('3');
+    await showAll();
+    expect(text()).toContain('New facts');
+    await goMore(/^Existing facts/);
+    expect(text()).toContain('Existing facts are the statements already in the ontology.');
   });
 });
 
-describe('inferred axioms summary and labels', () => {
-  const summary = () => container.querySelector('[data-testid="results-summary"]')?.textContent;
+describe('the classic layout', () => {
+  afterEach(() => {
+    try {
+      window.localStorage.removeItem('ontocode.swrlClassicLayout');
+    } catch {
+      return;
+    }
+  });
+
+  it('restores the seven tabs and the header run buttons, remembers the choice, and switches back', async () => {
+    await open();
+    await click(button('More'));
+    await click(container.querySelector('[data-testid="more-menu-classic"]') as HTMLElement);
+    const tabs = Array.from(container.querySelectorAll('[data-testid="classic-tabs"] button')).map(b => (b.textContent || '').trim());
+    expect(tabs).toEqual(['Editor', 'Inferred Axioms', 'Reference', 'SQWRL Query', 'Control', 'Asserted Axioms', 'OWL 2 RL', 'Switch to the new layout']);
+    expect(button(/Execute All \(2\)/)).toBeTruthy();
+    expect(window.localStorage.getItem('ontocode.swrlClassicLayout')).toBe('1');
+    await click(button('Control'));
+    expect(container.querySelector('[data-testid="control-panel"]')).toBeTruthy();
+    await click(button('Inferred Axioms'));
+    expect(text()).toContain('New facts are worked out by the rules');
+    await click(container.querySelector('[data-testid="classic-switch"]') as HTMLElement);
+    expect(container.querySelector('[data-testid="classic-tabs"]')).toBeNull();
+    expect(window.localStorage.getItem('ontocode.swrlClassicLayout')).toBeNull();
+  });
+
+  it('starts in the classic layout when it was chosen before, and survives blocked storage', async () => {
+    window.localStorage.setItem('ontocode.swrlClassicLayout', '1');
+    routes();
+    await act(async () => {
+      root.render(<SWRLEditor projectId="p1" />);
+    });
+    expect(container.querySelector('[data-testid="classic-tabs"]')).toBeTruthy();
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    await act(async () => {
+      root.render(<SWRLEditor projectId="p1" />);
+    });
+    expect(container.querySelector('[data-testid="classic-tabs"]')).toBeNull();
+    spy.mockRestore();
+  });
+});
+
+describe('the numbers on the Run and results screen', () => {
   const inferredTab = async (r: unknown) => {
     await open(r);
-    await load();
     await run();
-    await click(button(/Inferred Axioms/));
   };
 
-  it('shows one summary line under the stats and uses the same two labels in the filter chips', async () => {
+  it('shows the fact count big and both counts in the segmented control, using the same two labels in the filter chips', async () => {
     await inferredTab({ ...RUN, inferredAxiomsCount: 1108, conclusionCount: 118, structureCount: 945, omittedTrivialCount: 45 });
-    expect(summary()).toBe('1,108 produced: 118 facts about individuals from your rules, 945 class relationships from standard reasoning, 45 trivial ones hidden.');
+    expect(container.querySelector('[data-testid="control-stat-facts"]')?.textContent).toBe('118');
+    expect(container.querySelector('[data-testid="facts-view-standard"]')?.textContent).toBe('Standard reasoning (945)');
+    await click(container.querySelector('[data-testid="facts-view-standard"]') as HTMLElement);
     expect(button(/Facts about individuals \(118\)/)).toBeTruthy();
     expect(button(/Class relationships \(945\)/)).toBeTruthy();
     expect(button('Everything')).toBeTruthy();
@@ -446,32 +719,71 @@ describe('inferred axioms summary and labels', () => {
     expect(text()).not.toContain('Ontology structure');
   });
 
-  it('leaves out the hidden part when nothing was hidden and handles singulars', async () => {
+  it('handles singulars', async () => {
     await inferredTab({ ...RUN, inferredAxiomsCount: 2, conclusionCount: 1, structureCount: 1 });
-    expect(summary()).toBe('2 produced: 1 fact about an individual from your rules, 1 class relationship from standard reasoning.');
+    expect(container.querySelector('[data-testid="control-status"]')?.textContent).toContain('1new fact found');
+    expect(container.querySelector('[data-testid="facts-view-standard"]')?.textContent).toBe('Standard reasoning (1)');
+    expect(button(/^Add 1 fact to the ontology…/)).toBeTruthy();
   });
 
-  it('says there are no class relationships when only facts were produced', async () => {
+  it('shows zero standard reasoning when only facts were produced', async () => {
     await inferredTab({ ...RUN, inferredAxioms: [fact(1), fact(2)], inferredAxiomsCount: 2, conclusionCount: 2, structureCount: 0 });
-    expect(summary()).toBe('2 produced: 2 facts about individuals from your rules, no class relationships.');
+    expect(container.querySelector('[data-testid="facts-view-standard"]')?.textContent).toBe('Standard reasoning (0)');
+    expect(container.querySelector('[data-testid="control-stat-facts"]')?.textContent).toBe('2');
   });
 
-  it('omits the facts part when only class relationships were produced', async () => {
+  it('shows zero facts when only class relationships were produced', async () => {
     await inferredTab({ ...RUN, inferredAxioms: [relation], inferredAxiomsCount: 1, conclusionCount: 0, structureCount: 1 });
-    expect(summary()).toBe('1 produced: 1 class relationship from standard reasoning.');
+    expect(container.querySelector('[data-testid="control-stat-facts"]')?.textContent).toBe('0');
+    expect(container.querySelector('[data-testid="facts-view-standard"]')?.textContent).toBe('Standard reasoning (1)');
+    expect((container.querySelector('[data-testid="control-add"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows the hidden trivial count in the list header instead of repeating it', async () => {
+    await inferredTab({ ...RUN, inferredAxiomsCount: 1108, conclusionCount: 118, structureCount: 945, omittedTrivialCount: 45 });
+    await click(container.querySelector('[data-testid="facts-view-standard"]') as HTMLElement);
+    expect(text()).toContain('45 trivial same-individual facts hidden');
   });
 
   it('uses the response counts, not the preview length, for a paged run', async () => {
     await inferredTab({ ...RUN, inferredAxioms: [fact(1)], inferredAxiomsCount: 7300, conclusionCount: 6200, structureCount: 1000, omittedTrivialCount: 100, runId: 'run1', counts: { conclusions: 6200, structure: 1000, omittedTrivial: 100 } });
-    expect(summary()).toBe('7,300 produced: 6,200 facts about individuals from your rules, 1,000 class relationships from standard reasoning, 100 trivial ones hidden.');
+    expect(container.querySelector('[data-testid="control-stat-facts"]')?.textContent).toBe('6,200');
+    await click(container.querySelector('[data-testid="facts-view-standard"]') as HTMLElement);
     expect(button(/Facts about individuals \(6,200\)/)).toBeTruthy();
     expect(button(/Class relationships \(1,000\)/)).toBeTruthy();
   });
 
-  it('words the cut-off note and no longer shows the SWRL Rule Results panel', async () => {
+  const CUT = { ...RUN, truncated: true, inferredAxiomsCount: 1063, conclusionCount: 118, structureCount: 945 };
+  const standardView = () => click(container.querySelector('[data-testid="facts-view-standard"]') as HTMLElement);
+  const note = () => (text().match(/Showing the first [\d,]+ of [\d,]+; narrow the list with the search or the filter\./) || [''])[0];
+
+  it('counts the cut-off note against the facts when Facts about individuals is chosen', async () => {
+    await inferredTab(CUT);
+    await standardView();
+    await click(button(/^Facts about individuals/));
+    expect(note()).toBe('Showing the first 2 of 118; narrow the list with the search or the filter.');
+  });
+
+  it('counts the cut-off note against the class relationships when Class relationships is chosen', async () => {
+    await inferredTab(CUT);
+    await standardView();
+    await click(button(/^Class relationships/));
+    expect(note()).toBe('Showing the first 1 of 945; narrow the list with the search or the filter.');
+  });
+
+  it('counts the cut-off note against everything when Everything is chosen', async () => {
+    await inferredTab(CUT);
+    await standardView();
+    await click(button('Everything'));
+    expect(note()).toBe('Showing the first 3 of 1,063; narrow the list with the search or the filter.');
+  });
+
+  it('shows no cut-off note when everything in the chosen filter is loaded', async () => {
     await inferredTab({ ...RUN, truncated: true });
-    expect(text()).toContain('Showing the first 3 of 3; narrow the list with the search or the filter.');
+    await standardView();
+    expect(note()).toBe('');
     expect(text()).not.toContain('SWRL Rule Results');
+    expect(text()).not.toContain('Execution Summary');
     expect(text()).not.toContain('individuals classified');
     expect(text()).not.toContain('cut off');
   });
@@ -493,7 +805,16 @@ describe('model helpers', () => {
   });
 
   it('words the log lines', () => {
-    expect(loadLogLines(SUMMARY).length).toBeGreaterThan(8);
-    expect(runLogLines({ success: true, executedRuleNames: ['a'], executionTimeMs: 3, inferredAxiomsCount: 2 })).toContain('Number of inferred facts: 2');
+    expect(loadLogLines(SUMMARY).length).toBeGreaterThan(4);
+    expect(runLogLines({ success: true, executedRuleNames: ['a'], executionTimeMs: 3, inferredAxiomsCount: 2 })).toContain('The run took 3 millisecond(s).');
   });
 });
+
+async function goMore(label: RegExp) {
+  await click(button('More'));
+  await click(button(label));
+}
+
+async function showAll() {
+  await click(container.querySelector('[data-testid="facts-show-all"]') as HTMLElement);
+}
