@@ -132,6 +132,10 @@ final class InferredAxiomPresenter {
         return axiom instanceof OWLDataPropertyAssertionAxiom d && !placeholder(d.getSubject().toString());
     }
 
+    private static boolean realName(OWLIndividual individual) {
+        return individual.isNamed() && !placeholder(individual.asOWLNamedIndividual().getIRI().toString());
+    }
+
     private static boolean placeholder(String text) {
         return text.contains("urn:ontocode:blank:");
     }
@@ -140,8 +144,14 @@ final class InferredAxiomPresenter {
         return isTrivialSame(axiom) || isThingAssertion(axiom);
     }
 
+    private static final java.util.regex.Pattern BLANK_NODE = java.util.regex.Pattern.compile("<urn:ontocode:blank:[^>]*>");
+
+    private static String withoutBlankNodeIris(String text) {
+        return BLANK_NODE.matcher(text).replaceAll("_:anonymous");
+    }
+
     static String readable(OWLAxiom axiom) {
-        return axiom.toString()
+        return withoutBlankNodeIris(axiom.toString())
                 .replace("http://www.w3.org/2002/07/owl#", "owl:")
                 .replace("http://purl.obolibrary.org/obo/", "");
     }
@@ -157,7 +167,7 @@ final class InferredAxiomPresenter {
         if (axiom instanceof OWLClassAssertionAxiom classAssertion) {
             OWLIndividual individual = classAssertion.getIndividual();
             OWLClassExpression classExpr = classAssertion.getClassExpression();
-            if (individual.isNamed() && !classExpr.isAnonymous()) {
+            if (realName(individual) && !classExpr.isAnonymous()) {
                 subjectIri = individual.asOWLNamedIndividual().getIRI().toString();
                 predicateIri = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
                 objectIri = classExpr.asOWLClass().getIRI().toString();
@@ -165,14 +175,14 @@ final class InferredAxiomPresenter {
         } else if (axiom instanceof OWLObjectPropertyAssertionAxiom objectAssertion) {
             OWLIndividual subject = objectAssertion.getSubject();
             OWLIndividual object = objectAssertion.getObject();
-            if (subject.isNamed() && object.isNamed() && !objectAssertion.getProperty().isAnonymous()) {
+            if (realName(subject) && realName(object) && !objectAssertion.getProperty().isAnonymous()) {
                 subjectIri = subject.asOWLNamedIndividual().getIRI().toString();
                 predicateIri = objectAssertion.getProperty().asOWLObjectProperty().getIRI().toString();
                 objectIri = object.asOWLNamedIndividual().getIRI().toString();
             }
         } else if (axiom instanceof OWLDataPropertyAssertionAxiom dataAssertion) {
             OWLIndividual subject = dataAssertion.getSubject();
-            if (subject.isNamed() && !dataAssertion.getProperty().isAnonymous()) {
+            if (realName(subject) && !dataAssertion.getProperty().isAnonymous()) {
                 subjectIri = subject.asOWLNamedIndividual().getIRI().toString();
                 predicateIri = dataAssertion.getProperty().asOWLDataProperty().getIRI().toString();
                 OWLLiteral literal = dataAssertion.getObject();
@@ -182,7 +192,7 @@ final class InferredAxiomPresenter {
             }
         }
 
-        return new InferredAxiom(axiom.getAxiomType().getName(), axiom.toString(), readable(axiom),
+        return new InferredAxiom(axiom.getAxiomType().getName(), withoutBlankNodeIris(axiom.toString()), readable(axiom),
                 subjectIri, predicateIri, objectIri, objectLiteral, literalDatatypeIri, literalLangTag);
     }
 

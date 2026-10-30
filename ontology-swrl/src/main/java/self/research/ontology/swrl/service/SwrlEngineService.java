@@ -872,10 +872,7 @@ public class SwrlEngineService {
         OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
                 new org.semanticweb.owlapi.io.StringDocumentSource(ontologyText));
         PlainLiteralNormalizer.apply(ontology);
-        OWLDocumentFormat format = manager.getOntologyFormat(ontology);
-        if (format instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat prefixes) {
-            prefixes.setPrefix("_:", "urn:ontocode:blank:");
-        }
+        registerBlankNodePrefix(ontology);
         Set<OWLAxiom> original = new HashSet<>(ontology.getAxioms());
         SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
         Set<OWLAxiom> produced = runInference(engine, "ontology-rules");
@@ -995,6 +992,7 @@ public class SwrlEngineService {
         OntologyClientService.FetchedOntology fetched = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId);
         OWLOntology ontology = fetched.ontology();
         OntologyRules.removeAll(ontology);
+        registerBlankNodePrefix(ontology);
         if (owl2rlMaxOntologyAxioms > 0 && ontology.getAxiomCount() > owl2rlMaxOntologyAxioms) {
             throw new OntologyTooLargeException(owl2rlMaxOntologyAxioms);
         }
@@ -1060,6 +1058,13 @@ public class SwrlEngineService {
      * enabling it to resolve prefixed names like ns1:BFO_0000015.
      * Returns true if new prefixes were registered (engine cache should be evicted).
      */
+    static void registerBlankNodePrefix(OWLOntology ontology) {
+        OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
+        if (format instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat prefixes) {
+            prefixes.setPrefix("_:", "urn:ontocode:blank:");
+        }
+    }
+
     private boolean ensureNamespacePrefixes(String projectId, OWLOntology ontology) {
         String defaultNs = null;
         try {
@@ -1072,6 +1077,7 @@ public class SwrlEngineService {
             }
         } catch (Exception e) { /* ignore */ }
 
+        registerBlankNodePrefix(ontology);
         OWLDocumentFormat format = ontology.getOWLOntologyManager().getOntologyFormat(ontology);
         if (!(format instanceof org.semanticweb.owlapi.formats.PrefixDocumentFormat)) return false;
 
@@ -1108,7 +1114,6 @@ public class SwrlEngineService {
 
         // Register ALL project prefixes on the (freshly fetched) ontology format
         org.semanticweb.owlapi.formats.PrefixDocumentFormat pf = (org.semanticweb.owlapi.formats.PrefixDocumentFormat) format;
-        pf.setPrefix("_:", "urn:ontocode:blank:");
         for (Map.Entry<String, String> entry : prefixMap.entrySet()) {
             pf.setPrefix(entry.getValue(), entry.getKey());
         }
