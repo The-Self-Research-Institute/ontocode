@@ -753,7 +753,7 @@ public class SwrlEngineService {
         ensureNamespacePrefixes(projectId, ontology);
         Set<String> requested = new LinkedHashSet<>(ruleIds);
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology,
-                entry -> entry.enabled() && (requested.contains(entry.id()) || requested.contains(entry.name())));
+                entry -> entry.enabled() && (requested.contains(entry.id()) || requested.contains(entry.name())), true);
         SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
         OntologyRules.fillTexts(engine, entries);
 
@@ -766,7 +766,9 @@ public class SwrlEngineService {
                 continue;
             }
             matched.add(requested.contains(entry.id()) ? entry.id() : entry.name());
-            if (!entry.enabled()) {
+            if (entry.query()) {
+                skipped.add(new SkippedRule(entry.name(), "This is a SQWRL query. It is not run as a rule."));
+            } else if (!entry.enabled()) {
                 skipped.add(new SkippedRule(entry.name(), "This rule is disabled."));
             } else if (entry.ruleText() == null) {
                 skipped.add(new SkippedRule(entry.name(), "The rule could not be loaded by the rule engine."));
