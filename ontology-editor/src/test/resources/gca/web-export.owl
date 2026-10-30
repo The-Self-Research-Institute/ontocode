@@ -1,0 +1,339 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+	xmlns="http://example.org/zoo#"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:dcterms="http://purl.org/dc/terms/"
+	xmlns:owl="http://www.w3.org/2002/07/owl#"
+	xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+	xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+	xmlns:skos="http://www.w3.org/2004/02/skos/core#"
+	xmlns:xsd="http://www.w3.org/2001/XMLSchema#">
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120734">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/zoo#Animal"/>
+	<owl:intersectionOf rdf:nodeID="e542577d0d48406bba2405e20dfe2120735"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120735">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120736"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120736">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Fish"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120735">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120737"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120737">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120738"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120738">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Seed"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120737">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120739">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/zoo#Pet"/>
+	<owl:intersectionOf rdf:nodeID="e542577d0d48406bba2405e20dfe2120740"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120740">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120741"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120741">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#hasOwner"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120740">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120742"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120742">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120743"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120743">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#livesIn"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Water"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120742">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120744">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AllDisjointClasses"/>
+	<owl:members rdf:nodeID="e542577d0d48406bba2405e20dfe2120745"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120745">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120746"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120746">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#hasOwner"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120745">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120747"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120747">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120748"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120748">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Water"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120747">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120749">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<owl:equivalentClass rdf:nodeID="e542577d0d48406bba2405e20dfe2120750"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120750">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<owl:unionOf rdf:nodeID="e542577d0d48406bba2405e20dfe2120751"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120751">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120752"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120752">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Fish"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120751">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120753"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120753">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120754"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120754">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#livesIn"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Habitat"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120753">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120749">
+	<owl:intersectionOf rdf:nodeID="e542577d0d48406bba2405e20dfe2120755"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120755">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120756"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120756">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Seed"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120755">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120757"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120757">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120758"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120758">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#livesIn"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Water"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120757">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120759">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/zoo#Animal"/>
+	<owl:intersectionOf rdf:nodeID="e542577d0d48406bba2405e20dfe2120760"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120760">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120761"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120761">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#livesIn"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Habitat"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120760">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120762"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120762">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120763"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120763">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Seed"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120762">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120764">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/zoo#Pet"/>
+	<owl:intersectionOf rdf:nodeID="e542577d0d48406bba2405e20dfe2120765"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120765">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120766"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120766">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#hasOwner"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Person"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120765">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120767"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120767">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120768"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120768">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Seed"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120767">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120769">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/zoo#Predator"/>
+	<owl:intersectionOf rdf:nodeID="e542577d0d48406bba2405e20dfe2120770"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120770">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120771"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120771">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#eats"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Fish"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120770">
+	<rdf:rest rdf:nodeID="e542577d0d48406bba2405e20dfe2120772"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120772">
+	<rdf:first rdf:nodeID="e542577d0d48406bba2405e20dfe2120773"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120773">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Restriction"/>
+	<owl:onProperty rdf:resource="http://example.org/zoo#livesIn"/>
+	<owl:someValuesFrom rdf:resource="http://example.org/zoo#Water"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="e542577d0d48406bba2405e20dfe2120772">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#hasOwner">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#livesIn">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#eats">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Person">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Habitat">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Water">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Seed">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Predator">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Pet">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Fish">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/zoo#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Bird">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+	<rdfs:subClassOf rdf:resource="http://example.org/zoo#Animal"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo#Animal">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/zoo">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Ontology"/>
+</rdf:Description>
+
+</rdf:RDF>

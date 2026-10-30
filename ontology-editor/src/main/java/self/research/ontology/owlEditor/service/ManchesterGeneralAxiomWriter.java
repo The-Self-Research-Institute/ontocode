@@ -3,13 +3,16 @@ package self.research.ontology.owlEditor.service;
 import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
 import org.semanticweb.owlapi.manchestersyntax.renderer.ManchesterOWLSyntaxOWLObjectRendererImpl;
 import org.semanticweb.owlapi.model.AxiomType;
+import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLEquivalentClassesAxiom;
 import org.semanticweb.owlapi.model.OWLNaryClassAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
+import org.semanticweb.owlapi.model.PrefixManager;
 import org.semanticweb.owlapi.model.parameters.Imports;
+import org.semanticweb.owlapi.util.DefaultPrefixManager;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -50,14 +53,15 @@ final class ManchesterGeneralAxiomWriter {
         } finally {
             manager.addAxioms(ontology, general);
         }
-        out.write(frames(general).getBytes(StandardCharsets.UTF_8));
+        out.write(frames(general, format).getBytes(StandardCharsets.UTF_8));
     }
 
-    private static String frames(Set<OWLNaryClassAxiom> general) {
+    private static String frames(Set<OWLNaryClassAxiom> general, OWLDocumentFormat format) {
+        PrefixManager prefixes = format.isPrefixOWLDocumentFormat() ? format.asPrefixOWLDocumentFormat() : new DefaultPrefixManager();
         StringBuilder text = new StringBuilder();
         for (OWLNaryClassAxiom ax : general) {
             ManchesterOWLSyntaxOWLObjectRendererImpl renderer = new ManchesterOWLSyntaxOWLObjectRendererImpl();
-            renderer.setShortFormProvider(entity -> "<" + entity.getIRI() + ">");
+            renderer.setShortFormProvider(entity -> shortForm(prefixes, entity.getIRI()));
             String frame = ax instanceof OWLEquivalentClassesAxiom ? "EquivalentClasses: " : "DisjointClasses: ";
             text.append('\n').append(frame)
                     .append(ax.classExpressions()
@@ -66,5 +70,13 @@ final class ManchesterGeneralAxiomWriter {
                     .append('\n');
         }
         return text.toString();
+    }
+
+    private static String shortForm(PrefixManager prefixes, IRI iri) {
+        String prefixed = prefixes.getPrefixIRI(iri);
+        if (prefixed == null) {
+            return "<" + iri + ">";
+        }
+        return prefixed.startsWith(":") ? prefixed.substring(1) : prefixed;
     }
 }
