@@ -171,8 +171,9 @@ async function runAndOpenResults(response: unknown) {
   api.post.mockResolvedValue(response);
   await mount();
   await click(button('Control'));
-  await click(button(/Run all/));
-  await click(button(/Results/));
+  await click(button('Load ontology and rules'));
+  await click(button(/Run rules \(/));
+  await click(button(/Inferred Axioms/));
 }
 
 const plainRun = (axioms = AXIOMS) => ({
@@ -209,8 +210,9 @@ describe('result group accordions', () => {
     expect(expandedStates()).toEqual(['false', 'false']);
     api.post.mockResolvedValue(plainRun([item('ClassAssertion', 'z'), item('ObjectPropertyAssertion', 'y')]));
     await click(button('Control'));
-    await click(button(/Run all/));
-    await click(button(/Results/));
+    await click(button('Load ontology and rules'));
+    await click(button(/Run rules \(/));
+    await click(button(/Inferred Axioms/));
     expect(expandedStates()).toEqual(['true', 'true']);
   });
 

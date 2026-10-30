@@ -127,7 +127,8 @@ describe('Control tab', () => {
     await render(<SWRLEditor projectId="p1" />);
     await click(button('Control'));
     expect(text()).toContain('Nothing has been run yet.');
-    await click(button(/Run all/));
+    await click(button('Load ontology and rules'));
+    await click(button(/Run rules \(/));
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(text()).toContain('Completed with warnings');
     expect(text()).toContain('2 rounds');

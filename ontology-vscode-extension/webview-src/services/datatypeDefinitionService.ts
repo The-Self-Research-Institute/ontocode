@@ -18,7 +18,7 @@ type ApiEnvelope<T> = {
 };
 
 const unwrap = <T,>(response: any): T => {
-  const payload = response?.data || response;
+  const payload = response && typeof response.success === 'boolean' ? response : response?.data;
   if (!payload?.success) {
     throw new Error(payload?.error || 'Request failed');
   }

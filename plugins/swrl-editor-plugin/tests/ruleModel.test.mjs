@@ -292,12 +292,11 @@ test('isPagedRun needs a run id and counts', () => {
   assert.equal(isPagedRun({ runId: 'r1', counts: { conclusions: 1, structure: 2 } }), true);
 });
 
-test('derivedSummary uses separators and singular or plural', () => {
-  assert.equal(derivedSummary({ conclusions: 4, structure: 7599 }), '7,603 derived: 4 rule conclusions, 7,599 structure');
-  assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 derived: 1 rule conclusion, 0 structure');
-  assert.equal(derivedSummary({ conclusions: 2, structure: 3, omittedTrivial: 1 }), '5 derived: 2 rule conclusions, 3 structure (1 trivial same-individual fact hidden)');
-  assert.equal(derivedSummary({ conclusions: 2, structure: 3, omittedTrivial: 12 }).endsWith('(12 trivial same-individual facts hidden)'), true);
-  assert.equal(formatCount(1234567), '1,234,567');
+test('derivedSummary words facts, class relationships and hidden trivial ones', () => {
+  assert.equal(derivedSummary({ conclusions: 118, structure: 945, omittedTrivial: 45 }), '1,108 produced: 118 facts about individuals from your rules, 945 class relationships from standard reasoning, 45 trivial ones hidden.');
+  assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 produced: 1 fact about an individual from your rules, no class relationships.');
+  assert.equal(derivedSummary({ conclusions: 0, structure: 1, omittedTrivial: 1 }), '2 produced: 1 class relationship from standard reasoning, 1 trivial one hidden.');
+  assert.equal(derivedSummary({ conclusions: 0, structure: 0 }), '');
 });
 
 test('page math and range text', () => {

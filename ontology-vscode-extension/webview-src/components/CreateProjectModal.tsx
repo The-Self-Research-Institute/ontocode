@@ -369,7 +369,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                       "No other active members to add yet."
                     ) : (
                       <>
-                        {shareableMemberCount} active workspace member{shareableMemberCount === 1 ? "" : "s"} will be added as <strong>Viewer</strong>
+                        {shareableMemberCount} active workspace member{shareableMemberCount === 1 ? "" : "s"} will be added as <strong>Viewer</strong>. People who join the workspace later are added as Viewers too.
                       </>
                     )}
                   </div>

@@ -297,6 +297,27 @@ public class SwrlController {
         }
     }
 
+    @GetMapping("/{projectId}/transfer-summary")
+    public ResponseEntity<?> getTransferSummary(@PathVariable String projectId,
+                                                @RequestParam(defaultValue = "false") boolean draft,
+                                                @RequestParam(required = false) String userId) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to check the ontology of a private draft"));
+        }
+        try {
+            return ResponseEntity.ok(swrlEngineService.transferSummary(projectId, draft ? userId : null));
+        } catch (self.research.ontology.swrl.service.SwrlBusyException e) {
+            return busy(e);
+        } catch (java.util.concurrent.TimeoutException e) {
+            return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT).body(createErrorResponse("Checking the ontology timed out"));
+        } catch (self.research.ontology.swrl.service.OntologyTooLargeException e) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(createErrorResponse(e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Failed to summarise the ontology and rules of project {}", projectId, e);
+            return ResponseEntity.status(500).body(createErrorResponse("Could not check the ontology and rules"));
+        }
+    }
+
     @GetMapping(value = "/{projectId}/rules/owl")
     public ResponseEntity<?> getRulesAsOwl(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "false") boolean draft,

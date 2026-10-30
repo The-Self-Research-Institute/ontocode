@@ -49,6 +49,7 @@ export interface EditNotification {
   username: string;
   userColor: string;
   timestamp: number;
+  durationMs?: number;
 }
 
 export interface CollaborationState {
@@ -557,7 +558,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
     setTimeout(() => {
       removeNotification(id);
-    }, 5000);
+    }, notification.durationMs ?? 5000);
   }, []);
 
   addNotificationRef.current = addNotification;

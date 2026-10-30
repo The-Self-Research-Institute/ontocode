@@ -8643,6 +8643,20 @@ const updateItemInState = useCallback(
   }, []);
 
   useEffect(() => {
+    return notificationService.onToast((options) => {
+      collaboration.addNotification({
+        type: options.type,
+        message: `${options.title}: ${options.message}`,
+        userId: "system",
+        username: "System",
+        userColor: "#6366f1",
+        timestamp: Date.now(),
+        durationMs: options.duration,
+      });
+    });
+  }, [collaboration.addNotification]);
+
+  useEffect(() => {
     const loadInstalledPlugins = async () => {
       try {
         pluginLoader.loadFromStorage();
@@ -18665,7 +18679,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         {collaboration.state.notifications.map((notification) => (
           <ToastNotification
             key={notification.id}
-            toasts={[{ id: notification.id, type: notification.type, message: notification.message, username: notification.username, color: notification.userColor }]}
+            toasts={[{ id: notification.id, type: notification.type, message: notification.message, username: notification.username, color: notification.userColor, duration: notification.durationMs }]}
             onDismiss={() => collaboration.removeNotification(notification.id)}
           />
         ))}

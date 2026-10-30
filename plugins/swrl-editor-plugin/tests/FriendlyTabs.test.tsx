@@ -74,7 +74,7 @@ describe('friendly axiom rows', () => {
       items: [{ axiomType: 'ClassAssertion', readable: 'ann is a Patient', description: 'ClassAssertion(<http://example.org/clinic#Patient> <http://example.org/clinic#ann>)' }],
     });
     await render(<AssertedAxiomsPanel projectId="p1" draftMode={false} />);
-    expect(text()).toContain('Asserted axioms are the statements typed into the ontology, not the ones a reasoner worked out. Rules are listed on the Editor tab.');
+    expect(text()).toContain('Asserted axioms are the statements typed into the ontology.');
     const sentence = Array.from(container.querySelectorAll('li span')).find(e => e.textContent === 'ann is a Patient') as HTMLElement;
     expect(sentence.getAttribute('title')).toContain('<http://example.org/clinic#ann>');
     expect(container.querySelector('[data-testid="axiom-details"]')).toBeNull();
@@ -174,7 +174,8 @@ describe('Control tab rules list and last run', () => {
     expect(rowOf('d').textContent).toContain('Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThan(?a, 65)');
     expect(rowOf('d').textContent).not.toContain('Rule 12fc4201');
     expect((rowOf('d').querySelector('label') as HTMLElement).title).toContain('Rule 12fc4201');
-    expect(button(/Run all enabled rules/).textContent).toContain('(3)');
+    expect(button(/Run rules/).textContent).toContain('(3)');
+    expect(button(/Run rules/).disabled).toBe(true);
     expect(button(/Run selected/).textContent).toContain('(0)');
     expect(button(/Run selected/).disabled).toBe(true);
     expect(text()).toContain('Tick rules below to run only those.');
@@ -208,7 +209,8 @@ describe('Control tab rules list and last run', () => {
       ],
     });
     await open();
-    await click(button(/Run all enabled rules/));
+    await click(button('Load ontology and rules'));
+    await click(button(/Run rules \(/));
     const summary = container.querySelector('[data-testid="control-summary"]') as HTMLElement;
     expect(summary.textContent).toContain('Ran all enabled rules just now');
     expect(summary.textContent).toContain('5 inferred facts: 3 facts about individuals, 2 class relationships');
@@ -246,8 +248,9 @@ describe('Control tab rules list and last run', () => {
     const gate = deferred();
     api.post.mockReturnValue(gate.promise);
     await open();
+    await click(button('Load ontology and rules'));
     await act(async () => {
-      const b = button(/Run all enabled rules/);
+      const b = button(/Run rules \(/);
       b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });

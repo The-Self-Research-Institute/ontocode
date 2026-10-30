@@ -491,6 +491,14 @@ public class SwrlEngineService {
         });
     }
 
+    public TransferSummary transferSummary(String projectId, String draftUserId) throws Exception {
+        long start = System.currentTimeMillis();
+        TransferSummary counted = admitted(validationGate(), () -> TransferSummary.of(assertedOntology(projectId, draftUserId)));
+        return new TransferSummary(counted.rulesExported(), counted.classDeclarations(), counted.individualDeclarations(),
+                counted.objectPropertyDeclarations(), counted.dataPropertyDeclarations(), counted.totalAxioms(),
+                counted.skippedRules(), System.currentTimeMillis() - start);
+    }
+
     private OWLOntology assertedOntology(String projectId, String draftUserId) throws OWLOntologyCreationException {
         String stamp = ontologyClient.currentStamp(projectId, draftUserId);
         ValidationCache.Key key = new ValidationCache.Key(projectId, draftUserId, OwnerContext.current());

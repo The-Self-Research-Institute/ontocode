@@ -11,14 +11,15 @@ import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
 import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
 import { rt, btn } from './resultsTheme';
-import { ControlPanel } from './ControlPanel';
+import { ControlPanel, useControlSession } from './ControlPanel';
+import type { AddOutcome } from './ControlPanel';
 import { SWRL_BUILTINS, SWRL_BUILTINS_QUICK, BUILT_IN_PREFIXES } from './builtinCatalog';
 import { AssertedAxiomsPanel, Owl2RlPanel } from './AxiomPanels';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
 import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, InferredAxiom, AxiomsPageResponse } from './types';
-import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle } from './ruleModel';
-import type { AxiomKind } from './ruleModel';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle, INFERRED_NOTE, ADD_INFERRED_CAP, axiomsToOps, collectInferredAxioms, inferredPlan } from './ruleModel';
+import type { AxiomKind, FactOp } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
 
@@ -1189,6 +1190,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   if (!results) return (
     <div className="p-8 text-center" style={rt.label}>
       <AlertCircle size={48} className="mx-auto mb-4 opacity-50" />
+      <p className="text-sm mb-3" data-testid="inferred-note">{INFERRED_NOTE}</p>
       <p className="text-lg">Run rule execution to see results.</p>
       <p className="text-sm mt-2">Click "Execute All Rules" to run SWRL inference</p>
     </div>
@@ -1227,16 +1229,16 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const expandAll = () => setCollapsedGroups(new Set());
   const collapseAll = () => setCollapsedGroups(new Set(groupedAxioms.keys()));
   
-  const classAssertions = results.inferredAxioms.filter(ax => {
-    const parsed = formatInferredAxiom(ax);
-    return parsed.type === 'ClassAssertion';
+  const summaryLine = derivedSummary({
+    conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
+    structure: paged ? (results.counts?.structure ?? 0) : (results.structureCount ?? structureTotal),
+    omittedTrivial: results.omittedTrivialCount ?? results.counts?.omittedTrivial ?? 0,
   });
-  
-  const hasSwrlResults = classAssertions.length > 0;
 
   return (
     <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-4">
+      <p className="text-sm" style={rt.label} data-testid="inferred-note">{INFERRED_NOTE}</p>
       <div className="rounded-xl p-5 shadow-sm" style={rt.panel}>
         <h3 className="font-bold mb-4 text-lg flex items-center gap-2" style={rt.heading}>
           <BarChart2 size={20} />
@@ -1268,6 +1270,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             <div className="text-lg font-bold" style={rt.value}>{results.inferredAxiomsCount}</div>
           </div>
         </div>
+        {summaryLine && <p className="mt-3 text-sm" style={rt.value} data-testid="results-summary">{summaryLine}</p>}
 
         {results.executedRuleNames && results.executedRuleNames.length > 0 && (
           <div className="mt-4 pt-4" style={rt.divider}>
@@ -1296,37 +1299,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           {results.limitations.map((text, i) => <div key={i}>{text}</div>)}
         </div>
       )}
-      {results.success && hasSwrlResults && (
-        <div className="rounded-xl overflow-hidden shadow-md" style={rt.bannerSuccess}>
-          <div className="p-4 flex justify-between items-center" style={rt.rowBorder}>
-            <h3 className="font-bold text-lg flex items-center gap-2" style={rt.heading}>
-              <span className="text-2xl">🎯</span>
-              SWRL Rule Results
-              <span className="text-sm font-normal" style={rt.label}>({classAssertions.length} individuals classified)</span>
-            </h3>
-          </div>
-          <div className="p-4">
-            <div className="flex flex-wrap gap-2">
-              {classAssertions.map((ax, i) => {
-                const parsed = formatInferredAxiom(ax);
-                return (
-                  <div
-                    key={i}
-                    className="px-3 py-2 rounded-lg shadow-sm hover:shadow-md transition-all cursor-default" style={rt.card}
-                    title={ax.readable || ax.description}
-                  >
-                    <span className="font-bold" style={rt.value}>{parsed.subject}</span>
-                    <span className="mx-2" style={rt.label}>→</span>
-                    <span className="font-bold" style={rt.value}>{parsed.object}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {results.success && !hasSwrlResults && results.inferredAxioms.length > 0 && (
+      {results.success && results.inferredAxioms.length > 0 && !results.inferredAxioms.some(ax => formatInferredAxiom(ax).type === 'ClassAssertion') && (
         <div className="rounded-xl overflow-hidden" style={rt.bannerWarning}>
           <div 
             className="p-4 flex items-start gap-3 cursor-pointer"
@@ -1530,9 +1503,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               )}
               {paged && results.counts && (
                 <div className="mt-3 space-y-2 text-xs">
-                  <div style={rt.value}>{derivedSummary(results.counts)}</div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {([['conclusions', `Rule conclusions (${formatCount(results.counts.conclusions)})`], ['structure', `Structure (${formatCount(results.counts.structure)})`]] as const).map(([key, label]) => (
+                    {([['conclusions', `Facts about individuals (${formatCount(results.counts.conclusions)})`], ['structure', `Class relationships (${formatCount(results.counts.structure)})`]] as const).map(([key, label]) => (
                       <button
                         key={key}
                         onClick={() => { setTabChoice(key); setOffset(0); }}
@@ -1546,7 +1518,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               )}
               {!paged && conclusionTotal + structureTotal > 0 && results.conclusionCount !== undefined && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                  {([['conclusions', `Rule conclusions (${results.conclusionCount})`], ['structure', `Ontology structure (${results.structureCount ?? structureTotal})`], ['all', 'Everything']] as const).map(([key, label]) => (
+                  {([['conclusions', `Facts about individuals (${formatCount(results.conclusionCount)})`], ['structure', `Class relationships (${formatCount(results.structureCount ?? structureTotal)})`], ['all', 'Everything']] as const).map(([key, label]) => (
                     <button
                       key={key}
                       onClick={() => { setScopeChoice(key); setVisibleLimit(100); }}
@@ -1555,8 +1527,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       {label}
                     </button>
                   ))}
-                  {results.omittedTrivialCount ? <span style={rt.label}>{results.omittedTrivialCount} trivial same-individual facts hidden</span> : null}
-                  {results.truncated ? <span style={rt.value}>Only the first {results.inferredAxioms.length} are listed; the rest are cut off.</span> : null}
+                  {results.omittedTrivialCount ? <span style={rt.label}>{formatCount(results.omittedTrivialCount)} trivial same-individual facts hidden</span> : null}
+                  {results.truncated ? <span style={rt.value}>Showing the first {formatCount(results.inferredAxioms.length)} of {formatCount((results.conclusionCount ?? conclusionTotal) + (results.structureCount ?? structureTotal))}; narrow the list with the search or the filter.</span> : null}
                 </div>
               )}
             </div>
@@ -1783,6 +1755,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const [isCloning, setIsCloning] = useState(false);
   const [busyRules, setBusyRules] = useState<Record<string, 'delete' | 'toggle' | 'copy'>>({});
   const busyRulesRef = useRef<Set<string>>(new Set());
+  const [assertedVersion, setAssertedVersion] = useState(0);
+  const controlSession = useControlSession(`${projectId}|${draftMode}`);
   const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query' | 'control' | 'asserted' | 'owl2rl'>('editor');
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
@@ -2113,21 +2087,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     }
   };
 
-  const handleAddConclusions = async (axioms: InferredAxiom[]): Promise<{ ok: boolean; message: string }> => {
-    const ops = axioms.flatMap<Record<string, string | undefined>>(ax => {
-      if (!ax.subjectIri || !ax.predicateIri) return [];
-      if (ax.predicateIri === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' && ax.objectIri) {
-        return [{ type: 'addClassAssertion', iri: ax.subjectIri, classIri: ax.objectIri }];
-      }
-      if (ax.objectIri) {
-        return [{ type: 'addObjectPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, target: ax.objectIri }];
-      }
-      if (ax.objectLiteral != null) {
-        return [{ type: 'addDataPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, value: ax.objectLiteral, datatype: ax.literalDatatypeIri || undefined }];
-      }
-      return [];
-    });
-    if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
+  const postFactOps = async (ops: FactOp[], label: string, run: ExecutionResponse | null): Promise<{ ok: boolean; message: string }> => {
     try {
       const res = await apiClient.post<{ changeSetId?: string }>(
         withDraft(`/api/ontology/mutations/${projectId}`, draftMode),
@@ -2135,18 +2095,48 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
           ops,
           username: 'SWRL rules',
           sessionId: `swrl-add-${Date.now()}`,
-          precondition: executionResult?.stamp ?? null,
-          origin: { source: 'swrl-rules', label: 'Added from rule results (' + ops.length + ' facts)' }
+          precondition: run?.stamp ?? null,
+          origin: { source: 'swrl-rules', label }
         }
       );
       window.dispatchEvent(new CustomEvent('ontocode:committed-change', { detail: { projectId, direction: 'APPLY', changeSetId: res?.changeSetId } }));
-      return { ok: true, message: `Added ${ops.length} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.` };
+      return { ok: true, message: '' };
     } catch (e: any) {
       if (/stale|out of date|\(409\)|changed since/i.test(String(e?.message || ''))) {
         return { ok: false, message: 'The ontology or the rules changed since you ran this. Run the rules again, then add.' };
       }
       return { ok: false, message: e?.data?.message || e?.message || 'Could not add the facts.' };
     }
+  };
+
+  const handleAddConclusions = async (axioms: InferredAxiom[]): Promise<{ ok: boolean; message: string }> => {
+    const { ops } = axiomsToOps(axioms.filter(ax => ax.category !== 'structure'));
+    if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
+    const outcome = await postFactOps(ops, 'Added from rule results (' + ops.length + ' facts)', executionResult);
+    if (!outcome.ok) return outcome;
+    return { ok: true, message: `Added ${ops.length} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.` };
+  };
+
+  const handleAddInferred = async (includeStructure: boolean): Promise<AddOutcome> => {
+    const run = executionResult;
+    if (!run || !run.success) return { ok: false, message: 'Run the rules first, then add the inferred facts.' };
+    const plan = inferredPlan(run, includeStructure);
+    let axioms: InferredAxiom[];
+    try {
+      axioms = await collectInferredAxioms(apiClient.get.bind(apiClient), projectId, run, draftMode, includeStructure, ADD_INFERRED_CAP);
+    } catch (e: any) {
+      if (isExpiredRunError(e)) return { ok: false, message: EXPIRED_RUN_MESSAGE };
+      return { ok: false, message: pageErrorMessage(e) };
+    }
+    const { ops, unsupported } = axiomsToOps(axioms);
+    if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
+    const outcome = await postFactOps(ops, `Added from the Control tab (${ops.length} inferred facts)`, run);
+    if (!outcome.ok) return outcome;
+    setAssertedVersion(v => v + 1);
+    const parts = [`Added ${formatCount(ops.length)} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.`];
+    if (plan.overCap) parts.push(`Only the first ${formatCount(ADD_INFERRED_CAP)} of ${formatCount(plan.total)} are added in one go. Run the rules again to add the rest.`);
+    if (unsupported > 0) parts.push(`${formatCount(unsupported)} could not be written as simple facts and were left out.`);
+    return { ok: true, message: parts.join(' '), added: ops.length };
   };
 
   const startRuleBusy = (id: string, action: 'delete' | 'toggle' | 'copy') => {
@@ -2280,8 +2270,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     });
   };
 
-  const handleExecuteAll = async () => {
-    if (runInFlightRef.current) return;
+  const handleExecuteAll = async (): Promise<ExecutionResponse | null> => {
+    if (runInFlightRef.current) return null;
     runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
@@ -2290,25 +2280,28 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     try {
       const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode));
       setExecutionResult(res);
+      return res;
     } catch (e) {
       console.error('Execution failed:', e);
-      setExecutionResult({
+      const failed = {
         success: false,
         errorMessage: 'Execution failed',
         executionTimeMs: 0,
         totalRulesExecuted: 0,
         inferredAxiomsCount: 0,
         inferredAxioms: []
-      } as ExecutionResponse);
+      } as ExecutionResponse;
+      setExecutionResult(failed);
+      return failed;
     } finally {
       runInFlightRef.current = false;
       setIsExecuting(false);
     }
   };
 
-  const handleExecuteSelected = async () => {
-    if (selectedRuleIds.size === 0) return;
-    if (runInFlightRef.current) return;
+  const handleExecuteSelected = async (): Promise<ExecutionResponse | null> => {
+    if (selectedRuleIds.size === 0) return null;
+    if (runInFlightRef.current) return null;
     runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
@@ -2321,8 +2314,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         { ruleIds }
       );
       setExecutionResult(res);
+      return res;
     } catch (e) {
       console.error('Execution failed:', e);
+      return null;
     } finally {
       runInFlightRef.current = false;
       setIsExecuting(false);
@@ -2706,7 +2701,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                   : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              <BarChart2 size={14} /> Results
+              <BarChart2 size={14} /> Inferred Axioms
               {executionResult && (
                 <span className={`ml-1 px-1.5 py-0.5 text-[10px] rounded-full ${
                   executionResult.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
@@ -3051,6 +3046,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
             <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} />
           ) : activePanel === 'control' ? (
             <ControlPanel
+              projectId={projectId}
+              draftMode={draftMode}
+              session={controlSession}
+              onAddInferred={handleAddInferred}
               result={executionResult}
               isExecuting={isExecuting}
               enabledCount={enabledCount}
@@ -3066,7 +3065,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               ranAt={ranAt}
             />
           ) : activePanel === 'asserted' ? (
-            <AssertedAxiomsPanel projectId={projectId} draftMode={draftMode} />
+            <AssertedAxiomsPanel key={assertedVersion} projectId={projectId} draftMode={draftMode} />
           ) : activePanel === 'owl2rl' ? (
             <Owl2RlPanel projectId={projectId} draftMode={draftMode} />
           ) : activePanel === 'query' ? (

@@ -1,0 +1,49 @@
+@prefix : <http://example.org/hand#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix swrl: <http://www.w3.org/2003/11/swrl#> .
+@prefix swrlb: <http://www.w3.org/2003/11/swrlb#> .
+
+<http://example.org/hand> a owl:Ontology .
+
+:Person a owl:Class .
+:Adult a owl:Class .
+:Senior a owl:Class .
+:age a owl:DatatypeProperty .
+:knows a owl:ObjectProperty .
+:friendOf a owl:ObjectProperty .
+
+:x a swrl:Variable .
+:y a swrl:Variable .
+:a a swrl:Variable .
+
+:AdultRule a swrl:Imp ;
+  rdfs:label "AdultRule" ;
+  rdfs:comment "People of eighteen or more are adults" ;
+  swrl:body [ a swrl:AtomList ;
+    rdf:first [ a swrl:ClassAtom ; swrl:classPredicate :Person ; swrl:argument1 :x ] ;
+    rdf:rest [ a swrl:AtomList ;
+      rdf:first [ a swrl:DatavaluedPropertyAtom ; swrl:propertyPredicate :age ; swrl:argument1 :x ; swrl:argument2 :a ] ;
+      rdf:rest [ a swrl:AtomList ;
+        rdf:first [ a swrl:BuiltinAtom ; swrl:builtin swrlb:greaterThanOrEqual ;
+          swrl:arguments [ a rdf:List ; rdf:first :a ; rdf:rest [ a rdf:List ; rdf:first 18 ; rdf:rest rdf:nil ] ] ] ;
+        rdf:rest rdf:nil ] ] ] ;
+  swrl:head [ a swrl:AtomList ;
+    rdf:first [ a swrl:ClassAtom ; swrl:classPredicate :Adult ; swrl:argument1 :x ] ;
+    rdf:rest rdf:nil ] .
+
+:SeniorRule a swrl:Imp ;
+  rdfs:label "SeniorRule" ;
+  swrl:body [ a swrl:AtomList ;
+    rdf:first [ a swrl:ClassAtom ; swrl:classPredicate :Adult ; swrl:argument1 :x ] ;
+    rdf:rest [ a swrl:AtomList ;
+      rdf:first [ a swrl:DatavaluedPropertyAtom ; swrl:propertyPredicate :age ; swrl:argument1 :x ; swrl:argument2 :a ] ;
+      rdf:rest [ a swrl:AtomList ;
+        rdf:first [ a swrl:BuiltinAtom ; swrl:builtin swrlb:greaterThanOrEqual ;
+          swrl:arguments [ a rdf:List ; rdf:first :a ; rdf:rest [ a rdf:List ; rdf:first 65 ; rdf:rest rdf:nil ] ] ] ;
+        rdf:rest rdf:nil ] ] ] ;
+  swrl:head [ a swrl:AtomList ;
+    rdf:first [ a swrl:ClassAtom ; swrl:classPredicate :Senior ; swrl:argument1 :x ] ;
+    rdf:rest rdf:nil ] .

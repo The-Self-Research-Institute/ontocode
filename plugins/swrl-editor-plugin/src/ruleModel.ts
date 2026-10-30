@@ -1,3 +1,5 @@
+import type { AxiomsPageResponse, InferredAxiom } from './types';
+
 export const COMPARISONS = [
   'greaterThan',
   'lessThan',
@@ -687,13 +689,16 @@ function pluralize(n: number, one: string, many: string): string {
 }
 
 export function derivedSummary(counts: RunCounts): string {
-  const total = counts.conclusions + counts.structure;
-  const base = `${formatCount(total)} derived: ${formatCount(counts.conclusions)} ${pluralize(counts.conclusions, 'rule conclusion', 'rule conclusions')}, ${formatCount(counts.structure)} structure`;
+  const facts = counts.conclusions;
+  const relations = counts.structure;
   const omitted = counts.omittedTrivial ?? 0;
-  if (omitted > 0) {
-    return `${base} (${formatCount(omitted)} trivial same-individual ${pluralize(omitted, 'fact', 'facts')} hidden)`;
-  }
-  return base;
+  const total = facts + relations + omitted;
+  if (total <= 0) return '';
+  const parts: string[] = [];
+  if (facts > 0) parts.push(`${formatCount(facts)} ${pluralize(facts, 'fact about an individual', 'facts about individuals')} from your rules`);
+  parts.push(relations > 0 ? `${formatCount(relations)} ${pluralize(relations, 'class relationship', 'class relationships')} from standard reasoning` : 'no class relationships');
+  if (omitted > 0) parts.push(`${formatCount(omitted)} trivial ${pluralize(omitted, 'one', 'ones')} hidden`);
+  return `${formatCount(total)} produced: ${parts.join(', ')}.`;
 }
 
 export function pageStart(offset: number, total: number, limit: number = RESULTS_PAGE_SIZE): number {
@@ -883,7 +888,9 @@ export const OWL2RL_UNSUPPORTED_NOTE = 'This engine does not apply some standard
 
 export const OWL2RL_CATEGORY_LABELS = { conclusion: 'Facts about individuals', structure: 'Class relationships' } as const;
 
-export const ASSERTED_NOTE = 'Asserted axioms are the statements typed into the ontology, not the ones a reasoner worked out. Rules are listed on the Editor tab.';
+export const ASSERTED_NOTE = 'Asserted axioms are the statements typed into the ontology.';
+
+export const INFERRED_NOTE = 'Inferred axioms are worked out by the rules and are not saved in the ontology until you add them.';
 
 const UNSUPPORTED_RULE_NAMES: Record<string, string> = {
   'prp-spo2': 'property chains',
@@ -1038,4 +1045,183 @@ export function skippedListText(info: SkippedInfo): string {
   if (!info.reason) return info.name;
   const reason = info.couldNotRun ? plainSkipReason(info) : info.reason.replace(/\.$/, '');
   return `${info.name}: ${reason}`;
+}
+
+export const ADD_INFERRED_CAP = 5000;
+export const ADD_FETCH_PAGE = 500;
+
+export interface TransferSummary {
+  rulesExported: number;
+  classDeclarations: number;
+  individualDeclarations: number;
+  objectPropertyDeclarations: number;
+  dataPropertyDeclarations: number;
+  totalAxioms: number;
+  skippedRules?: Array<{ ruleName?: string; name?: string; reason?: string }>;
+  elapsedMs: number;
+}
+
+export function transferSummaryPath(projectId: string, draftMode: boolean): string {
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/transfer-summary`, draftMode);
+}
+
+function countLine(n: number, label: string): string {
+  return `${label}: ${formatCount(n)}`;
+}
+
+export const LOAD_STEP_NOTE = 'The rule engine is built fresh every time the rules run, so this step checks and counts what will be sent to it.';
+
+export function skippedLogLines(skipped: SkippedInfo[], limit = 10): string[] {
+  const lines = skipped.slice(0, limit).map(s => `Skipped rule ${skippedListText(s)}`);
+  if (skipped.length > limit) lines.push(`...and ${formatCount(skipped.length - limit)} more skipped rules.`);
+  return lines;
+}
+
+export function loadLogLines(summary: TransferSummary): string[] {
+  const skipped = skippedInfo({ skippedRules: summary.skippedRules });
+  return [
+    'Ontology and rules checked successfully.',
+    countLine(summary.rulesExported, 'Number of rules that will be sent to the rule engine'),
+    countLine(summary.classDeclarations, 'Number of classes that will be sent'),
+    countLine(summary.individualDeclarations, 'Number of individuals that will be sent'),
+    countLine(summary.objectPropertyDeclarations, 'Number of object properties that will be sent'),
+    countLine(summary.dataPropertyDeclarations, 'Number of data properties that will be sent'),
+    countLine(summary.totalAxioms, 'Total number of axioms that will be sent'),
+    ...skippedLogLines(skipped),
+    `The check took ${formatCount(summary.elapsedMs)} millisecond(s).`,
+    LOAD_STEP_NOTE,
+    'Press the Run rules button to run the rules.',
+  ];
+}
+
+function inferredLogLine(run: RunLike): string {
+  const split = inferredSplit(run);
+  const head = `Number of inferred facts: ${formatCount(inferredTotal(run))}`;
+  return split ? `${head} (${formatCount(split.facts)} about individuals, ${formatCount(split.relationships)} class relationships)` : head;
+}
+
+export function runLogLines(run: RunLike & { executionTimeMs?: number; errorMessage?: string | null }): string[] {
+  if (!run.success) {
+    return [`The rules could not be run: ${run.errorMessage || 'unknown problem'}`];
+  }
+  const ran = run.executedRuleNames?.length ?? run.totalRulesExecuted ?? 0;
+  return [
+    'Rules ran successfully.',
+    `Number of rules run: ${formatCount(ran)}`,
+    ...skippedLogLines(skippedInfo(run)),
+    inferredLogLine(run),
+    `The run took ${formatCount(run.executionTimeMs ?? 0)} millisecond(s).`,
+    'Look at the Inferred Axioms tab to see the inferred facts.',
+    'Press the Add inferred facts to ontology button to save them in the ontology.',
+  ];
+}
+
+export interface FactOp {
+  type: string;
+  iri: string;
+  classIri?: string;
+  property?: string;
+  target?: string;
+  value?: string;
+  datatype?: string;
+}
+
+const SUBCLASS_TEXT = /^SubClassOf\(<([^<>\s]+)> <([^<>\s]+)>\)$/;
+
+export type OpSource = {
+  description?: string;
+  axiomType?: string;
+  subjectIri?: string | null;
+  predicateIri?: string | null;
+  objectIri?: string | null;
+  objectLiteral?: string | null;
+  literalDatatypeIri?: string | null;
+};
+
+export function axiomToOp(ax: OpSource): FactOp | null {
+  if (ax.subjectIri && ax.predicateIri) {
+    if (ax.predicateIri === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' && ax.objectIri) {
+      return { type: 'addClassAssertion', iri: ax.subjectIri, classIri: ax.objectIri };
+    }
+    if (ax.objectIri) {
+      return { type: 'addObjectPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, target: ax.objectIri };
+    }
+    if (ax.objectLiteral != null) {
+      return { type: 'addDataPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, value: ax.objectLiteral, datatype: ax.literalDatatypeIri || undefined };
+    }
+    return null;
+  }
+  const sub = ax.axiomType === 'SubClassOf' ? SUBCLASS_TEXT.exec((ax.description || '').trim()) : null;
+  return sub ? { type: 'addSubClassOf', iri: sub[1], target: sub[2] } : null;
+}
+
+export function axiomsToOps(axioms: OpSource[]): { ops: FactOp[]; unsupported: number } {
+  const ops: FactOp[] = [];
+  let unsupported = 0;
+  for (const ax of axioms) {
+    const op = axiomToOp(ax);
+    if (op) ops.push(op);
+    else unsupported++;
+  }
+  return { ops, unsupported };
+}
+
+export interface InferredPlan {
+  facts: number;
+  relationships: number;
+  total: number;
+  willAdd: number;
+  overCap: boolean;
+}
+
+export function inferredPlan(run: RunLike, includeStructure: boolean, cap: number = ADD_INFERRED_CAP): InferredPlan {
+  const split = inferredSplit(run);
+  const facts = split ? split.facts : inferredTotal(run);
+  const relationships = split ? split.relationships : 0;
+  const total = facts + (includeStructure ? relationships : 0);
+  return { facts, relationships, total, willAdd: Math.min(total, cap), overCap: total > cap };
+}
+
+export function addConfirmText(plan: InferredPlan, cap: number = ADD_INFERRED_CAP): string {
+  const base = `This will add ${formatCount(plan.willAdd)} fact${plan.willAdd === 1 ? '' : 's'} to the ontology. They become ordinary asserted statements, and you can undo the change from the history.`;
+  return plan.overCap
+    ? `${base} Only the first ${formatCount(cap)} of ${formatCount(plan.total)} can be added in one go. Run the rules again afterwards to add the rest.`
+    : base;
+}
+
+export async function collectInferredAxioms(
+  get: <T>(url: string) => Promise<T>,
+  projectId: string,
+  run: { runId?: string; counts?: { conclusions: number; structure: number }; inferredAxioms?: InferredAxiom[] },
+  draftMode: boolean,
+  includeStructure: boolean,
+  cap: number = ADD_INFERRED_CAP
+): Promise<InferredAxiom[]> {
+  const kinds: AxiomKind[] = includeStructure ? ['conclusions', 'structure'] : ['conclusions'];
+  const out: InferredAxiom[] = [];
+  if (!isPagedRun(run)) {
+    for (const kind of kinds) {
+      const wanted = kind === 'structure' ? 'structure' : 'conclusion';
+      for (const ax of run.inferredAxioms ?? []) {
+        if (out.length >= cap) return out;
+        if ((ax.category ?? 'conclusion') === wanted) out.push(ax);
+      }
+    }
+    return out;
+  }
+  for (const kind of kinds) {
+    const total = kind === 'structure' ? run.counts!.structure : run.counts!.conclusions;
+    let offset = 0;
+    while (offset < total && out.length < cap) {
+      const page = await get<AxiomsPageResponse>(axiomsPagePath(projectId, run.runId!, { offset, limit: ADD_FETCH_PAGE, kind, query: '' }, draftMode));
+      const axioms = Array.isArray(page?.axioms) ? page.axioms : [];
+      if (axioms.length === 0) break;
+      for (const ax of axioms) {
+        if (out.length >= cap) break;
+        out.push(ax);
+      }
+      offset += axioms.length;
+    }
+  }
+  return out;
 }

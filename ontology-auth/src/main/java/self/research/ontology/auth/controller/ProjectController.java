@@ -313,7 +313,7 @@ public class ProjectController {
                 request.description
             );
 
-            // Persist visibility so invitation acceptance can make the right auto-add decision
+            // Persist visibility so later joins and role changes can make the right auto-add decision
             if ("all".equals(request.shareWith)) {
                 project.setVisibility("WORKSPACE");
             } else if ("specific".equals(request.shareWith)) {
@@ -1884,8 +1884,19 @@ public ResponseEntity<?> renameFile(
                 project.setDescription(request.get("description"));
             }
 
-            project.setUpdatedAt(java.time.LocalDateTime.now());
-            projectService.updateProject(project);
+            if (request.containsKey("visibility")) {
+                if (!"WORKSPACE".equals(request.get("visibility"))) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Visibility can only be changed to WORKSPACE"));
+                }
+                Optional<Workspace> workspaceOpt = projectService.getWorkspace(project.getWorkspaceId());
+                if (workspaceOpt.isEmpty()) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+                }
+                projectService.shareWithAllWorkspaceMembers(project, workspaceOpt.get());
+            } else {
+                project.setUpdatedAt(java.time.LocalDateTime.now());
+                projectService.updateProject(project);
+            }
 
             return ResponseEntity.ok(Map.of(
                 "message", "Project updated successfully",

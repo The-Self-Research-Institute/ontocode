@@ -12,10 +12,10 @@ import self.research.ontology.auth.model.Invitation;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.InvitationRepository;
-import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.InvitationService;
+import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.service.SystemSettingsService;
 
 import java.util.List;
@@ -42,7 +42,7 @@ class InvitationControllerSecurityTest {
         users = mock(UserRepository.class);
         workspaces = mock(WorkspaceRepository.class);
         controller = new InvitationController(invitations, mock(InvitationRepository.class), users, workspaces,
-                mock(ProjectRepository.class), mock(SystemSettingsService.class));
+                mock(ProjectService.class), mock(SystemSettingsService.class));
 
         workspace = new Workspace();
         workspace.setWorkspaceId("w1");

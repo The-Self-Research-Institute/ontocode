@@ -220,6 +220,68 @@ public class ProjectService {
         return dirty;
     }
 
+    public static boolean isPrivateProject(Project project) {
+        String visibility = project.getVisibility();
+        return "PRIVATE".equals(visibility)
+                || (visibility == null && (project.getMembers() == null || project.getMembers().size() <= 1));
+    }
+
+    public int autoAddNewWorkspaceMember(Workspace workspace, String userId, String username, String email,
+                                         Workspace.WorkspaceRole role) {
+        if (workspace == null || userId == null) {
+            return 0;
+        }
+        boolean newAdmin = role == Workspace.WorkspaceRole.ADMIN;
+        List<Project> projects;
+        try {
+            projects = projectRepository.findActiveByWorkspaceId(workspace.getWorkspaceId());
+        } catch (Exception e) {
+            log.warn("Could not load projects of workspace {} to add user {}: {}",
+                    workspace.getWorkspaceId(), userId, e.getMessage());
+            return 0;
+        }
+        int added = 0;
+        for (Project project : projects) {
+            try {
+                if (userId.equals(project.getOwnerId()) || project.hasMember(userId) || isPrivateProject(project)) {
+                    continue;
+                }
+                boolean everyone = "WORKSPACE".equals(project.getVisibility());
+                if (!newAdmin && !everyone) {
+                    continue;
+                }
+                String projectRole = newAdmin ? "EDITOR" : "VIEWER";
+                project.addMember(userId, username, email, projectRole);
+                projectRepository.save(project);
+                added++;
+                log.info("Auto-added {} as {} to project {} (visibility={}) in workspace {}",
+                        username, projectRole, project.getName(), project.getVisibility(), workspace.getWorkspaceId());
+            } catch (Exception e) {
+                log.warn("Failed to auto-add user {} to project {}: {}", userId, project.getProjectId(), e.getMessage());
+            }
+        }
+        return added;
+    }
+
+    public int shareWithAllWorkspaceMembers(Project project, Workspace workspace) {
+        project.setVisibility("WORKSPACE");
+        int added = 0;
+        for (Workspace.WorkspaceMember member : workspace.getMembers()) {
+            if (member.getUserId() == null
+                    || member.getStatus() != Workspace.MemberStatus.ACTIVE
+                    || member.getUserId().equals(project.getOwnerId())
+                    || project.hasMember(member.getUserId())) {
+                continue;
+            }
+            project.addMember(member.getUserId(), member.getUsername(), member.getEmail(), "VIEWER");
+            added++;
+        }
+        applyImplicitWorkspaceLeadershipEditors(project, workspace);
+        project.setUpdatedAt(LocalDateTime.now());
+        projectRepository.save(project);
+        return added;
+    }
+
     private boolean upsertLinkedWorkspaceEditor(Project project, Workspace workspace, String userId, String link) {
         Workspace.WorkspaceMember wm = workspace.getMember(userId);
         String username = wm != null ? wm.getUsername() : null;
