@@ -3,25 +3,7 @@ package self.research.ontology.swrl.service;
 import org.semanticweb.owlapi.formats.PrefixDocumentFormat;
 import org.semanticweb.owlapi.manchestersyntax.renderer.ManchesterOWLSyntaxOWLObjectRendererImpl;
 import org.semanticweb.owlapi.model.IRI;
-import org.semanticweb.owlapi.model.OWLAxiom;
-import org.semanticweb.owlapi.model.OWLClassAssertionAxiom;
-import org.semanticweb.owlapi.model.OWLClassExpression;
-import org.semanticweb.owlapi.model.OWLDataPropertyAssertionAxiom;
-import org.semanticweb.owlapi.model.OWLDataPropertyDomainAxiom;
-import org.semanticweb.owlapi.model.OWLDisjointClassesAxiom;
-import org.semanticweb.owlapi.model.OWLDocumentFormat;
-import org.semanticweb.owlapi.model.OWLEntity;
-import org.semanticweb.owlapi.model.OWLEquivalentClassesAxiom;
-import org.semanticweb.owlapi.model.OWLIndividual;
-import org.semanticweb.owlapi.model.OWLLiteral;
-import org.semanticweb.owlapi.model.OWLObjectPropertyAssertionAxiom;
-import org.semanticweb.owlapi.model.OWLObjectPropertyDomainAxiom;
-import org.semanticweb.owlapi.model.OWLObjectPropertyRangeAxiom;
-import org.semanticweb.owlapi.model.OWLOntology;
-import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
-import org.semanticweb.owlapi.model.OWLSubDataPropertyOfAxiom;
-import org.semanticweb.owlapi.model.OWLSubObjectPropertyOfAxiom;
-import org.semanticweb.owlapi.model.PrefixManager;
+import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.ShortFormProvider;
 
 import java.util.List;
@@ -35,6 +17,10 @@ final class AxiomWording {
             "http://www.w3.org/1999/02/22-rdf-syntax-ns#", "rdf:",
             "http://www.w3.org/2000/01/rdf-schema#", "rdfs:",
             "http://www.w3.org/2001/XMLSchema#", "xsd:");
+
+    private static final int MAX_TEXT = 120;
+
+    private static final java.util.regex.Pattern ANGLE_IRI = java.util.regex.Pattern.compile("<[^<>\\s]*[#/:]([^#/:<>\\s]+)>");
 
     private static final String PLACEHOLDER = "urn:ontocode:blank:";
 
@@ -110,31 +96,106 @@ final class AxiomWording {
         return "(" + renderer().render(expression).replaceAll("\\s+", " ").trim() + ")";
     }
 
+    private static String clip(String text) {
+        String flat = text.replaceAll("\\s+", " ").trim();
+        return flat.length() > MAX_TEXT ? flat.substring(0, MAX_TEXT) + "..." : flat;
+    }
+
     private String literal(OWLLiteral literal) {
         String type = literal.getDatatype().getIRI().toString();
         if (literal.hasLang()) {
-            return "\"" + literal.getLiteral() + "\"@" + literal.getLang();
+            return "\"" + clip(literal.getLiteral()) + "\"@" + literal.getLang();
         }
         if (type.endsWith("#integer") || type.endsWith("#decimal") || type.endsWith("#double") || type.endsWith("#float")
                 || type.endsWith("#int") || type.endsWith("#long") || type.endsWith("#boolean")) {
             return literal.getLiteral();
         }
         if (type.endsWith("#string") || type.endsWith("PlainLiteral")) {
-            return "\"" + literal.getLiteral() + "\"";
+            return "\"" + clip(literal.getLiteral()) + "\"";
         }
-        return "\"" + literal.getLiteral() + "\"^^" + name(literal.getDatatype().getIRI());
+        return "\"" + clip(literal.getLiteral()) + "\"^^" + name(literal.getDatatype().getIRI());
     }
 
     String sentence(OWLAxiom axiom) {
         String text = known(axiom);
-        if (text != null) {
-            return text;
+        if (text == null) {
+            try {
+                text = renderer().render(axiom).replaceAll("\\s+", " ").trim();
+            } catch (RuntimeException e) {
+                text = axiom.toString();
+            }
         }
-        try {
-            return renderer().render(axiom).replaceAll("\\s+", " ").trim();
-        } catch (RuntimeException e) {
-            return axiom.toString();
+        return ANGLE_IRI.matcher(text).replaceAll("$1");
+    }
+
+    private String property(OWLPropertyExpression expression) {
+        if (expression instanceof OWLObjectPropertyExpression object) {
+            return object.isAnonymous() ? "inverse " + name(object.getNamedProperty().getIRI()) : name(object.asOWLObjectProperty().getIRI());
         }
+        if (expression instanceof OWLDataProperty data) {
+            return name(data.getIRI());
+        }
+        return renderer().render(expression);
+    }
+
+    private String properties(java.util.Collection<? extends OWLPropertyExpression> expressions, String separator) {
+        return expressions.stream().map(this::property).sorted().collect(Collectors.joining(separator));
+    }
+
+    private String range(OWLDataRange range) {
+        if (range instanceof OWLDatatype) {
+            return name(range.asOWLDatatype().getIRI());
+        }
+        return "(" + renderer().render(range).replaceAll("\\s+", " ").trim() + ")";
+    }
+
+    private String annotationProperty(IRI iri) {
+        String full = iri.toString();
+        return switch (full) {
+            case "http://www.w3.org/2000/01/rdf-schema#label" -> "label";
+            case "http://www.w3.org/2000/01/rdf-schema#comment" -> "comment";
+            case "http://www.w3.org/2000/01/rdf-schema#seeAlso" -> "see also";
+            case "http://www.w3.org/2000/01/rdf-schema#isDefinedBy" -> "is defined by";
+            default -> name(iri);
+        };
+    }
+
+    private String annotationValue(OWLAnnotationValue value) {
+        if (value instanceof IRI iri) {
+            return name(iri);
+        }
+        if (value instanceof OWLLiteral literal) {
+            return literal(literal);
+        }
+        return "_:anonymous";
+    }
+
+    private String characteristic(OWLAxiom axiom) {
+        if (axiom instanceof OWLFunctionalObjectPropertyAxiom a) {
+            return property(a.getProperty()) + " is functional";
+        }
+        if (axiom instanceof OWLInverseFunctionalObjectPropertyAxiom a) {
+            return property(a.getProperty()) + " is inverse functional";
+        }
+        if (axiom instanceof OWLTransitiveObjectPropertyAxiom a) {
+            return property(a.getProperty()) + " is transitive";
+        }
+        if (axiom instanceof OWLSymmetricObjectPropertyAxiom a) {
+            return property(a.getProperty()) + " is symmetric";
+        }
+        if (axiom instanceof OWLAsymmetricObjectPropertyAxiom a) {
+            return property(a.getProperty()) + " is asymmetric";
+        }
+        if (axiom instanceof OWLReflexiveObjectPropertyAxiom a) {
+            return property(a.getProperty()) + " is reflexive";
+        }
+        if (axiom instanceof OWLIrreflexiveObjectPropertyAxiom a) {
+            return property(a.getProperty()) + " is irreflexive";
+        }
+        if (axiom instanceof OWLFunctionalDataPropertyAxiom a) {
+            return property(a.getProperty()) + " is functional";
+        }
+        return null;
     }
 
     private String known(OWLAxiom axiom) {
@@ -174,7 +235,62 @@ final class AxiomWording {
         if (axiom instanceof OWLSubDataPropertyOfAxiom a && !a.getSubProperty().isAnonymous() && !a.getSuperProperty().isAnonymous()) {
             return name(a.getSubProperty().asOWLDataProperty().getIRI()) + " is a kind of " + name(a.getSuperProperty().asOWLDataProperty().getIRI());
         }
-        return null;
+        if (axiom instanceof OWLAnnotationAssertionAxiom a) {
+            String subject = a.getSubject() instanceof IRI iri ? name(iri) : "_:anonymous";
+            return subject + " has " + annotationProperty(a.getProperty().getIRI()) + " " + annotationValue(a.getValue());
+        }
+        if (axiom instanceof OWLInverseObjectPropertiesAxiom a) {
+            return property(a.getFirstProperty()) + " is the inverse of " + property(a.getSecondProperty());
+        }
+        if (axiom instanceof OWLDataPropertyRangeAxiom a) {
+            return property(a.getProperty()) + " holds " + range(a.getRange());
+        }
+        if (axiom instanceof OWLDifferentIndividualsAxiom a) {
+            return a.getIndividualsAsList().stream().map(this::individual).collect(Collectors.joining(", ")) + " are different from each other";
+        }
+        if (axiom instanceof OWLSameIndividualAxiom a) {
+            return a.getIndividualsAsList().stream().map(this::individual).collect(Collectors.joining(" is the same as "));
+        }
+        if (axiom instanceof OWLNegativeObjectPropertyAssertionAxiom a) {
+            return individual(a.getSubject()) + " does not " + property(a.getProperty()) + " " + individual(a.getObject());
+        }
+        if (axiom instanceof OWLNegativeDataPropertyAssertionAxiom a) {
+            return individual(a.getSubject()) + " does not have " + property(a.getProperty()) + " " + literal(a.getObject());
+        }
+        if (axiom instanceof OWLHasKeyAxiom a) {
+            return operand(a.getClassExpression()) + " is identified by " + properties(a.getPropertyExpressions(), " and ");
+        }
+        if (axiom instanceof OWLDisjointUnionAxiom a) {
+            return name(a.getOWLClass().getIRI()) + " is exactly one of " + a.getClassExpressions().stream().map(this::operand).sorted().collect(Collectors.joining(", "));
+        }
+        if (axiom instanceof OWLEquivalentObjectPropertiesAxiom a) {
+            return properties(a.getProperties(), " is the same as ");
+        }
+        if (axiom instanceof OWLEquivalentDataPropertiesAxiom a) {
+            return properties(a.getProperties(), " is the same as ");
+        }
+        if (axiom instanceof OWLDisjointObjectPropertiesAxiom a) {
+            return properties(a.getProperties(), " and ") + " cannot overlap";
+        }
+        if (axiom instanceof OWLDisjointDataPropertiesAxiom a) {
+            return properties(a.getProperties(), " and ") + " cannot overlap";
+        }
+        if (axiom instanceof OWLSubPropertyChainOfAxiom a) {
+            return a.getPropertyChain().stream().map(this::property).collect(Collectors.joining(" then ")) + " implies " + property(a.getSuperProperty());
+        }
+        if (axiom instanceof OWLSubAnnotationPropertyOfAxiom a) {
+            return name(a.getSubProperty().getIRI()) + " is a kind of " + name(a.getSuperProperty().getIRI());
+        }
+        if (axiom instanceof OWLAnnotationPropertyDomainAxiom a) {
+            return name(a.getProperty().getIRI()) + " applies to " + name(a.getDomain());
+        }
+        if (axiom instanceof OWLAnnotationPropertyRangeAxiom a) {
+            return name(a.getProperty().getIRI()) + " points to " + name(a.getRange());
+        }
+        if (axiom instanceof OWLDeclarationAxiom a) {
+            return name(a.getEntity().getIRI()) + " is declared";
+        }
+        return characteristic(axiom);
     }
 
     private String joined(List<OWLClassExpression> expressions, String separator) {
