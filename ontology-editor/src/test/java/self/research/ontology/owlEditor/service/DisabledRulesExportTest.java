@@ -64,7 +64,7 @@ class DisabledRulesExportTest {
         RuleController controller = new RuleController(
                 serviceWith(List.of(item("a", "On", true), item("b", "Off", false))), new ProjectWriteLockRegistry());
 
-        ResponseEntity<?> response = controller.exportCheck("p", false, null, null);
+        ResponseEntity<?> response = controller.exportCheck("p", false, null, null, null);
 
         Map<?, ?> body = (Map<?, ?>) response.getBody();
         assertEquals(List.of(Map.of("id", "b", "ruleName", "Off")), body.get("disabledRules"));
@@ -76,9 +76,42 @@ class DisabledRulesExportTest {
         RuleController controller = new RuleController(serviceWith(List.of(item("a", "On", true))),
                 new ProjectWriteLockRegistry());
 
-        Map<?, ?> body = (Map<?, ?>) controller.exportCheck("p", false, null, null).getBody();
+        Map<?, ?> body = (Map<?, ?>) controller.exportCheck("p", false, null, null, null).getBody();
 
         assertEquals(List.of(), body.get("disabledRules"));
         assertNull(body.get("warning"));
+    }
+
+    Map<?, ?> checkFor(List<Map<String, Object>> items, String format) {
+        RuleController controller = new RuleController(serviceWith(items), new ProjectWriteLockRegistry());
+        return (Map<?, ?>) controller.exportCheck("p", false, null, format, null).getBody();
+    }
+
+    @Test
+    void manchesterExportWarnsThatNamesAndCommentsAreLostAndDisabledRulesWouldRun() {
+        Map<?, ?> body = checkFor(List.of(item("a", "On", true)), "manchester");
+
+        assertEquals(RuleController.MANCHESTER_WARNING, body.get("warning"));
+    }
+
+    @Test
+    void oboExportWarnsThatRulesAreNotSupported() {
+        Map<?, ?> body = checkFor(List.of(item("a", "On", true)), "obo");
+
+        assertEquals(RuleController.OBO_WARNING, body.get("warning"));
+    }
+
+    @Test
+    void manchesterAndOboExportsHaveNoWarningWhenTheOntologyHasNoRules() {
+        assertNull(checkFor(List.of(), "manchester").get("warning"));
+        assertNull(checkFor(List.of(), "obo").get("warning"));
+    }
+
+    @Test
+    void otherFormatsKeepTheDisabledFlagWarning() {
+        Map<?, ?> body = checkFor(List.of(item("a", "Off", false)), "turtle");
+
+        assertEquals(RuleController.DISABLED_WARNING, body.get("warning"));
+        assertNull(checkFor(List.of(item("a", "On", true)), "turtle").get("warning"));
     }
 }

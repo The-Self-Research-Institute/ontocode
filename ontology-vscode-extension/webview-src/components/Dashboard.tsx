@@ -81,6 +81,8 @@ import type {
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
+import { warnAboutRulesInExport } from "../services/exportRulesWarning";
+import { adviceAfterSlowFailure, adviceBeforeRun } from "../utils/slowReasonerAdvice";
 import {
   cancelReasonerSnapshots,
   invalidateReasonerSnapshots,
@@ -948,6 +950,7 @@ const TopMenuBar = ({
                                 return;
                               }
                               setExportingFormat(format);
+                              void warnAboutRulesInExport(getBaseUrl(), currentProjectId, format);
                               const baseName = (
                                  activeFileName || 
                                 myFiles.find((f) => f.projectId === currentProjectId)?.filename ||
@@ -2100,6 +2103,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedInsertionLine, setSelectedInsertionLine] = useState<number | null>(null);
 
   const [selectedReasoner, setSelectedReasoner] = useState<string>("HermiT");
+  const [reasonerAdvice, setReasonerAdvice] = useState<string | null>(null);
   const [isReasonerRunning, setIsReasonerRunning] = useState(false);
   const [isReasonerSynced, setIsReasonerSynced] = useState(false);
   const isReasonerSyncedRef = useRef(isReasonerSynced);
@@ -3239,6 +3243,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isStaleRun = () => reasonerRunIdRef.current !== myRunId || currentProjectIdRef.current !== startedProjectId;
     inferredClassHierarchyAttemptedKeyRef.current = null;
 
+    setReasonerAdvice(adviceBeforeRun(selectedReasoner, (metadata as any)?.axiomCount ?? (metadata as any)?.logicalAxiomCount));
     setIsReasonerLoading(true);
     setIsReasonerRunning(true);
 
@@ -3374,6 +3379,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         backendData?.error || error?.message || "Classification failed for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
       if (!isStaleRun()) {
+        const slowAdvice = adviceAfterSlowFailure(selectedReasoner, friendlyMessage);
+        if (slowAdvice) setReasonerAdvice(slowAdvice);
         notificationService.error("Classification Failed", `${friendlyMessage}${suggestion}`);
         setIsReasonerRunning(false);
       }
@@ -3387,6 +3394,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     isReasonerLoading,
     projectId,
     selectedReasoner,
+    metadata,
     loadInferredHierarchy,
     loadInferredObjectPropertyHierarchy,
     loadInferredDataPropertyHierarchy,
@@ -3456,6 +3464,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSelectReasoner = useCallback(
     (reasoner: string) => {
       clearAutoSyncReasoner();
+      setReasonerAdvice(null);
       invalidateReasonerSnapshots(projectId ? { projectId } : undefined);
       if (isReasonerRunning) {
         reasonerRunIdRef.current += 1;
@@ -14917,6 +14926,7 @@ const updateItemInState = useCallback(
                   apiBaseUrl={getBaseUrl()}
                   draftUserId={isDraftScopeActive() ? (resolveMutationActor().userId || undefined) : undefined}
                   selectedReasoner={selectedReasoner}
+                  reasonerAdvice={reasonerAdvice}
                   isReasonerRunning={isReasonerRunning}
                   isReasonerLoading={isReasonerLoading}
                   reasonerResults={reasonerResults}
