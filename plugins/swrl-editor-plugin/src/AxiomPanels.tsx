@@ -6,7 +6,13 @@ import {
   ASSERTED_PAGE_SIZE,
   ASSERTED_TYPES,
   OWL2RL_PAGE_SIZE,
+  ASSERTED_NOTE,
+  OWL2RL_CATEGORY_LABELS,
   OWL2RL_UNSUPPORTED_NOTE,
+  axiomHoverText,
+  axiomSentence,
+  unsupportedRulesSentence,
+  unsupportedRulesSummary,
   OWL2RL_EXPIRED_MESSAGE,
   assertedAxiomsPath,
   axiomListErrorMessage,
@@ -24,6 +30,10 @@ interface AssertedItem {
   readable?: string;
   description?: string;
   category?: string;
+  subjectIri?: string | null;
+  predicateIri?: string | null;
+  objectIri?: string | null;
+  objectLiteral?: string | null;
 }
 
 interface AssertedResponse {
@@ -66,6 +76,34 @@ interface Owl2RlResponse {
 const badge = (label: string) => (
   <span className="px-1.5 py-0.5 text-[10px] rounded-full whitespace-nowrap" style={rt.chip}>{label}</span>
 );
+
+function AxiomRow({ item, id, extraBadge }: { item: AssertedItem; id: string; extraBadge?: string }) {
+  const [open, setOpen] = useState(false);
+  const technical = axiomHoverText(item);
+  const detailsId = `${id}-details`;
+  return (
+    <li className="px-3 py-2 text-sm" style={rt.rowBorder}>
+      <div className="flex items-start gap-2">
+        {extraBadge && badge(extraBadge)}
+        {badge(item.axiomType)}
+        <span className="flex-1 break-words" style={rt.value} title={technical}>{axiomSentence(item)}</span>
+        <button
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          aria-controls={detailsId}
+          className="px-2 py-0.5 text-xs rounded-lg shrink-0"
+          style={rt.button}
+        >
+          {open ? 'Hide details' : 'Details'}
+        </button>
+      </div>
+      {open && (
+        <pre id={detailsId} className="mt-2 p-2 text-xs rounded-lg whitespace-pre-wrap break-all" style={rt.code} data-testid="axiom-details">{technical}</pre>
+      )}
+    </li>
+  );
+}
 
 export function AssertedAxiomsPanel({ projectId, draftMode }: { projectId: string; draftMode: boolean }) {
   const [searchInput, setSearchInput] = useState('');
@@ -110,7 +148,7 @@ export function AssertedAxiomsPanel({ projectId, draftMode }: { projectId: strin
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-3" data-testid="asserted-panel">
       <p className="text-sm" style={rt.label}>
-        Asserted axioms are the facts and rules typed into the ontology, not the ones worked out by a reasoner.
+        {ASSERTED_NOTE}
       </p>
       <form onSubmit={submitSearch} className="flex flex-wrap items-center gap-2">
         <input
@@ -177,13 +215,8 @@ export function AssertedAxiomsPanel({ projectId, draftMode }: { projectId: strin
               </button>
             </span>
           </div>
-          <ul className="rounded-lg overflow-hidden" style={rt.panel}>
-            {data.items.map((it, i) => (
-              <li key={`${page}-${i}`} className="flex items-start gap-2 px-3 py-2 text-sm" style={rt.rowBorder}>
-                {badge(it.axiomType)}
-                <span className="flex-1 break-words" style={rt.value}>{it.readable || it.description}</span>
-              </li>
-            ))}
+          <ul className="rounded-lg overflow-hidden" style={rt.panel} aria-label="Asserted axioms">
+            {data.items.map((it, i) => <AxiomRow key={`${page}-${i}`} id={`asserted-${page}-${i}`} item={it} />)}
           </ul>
         </>
       )}
@@ -249,6 +282,8 @@ export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draft
   const totalPages = result?.totalPages ?? 1;
   const typeNames = Object.keys(result?.typeCounts ?? {});
   const unsupported = result?.unsupportedRules ?? [];
+  const unsupportedSummary = unsupportedRulesSummary(unsupported);
+  const [showCodes, setShowCodes] = useState(false);
   const note = result ? owl2rlTruncationNote(result) : null;
   const axioms = result?.axioms ?? [];
   const sorted = [...axioms.filter(a => a.category !== 'structure'), ...axioms.filter(a => a.category === 'structure')];
@@ -293,7 +328,17 @@ export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draft
           </div>
           {unsupported.length > 0 && (
             <div className="p-2 text-sm rounded-lg" style={rt.bannerWarning} data-testid="owl2rl-unsupported">
-              {OWL2RL_UNSUPPORTED_NOTE} Not applied: {unsupported.join(', ')}.
+              {OWL2RL_UNSUPPORTED_NOTE} {unsupportedRulesSentence(unsupportedSummary.names)}{' '}
+              <button
+                type="button"
+                onClick={() => setShowCodes(o => !o)}
+                aria-expanded={showCodes}
+                aria-controls="owl2rl-unsupported-codes"
+                className="underline"
+              >
+                {showCodes ? 'Hide details' : 'Details'}
+              </button>
+              {showCodes && <div id="owl2rl-unsupported-codes" className="mt-1 text-xs" data-testid="owl2rl-unsupported-codes">Rule codes: {unsupportedSummary.codes.join(', ')}</div>}
             </div>
           )}
           {note && (
@@ -325,13 +370,14 @@ export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draft
               <button type="submit" className="px-3 py-1.5 text-sm rounded-lg" style={rt.button}>Filter</button>
             </form>
           )}
-          <ul className="rounded-lg overflow-hidden" style={rt.panel}>
+          <ul className="rounded-lg overflow-hidden" style={rt.panel} aria-label="Worked-out facts">
             {sorted.map((a, i) => (
-              <li key={`${page}-${i}`} className="flex items-start gap-2 px-3 py-2 text-sm" style={rt.rowBorder}>
-                {badge(a.category === 'structure' ? 'structure' : 'conclusion')}
-                {badge(a.axiomType)}
-                <span className="flex-1 break-words" style={rt.value}>{a.readable || a.description}</span>
-              </li>
+              <AxiomRow
+                key={`${page}-${i}`}
+                id={`owl2rl-${page}-${i}`}
+                item={a}
+                extraBadge={a.category === 'structure' ? OWL2RL_CATEGORY_LABELS.structure : OWL2RL_CATEGORY_LABELS.conclusion}
+              />
             ))}
           </ul>
           {result.runId && totalPages > 1 && (

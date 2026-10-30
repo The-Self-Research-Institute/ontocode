@@ -16,7 +16,7 @@ import { AssertedAxiomsPanel, Owl2RlPanel } from './AxiomPanels';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
 import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
-import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle } from './ruleModel';
 import type { AxiomKind } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
@@ -348,6 +348,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
   rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete, onMakeLocalCopy, isCopying
 }) => {
   const imported = isImportedRule(rule);
+  const { title, tooltip } = ruleTitle(rule);
   return (
   <div
     className={`group relative flex items-start gap-3 p-3 cursor-pointer transition-all duration-150 border-l-3 ${
@@ -370,8 +371,8 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
 
     <div className="flex-1 min-w-0">
       <div className="flex items-center gap-2">
-        <span className={`font-medium text-sm truncate ${isSelected ? 'text-purple-900' : 'text-gray-800'}`}>
-          {rule.ruleName}
+        <span className={`font-medium text-sm truncate ${isSelected ? 'text-purple-900' : 'text-gray-800'}`} title={tooltip}>
+          {title}
         </span>
         {rule.category && (
           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-200 text-gray-600 rounded">
@@ -1890,6 +1891,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const saveInFlightRef = useRef(false);
   const runInFlightRef = useRef(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
+  const [ranAt, setRanAt] = useState<number | null>(null);
+  useEffect(() => {
+    setRanAt(executionResult ? Date.now() : null);
+  }, [executionResult]);
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
   const [unmigrated, setUnmigrated] = useState<UnmigratedRule[]>([]);
   const [copyingId, setCopyingId] = useState<string | null>(null);
@@ -2785,7 +2790,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                 <span className={`ml-1 px-1.5 py-0.5 text-[10px] rounded-full ${
                   executionResult.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                 }`}>
-                  {executionResult.inferredAxiomsCount}
+                  {inferredTotal(executionResult)}
                 </span>
               )}
             </button>
@@ -3132,6 +3137,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               onRunAll={handleExecuteAll}
               onRunSelected={handleExecuteSelected}
               onClear={() => setExecutionResult(null)}
+              rules={rules}
+              selectedIds={selectedRuleIds}
+              onToggleRule={toggleRuleSelection}
+              onSelectAllEnabled={() => setSelectedRuleIds(new Set(rules.filter(r => r.enabled && !isSqwrlRule(r)).map(r => r.id)))}
+              onSelectNone={() => setSelectedRuleIds(new Set())}
+              ranAt={ranAt}
             />
           ) : activePanel === 'asserted' ? (
             <AssertedAxiomsPanel projectId={projectId} draftMode={draftMode} />

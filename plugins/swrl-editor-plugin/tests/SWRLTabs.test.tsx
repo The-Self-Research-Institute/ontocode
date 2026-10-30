@@ -274,6 +274,9 @@ describe('OWL 2 RL tab', () => {
     await render(<Owl2RlPanel projectId="p1" draftMode={false} />);
     await click(button('Compute OWL 2 RL closure'));
     expect(text()).toContain('does not apply some standard rules, such as property chains');
+    expect(text()).toContain('Not applied: property chains.');
+    expect(text()).not.toContain('prp-spo2');
+    await click(container.querySelector('[data-testid="owl2rl-unsupported"] button') as HTMLElement);
     expect(text()).toContain('prp-spo2');
     expect(text()).toContain('Showing the first 1,000 of 5,000');
   });

@@ -74,6 +74,8 @@ public final class AssertedAxiomLister {
                 }
             }
         }
+        RuleStructure structure = RuleStructure.of(ontology);
+        AxiomWording wording = AxiomWording.of(ontology);
         PriorityQueue<Candidate> best = new PriorityQueue<>(Math.min(keep + 1, 1024), ORDER.reversed());
         long total = 0;
         long scanned = 0;
@@ -86,11 +88,12 @@ public final class AssertedAxiomLister {
                     break scan;
                 }
                 scanned++;
-                if (InferredAxiomPresenter.isTrivial(axiom)) {
+                if (InferredAxiomPresenter.isTrivial(axiom) || structure.isArtifact(axiom)) {
                     continue;
                 }
-                String text = InferredAxiomPresenter.readable(axiom);
-                if (needle != null && !text.toLowerCase(Locale.ROOT).contains(needle)) {
+                String text = InferredAxiomPresenter.readable(axiom, wording);
+                if (needle != null && !text.toLowerCase(Locale.ROOT).contains(needle)
+                        && !axiom.toString().toLowerCase(Locale.ROOT).contains(needle)) {
                     continue;
                 }
                 total++;
@@ -108,7 +111,7 @@ public final class AssertedAxiomLister {
         int from = Math.min(pageIndex * pageSize, sorted.size());
         List<InferredAxiom> items = new ArrayList<>();
         for (Candidate candidate : sorted.subList(from, sorted.size())) {
-            items.add(InferredAxiomPresenter.format(candidate.axiom()));
+            items.add(InferredAxiomPresenter.format(candidate.axiom(), wording));
         }
         return new Page(total, pageIndex, pageSize, truncated, scanned, maxScan, items);
     }

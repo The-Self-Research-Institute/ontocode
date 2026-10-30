@@ -116,10 +116,33 @@ final class InferredAxiomPresenter {
     }
 
     private static boolean isTopOrBottomSubclass(OWLAxiom axiom) {
-        return axiom instanceof org.semanticweb.owlapi.model.OWLSubClassOfAxiom sub
-                && !sub.getSubClass().isAnonymous() && !sub.getSuperClass().isAnonymous()
-                && (sub.getSuperClass().isOWLThing() || sub.getSubClass().isOWLNothing()
-                || sub.getSubClass().equals(sub.getSuperClass()));
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLSubClassOfAxiom sub) {
+            return sub.getSuperClass().isOWLThing() || sub.getSubClass().isOWLNothing()
+                    || selfForm(sub.getSubClass()).equals(selfForm(sub.getSuperClass()));
+        }
+        if (axiom instanceof org.semanticweb.owlapi.model.OWLEquivalentClassesAxiom eq) {
+            Set<OWLClassExpression> forms = new HashSet<>();
+            for (OWLClassExpression expression : eq.getClassExpressions()) {
+                forms.add(selfForm(expression));
+            }
+            return forms.size() < 2;
+        }
+        return false;
+    }
+
+    private static OWLClassExpression selfForm(OWLClassExpression expression) {
+        if (expression instanceof org.semanticweb.owlapi.model.OWLObjectIntersectionOf intersection) {
+            Set<OWLClassExpression> operands = new HashSet<>();
+            for (OWLClassExpression operand : intersection.getOperands()) {
+                if (!operand.isOWLThing()) {
+                    operands.add(operand);
+                }
+            }
+            if (operands.size() == 1) {
+                return operands.iterator().next();
+            }
+        }
+        return expression;
     }
 
     private static boolean isAssertion(OWLAxiom axiom) {
@@ -144,19 +167,25 @@ final class InferredAxiomPresenter {
         return isTrivialSame(axiom) || isThingAssertion(axiom);
     }
 
+    static String readable(OWLAxiom axiom) {
+        return readable(axiom, AxiomWording.plain());
+    }
+
+    static String readable(OWLAxiom axiom, AxiomWording wording) {
+        return withoutBlankNodeIris(wording.sentence(axiom));
+    }
+
     private static final java.util.regex.Pattern BLANK_NODE = java.util.regex.Pattern.compile("<urn:ontocode:blank:[^>]*>");
 
     private static String withoutBlankNodeIris(String text) {
         return BLANK_NODE.matcher(text).replaceAll("_:anonymous");
     }
 
-    static String readable(OWLAxiom axiom) {
-        return withoutBlankNodeIris(axiom.toString())
-                .replace("http://www.w3.org/2002/07/owl#", "owl:")
-                .replace("http://purl.obolibrary.org/obo/", "");
+    static InferredAxiom format(OWLAxiom axiom) {
+        return format(axiom, AxiomWording.plain());
     }
 
-    static InferredAxiom format(OWLAxiom axiom) {
+    static InferredAxiom format(OWLAxiom axiom, AxiomWording wording) {
         String subjectIri = null;
         String predicateIri = null;
         String objectIri = null;
@@ -192,7 +221,7 @@ final class InferredAxiomPresenter {
             }
         }
 
-        return new InferredAxiom(axiom.getAxiomType().getName(), withoutBlankNodeIris(axiom.toString()), readable(axiom),
+        return new InferredAxiom(axiom.getAxiomType().getName(), withoutBlankNodeIris(axiom.toString()), readable(axiom, wording),
                 subjectIri, predicateIri, objectIri, objectLiteral, literalDatatypeIri, literalLangTag);
     }
 

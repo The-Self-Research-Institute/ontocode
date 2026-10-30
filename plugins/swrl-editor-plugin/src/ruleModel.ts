@@ -880,3 +880,162 @@ export function owl2rlTruncationNote(r: { truncated?: boolean; returnedCount?: n
 }
 
 export const OWL2RL_UNSUPPORTED_NOTE = 'This engine does not apply some standard rules, such as property chains. The closure may be missing some conclusions.';
+
+export const OWL2RL_CATEGORY_LABELS = { conclusion: 'Facts about individuals', structure: 'Class relationships' } as const;
+
+export const ASSERTED_NOTE = 'Asserted axioms are the statements typed into the ontology, not the ones a reasoner worked out. Rules are listed on the Editor tab.';
+
+const UNSUPPORTED_RULE_NAMES: Record<string, string> = {
+  'prp-spo2': 'property chains',
+  'prp-key': 'keys',
+  'cax-adc': 'disjoint unions and groups of disjoint classes',
+  'prp-adp': 'groups of disjoint properties',
+  'prp-ap': 'built-in annotation properties',
+  'eq-diff2': 'groups of different individuals',
+  'eq-diff3': 'groups of different individuals',
+  'eq-rep-s': 'treating identical individuals as interchangeable',
+  'eq-rep-p': 'treating identical individuals as interchangeable',
+  'eq-rep-o': 'treating identical individuals as interchangeable',
+  'dt-not-type': 'datatype checks',
+  'dt-type1': 'datatype checks',
+  'dt-type2': 'datatype checks',
+  'dt-eq': 'datatype checks',
+  'dt-diff': 'datatype checks',
+};
+
+export function unsupportedRulesSummary(codes: string[]): { names: string[]; codes: string[] } {
+  const names: string[] = [];
+  let other = false;
+  for (const raw of codes) {
+    const code = raw.trim().toLowerCase();
+    if (!code) continue;
+    const name = UNSUPPORTED_RULE_NAMES[code];
+    if (!name) other = true;
+    else if (!names.includes(name)) names.push(name);
+  }
+  if (other) names.push('other standard rules');
+  return { names, codes: codes.map(c => c.trim()).filter(Boolean) };
+}
+
+export function unsupportedRulesSentence(names: string[]): string {
+  if (names.length === 0) return '';
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Not applied: ${list}.`;
+}
+
+export function shortenIris(text: string): string {
+  return text.replace(/<(?:https?|urn|file):[^>\s]*?[#/:]([^#/:>\s]+)>/g, '$1');
+}
+
+export interface AxiomRowSource {
+  axiomType: string;
+  readable?: string;
+  description?: string;
+}
+
+export function axiomSentence(item: AxiomRowSource): string {
+  const text = item.readable || item.description || '';
+  return shortenIris(text);
+}
+
+export function axiomHoverText(item: AxiomRowSource): string {
+  return item.description || item.readable || '';
+}
+
+const GENERATED_RULE_NAME = /^Rule [0-9a-f]{6,}$/i;
+
+export function ruleTitle(rule: { ruleName: string; ruleText?: string }): { title: string; tooltip: string } {
+  const text = (rule.ruleText || '').replace(/\s+/g, ' ').trim();
+  if (text && GENERATED_RULE_NAME.test(rule.ruleName.trim())) {
+    const short = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+    return { title: short, tooltip: `${rule.ruleName}: ${text}` };
+  }
+  return { title: rule.ruleName, tooltip: rule.ruleName };
+}
+
+export function isSqwrlRule(rule: { ruleText?: string }): boolean {
+  const text = rule.ruleText || '';
+  const arrow = text.indexOf('->');
+  return arrow >= 0 && /\bsqwrl:/i.test(text.slice(arrow));
+}
+
+export interface RunLike {
+  success?: boolean;
+  executionMode?: string;
+  executedRuleNames?: string[];
+  totalRulesExecuted?: number;
+  inferredAxiomsCount?: number;
+  conclusionCount?: number;
+  structureCount?: number;
+  counts?: { conclusions: number; structure: number };
+  status?: string;
+  skippedRules?: Array<string | { ruleName?: string; name?: string; ruleId?: string; reason?: string }>;
+}
+
+export function runScopeText(run: RunLike): string {
+  const n = run.executedRuleNames?.length ?? run.totalRulesExecuted ?? 0;
+  if (run.executionMode === 'selected') return `Ran ${formatCount(n)} selected rule${n === 1 ? '' : 's'}`;
+  if (run.executionMode === 'test') return 'Tested one rule';
+  if (run.executionMode === 'all') return 'Ran all enabled rules';
+  return 'Ran the rules';
+}
+
+export function ranAtText(ranAt: number | null | undefined, now: number): string {
+  if (!ranAt) return '';
+  if (now - ranAt < 60_000) return 'just now';
+  const d = new Date(ranAt);
+  return `at ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+export function inferredSplit(run: RunLike): { facts: number; relationships: number } | null {
+  const facts = run.conclusionCount ?? run.counts?.conclusions;
+  const relationships = run.structureCount ?? run.counts?.structure;
+  if (typeof facts !== 'number' || typeof relationships !== 'number') return null;
+  return { facts, relationships };
+}
+
+export function inferredTotal(run: RunLike): number {
+  const split = inferredSplit(run);
+  return split ? split.facts + split.relationships : run.inferredAxiomsCount ?? 0;
+}
+
+export function inferredSummaryText(run: RunLike): string {
+  const total = inferredTotal(run);
+  const split = inferredSplit(run);
+  const head = `${formatCount(total)} inferred fact${total === 1 ? '' : 's'}`;
+  if (!split) return head;
+  return `${head}: ${formatCount(split.facts)} fact${split.facts === 1 ? '' : 's'} about individuals, ${formatCount(split.relationships)} class relationship${split.relationships === 1 ? '' : 's'}`;
+}
+
+export interface SkippedInfo { name: string; reason: string; couldNotRun: boolean }
+
+export function skippedInfo(run: RunLike): SkippedInfo[] {
+  return (run.skippedRules ?? []).map(s => {
+    if (typeof s === 'string') return { name: s, reason: '', couldNotRun: false };
+    const name = s.ruleName || s.name || s.ruleId || 'A rule';
+    const reason = s.reason || '';
+    return { name, reason, couldNotRun: /could not run/i.test(reason) };
+  });
+}
+
+export function plainSkipReason(info: SkippedInfo): string {
+  if (!info.reason) return 'Skipped';
+  if (info.couldNotRun) return `Could not run: ${info.reason.replace(/^.*?could not run:\s*/i, '')}`;
+  return `Skipped: ${info.reason.replace(/\.$/, '')}`;
+}
+
+export type RuleRunOutcome = { kind: 'ran' | 'skipped' | 'failed'; text: string } | null;
+
+export function ruleRunOutcome(rule: { ruleName: string; id: string }, run: RunLike | null): RuleRunOutcome {
+  if (!run) return null;
+  const skipped = skippedInfo(run).find(s => s.name === rule.ruleName || s.name === rule.id);
+  if (skipped) return { kind: skipped.couldNotRun ? 'failed' : 'skipped', text: plainSkipReason(skipped) };
+  if (run.executedRuleNames?.includes(rule.ruleName)) return { kind: 'ran', text: 'Ran' };
+  return null;
+}
+
+export function skippedListText(info: SkippedInfo): string {
+  if (!info.reason) return info.name;
+  const reason = info.couldNotRun ? plainSkipReason(info) : info.reason.replace(/\.$/, '');
+  return `${info.name}: ${reason}`;
+}

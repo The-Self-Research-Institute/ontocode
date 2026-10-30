@@ -1012,7 +1012,8 @@ public class SwrlEngineService {
         boolean truncated = all.size() > cap;
         List<OWLAxiom> kept = truncated ? all.subList(0, cap) : all;
         List<InferredAxiom> formatted = categorized(new InferredAxiomPresenter.Presented(kept, presented.conclusions(),
-                presented.conclusionCount(), presented.structureCount(), presented.omittedTrivial(), truncated));
+                presented.conclusionCount(), presented.structureCount(), presented.omittedTrivial(), truncated),
+                AxiomWording.of(ontology));
         int total = presented.conclusionCount() + presented.structureCount();
         long executionTime = System.currentTimeMillis() - startTime;
         for (OWLAxiom axiom : all) {
@@ -1223,9 +1224,13 @@ public class SwrlEngineService {
     }
 
     private List<InferredAxiom> categorized(InferredAxiomPresenter.Presented presented) {
+        return categorized(presented, AxiomWording.plain());
+    }
+
+    private List<InferredAxiom> categorized(InferredAxiomPresenter.Presented presented, AxiomWording wording) {
         List<InferredAxiom> out = new ArrayList<>();
         for (OWLAxiom axiom : presented.ordered()) {
-            InferredAxiom item = formatInferredAxiom(axiom);
+            InferredAxiom item = InferredAxiomPresenter.format(axiom, wording);
             item.setCategory(presented.conclusions().contains(axiom) ? "conclusion" : "structure");
             out.add(item);
         }
@@ -1237,10 +1242,6 @@ public class SwrlEngineService {
         result.setStructureCount(presented.structureCount());
         result.setOmittedTrivialCount(presented.omittedTrivial());
         result.setTruncated(presented.truncated());
-    }
-
-    private InferredAxiom formatInferredAxiom(OWLAxiom axiom) {
-        return InferredAxiomPresenter.format(axiom);
     }
 
     /**
