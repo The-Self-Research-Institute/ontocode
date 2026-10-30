@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,6 +29,9 @@ import java.util.Optional;
 @RequestMapping("/api/ontology/metadata")
 @CrossOrigin
 public class OntologyMetadataController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private final OntologyMetadataService metadataService;
@@ -122,6 +127,10 @@ public class OntologyMetadataController {
             String language = request.get("language");
             String datatype = request.get("datatype");
             boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
+            ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+            if (publicEditOff != null) {
+                return publicEditOff;
+            }
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.addOntologyAnnotation(projectId, propertyIri, value, language, datatype, draft, userId, username);
@@ -147,6 +156,10 @@ public class OntologyMetadataController {
             String language = request.get("language");
             String datatype = request.get("datatype");
             boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
+            ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+            if (publicEditOff != null) {
+                return publicEditOff;
+            }
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.updateOntologyAnnotation(projectId, propertyIri, oldValue, newValue, language, datatype,
@@ -170,6 +183,10 @@ public class OntologyMetadataController {
                                              @RequestParam(required = false) String userId,
                                              @RequestParam(required = false) String username,
                                              HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             metadataService.deleteOntologyAnnotation(projectId, propertyIri, value, language, draft, RequestActor.userIdOr(httpRequest, userId), username);
             if (!draft) {
@@ -223,6 +240,10 @@ public class OntologyMetadataController {
         try {
             String importIri = request.get("importIri");
             boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
+            ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+            if (publicEditOff != null) {
+                return publicEditOff;
+            }
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             Map<String, Object> resolution = metadataService.addOntologyImport(projectId, importIri, draft, userId, username,
@@ -277,6 +298,10 @@ public class OntologyMetadataController {
                                          @RequestParam(required = false) String userId,
                                          @RequestParam(required = false) String username,
                                          HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             metadataService.deleteOntologyImport(projectId, importIri, draft, RequestActor.userIdOr(httpRequest, userId), username);
             if (!draft) {
@@ -310,6 +335,10 @@ public class OntologyMetadataController {
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
             boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
+            ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+            if (publicEditOff != null) {
+                return publicEditOff;
+            }
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
             metadataService.addGCI(projectId, subClass, superClass, draft, userId, username);
@@ -333,6 +362,10 @@ public class OntologyMetadataController {
             String subClass = request.get("subClass");
             String superClass = request.get("superClass");
             boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
+            ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+            if (publicEditOff != null) {
+                return publicEditOff;
+            }
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
             String username = request.get("username");
 
@@ -354,6 +387,10 @@ public class OntologyMetadataController {
                                       @RequestParam(required = false) String userId,
                                       @RequestParam(required = false) String username,
                                       HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             metadataService.deleteGCI(projectId, value, draft, RequestActor.userIdOr(httpRequest, userId), username);
             if (!draft) {
@@ -386,6 +423,10 @@ public class OntologyMetadataController {
             String iri = request.get("iri");
             String oldPrefix = request.get("oldPrefix");
             boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
+            ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+            if (publicEditOff != null) {
+                return publicEditOff;
+            }
             String userId = request.get("userId");
             String actorId = RequestActor.recordedId(httpRequest, request.getOrDefault("actorUserId", userId), draft);
             metadataService.updatePrefix(projectId, prefix, iri, oldPrefix, draft, userId, actorId,
@@ -404,6 +445,10 @@ public class OntologyMetadataController {
                                          @RequestParam(required = false) String userId,
                                          @RequestParam(required = false) String actorUserId,
                                          @RequestParam(required = false) String actorUsername, HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             metadataService.deletePrefix(projectId, prefix, draft, userId,
                     RequestActor.recordedId(httpRequest, actorUserId != null ? actorUserId : userId, draft), actorUsername);

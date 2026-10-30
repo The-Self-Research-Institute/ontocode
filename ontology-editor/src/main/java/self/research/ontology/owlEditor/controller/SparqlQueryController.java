@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.model.Value;
 import org.springframework.http.ResponseEntity;
@@ -37,6 +39,9 @@ import java.util.Map;
 @RequestMapping("/api/sparql")
 @CrossOrigin(exposedHeaders = SparqlQueryController.TRUNCATED_HEADER)
 public class SparqlQueryController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private final SparqlDatasetService datasetService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -309,6 +314,10 @@ public class SparqlQueryController {
                                     @RequestParam(required = false, defaultValue = "Anonymous") String username,
                                     @RequestParam(required = false, defaultValue = "false") boolean draft,
                                     jakarta.servlet.http.HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
         }

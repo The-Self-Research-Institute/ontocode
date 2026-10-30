@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import self.research.ontology.owlEditor.config.CallerIdentity;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
@@ -33,6 +34,9 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/ontology")
 @CrossOrigin(originPatterns = "*")
 public class DLQueryController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(DLQueryController.class);
     private static final String DESKTOP_USER_ID = "desktop-user-local";
@@ -170,6 +174,10 @@ public class DLQueryController {
             @RequestParam(required = false, defaultValue = "true") boolean draft,
             CallerIdentity caller
     ) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             if (request.getExpression() == null || request.getExpression().isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of(

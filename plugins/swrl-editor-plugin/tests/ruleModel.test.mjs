@@ -204,6 +204,12 @@ test('friendlyRuleError', () => {
   assert.equal(friendlyRuleError(null, 'fallback'), 'fallback');
 });
 
+test('friendlyRuleError explains that public editing is off', () => {
+  const refusal = { status: 403, data: { code: 'PUBLIC_EDIT_DISABLED', error: 'x', draftAllowed: true } };
+  assert.equal(friendlyRuleError(refusal, 'x'), 'The project owner turned off public editing. Switch to Draft Mode to make your changes.');
+  assert.equal(friendlyRuleError({ status: 403, data: { viewOnly: true, error: 'View only' } }, 'x'), 'x');
+});
+
 test('import summary line wording and plurals', () => {
   const r = { read: 12, imported: new Array(9).fill({}), duplicates: 2, invalid: 1 };
   assert.equal(importSummaryLine(r, false), '12 rows read · 9 imported · 2 duplicates · 1 invalid');

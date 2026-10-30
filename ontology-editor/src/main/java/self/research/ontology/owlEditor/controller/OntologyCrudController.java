@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +37,9 @@ import java.util.concurrent.Executors;
 @RequestMapping("/api/ontology")
 @CrossOrigin
 public class OntologyCrudController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(OntologyCrudController.class);
 
@@ -222,6 +227,10 @@ public class OntologyCrudController {
                                                   @RequestParam(required = false, defaultValue = "Anonymous") String username,
                                                   @RequestParam(required = false, defaultValue = "false") boolean draft,
                                                   jakarta.servlet.http.HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             final String actorId = RequestActor.forScope(httpRequest, userId, draft);
             final String actorName = "Anonymous".equals(username) ? actorId : username;

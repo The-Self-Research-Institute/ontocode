@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +37,9 @@ import java.util.concurrent.Callable;
 @RequestMapping("/api/ontology/{projectId}/rules")
 @CrossOrigin
 public class RuleController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(RuleController.class);
 
@@ -184,6 +188,10 @@ public class RuleController {
 
     private ResponseEntity<?> write(String projectId, boolean draft, RuleRequest request, HttpServletRequest http,
                                     Write work) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         String actor = RequestActor.forScope(http, request.userId(), draft);
         String username = RequestActor.displayName(http, request.username());
         ChangeOrigin origin = request.origin() == null ? ChangeOrigin.manual()

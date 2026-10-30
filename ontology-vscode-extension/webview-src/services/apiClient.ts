@@ -6,6 +6,7 @@ import { resolveMutationUserId } from '../utils/mutationActor';
 import { isTrustedMessage } from '../utils/trustedMessage';
 import { postToSelf } from '../utils/selfMessage';
 import { announceOntologyHeaderWrite } from '../utils/ontologyHeaderWrite';
+import { flagPublicEditDisabled, isPublicEditDisabled } from '../utils/publicEditDisabled';
 
 // Get initial base URL from centralized config
 let BASE_URL = getGatewayUrl();
@@ -206,7 +207,11 @@ class ApiClient {
           console.log('[ApiClient] 503 Maintenance mode - redirecting');
           this.onMaintenance(msg);
         }
-        p.reject(new ApiError(error.message || 'API request failed via proxy', error.status, error.data, error.code));
+        const proxied = new ApiError(error.message || 'API request failed via proxy', error.status, error.data, error.code);
+        if (isPublicEditDisabled(error.status, error.data)) {
+          flagPublicEditDisabled(proxied);
+        }
+        p.reject(proxied);
       } else {
         p.resolve(response);
       }
@@ -332,7 +337,11 @@ class ApiClient {
           this.onUnauthorized();
         }
 
-        throw new ApiError(msg, status, data, err.code);
+        const apiError = new ApiError(msg, status, data, err.code);
+        if (isPublicEditDisabled(status, data)) {
+          flagPublicEditDisabled(apiError);
+        }
+        throw apiError;
       }
     );
   }

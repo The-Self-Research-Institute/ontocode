@@ -1,6 +1,7 @@
 import apiClient from './apiClient';
 import { resolveMutationActor } from '../utils/mutationActor';
 import { announceMutationApplied } from '../utils/committedChange';
+import { isPublicEditDisabled, PUBLIC_EDIT_DISABLED_EVENT } from '../utils/publicEditDisabled';
 
 export interface MutationOp {
   type: string;
@@ -35,9 +36,15 @@ let onPublicEditDisabled: (() => void) | null = null;
 export const PUBLIC_EDIT_DISABLED_MESSAGE =
   'The project owner turned off public editing. Switch to Draft Mode to make your changes.';
 
+if (typeof window !== 'undefined') {
+  window.addEventListener(PUBLIC_EDIT_DISABLED_EVENT, () => {
+    if (onPublicEditDisabled) onPublicEditDisabled();
+  });
+}
+
 export function publicEditDisabledError(err: any): Error | null {
-  if (err?.status !== 403 || err?.data?.code !== 'PUBLIC_EDIT_DISABLED') return null;
-  if (onPublicEditDisabled) onPublicEditDisabled();
+  if (!isPublicEditDisabled(err?.status, err?.data)) return null;
+  if (!err.publicEditNotified && onPublicEditDisabled) onPublicEditDisabled();
   const e = new Error(PUBLIC_EDIT_DISABLED_MESSAGE);
   (e as any).reason = 'draftRequired';
   return e;

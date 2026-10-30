@@ -7,6 +7,12 @@ declare global {
   }
 }
 
+function announcePublicEditDisabled(err: any): void {
+  if (err.status === 403 && err.data?.code === 'PUBLIC_EDIT_DISABLED') {
+    window.dispatchEvent(new CustomEvent('ontocode:public-edit-disabled'));
+  }
+}
+
 class ApiClient {
   private isVSCode = typeof window !== 'undefined' && !!window.vscode;
   private pending = new Map<string, { resolve: (v: any) => void; reject: (r?: any) => void }>();
@@ -96,6 +102,7 @@ class ApiClient {
       err.status = response.status;
       err.data = data;
       err.retryAfter = response.headers.get('Retry-After');
+      announcePublicEditDisabled(err);
       throw err;
     }
 
@@ -128,6 +135,7 @@ class ApiClient {
       const err: any = new Error(detail || `Request failed (${response.status})`);
       err.status = response.status;
       err.data = data;
+      announcePublicEditDisabled(err);
       throw err;
     }
     return response;

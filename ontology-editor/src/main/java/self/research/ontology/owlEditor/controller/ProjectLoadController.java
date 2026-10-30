@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import self.research.ontology.owlEditor.config.CallerEmail;
 import self.research.ontology.owlEditor.config.CallerIdentity;
 import self.research.ontology.owlEditor.service.AccessDenial;
@@ -81,6 +82,9 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 @RequestMapping("/api/ontology")
 @CrossOrigin
 public class ProjectLoadController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
     private static final java.util.regex.Pattern PCT_PATTERN = java.util.regex.Pattern.compile("(\\d+)%");
@@ -1875,6 +1879,10 @@ public class ProjectLoadController {
             @RequestParam(required = false, defaultValue = "false") boolean draft,
             @RequestBody Map<String, Object> request,
             HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (draftOwnerMismatch(httpRequest, draft, userId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("success", false, "error", "You can only save your own draft"));

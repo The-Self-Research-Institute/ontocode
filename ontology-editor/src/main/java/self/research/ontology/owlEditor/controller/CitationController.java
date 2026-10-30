@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,9 @@ import java.util.Map;
 @CrossOrigin(originPatterns = "*")
 public class CitationController {
 
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
+
     private static final Logger log = LoggerFactory.getLogger(CitationController.class);
 
     @Autowired
@@ -37,6 +41,10 @@ public class CitationController {
             @PathVariable String projectId,
             @RequestBody InsertCitationRequest request,
             jakarta.servlet.http.HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, false);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         
         try {
             log.info("[CitationController] Inserting citation into project: {}, format: {}", 
@@ -150,6 +158,10 @@ public class CitationController {
             @org.springframework.web.bind.annotation.RequestParam(required = false) String username,
             @org.springframework.web.bind.annotation.RequestParam(required = false) String draft,
             jakarta.servlet.http.HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, Boolean.parseBoolean(draft));
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         
         try {
             log.info("[CitationController] Deleting citation {} from project: {}", citationId, projectId);

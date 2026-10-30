@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +15,9 @@ import java.util.Map;
 @RequestMapping("/api/ontology")
 @CrossOrigin(originPatterns = "*")
 public class AxiomAnnotationController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(AxiomAnnotationController.class);
 
@@ -47,6 +52,10 @@ public class AxiomAnnotationController {
                                            @RequestParam(required = false, defaultValue = "false") boolean draft,
                                            @RequestParam(required = false) String userId,
                                            @RequestParam(required = false) String username) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             axiomAnnotationService.addAnnotation(
                     projectId,
@@ -80,6 +89,10 @@ public class AxiomAnnotationController {
                                               @RequestParam(required = false, defaultValue = "false") boolean draft,
                                               @RequestParam(required = false) String userId,
                                               @RequestParam(required = false) String username) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             axiomAnnotationService.deleteAnnotation(
                     projectId, entityIri, relatedIri, sectionName, annotationProperty, value, draft, userId, username);

@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -35,6 +37,9 @@ import java.util.Optional;
 @CrossOrigin(originPatterns = "*")
 @RequestMapping("/api/projects/{projectId}/merge")
 public class OntologyMergeController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(OntologyMergeController.class);
     private static final String DESKTOP_USER_ID = "desktop-user-local";
@@ -178,6 +183,10 @@ public class OntologyMergeController {
             @RequestParam(value = "username", required = false) String username,
             @RequestParam(value = "draft", defaultValue = "false") boolean draft,
             HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
 
         log.info("[MERGE] Executing merge for project {}", projectId);
         log.info("[MERGE] Strategy: {}, Rename suffix: {}", strategy, renameSuffix);
@@ -262,6 +271,10 @@ public class OntologyMergeController {
             @RequestParam(value = "username", required = false) String username,
             @RequestBody MergeOptions options,
             HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, false);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
 
         log.info("[MERGE] Executing merge with manual resolutions for project {}", projectId);
         log.info("[MERGE] Resolutions provided: {}", options.getConflictResolutions().size());
