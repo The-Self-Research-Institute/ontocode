@@ -3,6 +3,7 @@ import { rt } from './resultsTheme';
 import apiClient from './apiClient';
 import type { InferredAxiom } from './types';
 import { withDraft } from './ruleModel';
+import { ExplainDetail } from './ExplainDetail';
 
 interface Premise {
   kind: string;
@@ -62,13 +63,17 @@ const statusText = (r: ExplainResult): string => {
   if (r.status === 'explained') return 'Explained by a rule';
   if (r.status === 'origin_only') {
     if (hasAssertedNote(r.notes)) return 'Already in the ontology';
-    return 'Produced by OWL reasoning or something this explanation cannot evaluate';
+    return '';
   }
   if (r.status === 'not_found') return 'No explanation was found for this conclusion';
   return 'The explanation returned an unrecognised status';
 };
 
 const COLLAPSE_AFTER = 3;
+
+export const NOT_TRACEABLE = 'None of your rules produced this fact. It comes from the standard reasoning the engine always applies, for example "a Customer is also a Person because Customer is a kind of Person". It is not an error.';
+
+const isOldOriginNote = (n: string): boolean => /^(Produced by OWL reasoning or|None of your rules produced this fact)/i.test(n);
 
 const JustificationView: React.FC<{ j: Justification; index: number }> = ({ j, index }) => {
   const bindings = formatBindings(j.bindings);
@@ -95,7 +100,7 @@ const JustificationView: React.FC<{ j: Justification; index: number }> = ({ j, i
   );
 };
 
-export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; onClose: () => void; draftMode?: boolean }> = ({ projectId, axiom, onClose, draftMode = false }) => {
+export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; onClose: () => void; draftMode?: boolean; ruleless?: boolean }> = ({ projectId, axiom, onClose, draftMode = false, ruleless = false }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExplainResult | null>(null);
@@ -106,6 +111,11 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
     setLoading(true);
     setError(null);
     setResult(null);
+    if (ruleless) {
+      setResult({ status: 'origin_only' });
+      setLoading(false);
+      return;
+    }
     const body: Record<string, string> = {
       subject: axiom.subjectIri || '',
       predicate: axiom.predicateIri || '',
@@ -131,11 +141,12 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
     return () => {
       cancelled = true;
     };
-  }, [projectId, axiom]);
+  }, [projectId, axiom, ruleless, draftMode]);
 
   const justifications = result?.justifications || [];
   const visible = showAll ? justifications : justifications.slice(0, COLLAPSE_AFTER);
   const hidden = justifications.length - visible.length;
+  const shownNotes = (result?.notes || []).filter(n => !isOldOriginNote(n));
 
   return (
     <div className="rounded-lg p-3 text-sm space-y-2" style={rt.panel}>
@@ -147,12 +158,9 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
       {error && <div className="text-xs rounded p-2" style={rt.bannerError}>{error}</div>}
       {result && (
         <>
-          <div className="text-xs font-medium" style={rt.value}>{statusText(result)}</div>
+          {statusText(result) && <div className="text-xs font-medium" style={rt.value}>{statusText(result)}</div>}
           {result.status === 'explained' && justifications.length > 1 && (
             <div className="text-xs" style={rt.label}>{justifications.length} different rules or bindings each produce this conclusion.</div>
-          )}
-          {result.status === 'origin_only' && !hasAssertedNote(result.notes) && (
-            <div className="text-xs" style={rt.label}>This does not mean the conclusion is wrong, only that no rule here could be shown to produce it.</div>
           )}
           {visible.map((j, i) => (
             <JustificationView key={i} j={j} index={i} />
@@ -167,9 +175,15 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
               Show fewer
             </button>
           )}
-          {result.notes && result.notes.length > 0 && (
+          {result.status === 'origin_only' && !hasAssertedNote(result.notes) && (
+            <div className="space-y-2">
+              <div className="text-xs" style={rt.label}>{NOT_TRACEABLE}</div>
+              <ExplainDetail projectId={projectId} axiom={axiom} draftMode={draftMode} />
+            </div>
+          )}
+          {shownNotes.length > 0 && (
             <ul className="list-disc pl-5 text-xs space-y-0.5" style={rt.value}>
-              {result.notes.map((n, i) => (
+              {shownNotes.map((n, i) => (
                 <li key={i}>{n}</li>
               ))}
             </ul>

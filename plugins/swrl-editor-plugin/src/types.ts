@@ -167,3 +167,106 @@ export interface SqwrlQueryResponse {
   nextOffset?: number;
   pageBytesCapped?: boolean;
 }
+
+export type ExplainAxiomType =
+  | 'ClassAssertion'
+  | 'SubClassOf'
+  | 'ObjectPropertyAssertion'
+  | 'DataPropertyAssertion'
+  | 'ObjectPropertyDomain'
+  | 'ObjectPropertyRange'
+  | 'SubObjectPropertyOf'
+  | 'InverseObjectProperties'
+  | 'EquivalentClasses'
+  | 'SameIndividual';
+
+export interface ExplainFact {
+  axiomType: ExplainAxiomType;
+  subjectIri: string;
+  predicateIri?: string | null;
+  objectIri?: string | null;
+  objectLiteral?: string | null;
+  literalDatatypeIri?: string | null;
+  objectIris?: string[] | null;
+  objectOperator?: 'UNION' | 'INTERSECTION' | null;
+  reasoner?: 'HERMIT' | 'ELK';
+}
+
+export type ExplainStatus =
+  | 'EXPLAINED'
+  | 'ASSERTED'
+  | 'NOT_ENTAILED'
+  | 'UNSUPPORTED'
+  | 'TOO_LARGE'
+  | 'TIMEOUT'
+  | 'CANCELLED'
+  | 'FAILED';
+
+export type ExplainJobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+
+export interface ExplainEntity {
+  iri: string;
+  label: string;
+  kind: string;
+}
+
+export interface ExplainAxiom {
+  axiomType: string;
+  role: 'ASSERTED' | 'RULE' | 'CONCLUSION';
+  text: string;
+  subjectIri: string | null;
+  predicateIri: string | null;
+  objectIri: string | null;
+  objectLiteral: string | null;
+  literalDatatypeIri: string | null;
+  objectIris: string[] | null;
+  objectOperator: 'UNION' | 'INTERSECTION' | null;
+  entities: ExplainEntity[];
+}
+
+export interface ExplainSubmitResponse {
+  success: boolean;
+  async: boolean;
+  jobId: string;
+  status: ExplainJobStatus;
+  queuePosition: number;
+  estimatedWaitTimeMs: number;
+}
+
+export interface ExplainJobResponse {
+  success?: boolean;
+  jobId: string;
+  jobType?: string;
+  projectId: string;
+  status: ExplainJobStatus;
+  queuePosition?: number;
+  estimatedWaitTimeMs?: number;
+  executionTimeMs?: number;
+  error?: string;
+  explainStatus?: ExplainStatus;
+  message?: string;
+  conclusion?: ExplainAxiom;
+  justification?: ExplainAxiom[];
+  axiomCount?: number;
+  minimal?: boolean;
+  partial?: boolean;
+  timeBudgetHit?: boolean;
+  usesRules?: boolean;
+  reasoner?: string;
+  reasonerRequested?: string;
+  reasonerFallback?: boolean;
+  elapsedMs?: number;
+  loadMs?: number;
+  budgetMs?: number;
+  ontologyAxiomCount?: number;
+  entailmentChecks?: number;
+  ontologyRevision?: number;
+}
+
+export interface ExplainRunOptions {
+  draft?: boolean;
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  onUpdate?: (job: ExplainJobResponse) => void;
+}

@@ -19,7 +19,7 @@ test('every function the rule engine registers is in the help list', () => {
 test('the help list has no function the rule engine does not register', () => {
   const extra = listed.filter(item => {
     const [prefix, name] = item.fullName.split(':');
-    return !(engine[prefix] || []).includes(name) && !(item.status === 'unavailable' && item.note.includes('does not accept'));
+    return !(engine[prefix] || []).includes(name);
   }).map(item => item.fullName);
   assert.deepEqual(extra, []);
 });
@@ -64,9 +64,33 @@ test('functions the old list described wrongly are no longer offered', () => {
   }
 });
 
-test('functions the engine implements but refuses in a rule are flagged as unavailable', () => {
-  for (const full of ['swrlb:subtractDateTimesYieldingDayTimeDuration', 'sqwrl:countDistinct']) {
+test('functions that were once refused or wrong are listed as working', () => {
+  for (const full of [
+    'swrlb:subtractDateTimesYieldingDayTimeDuration', 'sqwrl:countDistinct', 'swrlb:date', 'swrlb:time', 'swrlb:dateTime', 'swrlb:integerDivide', 'swrlb:round',
+    'swrlb:divide', 'swrlb:subtractDates', 'swrlb:subtractTimes', 'swrlb:addYearMonthDurations', 'swrlb:subtractYearMonthDurations', 'swrlb:subtractDayTimeDurations',
+    'swrlb:multiplyYearMonthDuration', 'swrlb:divideYearMonthDuration', 'swrlb:multiplyDayTimeDuration', 'swrlb:divideDayTimeDuration',
+    'swrlb:addDayTimeDurationToTime', 'swrlb:subtractDayTimeDurationFromTime', 'swrlb:addYearMonthDurationToDateTime', 'swrlb:subtractYearMonthDurationFromDateTime',
+    'swrlb:substring', 'swrlb:substringBefore', 'swrlb:translate', 'swrlb:matches', 'swrlb:anyURI', 'swrlb:resolveURI', 'swrlm:eval', 'swrlm:log',
+    'temporal:durationEqualTo', 'temporal:durationGreaterThan', 'temporal:durationLessThan', 'temporal:notDurationEqualTo', 'sqwrl:min', 'sqwrl:max',
+    'sqwrl:contains', 'sqwrl:notContains',
+  ]) {
     const found = listed.find(item => item.fullName === full);
-    assert.equal(found.status, 'unavailable');
+    assert.ok(found, full);
+    assert.equal(found.status, 'ok', full);
+  }
+});
+
+test('only the list functions are still marked unavailable, each with a note saying why', () => {
+  const unavailable = listed.filter(item => item.status === 'unavailable').map(item => item.fullName).sort();
+  assert.deepEqual(unavailable, ['length', 'first', 'rest', 'empty', 'member', 'sublist', 'listConcat', 'listIntersection', 'listSubtraction'].map(name => `swrlb:${name}`).sort());
+  for (const item of listed.filter(entry => entry.status === 'unavailable')) {
+    assert.ok(item.note && item.note.includes('does not implement'), item.fullName);
+  }
+});
+
+test('functions whose corrected behaviour has a real limit keep a note', () => {
+  for (const full of ['swrlb:divide', 'swrlb:round', 'swrlb:addYearMonthDurationToDateTime', 'swrlb:addDayTimeDurationToTime', 'swrlb:date']) {
+    const found = listed.find(item => item.fullName === full);
+    assert.ok(found.note && found.note.length > 10, full);
   }
 });

@@ -24,7 +24,7 @@ class FriendlyRuleFeedbackTest {
     private static final String CHILD = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:lessThan(?a, 18) -> Child(?p)";
     private static final String UNKNOWN_CLASS = "Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:lessThan(?a, 18) -> Childd(?p)";
 
-    private static SWRLRule heightIntoMod() {
+    private static SWRLRule heightIntoUpperCase() {
         OWLDataFactory df = OWLManager.getOWLDataFactory();
         String ns = "http://example.org/triage#";
         SWRLVariable p = df.getSWRLVariable(IRI.create(ns + "p"));
@@ -33,8 +33,8 @@ class FriendlyRuleFeedbackTest {
         Set<SWRLAtom> body = new LinkedHashSet<>();
         body.add(df.getSWRLClassAtom(df.getOWLClass(IRI.create(ns + "Patient")), p));
         body.add(df.getSWRLDataPropertyAtom(df.getOWLDataProperty(IRI.create(ns + "hasHeight")), p, h));
-        body.add(df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#mod"),
-                List.of(r, h, df.getSWRLLiteralArgument(df.getOWLLiteral(7)))));
+        body.add(df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#upperCase"),
+                List.of(r, h)));
         body.add(df.getSWRLBuiltInAtom(IRI.create("http://www.w3.org/2003/11/swrlb#equal"),
                 List.of(r, df.getSWRLLiteralArgument(df.getOWLLiteral(0)))));
         Set<SWRLAtom> head = Set.of(df.getSWRLClassAtom(df.getOWLClass(IRI.create(ns + "WeeklyReview")), p));
@@ -66,7 +66,7 @@ class FriendlyRuleFeedbackTest {
     @Test
     void aTypeMismatchIsExplainedInPlainWords() throws Exception {
         TriageHarness harness = new TriageHarness();
-        harness.addAxiom(heightIntoMod());
+        harness.addAxiom(heightIntoUpperCase());
 
         ExecutionResult result = harness.service.executeRules(TriageHarness.PROJECT);
 
@@ -75,7 +75,7 @@ class FriendlyRuleFeedbackTest {
         assertEquals("Bad maths", result.getSkippedRules().get(0).ruleName());
         String message = result.getSkippedRules().get(0).reason();
         assertTrue(message.startsWith("Rule Bad maths could not run: "), message);
-        assertTrue(message.contains("needs a whole number"), message);
+        assertTrue(message.contains("needs text"), message);
         assertTrue(message.contains("Technical detail:"), message);
     }
 

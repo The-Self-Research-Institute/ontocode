@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import apiClient from './apiClient';
 import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
+import { toExplainFact } from './explainText';
 import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
 import { rt, btn } from './resultsTheme';
@@ -18,7 +19,7 @@ import { AssertedAxiomsPanel, Owl2RlPanel } from './AxiomPanels';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
 import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, InferredAxiom, AxiomsPageResponse } from './types';
-import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle, INFERRED_NOTE, ADD_INFERRED_CAP, axiomsToOps, collectInferredAxioms, inferredPlan } from './ruleModel';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle, INFERRED_NOTE, ADD_INFERRED_CAP, axiomsToOps, collectInferredAxioms, inferredPlan, resultCounts, resultHeading, searchMatchText, cutoffNote, showMoreLabel, countLabel, sectionTotal, groupLabel, groupTotal, ResultFilter } from './ruleModel';
 import type { AxiomKind, FactOp } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
@@ -768,13 +769,15 @@ interface ResultsPanelProps {
   isExecuting: boolean;
   onAdd?: (axioms: InferredAxiom[]) => Promise<{ ok: boolean; message: string }>;
   onRerun?: () => void;
+  rules?: SwrlRule[];
 }
 
 
 
-const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: string; predicate?: string; object?: string; formatted: string } => {
-  const readable = axiom.readable || '';
-  
+type ParsedAxiom = { type: string; subject: string; predicate?: string; object?: string; formatted: string; recognized?: boolean };
+
+const parseAxiomText = (axiom: InferredAxiom, readable: string): ParsedAxiom => {
+
   const clean = (s: string) => extractLocalName(s);
   
   const classAssertionMatch = readable.match(/ClassAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
@@ -982,8 +985,17 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   return {
     type: axiom.axiomType || 'Unknown',
     subject: simplified,
-    formatted: simplified || readable
+    formatted: simplified || readable,
+    recognized: false
   };
+};
+
+const formatInferredAxiom = (axiom: InferredAxiom): ParsedAxiom => {
+  const technical = parseAxiomText(axiom, axiom.description || '');
+  if (technical.recognized !== false) return technical;
+  const friendly = parseAxiomText(axiom, axiom.readable || '');
+  if (friendly.recognized !== false) return friendly;
+  return parseAxiomText(axiom, axiom.readable || axiom.description || '');
 };
 
 interface GroupedAxiomItem {
@@ -1031,13 +1043,85 @@ const getAxiomTypeStyle = (type: string): { icon: string } => ({ icon: AXIOM_ICO
 
 const canExplain = (ax: InferredAxiom): boolean => ax.category === 'conclusion' && !!ax.subjectIri && !!ax.predicateIri;
 
-const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: boolean; onToggle?: (key: string) => void; onWhy?: (axiom: InferredAxiom) => void }> = ({ item, index, selected, onToggle, onWhy }) => {
+const canExplainIn = (ax: InferredAxiom, section: string): boolean => (section === 'rules' ? canExplain(ax) : toExplainFact(ax) !== null);
+
+type FactSection = 'rules' | 'standard' | 'structure';
+
+const SECTION_TITLES: Record<FactSection, string> = { rules: 'From your rules', standard: 'From standard reasoning', structure: 'Class relationships' };
+const SECTION_ORDER: FactSection[] = ['rules', 'standard', 'structure'];
+const STANDARD_NOTE = 'These follow from the class tree and the standard reasoning the engine always applies, not from a rule you wrote. For example, a Customer is also a Person because Customer is a kind of Person. They are not errors, and no rule explanation exists for them.';
+
+const atomLocalName = (raw: string): string => raw.replace(/^<|>$/g, '').split(/[#/:]/).pop() || '';
+
+const ruleHeadNames = (rules: SwrlRule[]): Set<string> => {
+  const names = new Set<string>();
+  rules.forEach(rule => {
+    const text = rule.ruleText || '';
+    if (!rule.enabled || /sqwrl:/i.test(text)) return;
+    const ascii = text.lastIndexOf('->');
+    const unicode = text.lastIndexOf('\u2192');
+    if (ascii < 0 && unicode < 0) return;
+    const head = ascii > unicode ? text.slice(ascii + 2) : text.slice(unicode + 1);
+    const pattern = /([^\s(),^]+)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(head)) !== null) {
+      const name = atomLocalName(m[1]);
+      if (name) names.add(name);
+    }
+  });
+  return names;
+};
+
+const sectionOf = (ax: InferredAxiom, heads: Set<string>): FactSection => {
+  if (ax.category !== 'conclusion') return 'structure';
+  const parsed = formatInferredAxiom(ax);
+  const name = parsed.type === 'ClassAssertion' ? parsed.object : parsed.predicate;
+  return name && heads.has(name) ? 'rules' : 'standard';
+};
+
+interface SectionData {
+  key: FactSection;
+  title: string;
+  note?: string;
+  axioms: InferredAxiom[];
+  groups: Map<string, GroupedAxiomItem[]>;
+}
+
+const splitSections = (axioms: InferredAxiom[], heads: Set<string>): SectionData[] => {
+  const buckets: Record<FactSection, InferredAxiom[]> = { rules: [], standard: [], structure: [] };
+  axioms.forEach(ax => buckets[sectionOf(ax, heads)].push(ax));
+  return SECTION_ORDER.filter(key => buckets[key].length > 0).map(key => ({
+    key,
+    title: SECTION_TITLES[key],
+    note: key === 'rules' ? undefined : STANDARD_NOTE,
+    axioms: buckets[key],
+    groups: groupAxiomsByType(buckets[key]),
+  }));
+};
+
+const WHY_STYLE = '.swrl-why{opacity:.8}.swrl-why-host:hover .swrl-why,.swrl-why-host:focus-within .swrl-why,.swrl-why:hover,.swrl-why:focus-visible,.swrl-why[aria-expanded="true"]{opacity:1}';
+
+const WhyButton: React.FC<{ onClick: () => void; open?: boolean }> = ({ onClick, open }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="swrl-why inline-flex items-center text-xs font-semibold underline"
+    style={rt.link}
+    aria-label="Why was this concluded?"
+    aria-expanded={!!open}
+    title="Why was this concluded?"
+  >
+    Why?
+  </button>
+);
+
+const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: boolean; onToggle?: (key: string) => void; onWhy?: (axiom: InferredAxiom) => void; canWhy?: boolean; whyOpen?: boolean }> = ({ item, index, selected, onToggle, onWhy, canWhy, whyOpen }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const displaySubject = item.subject || item.formatted || `Item ${index + 1}`;
   
   return (
     <div 
-      className="relative group"
+      className="relative group swrl-why-host"
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
@@ -1061,8 +1145,8 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
             </span>
           </>
         )}
-        {onWhy && canExplain(item.axiom) && (
-          <button onClick={() => onWhy(item.axiom)} className="text-xs font-medium whitespace-nowrap" style={rt.link}>Why?</button>
+        {onWhy && canWhy && (
+          <WhyButton onClick={() => onWhy(item.axiom)} open={whyOpen} />
         )}
       </div>
       {showTooltip && item.rawReadable && (
@@ -1076,7 +1160,8 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
   );
 };
 
-const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, draftMode = false }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, rules = [], draftMode = false }) => {
+  const ruleHeads = useMemo(() => ruleHeadNames(rules), [rules]);
   const [explained, setExplained] = useState<InferredAxiom | null>(null);
   const toggleWhy = (ax: InferredAxiom) => setExplained(prev => (prev === ax ? null : ax));
   const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
@@ -1214,7 +1299,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                parsed.type?.toLowerCase().includes(searchLower);
       })
     : inScope;
-  const filteredAxioms = matchedAxioms.slice(0, visibleLimit);
+  const filteredAxioms = paged ? matchedAxioms : matchedAxioms.slice(0, visibleLimit);
   const matchedConclusions = matchedAxioms.filter(ax => ax.category === 'conclusion');
   const selectedConclusions = Array.from(selectedMap.values());
   const selectedCount = selectedConclusions.length;
@@ -1225,9 +1310,39 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const pagerPrev = previousOffset(offset);
   const pagerNext = nextOffset(offset, pageTotal);
 
-  const groupedAxioms = groupAxiomsByType(filteredAxioms);
+  const modelTotals = {
+    conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
+    structure: paged ? (results.counts?.structure ?? 0) : (results.structureCount ?? structureTotal),
+  };
+  const modelFilter: ResultFilter = paged ? pagedKind : scope;
+  const counts = resultCounts({
+    filter: modelFilter,
+    paged,
+    totals: modelTotals,
+    loaded: { conclusions: conclusionTotal, structure: structureTotal },
+    matched: paged ? pageTotal : matchedAxioms.length,
+    shown: filteredAxioms.length,
+    searching: searchFilter.trim() !== '',
+  });
+  const matchedSections = splitSections(matchedAxioms, ruleHeads);
+  const sections = splitSections(filteredAxioms, ruleHeads);
+  const loadedTotals = { conclusions: conclusionTotal, structure: structureTotal };
+  const sectionLabel = (sec: SectionData): string => {
+    if (paged) {
+      return counts.searching || sec.key !== 'structure' ? countLabel(sec.title, null, sec.axioms.length) : countLabel(sec.title, modelTotals.structure, sec.axioms.length);
+    }
+    const inSection = matchedSections.find(m => m.key === sec.key)?.axioms.length ?? 0;
+    return countLabel(sec.title, sectionTotal(sec.key, counts, modelTotals, loadedTotals, inSection), sec.axioms.length, counts.searching);
+  };
+  const groupText = (sec: SectionData, type: string, shown: number): string => {
+    const fullyLoaded = !paged && (sec.key === 'structure' ? structureTotal >= modelTotals.structure : conclusionTotal >= modelTotals.conclusions);
+    const inGroup = matchedSections.find(m => m.key === sec.key)?.groups.get(type)?.length ?? 0;
+    return groupLabel(groupTotal(!paged && (counts.searching || fullyLoaded), inGroup), shown, counts.searching && !paged);
+  };
+  const groupCount = sections.reduce((n, sec) => n + sec.groups.size, 0);
+  const orderedRows = sections.flatMap(sec => sec.axioms.map((ax, i) => ({ ax, sec, first: i === 0 })));
   const expandAll = () => setCollapsedGroups(new Set());
-  const collapseAll = () => setCollapsedGroups(new Set(groupedAxioms.keys()));
+  const collapseAll = () => setCollapsedGroups(new Set(sections.flatMap(sec => Array.from(sec.groups.keys()).map(t => `${sec.key}|${t}`))));
   
   const summaryLine = derivedSummary({
     conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
@@ -1238,6 +1353,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   return (
     <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-4">
+      <style>{WHY_STYLE}</style>
       <p className="text-sm" style={rt.label} data-testid="inferred-note">{INFERRED_NOTE}</p>
       <div className="rounded-xl p-5 shadow-sm" style={rt.panel}>
         <h3 className="font-bold mb-4 text-lg flex items-center gap-2" style={rt.heading}>
@@ -1372,10 +1488,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             <div className="flex justify-between items-center">
               <h3 className="font-bold text-lg flex items-center gap-2" style={rt.heading}>
                 <span>📚</span>
-                All Inferred Axioms
-                <span className="text-sm font-normal" style={rt.label}>
-                  ({paged ? formatCount(pageTotal) : matchedAxioms.length} matching{matchedAxioms.length > filteredAxioms.length ? `, showing ${filteredAxioms.length}` : ''}, {groupedAxioms.size} types)
-                </span>
+                <span data-testid="inferred-heading">{resultHeading(counts)}</span>
               </h3>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: 'var(--surface-3)' }}>
@@ -1406,10 +1519,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                 </div>
                 {viewMode === 'grouped' && (
                   <div className="flex gap-1">
-                    <button onClick={expandAll} disabled={groupedAxioms.size === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Expand all" aria-label="Expand all">
+                    <button onClick={expandAll} disabled={groupCount === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Expand all" aria-label="Expand all">
                       <Maximize2 size={14} />
                     </button>
-                    <button onClick={collapseAll} disabled={groupedAxioms.size === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Collapse all" aria-label="Collapse all">
+                    <button onClick={collapseAll} disabled={groupCount === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Collapse all" aria-label="Collapse all">
                       <Minimize2 size={14} />
                     </button>
                   </div>
@@ -1445,7 +1558,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               </div>
               {searchFilter && (
                 <div className="mt-2 text-xs" style={rt.label}>
-                  Found {paged ? formatCount(pageTotal) : matchedAxioms.length} axioms matching "{searchFilter}"
+                  {searchMatchText(counts, searchFilter.trim())}
                 </div>
               )}
               {onAdd && (matchedConclusions.length > 0 || (paged && selectedCount > 0)) && (
@@ -1528,7 +1641,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                     </button>
                   ))}
                   {results.omittedTrivialCount ? <span style={rt.label}>{formatCount(results.omittedTrivialCount)} trivial same-individual facts hidden</span> : null}
-                  {results.truncated ? <span style={rt.value}>Showing the first {formatCount(results.inferredAxioms.length)} of {formatCount((results.conclusionCount ?? conclusionTotal) + (results.structureCount ?? structureTotal))}; narrow the list with the search or the filter.</span> : null}
+                  {cutoffNote(counts) ? <span style={rt.value} data-testid="cutoff-note">{cutoffNote(counts)}</span> : null}
                 </div>
               )}
             </div>
@@ -1537,14 +1650,29 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
 
           {showList && viewMode === 'grouped' && (
             <div className="max-h-[70vh] overflow-y-auto">
-              {Array.from(groupedAxioms.entries()).map(([type, items]) => {
-                const style = getAxiomTypeStyle(type);
-                const isExpanded = !collapsedGroups.has(type);
+              {sections.map(sec => {
+                const secOpen = !collapsedGroups.has(`sec:${sec.key}`);
                 return (
-                  <div key={type} style={rt.rowBorder}>
+                <div key={sec.key} data-testid={`section-${sec.key}`}>
+                  <button
+                    onClick={() => toggleGroup(`sec:${sec.key}`)}
+                    aria-expanded={secOpen}
+                    className="w-full px-4 py-2 flex items-center justify-between text-left" style={{ ...rt.panelHeader, color: 'var(--text-primary)' }}
+                  >
+                    <span className="text-sm font-bold">{sectionLabel(sec)}</span>
+                    <ChevronRight size={16} className={`transition-transform ${secOpen ? 'rotate-90' : ''}`} style={rt.label} />
+                  </button>
+                  {secOpen && sec.note && <div className="px-4 py-2 text-xs" style={rt.label}>{sec.note}</div>}
+                  {secOpen && Array.from(sec.groups.entries()).map(([type, items]) => {
+                const style = getAxiomTypeStyle(type);
+                const groupKey = `${sec.key}|${type}`;
+                const isExpanded = !collapsedGroups.has(groupKey);
+                return (
+                  <div key={groupKey} style={rt.rowBorder}>
                     <button
-                      onClick={() => toggleGroup(type)}
+                      onClick={() => toggleGroup(groupKey)}
                       aria-expanded={isExpanded}
+                      data-testid="group-header"
                       className="w-full p-4 flex items-center justify-between transition-colors" style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)' }}
                     >
                       <div className="flex items-center gap-3">
@@ -1553,7 +1681,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                           {type}
                         </span>
                         <span className="text-sm font-medium" style={rt.label}>
-                          {items.length} inferred
+                          {groupText(sec, type, items.length)}
                         </span>
                       </div>
                       <ChevronRight size={20} className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`} style={rt.label} />
@@ -1562,17 +1690,20 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       <div className="p-4 pt-2" style={{ backgroundColor: 'var(--surface-1)' }}>
                         <div className="flex flex-wrap gap-2">
                           {items.map((item, i) => (
-                            <AxiomCard key={i} item={item} index={i} selected={selectedKeys.has(item.key)} onToggle={onAdd ? toggleSelected : undefined} onWhy={toggleWhy} />
+                            <AxiomCard key={i} item={item} index={i} selected={selectedKeys.has(item.key)} onToggle={onAdd ? toggleSelected : undefined} onWhy={toggleWhy} canWhy={canExplainIn(item.axiom, sec.key)} whyOpen={explained === item.axiom} />
                           ))}
                         </div>
                         {explained && items.some(it => it.axiom === explained) && (
                           <div className="mt-2">
-                            <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={explained} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={explained} onClose={() => setExplained(null)} />
                           </div>
                         )}
                       </div>
                     )}
                   </div>
+                );
+              })}
+                </div>
                 );
               })}
             </div>
@@ -1593,12 +1724,20 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                   </tr>
                 </thead>
                 <tbody style={{ color: 'var(--text-primary)' }}>
-                  {filteredAxioms.map((ax, i) => {
+                  {orderedRows.map(({ ax, sec, first }, i) => {
                     const parsed = formatInferredAxiom(ax);
                     const style = getAxiomTypeStyle(parsed.type);
                     return (
                       <React.Fragment key={i}>
-                      <tr style={rt.rowBorder} title={ax.readable}>
+                      {first && (
+                        <tr style={rt.panelHeader}>
+                          <td colSpan={onAdd ? 7 : 6} className="px-4 py-2 text-xs">
+                            <div className="font-bold text-sm" style={rt.heading}>{sectionLabel(sec)}</div>
+                            {sec.note && <div style={rt.label}>{sec.note}</div>}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="swrl-why-host" style={rt.rowBorder} title={ax.readable}>
                         {onAdd && (
                           <td className="px-4 py-2">
                             {ax.category === 'conclusion' && (
@@ -1621,15 +1760,15 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                         <td className="px-4 py-2 font-bold text-center" style={rt.label}>{parsed.predicate || '→'}</td>
                         <td className="px-4 py-2 font-medium max-w-[200px] truncate" style={rt.value}>{parsed.object || '-'}</td>
                         <td className="px-4 py-2">
-                          {canExplain(ax) && (
-                            <button onClick={() => toggleWhy(ax)} className="text-xs font-medium" style={rt.link}>Why?</button>
+                          {canExplainIn(ax, sec.key) && (
+                            <WhyButton onClick={() => toggleWhy(ax)} open={explained === ax} />
                           )}
                         </td>
                       </tr>
                       {explained === ax && (
                         <tr>
                           <td colSpan={onAdd ? 7 : 6} className="px-4 py-2">
-                            <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={ax} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
                           </td>
                         </tr>
                       )}
@@ -1660,20 +1799,27 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             </div>
           )}
 
-          {showInferredAxioms && matchedAxioms.length > filteredAxioms.length && (
+          {showInferredAxioms && !paged && showMoreLabel(counts, 100) && (
             <div className="p-3 text-center" style={rt.divider}>
               <button onClick={() => setVisibleLimit(visibleLimit + 100)} className="px-4 py-1.5 text-sm rounded-lg" style={rt.button}>
-                Show 100 more ({matchedAxioms.length - filteredAxioms.length} remaining)
+                {showMoreLabel(counts, 100)}
               </button>
             </div>
           )}
 
           {showList && viewMode === 'raw' && (
             <div className="max-h-[70vh] overflow-y-auto">
-              {filteredAxioms.map((ax, i) => {
+              {orderedRows.map(({ ax, sec, first }, i) => {
                 const style = getAxiomTypeStyle(ax.axiomType);
                 return (
-                  <div key={i} className="p-4" style={{ ...rt.rowBorder, backgroundColor: i % 2 === 0 ? 'var(--surface-1)' : 'var(--surface-2)', color: 'var(--text-primary)' }}>
+                  <React.Fragment key={i}>
+                  {first && (
+                    <div className="px-4 py-2 text-xs" style={rt.panelHeader}>
+                      <div className="font-bold text-sm" style={rt.heading}>{sectionLabel(sec)}</div>
+                      {sec.note && <div style={rt.label}>{sec.note}</div>}
+                    </div>
+                  )}
+                  <div className="p-4 swrl-why-host" style={{ ...rt.rowBorder, backgroundColor: i % 2 === 0 ? 'var(--surface-1)' : 'var(--surface-2)', color: 'var(--text-primary)' }}>
                     <div className="flex items-center gap-2 mb-2">
                       {onAdd && ax.category === 'conclusion' && (
                         <input
@@ -1687,17 +1833,18 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={rt.chip}>
                         {style.icon} {ax.axiomType}
                       </span>
-                      {canExplain(ax) && (
-                        <button onClick={() => toggleWhy(ax)} className="text-xs font-medium" style={rt.link}>Why?</button>
+                      {canExplainIn(ax, sec.key) && (
+                        <WhyButton onClick={() => toggleWhy(ax)} open={explained === ax} />
                       )}
                     </div>
                     <pre className="text-sm font-mono p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all" style={rt.code}>{ax.readable}</pre>
                     {explained === ax && (
                       <div className="mt-2">
-                        <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={ax} onClose={() => setExplained(null)} />
+                        <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
                       </div>
                     )}
                   </div>
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -3043,7 +3190,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               )}
             </div>
           ) : activePanel === 'results' ? (
-            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} />
+            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} rules={rules} />
           ) : activePanel === 'control' ? (
             <ControlPanel
               projectId={projectId}

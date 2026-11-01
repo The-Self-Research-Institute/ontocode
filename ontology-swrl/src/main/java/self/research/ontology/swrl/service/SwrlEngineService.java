@@ -8,7 +8,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.swrlapi.factory.SWRLAPIFactory;
+import self.research.ontology.swrl.builtin.BuiltInLibraries;
+import self.research.ontology.swrl.builtin.SqwrlRewrites;
 import org.swrlapi.core.SWRLRuleEngine;
 import org.swrlapi.exceptions.SWRLBuiltInException;
 import org.swrlapi.parser.SWRLParseException;
@@ -270,7 +271,7 @@ public class SwrlEngineService {
         OWLOntology ontology = fetch(projectId, draftUserId);
         ensureNamespacePrefixes(projectId, ontology);
         OntologyRules.removeAll(ontology);
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
         return validationCache.put(new ValidationCache.Key(projectId, draftUserId, OwnerContext.current()), stamp,
                 ontology, engine, ontologyClient.maxAxioms());
     }
@@ -281,7 +282,7 @@ public class SwrlEngineService {
             OWLOntology ontology = fetch(projectId, draftUserId);
             ensureNamespacePrefixes(projectId, ontology);
             OntologyRules.removeAll(ontology);
-            return new ValidationCache.Entry(null, ontology, SWRLAPIFactory.createSWRLRuleEngine(ontology), 0);
+            return new ValidationCache.Entry(null, ontology, BuiltInLibraries.createRuleEngine(ontology), 0);
         }
         String stamp = ontologyClient.currentStamp(projectId, draftUserId);
         ValidationCache.Key key = new ValidationCache.Key(projectId, draftUserId, OwnerContext.current());
@@ -294,7 +295,7 @@ public class SwrlEngineService {
             OWLOntology ontology = fetch(projectId, draftUserId);
             ensureNamespacePrefixes(projectId, ontology);
             OntologyRules.removeAll(ontology);
-            return new ValidationCache.Entry(null, ontology, SWRLAPIFactory.createSWRLRuleEngine(ontology), 0);
+            return new ValidationCache.Entry(null, ontology, BuiltInLibraries.createRuleEngine(ontology), 0);
         }
         return buildValidationEntry(projectId, draftUserId, stamp);
     }
@@ -467,7 +468,7 @@ public class SwrlEngineService {
         }
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, entry -> true, true);
         try {
-            SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
             OntologyRules.fillTexts(engine, entries);
         } catch (RuntimeException e) {
             logger.warn("The rule engine could not load the rules of project {}, listing them from the ontology instead: {}",
@@ -662,7 +663,7 @@ public class SwrlEngineService {
         ensureNamespacePrefixes(projectId, ontology);
         long engineStart = System.currentTimeMillis();
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
         OntologyRules.fillTexts(engine, entries);
         long engineDuration = System.currentTimeMillis() - engineStart;
         engineLog.info("[EXECUTE] Fresh engine created in {}ms project={}", engineDuration, projectId);
@@ -772,7 +773,7 @@ public class SwrlEngineService {
         Set<String> requested = new LinkedHashSet<>(ruleIds);
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology,
                 entry -> entry.enabled() && (requested.contains(entry.id()) || requested.contains(entry.name())), true);
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
         OntologyRules.fillTexts(engine, entries);
 
         List<OntologyRules.Entry> selectedRules = new ArrayList<>();
@@ -857,7 +858,7 @@ public class SwrlEngineService {
         OWLOntology ontology = ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
         ensureNamespacePrefixes(projectId, ontology);
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
         OntologyRules.fillTexts(engine, entries);
 
         OWLDataFactory factory = org.semanticweb.owlapi.apibinding.OWLManager.getOWLDataFactory();
@@ -894,7 +895,7 @@ public class SwrlEngineService {
         PlainLiteralNormalizer.apply(ontology);
         registerBlankNodePrefix(ontology);
         Set<OWLAxiom> original = new HashSet<>(ontology.getAxioms());
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
         Set<OWLAxiom> produced = runInference(engine, "ontology-rules");
         OWLOntology result = manager.createOntology();
         produced.stream()
@@ -974,7 +975,7 @@ public class SwrlEngineService {
                 failed.add(new SkippedRule(culprit.name(), "Rule " + culprit.name() + " could not run: " + RuleMessages.explain(reason)));
                 ran.remove(culprit);
                 OntologyRules.drop(ontology, culprit);
-                engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+                engine = BuiltInLibraries.createRuleEngine(ontology);
             }
         }
     }
@@ -1021,7 +1022,7 @@ public class SwrlEngineService {
         for (OWLAxiom axiom : ontology.getAxioms(org.semanticweb.owlapi.model.parameters.Imports.INCLUDED)) {
             existing.add(axiom.getAxiomWithoutAnnotations());
         }
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
         List<String> unsupported = engine.getOWL2RLEngine().getUnsupportedRules().stream()
                 .map(rule -> rule.name().toLowerCase(Locale.ROOT).replace('_', '-')).sorted().collect(Collectors.toList());
         Set<OWLAxiom> derived = runInference(engine, projectId);
@@ -1384,7 +1385,7 @@ public class SwrlEngineService {
         OWLOntology ontology = ontologyClient.fetchOntology(projectId);
         ensureNamespacePrefixes(projectId, ontology);
         OntologyRules.removeAll(ontology);
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
 
         String testRuleName = "test_" + System.currentTimeMillis();
         String resolvedText = resolveEntityNames(ruleText, ontology);
@@ -1514,12 +1515,21 @@ public class SwrlEngineService {
         if (PlainLiteralNormalizer.needsDoubleNumbers(queryText)) {
             PlainLiteralNormalizer.numbersAsDouble(ontology);
         }
-        org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
+        org.swrlapi.sqwrl.SQWRLQueryEngine queryEngine = BuiltInLibraries.createQueryEngine(ontology);
 
         logger.info("Executing SQWRL query for project {}: {}", projectId, queryText);
 
-        String resolvedQuery = resolveEntityNames(queryText, ontology);
-        org.swrlapi.sqwrl.SQWRLResult sqwrlResult = queryEngine.runSQWRLQuery(runName, resolvedQuery);
+        String resolvedQuery = SqwrlRewrites.sliceAliases(resolveEntityNames(queryText, ontology));
+        org.swrlapi.sqwrl.SQWRLResult sqwrlResult;
+        try {
+            sqwrlResult = queryEngine.runSQWRLQuery(runName, resolvedQuery);
+        } catch (org.swrlapi.sqwrl.exceptions.SQWRLException e) {
+            String ordered = SqwrlRewrites.minMaxByOrdering(resolvedQuery, e.getMessage());
+            if (ordered == null) {
+                throw e;
+            }
+            sqwrlResult = queryEngine.runSQWRLQuery(runName + "_ordered", ordered);
+        }
 
         List<String> columnNames = new ArrayList<>();
         int columnCount = sqwrlResult.getNumberOfColumns();
@@ -1591,7 +1601,7 @@ public class SwrlEngineService {
         ensureNamespacePrefixes(projectId, ontology);
         Set<OWLAxiom> asserted = InferredAxiomPresenter.assertionsOf(ontology);
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
-        SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+        SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
         OntologyRules.fillTexts(engine, entries);
 
         Map<OntologyRules.Entry, org.swrlapi.core.SWRLAPIRule> parsed = new LinkedHashMap<>();
@@ -1813,7 +1823,7 @@ public class SwrlEngineService {
             notes.add("asserted fact");
         } else if (present) {
             status = "origin_only";
-            notes.add("Produced by OWL reasoning or a rule this explanation cannot evaluate");
+            notes.add("None of your rules produced this fact. It comes from the standard reasoning the engine always applies, for example \"a Customer is also a Person because Customer is a kind of Person\". It is not an error.");
         } else {
             status = "not_found";
             notes.add("This is not an asserted fact and the engine does not derive it, so there is nothing to explain");

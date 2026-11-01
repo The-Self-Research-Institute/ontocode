@@ -14,7 +14,7 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.swrlapi.core.SWRLRuleEngine;
-import org.swrlapi.factory.SWRLAPIFactory;
+import self.research.ontology.swrl.builtin.BuiltInLibraries;
 import self.research.ontology.swrl.model.ExecutionResult;
 import self.research.ontology.swrl.model.InferredAxiom;
 import self.research.ontology.swrl.model.SkippedRule;
@@ -50,10 +50,11 @@ class SwrlFunctionLibrariesTest {
 
     private static final boolean FULL = Boolean.getBoolean("swrl.functions.full");
 
-    private static final Set<String> QUICK_CASES = Set.of("eq_int", "gt_date", "eq_text", "not_bool", "add_int", "temporal_notBefore",
-            "temporal_durationGreaterThan_fails", "abox_caa_wrong_order_fails", "unknown_function", "unknown_prefix", "unknown_class");
+    private static final Set<String> QUICK_CASES = Set.of("eq_int", "gt_date", "not_bool", "add_int", "temporal_notBefore", "temporal_durationGreaterThan",
+            "abox_caa_wrong_order_fails", "unknown_function", "unknown_prefix", "unknown_class", "date", "time", "lt_time", "integerDivide_int",
+            "addYearMonthDurations", "matches_with_ignore_case_flag_plain");
 
-    private static final Set<String> QUICK_QUERIES = Set.of("select", "count", "sum_int", "avg_int", "min_text_fails", "nthLast_rejected", "abox_caa");
+    private static final Set<String> QUICK_QUERIES = Set.of("select", "count", "sum_int", "avg_int", "min_text", "nthLast", "countDistinct", "abox_caa");
 
     private static List<Case> active() {
         return FULL ? cases() : cases().stream().filter(c -> QUICK_CASES.contains(c.id())).toList();
@@ -130,10 +131,6 @@ class SwrlFunctionLibrariesTest {
         cases.add(fails(id, function, "Item(?r) ^ " + call + " -> OUT(?r, ?o)", message));
     }
 
-    private static Predicate<Set<String>> prefixes(String first, String second) {
-        return facts -> facts.size() == 2 && facts.stream().anyMatch(f -> f.startsWith(first)) && facts.stream().anyMatch(f -> f.startsWith(second));
-    }
-
     static List<Case> cases() {
         List<Case> c = new ArrayList<>();
         compare(c, "eq_int", "swrlb:equal", "intVal", "7", "r1");
@@ -160,7 +157,12 @@ class SwrlFunctionLibrariesTest {
         compare(c, "lt_datetime", "swrlb:lessThan", "stamp", "\"2024-06-01T00:00:00\"^^xsd:dateTime", "r1");
         compare(c, "gt_datetime", "swrlb:greaterThan", "stamp", "\"2024-06-01T00:00:00\"^^xsd:dateTime", "r2");
         compare(c, "eq_time", "swrlb:equal", "clock", "\"10:30:00\"^^xsd:time", "r1");
-        compare(c, "known_lt_time_matches_every_time", "swrlb:lessThan", "clock", "\"12:00:00\"^^xsd:time", "r1", "r2");
+        compare(c, "lt_time", "swrlb:lessThan", "clock", "\"12:00:00\"^^xsd:time", "r1");
+        compare(c, "le_time", "swrlb:lessThanOrEqual", "clock", "\"10:30:00\"^^xsd:time", "r1");
+        compare(c, "gt_time", "swrlb:greaterThan", "clock", "\"12:00:00\"^^xsd:time", "r2");
+        compare(c, "ge_time", "swrlb:greaterThanOrEqual", "clock", "\"23:15:00\"^^xsd:time", "r2");
+        compare(c, "lt_time_other_zone", "swrlb:lessThan", "clock", "\"11:30:00+02:00\"^^xsd:time");
+        compare(c, "gt_time_other_zone", "swrlb:greaterThan", "clock", "\"11:30:00+02:00\"^^xsd:time", "r1", "r2");
         compare(c, "int_never_equals_text", "swrlb:equal", "intVal", "\"7\"");
         compare(c, "date_never_equals_plain_text", "swrlb:equal", "day", "\"2024-03-15\"");
         both(c, "eq_text", "swrlb:equal", "Item(?r) ^ STR(?r, ?v) ^ swrlb:equal(?v, \"Alpha Beta\") -> HIT(?r)", "r1");
@@ -181,11 +183,17 @@ class SwrlFunctionLibrariesTest {
         calc(c, "subtract_int", "swrlb:subtract", "intVal", "swrlb:subtract(?o, ?v, 5)", "r1=2", "r2=7");
         calc(c, "subtract_dbl", "swrlb:subtract", "dblVal", "swrlb:subtract(?o, ?v, 0.5)", "r1=8.5", "r2=0.0");
         calc(c, "multiply_int", "swrlb:multiply", "intVal", "swrlb:multiply(?o, ?v, 3)", "r1=21", "r2=36");
-        calc(c, "known_divide_int_rounds_to_whole", "swrlb:divide", "intVal", "swrlb:divide(?o, ?v, 2)", "r1=4", "r2=6");
-        calc(c, "known_divide_dec_rounds_to_one_place", "swrlb:divide", "decVal", "swrlb:divide(?o, ?v, 2)", "r1=1.3", "r2=-1.8");
+        calc(c, "divide_int_exact", "swrlb:divide", "intVal", "swrlb:divide(?o, ?v, 2)", "r1=3.5", "r2=6");
+        calc(c, "divide_dec_exact", "swrlb:divide", "decVal", "swrlb:divide(?o, ?v, 2)", "r1=1.25", "r2=-1.75");
+        calc(c, "divide_int_repeating", "swrlb:divide", "intVal", "swrlb:divide(?o, ?v, 3)", "r1=2.33333333333333333333", "r2=4");
         calc(c, "divide_dbl", "swrlb:divide", "dblVal", "swrlb:divide(?o, ?v, 3)", "r1=3.0", "r2=0.2");
-        calc(c, "known_integerDivide_adds_instead", "swrlb:integerDivide", "intVal", "swrlb:integerDivide(?o, ?v, 5)", "r1=12", "r2=17");
+        calc(c, "integerDivide_int", "swrlb:integerDivide", "intVal", "swrlb:integerDivide(?o, ?v, 5)", "r1=1", "r2=2");
+        calc(c, "integerDivide_dec_truncates_toward_zero", "swrlb:integerDivide", "decVal", "swrlb:integerDivide(?o, ?v, 2)", "r1=1", "r2=-1");
+        calc(c, "integerDivide_negative_divisor", "swrlb:integerDivide", "intVal", "swrlb:integerDivide(?o, ?v, -5)", "r1=-1", "r2=-2");
+        failing(c, "integerDivide_by_zero_fails", "swrlb:integerDivide", "intVal", "swrlb:integerDivide(?o, ?v, 0)", "divides by zero");
         calc(c, "mod_int", "swrlb:mod", "intVal", "swrlb:mod(?o, ?v, 5)", "r1=2", "r2=2");
+        calc(c, "mod_keeps_the_sign_of_the_first_value", "swrlb:mod", "decVal", "swrlb:mod(?o, ?v, 2)", "r1=0.5", "r2=-1.5");
+        calc(c, "mod_negative_divisor", "swrlb:mod", "intVal", "swrlb:mod(?o, ?v, -5)", "r1=2", "r2=2");
         calc(c, "pow_int", "swrlb:pow", "intVal", "swrlb:pow(?o, ?v, 2)", "r1=49", "r2=144");
         calc(c, "unaryPlus_int", "swrlb:unaryPlus", "intVal", "swrlb:unaryPlus(?o, ?v)", "r1=7", "r2=12");
         calc(c, "unaryMinus_int", "swrlb:unaryMinus", "intVal", "swrlb:unaryMinus(?o, ?v)", "r1=-7", "r2=-12");
@@ -193,8 +201,8 @@ class SwrlFunctionLibrariesTest {
         calc(c, "ceiling_dec", "swrlb:ceiling", "decVal", "swrlb:ceiling(?o, ?v)", "r1=3", "r2=-3");
         calc(c, "floor_dec", "swrlb:floor", "decVal", "swrlb:floor(?o, ?v)", "r1=2", "r2=-4");
         calc(c, "round_int", "swrlb:round", "intVal", "swrlb:round(?o, ?v)", "r1=7", "r2=12");
-        failing(c, "round_dec_fails", "swrlb:round", "decVal", "swrlb:round(?o, ?v)", "cannot round");
-        failing(c, "round_dbl_fails", "swrlb:round", "dblVal", "swrlb:round(?o, ?v)", "cannot round");
+        calc(c, "round_dec_half_up", "swrlb:round", "decVal", "swrlb:round(?o, ?v)", "r1=3", "r2=-3");
+        calc(c, "round_dbl", "swrlb:round", "dblVal", "swrlb:round(?o, ?v)", "r1=9.0", "r2=1.0");
         calc(c, "roundHalfToEven_dec", "swrlb:roundHalfToEven", "decVal", "swrlb:roundHalfToEven(?o, ?v)", "r1=2", "r2=-4");
         calc(c, "roundHalfToEven_dbl", "swrlb:roundHalfToEven", "dblVal", "swrlb:roundHalfToEven(?o, ?v)", "r1=9.0", "r2=0.0");
         failing(c, "roundHalfToEven_precision_arity", "swrlb:roundHalfToEven", "decVal", "swrlb:roundHalfToEven(?o, ?v, 0)", "needs 2 values");
@@ -212,9 +220,11 @@ class SwrlFunctionLibrariesTest {
         both(c, "stringConcat", "swrlb:stringConcat", "Item(?r) ^ STR(?r, ?v) ^ swrlb:stringConcat(?o, ?v, \"-\", ?v) -> OUT(?r, ?o)", "r1=Alpha Beta-Alpha Beta", "r2=gamma-gamma");
         c.add(works("stringConcat_typed_and_plain", "swrlb:stringConcat", "Item(?r) ^ strText(?r, ?a) ^ plainText(?r, ?b) ^ swrlb:stringConcat(?o, ?a, \"|\", ?b) -> OUT(?r, ?o)", "r1=Alpha Beta|Alpha Beta", "r2=gamma|gamma"));
         c.add(works("stringConcat_text_and_number", "swrlb:stringConcat", "Item(?r) ^ strText(?r, ?a) ^ intVal(?r, ?b) ^ swrlb:stringConcat(?o, ?a, ?b) -> OUT(?r, ?o)", "r1=Alpha Beta7", "r2=gamma12"));
-        both(c, "known_substring_zero_based_end_index", "swrlb:substring", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substring(?o, ?v, 2, 3) -> OUT(?r, ?o)", "r1=p", "r2=m");
-        failing(c, "substring_past_end_fails", "swrlb:substring", "strText", "swrlb:substring(?o, ?v, 7)", "StringIndexOutOfBoundsException");
-        failing(c, "substring_arity_fails", "swrlb:substring", "strText", "swrlb:substring(?o, ?v)", "needs at least 3 values");
+        both(c, "substring_start_and_length", "swrlb:substring", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substring(?o, ?v, 2, 3) -> OUT(?r, ?o)", "r1=lph", "r2=amm");
+        both(c, "substring_to_the_end", "swrlb:substring", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substring(?o, ?v, 7) -> OUT(?r, ?o)", "r1=Beta", "r2=");
+        both(c, "substring_length_past_the_end", "swrlb:substring", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substring(?o, ?v, 4, 50) -> OUT(?r, ?o)", "r1=ha Beta", "r2=ma");
+        both(c, "substring_start_before_the_text", "swrlb:substring", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substring(?o, ?v, 0, 3) -> OUT(?r, ?o)", "r1=Al", "r2=ga");
+        failing(c, "substring_arity_fails", "swrlb:substring", "strText", "swrlb:substring(?o, ?v)", "needs 3 to 4 values");
         both(c, "stringLength", "swrlb:stringLength", "Item(?r) ^ STR(?r, ?v) ^ swrlb:stringLength(?o, ?v) -> OUT(?r, ?o)", "r1=10", "r2=5");
         both(c, "stringLength_as_test", "swrlb:stringLength", "Item(?r) ^ STR(?r, ?v) ^ swrlb:stringLength(5, ?v) -> HIT(?r)", "r2");
         c.add(works("normalizeSpace", "swrlb:normalizeSpace", "Item(?r) ^ spaced(?r, ?v) ^ swrlb:normalizeSpace(?o, ?v) -> OUT(?r, ?o)", "r1=a b", "r2=x"));
@@ -222,15 +232,19 @@ class SwrlFunctionLibrariesTest {
         both(c, "upperCase", "swrlb:upperCase", "Item(?r) ^ STR(?r, ?v) ^ swrlb:upperCase(?o, ?v) -> OUT(?r, ?o)", "r1=ALPHA BETA", "r2=GAMMA");
         both(c, "lowerCase", "swrlb:lowerCase", "Item(?r) ^ STR(?r, ?v) ^ swrlb:lowerCase(?o, ?v) -> OUT(?r, ?o)", "r1=alpha beta", "r2=gamma");
         both(c, "translate_one_character", "swrlb:translate", "Item(?r) ^ STR(?r, ?v) ^ swrlb:translate(?o, ?v, \"a\", \"x\") -> OUT(?r, ?o)", "r1=Alphx Betx", "r2=gxmmx");
-        both(c, "known_translate_longer_map_unchanged", "swrlb:translate", "Item(?r) ^ STR(?r, ?v) ^ swrlb:translate(?o, ?v, \"ab\", \"xy\") -> OUT(?r, ?o)", "r1=Alpha Beta", "r2=gamma");
+        both(c, "translate_several_characters", "swrlb:translate", "Item(?r) ^ STR(?r, ?v) ^ swrlb:translate(?o, ?v, \"ab\", \"xy\") -> OUT(?r, ?o)", "r1=Alphx Betx", "r2=gxmmx");
+        both(c, "translate_removes_unmapped_characters", "swrlb:translate", "Item(?r) ^ STR(?r, ?v) ^ swrlb:translate(?o, ?v, \"abp\", \"x\") -> OUT(?r, ?o)", "r1=Alhx Betx", "r2=gxmmx");
         both(c, "contains", "swrlb:contains", "Item(?r) ^ STR(?r, ?v) ^ swrlb:contains(?v, \"pha\") -> HIT(?r)", "r1");
         both(c, "containsIgnoreCase", "swrlb:containsIgnoreCase", "Item(?r) ^ STR(?r, ?v) ^ swrlb:containsIgnoreCase(?v, \"PHA\") -> HIT(?r)", "r1");
         both(c, "startsWith", "swrlb:startsWith", "Item(?r) ^ STR(?r, ?v) ^ swrlb:startsWith(?v, \"Alp\") -> HIT(?r)", "r1");
         both(c, "endsWith", "swrlb:endsWith", "Item(?r) ^ STR(?r, ?v) ^ swrlb:endsWith(?v, \"eta\") -> HIT(?r)", "r1");
-        both(c, "substringBefore", "swrlb:substringBefore", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substringBefore(?o, ?v, \" \") -> OUT(?r, ?o)", "r1=Alpha", "r2=gamma");
+        both(c, "substringBefore", "swrlb:substringBefore", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substringBefore(?o, ?v, \" \") -> OUT(?r, ?o)", "r1=Alpha", "r2=");
         both(c, "substringAfter", "swrlb:substringAfter", "Item(?r) ^ STR(?r, ?v) ^ swrlb:substringAfter(?o, ?v, \" \") -> OUT(?r, ?o)", "r1=Beta", "r2=");
         both(c, "matches", "swrlb:matches", "Item(?r) ^ STR(?r, ?v) ^ swrlb:matches(?v, \"^Alp.*a$\") -> HIT(?r)", "r1");
-        c.add(fails("matches_flags_arity_fails", "swrlb:matches", "Item(?r) ^ strText(?r, ?v) ^ swrlb:matches(?v, \"^alpha\", \"i\") -> HIT(?r)", "needs 2 values"));
+        both(c, "matches_anywhere_in_the_text", "swrlb:matches", "Item(?r) ^ STR(?r, ?v) ^ swrlb:matches(?v, \"pha\") -> HIT(?r)", "r1");
+        both(c, "matches_with_ignore_case_flag", "swrlb:matches", "Item(?r) ^ STR(?r, ?v) ^ swrlb:matches(?v, \"^ALPHA\", \"i\") -> HIT(?r)", "r1");
+        both(c, "matches_without_flag_is_case_sensitive", "swrlb:matches", "Item(?r) ^ STR(?r, ?v) ^ swrlb:matches(?v, \"^ALPHA\") -> HIT(?r)");
+        c.add(fails("matches_unknown_flag_fails", "swrlb:matches", "Item(?r) ^ strText(?r, ?v) ^ swrlb:matches(?v, \"^alpha\", \"z\") -> HIT(?r)", "is not a pattern option"));
         c.add(fails("matches_bad_pattern_fails", "swrlb:matches", "Item(?r) ^ strText(?r, ?v) ^ swrlb:matches(?v, \"([\") -> HIT(?r)", "not a valid regular expression"));
         both(c, "replace", "swrlb:replace", "Item(?r) ^ STR(?r, ?v) ^ swrlb:replace(?o, ?v, \"a\", \"o\") -> OUT(?r, ?o)", "r1=Alpho Beto", "r2=gommo");
         both(c, "tokenize", "swrlb:tokenize", "Item(?r) ^ STR(?r, ?v) ^ swrlb:tokenize(?o, ?v, \" \") -> OUT(?r, ?o)", "r1=Alpha", "r1=Beta", "r2=gamma");
@@ -244,36 +258,62 @@ class SwrlFunctionLibrariesTest {
 
         pureCalc(c, "yearMonthDuration", "swrlb:yearMonthDuration", "swrlb:yearMonthDuration(?o, 1, 6)", "r1=P1Y6M", "r2=P1Y6M");
         pureCalc(c, "dayTimeDuration", "swrlb:dayTimeDuration", "swrlb:dayTimeDuration(?o, 2, 12, 0, 0)", "r1=P2DT12H", "r2=P2DT12H");
-        pureCalc(c, "known_date_wrong_form", "swrlb:date", "swrlb:date(?o, 2024, 3, 15, \"\")", "r1=2024-3-15GMT", "r2=2024-3-15GMT");
-        pureCalc(c, "known_dateTime_month_shifted", "swrlb:dateTime", "swrlb:dateTime(?o, 2024, 12, 25, 8, 5, 3, \"Z\")", "r1=2025-0-25T8:5:3GMT", "r2=2025-0-25T8:5:3GMT");
-        pureFails(c, "time_fails", "swrlb:time", "swrlb:time(?o, 10, 30, 0, \"Z\")", "could not work out a result");
+        pureCalc(c, "date", "swrlb:date", "swrlb:date(?o, 2024, 3, 15, \"\")", "r1=2024-03-15", "r2=2024-03-15");
+        pureCalc(c, "date_with_zone", "swrlb:date", "swrlb:date(?o, 2024, 3, 15, \"+05:30\")", "r1=2024-03-15+05:30", "r2=2024-03-15+05:30");
+        pureCalc(c, "date_leap_day", "swrlb:date", "swrlb:date(?o, 2024, 2, 29, \"Z\")", "r1=2024-02-29Z", "r2=2024-02-29Z");
+        pureFails(c, "date_not_a_real_day_fails", "swrlb:date", "swrlb:date(?o, 2023, 2, 29, \"\")", "is not a real date");
+        pureFails(c, "date_bad_zone_fails", "swrlb:date", "swrlb:date(?o, 2024, 3, 15, \"somewhere\")", "is not a time zone");
+        pureCalc(c, "dateTime", "swrlb:dateTime", "swrlb:dateTime(?o, 2024, 12, 25, 8, 5, 3, \"Z\")", "r1=2024-12-25T08:05:03Z", "r2=2024-12-25T08:05:03Z");
+        pureCalc(c, "dateTime_without_zone", "swrlb:dateTime", "swrlb:dateTime(?o, 2024, 1, 5, 23, 59, 59, \"\")", "r1=2024-01-05T23:59:59", "r2=2024-01-05T23:59:59");
+        pureFails(c, "dateTime_hour_out_of_range_fails", "swrlb:dateTime", "swrlb:dateTime(?o, 2024, 12, 25, 25, 5, 3, \"Z\")", "is not a real time");
+        pureCalc(c, "time", "swrlb:time", "swrlb:time(?o, 10, 30, 0, \"Z\")", "r1=10:30:00Z", "r2=10:30:00Z");
+        pureCalc(c, "time_without_zone", "swrlb:time", "swrlb:time(?o, 9, 5, 7, \"\")", "r1=09:05:07", "r2=09:05:07");
+        pureFails(c, "time_minute_out_of_range_fails", "swrlb:time", "swrlb:time(?o, 10, 60, 0, \"\")", "is not a real time");
         pureFails(c, "date_arity_fails", "swrlb:date", "swrlb:date(?o, 2024, 3, 15)", "needs 5 values");
         pureCalc(c, "addDayTimeDurations", "swrlb:addDayTimeDurations", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:dayTimeDuration(?b, 0, 12, 0, 0) ^ swrlb:addDayTimeDurations(?o, ?a, ?b)", "r1=P1DT12H", "r2=P1DT12H");
-        pureCalc(c, "known_addYearMonthDurations_wrong", "swrlb:addYearMonthDurations", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:yearMonthDuration(?b, 0, 8) ^ swrlb:addYearMonthDurations(?o, ?a, ?b)", "r1=PT8H", "r2=PT8H");
-        pureFails(c, "subtractYearMonthDurations_fails", "swrlb:subtractYearMonthDurations", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:yearMonthDuration(?b, 0, 8) ^ swrlb:subtractYearMonthDurations(?o, ?a, ?b)", "not in the form the function expects");
-        pureFails(c, "subtractDayTimeDurations_fails", "swrlb:subtractDayTimeDurations", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:dayTimeDuration(?b, 0, 12, 0, 0) ^ swrlb:subtractDayTimeDurations(?o, ?a, ?b)", "not in the form the function expects");
-        pureFails(c, "multiplyYearMonthDuration_fails", "swrlb:multiplyYearMonthDuration", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:multiplyYearMonthDuration(?o, ?a, 2)", "but the function needs a date or time");
-        pureFails(c, "divideYearMonthDuration_fails", "swrlb:divideYearMonthDuration", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:divideYearMonthDuration(?o, ?a, 2)", "but the function needs a date or time");
-        pureFails(c, "multiplyDayTimeDuration_fails", "swrlb:multiplyDayTimeDuration", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:multiplyDayTimeDuration(?o, ?a, 2)", "but the function needs a date or time");
-        pureFails(c, "divideDayTimeDuration_fails", "swrlb:divideDayTimeDuration", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:divideDayTimeDuration(?o, ?a, 2)", "but the function needs a date or time");
-        failing(c, "subtractDates_fails", "swrlb:subtractDates", "day", "swrlb:subtractDates(?o, ?v, \"2024-03-01\"^^xsd:date)", "not in the form the function expects");
-        failing(c, "subtractTimes_fails", "swrlb:subtractTimes", "clock", "swrlb:subtractTimes(?o, ?v, \"08:00:00\"^^xsd:time)", "needs text");
-        failing(c, "subtractDateTimesYieldingYearMonthDuration_fails", "swrlb:subtractDateTimesYieldingYearMonthDuration", "stamp", "swrlb:subtractDateTimesYieldingYearMonthDuration(?o, ?v, \"2023-03-15T10:30:00\"^^xsd:dateTime)", "not in the form the function expects");
-        c.add(rejected("subtractDateTimesYieldingDayTimeDuration_unknown", "swrlb:subtractDateTimesYieldingDayTimeDuration", "Item(?r) ^ stamp(?r, ?v) ^ swrlb:subtractDateTimesYieldingDayTimeDuration(?o, ?v, \"2024-03-14T10:30:00\"^^xsd:dateTime) -> OUT(?r, ?o)", "Unknown function"));
+        pureCalc(c, "addYearMonthDurations", "swrlb:addYearMonthDurations", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:yearMonthDuration(?b, 0, 8) ^ swrlb:addYearMonthDurations(?o, ?a, ?b)", "r1=P2Y2M", "r2=P2Y2M");
+        pureCalc(c, "subtractYearMonthDurations", "swrlb:subtractYearMonthDurations", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:yearMonthDuration(?b, 0, 8) ^ swrlb:subtractYearMonthDurations(?o, ?a, ?b)", "r1=P10M", "r2=P10M");
+        pureCalc(c, "subtractYearMonthDurations_negative", "swrlb:subtractYearMonthDurations", "swrlb:yearMonthDuration(?a, 0, 8) ^ swrlb:yearMonthDuration(?b, 1, 6) ^ swrlb:subtractYearMonthDurations(?o, ?a, ?b)", "r1=-P10M", "r2=-P10M");
+        pureCalc(c, "subtractDayTimeDurations", "swrlb:subtractDayTimeDurations", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:dayTimeDuration(?b, 0, 12, 0, 0) ^ swrlb:subtractDayTimeDurations(?o, ?a, ?b)", "r1=PT12H", "r2=PT12H");
+        pureCalc(c, "subtractDayTimeDurations_negative", "swrlb:subtractDayTimeDurations", "swrlb:dayTimeDuration(?a, 0, 12, 0, 0) ^ swrlb:dayTimeDuration(?b, 1, 0, 0, 0) ^ swrlb:subtractDayTimeDurations(?o, ?a, ?b)", "r1=-PT12H", "r2=-PT12H");
+        pureCalc(c, "multiplyYearMonthDuration", "swrlb:multiplyYearMonthDuration", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:multiplyYearMonthDuration(?o, ?a, 2)", "r1=P3Y", "r2=P3Y");
+        pureCalc(c, "divideYearMonthDuration", "swrlb:divideYearMonthDuration", "swrlb:yearMonthDuration(?a, 1, 6) ^ swrlb:divideYearMonthDuration(?o, ?a, 2)", "r1=P9M", "r2=P9M");
+        pureCalc(c, "multiplyDayTimeDuration", "swrlb:multiplyDayTimeDuration", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:multiplyDayTimeDuration(?o, ?a, 2)", "r1=P2D", "r2=P2D");
+        pureCalc(c, "divideDayTimeDuration", "swrlb:divideDayTimeDuration", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:divideDayTimeDuration(?o, ?a, 2)", "r1=PT12H", "r2=PT12H");
+        pureFails(c, "divideDayTimeDuration_by_zero_fails", "swrlb:divideDayTimeDuration", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:divideDayTimeDuration(?o, ?a, 0)", "divides by zero");
+        pureFails(c, "addYearMonthDurations_rejects_day_time", "swrlb:addYearMonthDurations", "swrlb:dayTimeDuration(?a, 1, 0, 0, 0) ^ swrlb:yearMonthDuration(?b, 0, 8) ^ swrlb:addYearMonthDurations(?o, ?a, ?b)", "needs a duration of years and months only");
+        calc(c, "subtractDates", "swrlb:subtractDates", "day", "swrlb:subtractDates(?o, ?v, \"2024-03-01\"^^xsd:date)", "r1=P14D", "r2=P306D");
+        calc(c, "subtractTimes", "swrlb:subtractTimes", "clock", "swrlb:subtractTimes(?o, ?v, \"08:00:00\"^^xsd:time)", "r1=PT2H30M", "r2=PT15H15M");
+        calc(c, "subtractDateTimesYieldingYearMonthDuration", "swrlb:subtractDateTimesYieldingYearMonthDuration", "stamp", "swrlb:subtractDateTimesYieldingYearMonthDuration(?o, ?v, \"2023-03-15T10:30:00\"^^xsd:dateTime)", "r1=P1Y", "r2=P1Y9M");
+        calc(c, "subtractDateTimesYieldingDayTimeDuration", "swrlb:subtractDateTimesYieldingDayTimeDuration", "stamp", "swrlb:subtractDateTimesYieldingDayTimeDuration(?o, ?v, \"2024-03-14T10:30:00\"^^xsd:dateTime)", "r1=P1D", "r2=P292DT13H30M");
+        calc(c, "subtractDates_plain_text_constant", "swrlb:subtractDates", "day", "swrlb:subtractDates(?o, ?v, \"2024-03-01\")", "r1=P14D", "r2=P306D");
+        calc(c, "subtractDates_earlier_first_is_negative", "swrlb:subtractDates", "day", "swrlb:subtractDates(?o, \"2024-03-01\"^^xsd:date, ?v)", "r1=-P14D", "r2=-P306D");
+        calc(c, "subtractDates_with_zones", "swrlb:subtractDates", "day", "swrlb:subtractDates(?o, ?v, \"2024-03-15+05:30\"^^xsd:date)", "r1=PT5H30M", "r2=P292DT5H30M");
+        calc(c, "subtractTimes_plain_text_constant", "swrlb:subtractTimes", "clock", "swrlb:subtractTimes(?o, ?v, \"08:00:00\")", "r1=PT2H30M", "r2=PT15H15M");
+        failing(c, "subtractDates_text_that_is_not_a_date_fails", "swrlb:subtractDates", "day", "swrlb:subtractDates(?o, ?v, \"yesterday\")", "is not a date in the form");
+        failing(c, "subtractTimes_text_that_is_not_a_time_fails", "swrlb:subtractTimes", "clock", "swrlb:subtractTimes(?o, ?v, \"noon\")", "is not a time in the form");
+        failing(c, "subtractDateTimes_text_that_is_not_a_date_time_fails", "swrlb:subtractDateTimesYieldingDayTimeDuration", "stamp", "swrlb:subtractDateTimesYieldingDayTimeDuration(?o, ?v, \"2024-03-14\")", "is not a date and time in the form");
+        c.add(works("addYearMonthDurationToDateTime_plain_text_constant", "swrlb:addYearMonthDurationToDateTime", "Item(?r) ^ swrlb:yearMonthDuration(?a, 0, 1) ^ swrlb:addYearMonthDurationToDateTime(?o, \"2024-01-31T10:30:00\", ?a) -> OUT(?r, ?o)", "r1=2024-02-29T10:30:00", "r2=2024-02-29T10:30:00"));
+        c.add(works("addYearMonthDurationToDateTime_keeps_the_zone", "swrlb:addYearMonthDurationToDateTime", "Item(?r) ^ swrlb:yearMonthDuration(?a, 1, 0) ^ swrlb:addYearMonthDurationToDateTime(?o, \"2024-02-29T10:30:00+02:00\", ?a) -> OUT(?r, ?o)", "r1=2025-02-28T10:30:00+02:00", "r2=2025-02-28T10:30:00+02:00"));
+        pureFails(c, "durations_that_are_not_durations_fail", "swrlb:addDayTimeDurationToTime", "swrlb:addDayTimeDurationToTime(?o, \"10:00:00\", \"two hours\")", "is not a duration");
         c.add(works("addYearMonthDurationToDate", "swrlb:addYearMonthDurationToDate", "Item(?r) ^ day(?r, ?d) ^ swrlb:yearMonthDuration(?a, 0, 2) ^ swrlb:addYearMonthDurationToDate(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-05-15", "r2=2025-03-01"));
-        c.add(worksWhen("known_addYearMonthDurationToDateTime_time_of_day_replaced", "swrlb:addYearMonthDurationToDateTime", "Item(?r) ^ stamp(?r, ?d) ^ swrlb:yearMonthDuration(?a, 0, 2) ^ swrlb:addYearMonthDurationToDateTime(?o, ?d, ?a) -> OUT(?r, ?o)", prefixes("r1=2024-05-15T", "r2=2025-03-01T")));
+        c.add(works("addYearMonthDurationToDateTime", "swrlb:addYearMonthDurationToDateTime", "Item(?r) ^ stamp(?r, ?d) ^ swrlb:yearMonthDuration(?a, 0, 2) ^ swrlb:addYearMonthDurationToDateTime(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-05-15T10:30:00", "r2=2025-03-01T00:00:00"));
         c.add(works("addDayTimeDurationToDate", "swrlb:addDayTimeDurationToDate", "Item(?r) ^ day(?r, ?d) ^ swrlb:dayTimeDuration(?a, 3, 0, 0, 0) ^ swrlb:addDayTimeDurationToDate(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-03-18", "r2=2025-01-04"));
         c.add(works("addDayTimeDurationToDateTime", "swrlb:addDayTimeDurationToDateTime", "Item(?r) ^ stamp(?r, ?d) ^ swrlb:dayTimeDuration(?a, 0, 2, 0, 0) ^ swrlb:addDayTimeDurationToDateTime(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-03-15T12:30:00", "r2=2025-01-01T02:00:00"));
-        c.add(fails("addDayTimeDurationToTime_fails", "swrlb:addDayTimeDurationToTime", "Item(?r) ^ clock(?r, ?d) ^ swrlb:dayTimeDuration(?a, 0, 2, 0, 0) ^ swrlb:addDayTimeDurationToTime(?o, ?d, ?a) -> OUT(?r, ?o)", "needs text"));
+        c.add(works("addDayTimeDurationToTime", "swrlb:addDayTimeDurationToTime", "Item(?r) ^ clock(?r, ?d) ^ swrlb:dayTimeDuration(?a, 0, 2, 0, 0) ^ swrlb:addDayTimeDurationToTime(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=12:30:00", "r2=01:15:00"));
         c.add(works("subtractYearMonthDurationFromDate", "swrlb:subtractYearMonthDurationFromDate", "Item(?r) ^ day(?r, ?d) ^ swrlb:yearMonthDuration(?a, 0, 2) ^ swrlb:subtractYearMonthDurationFromDate(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-01-15", "r2=2024-11-01"));
-        c.add(worksWhen("known_subtractYearMonthDurationFromDateTime_time_of_day_replaced", "swrlb:subtractYearMonthDurationFromDateTime", "Item(?r) ^ stamp(?r, ?d) ^ swrlb:yearMonthDuration(?a, 0, 2) ^ swrlb:subtractYearMonthDurationFromDateTime(?o, ?d, ?a) -> OUT(?r, ?o)", prefixes("r1=2024-01-15T", "r2=2024-11-01T")));
+        c.add(works("subtractYearMonthDurationFromDateTime", "swrlb:subtractYearMonthDurationFromDateTime", "Item(?r) ^ stamp(?r, ?d) ^ swrlb:yearMonthDuration(?a, 0, 2) ^ swrlb:subtractYearMonthDurationFromDateTime(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-01-15T10:30:00", "r2=2024-11-01T00:00:00"));
         c.add(works("subtractDayTimeDurationFromDate", "swrlb:subtractDayTimeDurationFromDate", "Item(?r) ^ day(?r, ?d) ^ swrlb:dayTimeDuration(?a, 3, 0, 0, 0) ^ swrlb:subtractDayTimeDurationFromDate(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-03-12", "r2=2024-12-29"));
         c.add(works("subtractDayTimeDurationFromDateTime", "swrlb:subtractDayTimeDurationFromDateTime", "Item(?r) ^ stamp(?r, ?d) ^ swrlb:dayTimeDuration(?a, 0, 2, 0, 0) ^ swrlb:subtractDayTimeDurationFromDateTime(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=2024-03-15T08:30:00", "r2=2024-12-31T10:00:00"));
-        c.add(fails("subtractDayTimeDurationFromTime_fails", "swrlb:subtractDayTimeDurationFromTime", "Item(?r) ^ clock(?r, ?d) ^ swrlb:dayTimeDuration(?a, 0, 2, 0, 0) ^ swrlb:subtractDayTimeDurationFromTime(?o, ?d, ?a) -> OUT(?r, ?o)", "needs text"));
+        c.add(works("subtractDayTimeDurationFromTime", "swrlb:subtractDayTimeDurationFromTime", "Item(?r) ^ clock(?r, ?d) ^ swrlb:dayTimeDuration(?a, 0, 2, 0, 0) ^ swrlb:subtractDayTimeDurationFromTime(?o, ?d, ?a) -> OUT(?r, ?o)", "r1=08:30:00", "r2=21:15:00"));
 
         String notImplemented = "does not implement it yet";
-        pureFails(c, "anyURI_not_implemented", "swrlb:anyURI", "swrlb:anyURI(?o, \"http\", \"example.org\", \"/a\", \"\", \"\")", notImplemented);
-        pureFails(c, "resolveURI_not_implemented", "swrlb:resolveURI", "swrlb:resolveURI(?o, \"b/c\", \"http://example.org/a/\")", notImplemented);
+        pureCalc(c, "anyURI", "swrlb:anyURI", "swrlb:anyURI(?o, \"http\", \"example.org\", \"/a\", \"\", \"\")", "r1=http://example.org/a", "r2=http://example.org/a");
+        pureCalc(c, "anyURI_with_query_and_fragment", "swrlb:anyURI", "swrlb:anyURI(?o, \"https\", \"example.org\", \"docs/a\", \"q=1\", \"top\")", "r1=https://example.org/docs/a?q=1#top", "r2=https://example.org/docs/a?q=1#top");
+        pureCalc(c, "anyURI_with_port", "swrlb:anyURI", "swrlb:anyURI(?o, \"http\", \"example.org\", \"8080\", \"/a\", \"\", \"\")", "r1=http://example.org:8080/a", "r2=http://example.org:8080/a");
+        pureCalc(c, "resolveURI", "swrlb:resolveURI", "swrlb:resolveURI(?o, \"b/c\", \"http://example.org/a/\")", "r1=http://example.org/a/b/c", "r2=http://example.org/a/b/c");
+        pureCalc(c, "resolveURI_parent_folder", "swrlb:resolveURI", "swrlb:resolveURI(?o, \"../x\", \"http://example.org/a/b/\")", "r1=http://example.org/a/x", "r2=http://example.org/a/x");
+        pureFails(c, "resolveURI_relative_base_fails", "swrlb:resolveURI", "swrlb:resolveURI(?o, \"b\", \"a/b\")", "is not a full web address");
         for (String list : List.of("length", "first", "rest")) {
             c.add(fails(list + "_not_implemented", "swrlb:" + list, "Item(?r) ^ strText(?r, ?v) ^ swrlb:tokenize(?l, ?v, \" \") ^ swrlb:" + list + "(?o, ?l) -> OUT(?r, ?o)", notImplemented));
         }
@@ -289,7 +329,12 @@ class SwrlFunctionLibrariesTest {
                 && facts.stream().anyMatch(f -> f.startsWith("r1=0.95424250943")) && facts.stream().anyMatch(f -> f.startsWith("r2=-0.30102999566"))));
         calc(c, "swrlm_eval_formula", "swrlm:eval", "dblVal", "swrlm:eval(?o, \"v*2+1\", ?v)", "r1=19.0", "r2=2.0");
         calc(c, "swrlm_eval_function_in_formula", "swrlm:eval", "dblVal", "swrlm:eval(?o, \"sqrt(v)\", ?v)", "r1=3.0", "r2=" + Math.sqrt(0.5));
-        failing(c, "swrlm_eval_needs_double_data", "swrlm:eval", "decVal", "swrlm:eval(?o, \"v*2+1\", ?v)", "xsd:double");
+        calc(c, "swrlm_eval_decimal_data", "swrlm:eval", "decVal", "swrlm:eval(?o, \"v*2+1\", ?v)", "r1=6.0", "r2=-6.0");
+        calc(c, "swrlm_eval_integer_data", "swrlm:eval", "intVal", "swrlm:eval(?o, \"v*2+1\", ?v)", "r1=15.0", "r2=25.0");
+        c.add(works("swrlm_eval_two_kinds_of_data", "swrlm:eval", "Item(?r) ^ intVal(?r, ?v) ^ decVal(?r, ?d) ^ swrlm:eval(?o, \"v+d\", ?v, ?d) -> OUT(?r, ?o)", "r1=9.5", "r2=8.5"));
+        calc(c, "swrlm_log_with_base", "swrlm:log", "dblVal", "swrlm:log(?o, ?v, 2)", "r1=" + Math.log(9.0) / Math.log(2), "r2=-1.0");
+        calc(c, "swrlm_log_with_base_ten", "swrlm:log", "intVal", "swrlm:log(?o, ?v, 10)", "r1=" + Math.log10(7), "r2=" + Math.log10(12));
+        failing(c, "swrlm_log_of_zero_fails", "swrlm:log", "intVal", "swrlm:log(?o, 0, ?v)", "needs a positive number");
         failing(c, "swrlm_eval_wrong_variable_name", "swrlm:eval", "dblVal", "swrlm:eval(?o, \"x*2+1\", ?v)", "swrlm:eval could not run");
         rejectedFunction(c, "swrlm_exp_unknown", "swrlm:exp", "dblVal", "swrlm:exp(?o, ?v)");
         rejectedFunction(c, "swrlm_log10_unknown", "swrlm:log10", "dblVal", "swrlm:log10(?o, ?v)");
@@ -307,8 +352,15 @@ class SwrlFunctionLibrariesTest {
         compare(c, "temporal_after", "temporal:after", "stamp", "\"2024-12-31T00:00:00\", \"Days\"", "r2");
         compare(c, "temporal_equals", "temporal:equals", "stamp", "\"2024-03-15T10:30:00\", \"Days\"", "r1");
         compare(c, "temporal_notBefore", "temporal:notBefore", "stamp", "\"2024-12-31T00:00:00\", \"Days\"", "r2");
-        c.add(fails("temporal_durationGreaterThan_fails", "temporal:durationGreaterThan", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationGreaterThan(?v, \"2024-03-10T10:30:00\", 3, \"Days\") -> HIT(?r)", "needs a whole number"));
-        c.add(fails("temporal_durationEqualTo_fails", "temporal:durationEqualTo", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationEqualTo(?v, \"2024-03-12T10:30:00\", 3, \"Days\") -> HIT(?r)", "needs a whole number"));
+        c.add(works("temporal_durationGreaterThan", "temporal:durationGreaterThan", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationGreaterThan(?v, \"2024-03-10T10:30:00\", 3, \"Days\") -> HIT(?r)", "r1", "r2"));
+        c.add(works("temporal_durationGreaterThanOrEqualTo", "temporal:durationGreaterThanOrEqualTo", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationGreaterThanOrEqualTo(?v, \"2024-03-10T10:30:00\", 5, \"Days\") -> HIT(?r)", "r1", "r2"));
+        c.add(works("temporal_durationLessThan", "temporal:durationLessThan", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationLessThan(?v, \"2024-03-10T10:30:00\", 100, \"Days\") -> HIT(?r)", "r1"));
+        c.add(works("temporal_durationLessThanOrEqualTo", "temporal:durationLessThanOrEqualTo", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationLessThanOrEqualTo(?v, \"2024-03-10T10:30:00\", 5, \"Days\") -> HIT(?r)", "r1"));
+        c.add(works("temporal_durationEqualTo", "temporal:durationEqualTo", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationEqualTo(?v, \"2024-03-12T10:30:00\", 3, \"Days\") -> HIT(?r)", "r1"));
+        c.add(works("temporal_durationEqualTo_in_hours", "temporal:durationEqualTo", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationEqualTo(?v, \"2024-03-15T08:30:00\", 2, \"Hours\") -> HIT(?r)", "r1"));
+        c.add(works("temporal_notDurationEqualTo", "temporal:notDurationEqualTo", "Item(?r) ^ stamp(?r, ?v) ^ temporal:notDurationEqualTo(?v, \"2024-03-12T10:30:00\", 3, \"Days\") -> HIT(?r)", "r2"));
+        c.add(works("temporal_notDurationGreaterThan", "temporal:notDurationGreaterThan", "Item(?r) ^ stamp(?r, ?v) ^ temporal:notDurationGreaterThan(?v, \"2024-03-10T10:30:00\", 100, \"Days\") -> HIT(?r)", "r1"));
+        c.add(fails("temporal_duration_unknown_unit_fails", "temporal:durationEqualTo", "Item(?r) ^ stamp(?r, ?v) ^ temporal:durationEqualTo(?v, \"2024-03-12T10:30:00\", 3, \"Fortnights\") -> HIT(?r)", "is not a unit of time"));
 
         c.add(fails("abox_caa_wrong_order_fails", "abox:caa", "Item(?r) ^ abox:caa(?r, Item) -> HIT(?r)", "expecting class"));
 
@@ -342,7 +394,8 @@ class SwrlFunctionLibrariesTest {
         q.add(query("count", "sqwrl:count", "Item(?r) -> sqwrl:count(?r)", false, "count(?r)", "count(?r)=2"));
         q.add(query("count_nothing_gives_no_row", "sqwrl:count", "Other(?r) -> sqwrl:count(?r)", false, "count(?r)"));
         q.add(query("count_after_filter_gives_no_row", "sqwrl:count", "Item(?r) ^ intVal(?r, ?v) ^ swrlb:greaterThan(?v, 100) -> sqwrl:count(?r)", false, "count(?r)"));
-        q.add(queryFails("countDistinct_unknown", "sqwrl:countDistinct", "Item(?r) ^ flag(?r, ?f) -> sqwrl:countDistinct(?f)", "sqwrl:countDistinct is not a function the rule engine knows"));
+        q.add(query("countDistinct", "sqwrl:countDistinct", "Item(?r) ^ flag(?r, ?f) -> sqwrl:countDistinct(?f)", false, "countDistinct(?f)", "countDistinct(?f)=2"));
+        q.add(query("countDistinct_repeated_values", "sqwrl:countDistinct", "Item(?r) ^ strText(?r, ?f) ^ Item(?q) -> sqwrl:countDistinct(?f)", false, "countDistinct(?f)", "countDistinct(?f)=2"));
         q.add(query("sum_int", "sqwrl:sum", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:sum(?v)", false, "sum(?v)", "sum(?v)=19.0"));
         q.add(query("sum_decimal", "sqwrl:sum", "Item(?r) ^ decVal(?r, ?v) -> sqwrl:sum(?v)", false, "sum(?v)", "sum(?v)=-1.0"));
         q.add(query("sum_double", "sqwrl:sum", "Item(?r) ^ dblVal(?r, ?v) -> sqwrl:sum(?v)", false, "sum(?v)", "sum(?v)=9.5"));
@@ -352,8 +405,10 @@ class SwrlFunctionLibrariesTest {
         q.add(query("median_double", "sqwrl:median", "Item(?r) ^ dblVal(?r, ?v) -> sqwrl:median(?v)", false, "median(?v)", "median(?v)=4.75"));
         q.add(query("min_int", "sqwrl:min", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:min(?v)", false, "min(?v)", "min(?v)=7"));
         q.add(query("max_int", "sqwrl:max", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:max(?v)", false, "max(?v)", "max(?v)=12"));
-        q.add(queryFails("min_text_fails", "sqwrl:min", "Item(?r) ^ plainText(?r, ?p) -> sqwrl:min(?p)", "sqwrl:min could not run"));
-        q.add(queryFails("max_date_fails", "sqwrl:max", "Item(?r) ^ day(?r, ?p) -> sqwrl:max(?p)", "sqwrl:max could not run"));
+        q.add(query("min_text", "sqwrl:min", "Item(?r) ^ plainText(?r, ?p) -> sqwrl:min(?p)", false, "min(?p)", "min(?p)=Alpha Beta"));
+        q.add(query("max_text", "sqwrl:max", "Item(?r) ^ strText(?r, ?p) -> sqwrl:max(?p)", false, "max(?p)", "max(?p)=gamma"));
+        q.add(query("max_date", "sqwrl:max", "Item(?r) ^ day(?r, ?p) -> sqwrl:max(?p)", false, "max(?p)", "max(?p)=2025-01-01"));
+        q.add(query("min_date", "sqwrl:min", "Item(?r) ^ day(?r, ?p) -> sqwrl:min(?p)", false, "min(?p)", "min(?p)=2024-03-15"));
         q.add(query("columnNames", "sqwrl:columnNames", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:columnNames(\"Item\", \"Value\")", false, "Item,Value", "Item=r1;Value=7", "Item=r2;Value=12"));
         q.add(query("limit", "sqwrl:limit", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:limit(1)", true, "r,v", "r=r1;v=7"));
         q.add(query("nth", "sqwrl:nth", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:nth(1)", true, "r,v", "r=r1;v=7"));
@@ -366,9 +421,12 @@ class SwrlFunctionLibrariesTest {
         q.add(query("notLastN", "sqwrl:notLastN", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:notLastN(1)", true, "r,v", "r=r1;v=7"));
         q.add(query("greatestN", "sqwrl:greatestN", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:greatestN(1)", true, "r,v", "r=r2;v=12"));
         q.add(query("leastN", "sqwrl:leastN", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:leastN(1)", true, "r,v", "r=r1;v=7"));
-        q.add(queryFails("nthLast_rejected", "sqwrl:nthLast", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:nthLast(1)", "unknown slicing operator"));
-        q.add(queryFails("nthGreatest_rejected", "sqwrl:nthGreatest", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:nthGreatest(1)", "unknown slicing operator"));
-        q.add(queryFails("notNthLast_rejected", "sqwrl:notNthLast", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:notNthLast(1)", "unknown slicing operator"));
+        q.add(query("nthLast", "sqwrl:nthLast", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:nthLast(1)", true, "r,v", "r=r2;v=12"));
+        q.add(query("nthLast_second_from_the_end", "sqwrl:nthLast", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:nthLast(2)", true, "r,v", "r=r1;v=7"));
+        q.add(query("nthGreatest", "sqwrl:nthGreatest", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:nthGreatest(1)", true, "r,v", "r=r2;v=12"));
+        q.add(query("nthGreatest_second", "sqwrl:nthGreatest", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:nthGreatest(2)", true, "r,v", "r=r1;v=7"));
+        q.add(queryFails("notNthLast_second_is_not_available", "sqwrl:notNthLast", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:notNthLast(2)", "unknown slicing operator"));
+        q.add(query("notNthLast", "sqwrl:notNthLast", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:notNthLast(1)", true, "r,v", "r=r1;v=7"));
         q.add(queryFails("slicing_without_order_fails", "sqwrl:greatestN", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:greatestN(1)", "needs a sort order"));
         q.add(queryFails("slicing_needs_a_number", "sqwrl:firstN", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:firstN(?v, 1)", "takes only a whole number"));
         q.add(queryFails("first_after_arrow_fails", "sqwrl:first", "Item(?r) ^ intVal(?r, ?v) -> sqwrl:select(?r, ?v) ^ sqwrl:orderBy(?v) ^ sqwrl:first(1)", "belongs in the condition part"));
@@ -393,7 +451,9 @@ class SwrlFunctionLibrariesTest {
         q.add(query("notEqual", "sqwrl:notEqual", "Item(?r) ^ intVal(?r, ?v) ^ sqwrl:makeSet(?a, ?v) ^ sqwrl:makeSet(?b, ?v) ^ sqwrl:notEqual(?a, ?b) -> sqwrl:select(?r)", false, "r"));
         q.add(query("intersects", "sqwrl:intersects", "Item(?r) ^ intVal(?r, ?v) ^ sqwrl:makeSet(?a, ?v) ^ sqwrl:makeSet(?b, ?v) ^ sqwrl:intersects(?a, ?b) -> sqwrl:select(?r)", false, "r", "r=r1", "r=r2"));
         q.add(query("notIntersects", "sqwrl:notIntersects", "Item(?r) ^ intVal(?r, ?v) ^ sqwrl:makeSet(?a, ?v) ^ sqwrl:makeSet(?b, ?v) ^ sqwrl:notIntersects(?a, ?b) -> sqwrl:select(?r)", false, "r"));
-        q.add(queryFails("contains_fails", "sqwrl:contains", "Item(?r) ^ intVal(?r, ?v) ^ Item(?q) ^ intVal(?q, ?w) ^ sqwrl:makeSet(?s, ?w) ^ sqwrl:groupBy(?s, ?r) ^ sqwrl:contains(?s, ?v) -> sqwrl:select(?r, ?v)", "sqwrl:contains could not run"));
+        q.add(query("contains", "sqwrl:contains", "Item(?r) ^ intVal(?r, ?v) ^ sqwrl:makeSet(?a, ?v) ^ sqwrl:makeSet(?b, ?v) ^ sqwrl:contains(?a, ?b) -> sqwrl:select(?r)", false, "r", "r=r1", "r=r2"));
+        q.add(query("notContains", "sqwrl:notContains", "Item(?r) ^ intVal(?r, ?v) ^ sqwrl:makeSet(?a, ?v) ^ sqwrl:makeSet(?b, ?v) ^ sqwrl:notContains(?a, ?b) -> sqwrl:select(?r)", false, "r"));
+        q.add(queryFails("contains_with_a_single_value_fails", "sqwrl:contains", "Item(?r) ^ intVal(?r, ?v) ^ Item(?q) ^ intVal(?q, ?w) ^ sqwrl:makeSet(?s, ?w) ^ sqwrl:groupBy(?s, ?r) ^ sqwrl:contains(?s, ?v) -> sqwrl:select(?r, ?v)", "sqwrl:contains could not run"));
         q.add(query("with_greaterThan", "swrlb:greaterThan inside sqwrl", "Item(?r) ^ intVal(?r, ?v) ^ swrlb:greaterThan(?v, 10) -> sqwrl:select(?r, ?v)", false, "r,v", "r=r2;v=12"));
         q.add(query("with_startsWith_on_plain_text", "swrlb:startsWith inside sqwrl", "Item(?r) ^ plainText(?r, ?p) ^ swrlb:startsWith(?p, \"Alp\") -> sqwrl:select(?r, ?p)", false, "r,p", "r=r1;p=Alpha Beta"));
         q.add(query("with_stringConcat_on_plain_text", "swrlb:stringConcat inside sqwrl", "Item(?r) ^ plainText(?r, ?p) ^ swrlb:stringConcat(?o, ?p, \"!\") -> sqwrl:select(?r, ?o)", false, "r,o", "r=r1;o=Alpha Beta!", "r=r2;o=gamma!"));
@@ -449,10 +509,13 @@ class SwrlFunctionLibrariesTest {
             try {
                 List<Future<?>> work = new ArrayList<>();
                 List<Case> good = cases.stream().filter(c -> c.kind() == Kind.WORKS).toList();
-                work.add(pool.submit(() -> {
-                    runExecuteAll(good);
-                    return null;
-                }));
+                for (int i = 0; i < good.size(); i += 60) {
+                    List<Case> chunk = good.subList(i, Math.min(good.size(), i + 60));
+                    work.add(pool.submit(() -> {
+                        runExecuteAll(chunk);
+                        return null;
+                    }));
+                }
                 List<Case> bad = distinctFailures(cases);
                 for (int i = 0; i < bad.size(); i += 3) {
                     List<Case> chunk = bad.subList(i, Math.min(bad.size(), i + 3));
@@ -507,7 +570,7 @@ class SwrlFunctionLibrariesTest {
             OWLOntology ontology = OWLManager.createOWLOntologyManager().loadOntologyFromOntologyDocument(new StringDocumentSource(document));
             PlainLiteralNormalizer.apply(ontology);
             ReflectionTestUtils.invokeMethod(executor, "ensureNamespacePrefixes", "p1", ontology);
-            SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
+            SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
             for (Case c : group) {
                 String resolved = ReflectionTestUtils.invokeMethod(executor, "resolveEntityNames", c.ruleText(), ontology);
                 engine.createSWRLRule(c.id(), resolved);

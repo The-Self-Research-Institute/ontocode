@@ -1,6 +1,7 @@
 package self.research.ontology.swrl.service;
 
 import org.swrlapi.builtins.AbstractSWRLBuiltInLibrary;
+import self.research.ontology.swrl.builtin.BuiltInLibraries;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -17,15 +18,7 @@ final class BuiltInCatalog {
 
     private static Map<String, Set<String>> load() {
         Map<String, Set<String>> libraries = new LinkedHashMap<>();
-        for (AbstractSWRLBuiltInLibrary library : new AbstractSWRLBuiltInLibrary[]{
-                new org.swrlapi.builtins.swrlb.SWRLBuiltInLibraryImpl(),
-                new org.swrlapi.builtins.swrlm.SWRLBuiltInLibraryImpl(),
-                new org.swrlapi.builtins.swrlx.SWRLBuiltInLibraryImpl(),
-                new org.swrlapi.builtins.temporal.SWRLBuiltInLibraryImpl(),
-                new org.swrlapi.builtins.sqwrl.SWRLBuiltInLibraryImpl(),
-                new org.swrlapi.builtins.tbox.SWRLBuiltInLibraryImpl(),
-                new org.swrlapi.builtins.abox.SWRLBuiltInLibraryImpl(),
-                new org.swrlapi.builtins.rbox.SWRLBuiltInLibraryImpl()}) {
+        for (AbstractSWRLBuiltInLibrary library : BuiltInLibraries.libraries()) {
             libraries.put(library.getPrefix(), Collections.unmodifiableSet(new TreeSet<>(library.getBuiltInNames())));
         }
         return Collections.unmodifiableMap(libraries);

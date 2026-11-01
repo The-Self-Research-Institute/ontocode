@@ -135,12 +135,15 @@ describe('the three step buttons', () => {
     expect(button('Add inferred facts to ontology').disabled).toBe(false);
   });
 
-  it('names each button plainly and keeps the Protege name in the tooltip', async () => {
+  it('names each button plainly with no engine or tool names in the tooltip', async () => {
     await open();
-    expect(button('Load ontology and rules').title).toContain('OWL+SWRL->Drools');
+    expect(button('Load ontology and rules').title).toContain('Step 1');
     expect(button('Load ontology and rules').title).toContain('built fresh');
-    expect(button(/Run rules \(/).title).toContain('Run Drools');
-    expect(button('Add inferred facts to ontology').title).toContain('Drools->OWL');
+    expect(button(/Run rules \(/).title).toContain('Step 2');
+    expect(button('Add inferred facts to ontology').title).toContain('Step 3');
+    for (const label of ['Load ontology and rules', /Run rules \(/, 'Add inferred facts to ontology']) {
+      expect(button(label).title).not.toMatch(/protege|drools/i);
+    }
   });
 
   it('keeps Add off when the run found nothing', async () => {
@@ -469,8 +472,8 @@ describe('inferred axioms summary and labels', () => {
   });
 
   it('words the cut-off note and no longer shows the SWRL Rule Results panel', async () => {
-    await inferredTab({ ...RUN, truncated: true });
-    expect(text()).toContain('Showing the first 3 of 3; narrow the list with the search or the filter.');
+    await inferredTab({ ...RUN, truncated: true, conclusionCount: 20, structureCount: 40 });
+    expect(text()).toContain('Showing 2 of 20 (the rest is not loaded for this run).');
     expect(text()).not.toContain('SWRL Rule Results');
     expect(text()).not.toContain('individuals classified');
     expect(text()).not.toContain('cut off');

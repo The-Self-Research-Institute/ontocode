@@ -512,6 +512,19 @@ class FreeViewOnlyInterceptorTest {
     }
 
     @Test
+    void viewerOnFreePlanCanAskForAnExplanationAndCancelIt() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);
+
+        MockHttpServletRequest ask = postRequest("/api/ontology/proj-5/explain-inference", "FREE");
+        MockHttpServletRequest cancel = postRequest("/api/ontology/proj-5/explain-inference/job-1", "FREE");
+        cancel.setMethod("DELETE");
+
+        assertTrue(interceptor.preHandle(ask, new MockHttpServletResponse(), new Object()));
+        assertTrue(interceptor.preHandle(cancel, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
     void viewerStillCannotDeleteOtherProjectResources() throws Exception {
         when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
         when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);

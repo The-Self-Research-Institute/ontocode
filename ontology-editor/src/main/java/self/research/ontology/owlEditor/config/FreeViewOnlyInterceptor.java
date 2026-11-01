@@ -29,6 +29,7 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
     private static final List<String> READ_ONLY_POST_PATTERNS = List.of(
         "/**/dl-query",
+        "/api/ontology/*/explain-inference",
         "/api/sparql/query/**",
         "/api/sparql/*/queries",
         "/api/v1/issues/report",
@@ -64,7 +65,8 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/api/sparql/*/queries/**",
         "/api/preferences/**",
         "/api/ontology/*/reasoner/jobs/*",
-        "/api/dl-query/jobs/*"
+        "/api/dl-query/jobs/*",
+        "/api/ontology/*/explain-inference/*"
     );
 
     private static final String PROPOSE_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/propose";

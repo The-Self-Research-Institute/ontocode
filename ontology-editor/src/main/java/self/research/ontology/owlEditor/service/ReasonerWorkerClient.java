@@ -20,6 +20,8 @@ import java.util.Map;
 @ConditionalOnProperty(name = "ontocode.reasoner-worker.enabled", havingValue = "true")
 public class ReasonerWorkerClient {
 
+    public static final String EXPLAIN_INFERENCE_JOB_TYPE = "EXPLAIN_INFERENCE";
+
     private final org.springframework.web.client.RestTemplate restTemplate;
     private final org.springframework.web.client.RestTemplate shortRestTemplate;
     private final String workerUrl;
@@ -63,6 +65,40 @@ public class ReasonerWorkerClient {
             body.put("ownerEmail", ownerEmail);
         }
 
+        return sendJob(jobType, projectId, body);
+    }
+
+    public Map<String, Object> submitExplainInference(String projectId, ExplainInferenceRequest fact,
+                                                      String reasonerType, String ownerEmail) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("jobType", EXPLAIN_INFERENCE_JOB_TYPE);
+        body.put("projectId", projectId);
+        body.put("entailmentType", fact.axiomType());
+        putIfPresent(body, "subjectIri", fact.subjectIri());
+        putIfPresent(body, "propertyIri", fact.predicateIri());
+        putIfPresent(body, "targetIri", fact.objectIri());
+        putIfPresent(body, "literalValue", fact.objectLiteral());
+        putIfPresent(body, "reasonerType", reasonerType);
+        putIfPresent(body, "ownerEmail", ownerEmail);
+        Map<String, Object> params = new HashMap<>();
+        putIfPresent(params, "literalDatatypeIri", fact.literalDatatypeIri());
+        if (fact.objectIris() != null && !fact.objectIris().isEmpty()) {
+            params.put("objectIris", fact.objectIris());
+            putIfPresent(params, "objectOperator", fact.objectOperator());
+        }
+        if (!params.isEmpty()) {
+            body.put("params", params);
+        }
+        return sendJob(EXPLAIN_INFERENCE_JOB_TYPE, projectId, body);
+    }
+
+    private static void putIfPresent(Map<String, Object> target, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            target.put(key, value);
+        }
+    }
+
+    private Map<String, Object> sendJob(String jobType, String projectId, Map<String, Object> body) {
         try {
             ResponseEntity<Map> response = restTemplate.exchange(
                     workerUrl + "/api/reasoning/jobs",

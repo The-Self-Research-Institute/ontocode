@@ -27,6 +27,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       "SPARQL — The results panel fills the tab, and its drag handle resizes in the natural direction.",
       "SWRL — Execute lists what the rules conclude first. The Test button shows only what that rule adds, saved rules keep their id after the first save, and checking a rule while typing is faster.",
       "SQWRL — Results are paged with a filter and sort, and very large results are cut with a notice.",
+      "SWRL functions — Date, time and duration functions, integer division, rounding and a few text and SQWRL functions now give correct results, following the SWRL standard. Other tools that use the same library can still return the old results for these, so a rule that depended on an old result can behave differently. The Function help tab lists what works and what does not.",
       "Plugins — The plugin tabs load again in the web app.",
       "Desktop — The app keeps within half of the computer's memory, cleans up leftover processes, rotates its logs and checks free disk space. The Description panel shows the full ancestor chain, and the add class dialog says Local Mode.",
       "License — OntoCode is released under the MIT License.",

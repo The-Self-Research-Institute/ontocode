@@ -1225,3 +1225,113 @@ export async function collectInferredAxioms(
   }
   return out;
 }
+
+export type ResultFilter = 'conclusions' | 'structure' | 'all';
+
+export const RESULT_FILTER_NAMES: Record<ResultFilter, string> = {
+  conclusions: 'Facts about individuals',
+  structure: 'Class relationships',
+  all: 'Everything',
+};
+
+export interface ResultCountInput {
+  filter: ResultFilter;
+  paged: boolean;
+  totals: { conclusions: number; structure: number };
+  loaded: { conclusions: number; structure: number };
+  matched: number;
+  shown: number;
+  searching: boolean;
+}
+
+export interface ResultCounts {
+  filter: ResultFilter;
+  paged: boolean;
+  total: number;
+  loaded: number;
+  matched: number;
+  shown: number;
+  remaining: number;
+  searching: boolean;
+  partial: boolean;
+}
+
+function filterSum(filter: ResultFilter, v: { conclusions: number; structure: number }): number {
+  if (filter === 'conclusions') return v.conclusions;
+  if (filter === 'structure') return v.structure;
+  return v.conclusions + v.structure;
+}
+
+export function resultCounts(input: ResultCountInput): ResultCounts {
+  const total = Math.max(0, filterSum(input.filter, input.totals));
+  const loaded = input.paged ? total : Math.min(total, Math.max(0, filterSum(input.filter, input.loaded)));
+  const matched = input.searching ? Math.max(0, input.matched) : loaded;
+  const shown = Math.max(0, input.shown);
+  const reference = input.searching ? matched : total;
+  return {
+    filter: input.filter,
+    paged: input.paged,
+    total,
+    loaded,
+    matched,
+    shown,
+    remaining: Math.max(0, reference - shown),
+    searching: input.searching,
+    partial: !input.paged && total > loaded,
+  };
+}
+
+export function resultHeading(c: ResultCounts): string {
+  const base = `${RESULT_FILTER_NAMES[c.filter]} (${formatCount(c.total)} in total)`;
+  return c.shown < c.total ? `${base}, showing ${formatCount(c.shown)}` : base;
+}
+
+export function searchMatchText(c: ResultCounts, query: string): string {
+  if (c.paged) return `${formatCount(c.matched)} match "${query}"`;
+  return `${formatCount(c.matched)} match "${query}" in the loaded rows`;
+}
+
+export function cutoffNote(c: ResultCounts): string | null {
+  if (!c.partial) return null;
+  if (c.searching) return `Search covers only the ${formatCount(c.loaded)} loaded rows of ${formatCount(c.total)}.`;
+  if (c.shown >= c.loaded) return `Showing ${formatCount(c.shown)} of ${formatCount(c.total)} (the rest is not loaded for this run).`;
+  return `Showing ${formatCount(c.shown)} of ${formatCount(c.total)}. Search or filter to narrow, or show more.`;
+}
+
+export function showMoreStep(c: ResultCounts, step: number): number {
+  const reachable = c.searching ? c.matched : c.loaded;
+  return Math.max(0, Math.min(step, reachable - c.shown));
+}
+
+export function showMoreLabel(c: ResultCounts, step: number): string | null {
+  const n = showMoreStep(c, step);
+  return n > 0 ? `Show ${formatCount(n)} more (${formatCount(c.remaining)} remaining)` : null;
+}
+
+export function countLabel(title: string, total: number | null, shown: number, searching = false): string {
+  if (total === null) return `${title}: showing ${formatCount(shown)}`;
+  const head = `${title}: ${formatCount(total)} ${searching ? 'match in the loaded rows' : 'in total'}`;
+  return shown < total ? `${head}, showing ${formatCount(shown)}` : head;
+}
+
+export function sectionTotal(
+  key: 'rules' | 'standard' | 'structure',
+  c: ResultCounts,
+  totals: { conclusions: number; structure: number },
+  loaded: { conclusions: number; structure: number },
+  matchedInSection: number
+): number | null {
+  if (c.searching) return matchedInSection;
+  if (key === 'structure') return totals.structure;
+  return loaded.conclusions >= totals.conclusions ? matchedInSection : null;
+}
+
+export function groupTotal(sectionExact: boolean, matchedInGroup: number): number | null {
+  return sectionExact ? matchedInGroup : null;
+}
+
+export function groupLabel(total: number | null, shown: number, searching = false): string {
+  if (total === null) return `showing ${formatCount(shown)}`;
+  const head = `${formatCount(total)} ${searching ? 'match in the loaded rows' : 'in total'}`;
+  return shown < total ? `${head}, showing ${formatCount(shown)}` : head;
+}

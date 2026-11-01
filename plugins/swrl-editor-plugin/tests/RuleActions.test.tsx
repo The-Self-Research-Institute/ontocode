@@ -160,7 +160,7 @@ function item(type: string, name: string) {
 const AXIOMS = [item('ClassAssertion', 'a'), item('ClassAssertion', 'b'), item('ObjectPropertyAssertion', 'c')];
 
 function groupHeaders() {
-  return Array.from(container.querySelectorAll('button[aria-expanded]')).filter(b => /inferred/.test(b.textContent || '')) as HTMLButtonElement[];
+  return Array.from(container.querySelectorAll('button[data-testid="group-header"]')) as HTMLButtonElement[];
 }
 
 function expandedStates() {

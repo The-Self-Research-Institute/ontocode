@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, ruleFromResponse, needsValidation, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE, cloneRuleBody, assertedAxiomsPath, canGoNextAssertedPage, axiomListErrorMessage, busyMessage, owl2rlStartPath, owl2rlRunPath, owl2rlErrorMessage, owl2rlTruncationNote, OWL2RL_EXPIRED_MESSAGE } from '../src/ruleModel.ts';
+import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, ruleFromResponse, needsValidation, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE, cloneRuleBody, assertedAxiomsPath, canGoNextAssertedPage, axiomListErrorMessage, busyMessage, owl2rlStartPath, owl2rlRunPath, owl2rlErrorMessage, owl2rlTruncationNote, OWL2RL_EXPIRED_MESSAGE, resultCounts, resultHeading, searchMatchText, cutoffNote, showMoreLabel, countLabel, sectionTotal, groupLabel, groupTotal } from '../src/ruleModel.ts';
 
 const DEMO = [
   ['Senior', 'Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)', true],
@@ -414,4 +414,63 @@ test('owl2rl paths and messages', () => {
   assert.equal(owl2rlErrorMessage({ status: 429, data: { busy: true, message: 'Busy now' } }), 'Busy now');
   assert.equal(owl2rlTruncationNote({ truncated: false }), null);
   assert.equal(owl2rlTruncationNote({ truncated: true, returnedCount: 1000, derivedCount: 5000 }), 'Showing the first 1,000 of 5,000.');
+});
+
+const TOT = { conclusions: 118, structure: 945 };
+const LOADED = { conclusions: 118, structure: 882 };
+const counts = (filter, shown, extra = {}) => resultCounts({ filter, paged: false, totals: TOT, loaded: LOADED, matched: 0, shown, searching: false, ...extra });
+
+test('result counts use the server total for the selected filter only', () => {
+  assert.deepEqual(counts('conclusions', 100), { filter: 'conclusions', paged: false, total: 118, loaded: 118, matched: 118, shown: 100, remaining: 18, searching: false, partial: false });
+  const s = counts('structure', 100);
+  assert.deepEqual([s.total, s.loaded, s.shown, s.remaining, s.partial], [945, 882, 100, 845, true]);
+  const a = counts('all', 100);
+  assert.deepEqual([a.total, a.loaded, a.remaining, a.partial], [1063, 1000, 963, true]);
+});
+
+test('paged counts reach the total through the pager', () => {
+  const c = resultCounts({ filter: 'structure', paged: true, totals: TOT, loaded: { conclusions: 0, structure: 0 }, matched: 945, shown: 50, searching: false });
+  assert.deepEqual([c.total, c.loaded, c.partial, c.remaining], [945, 945, false, 895]);
+  assert.equal(resultHeading(c), 'Class relationships (945 in total), showing 50');
+  assert.equal(cutoffNote(c), null);
+});
+
+test('headings, notes and buttons for every filter', () => {
+  assert.equal(resultHeading(counts('conclusions', 100)), 'Facts about individuals (118 in total), showing 100');
+  assert.equal(resultHeading(counts('conclusions', 118)), 'Facts about individuals (118 in total)');
+  assert.equal(resultHeading(counts('structure', 100)), 'Class relationships (945 in total), showing 100');
+  assert.equal(resultHeading(counts('all', 100)), 'Everything (1,063 in total), showing 100');
+  assert.equal(cutoffNote(counts('conclusions', 100)), null);
+  assert.equal(cutoffNote(counts('structure', 100)), 'Showing 100 of 945. Search or filter to narrow, or show more.');
+  assert.equal(cutoffNote(counts('structure', 882)), 'Showing 882 of 945 (the rest is not loaded for this run).');
+  assert.equal(cutoffNote(counts('all', 100)), 'Showing 100 of 1,063. Search or filter to narrow, or show more.');
+  assert.equal(showMoreLabel(counts('structure', 100), 100), 'Show 100 more (845 remaining)');
+  assert.equal(showMoreLabel(counts('structure', 800), 100), 'Show 82 more (145 remaining)');
+  assert.equal(showMoreLabel(counts('structure', 882), 100), null);
+  assert.equal(showMoreLabel(counts('conclusions', 118), 100), null);
+});
+
+test('search wording only appears with a search and covers the loaded rows', () => {
+  const c = counts('structure', 100, { searching: true, matched: 111 });
+  assert.equal(searchMatchText(c, 'C1'), '111 match "C1" in the loaded rows');
+  assert.equal(cutoffNote(c), 'Search covers only the 882 loaded rows of 945.');
+  assert.equal(showMoreLabel(c, 100), 'Show 11 more (11 remaining)');
+  const p = resultCounts({ filter: 'structure', paged: true, totals: TOT, loaded: LOADED, matched: 30, shown: 30, searching: true });
+  assert.equal(searchMatchText(p, 'C1'), '30 match "C1"');
+});
+
+test('section and group labels', () => {
+  assert.equal(countLabel('Class relationships', 945, 100), 'Class relationships: 945 in total, showing 100');
+  assert.equal(countLabel('From your rules', 100, 100), 'From your rules: 100 in total');
+  assert.equal(countLabel('From your rules', null, 100), 'From your rules: showing 100');
+  assert.equal(countLabel('Class relationships', 111, 100, true), 'Class relationships: 111 match in the loaded rows, showing 100');
+  assert.equal(groupLabel(null, 100), 'showing 100');
+  assert.equal(groupLabel(118, 100), '118 in total, showing 100');
+  assert.equal(groupLabel(18, 18), '18 in total');
+  assert.equal(groupTotal(false, 5), null);
+  assert.equal(groupTotal(true, 5), 5);
+  const c = counts('conclusions', 100);
+  assert.equal(sectionTotal('structure', c, TOT, LOADED, 0), 945);
+  assert.equal(sectionTotal('rules', c, TOT, LOADED, 100), 100);
+  assert.equal(sectionTotal('rules', c, TOT, { conclusions: 50, structure: 0 }, 40), null);
 });

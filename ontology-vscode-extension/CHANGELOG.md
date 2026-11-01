@@ -10,6 +10,7 @@ All notable changes to OntoCode Studio are listed here, newest first. The same n
 - SPARQL — The results panel fills the tab, and its drag handle resizes in the natural direction.
 - SWRL — Execute lists what the rules conclude first. The Test button shows only what that rule adds, saved rules keep their id after the first save, and checking a rule while typing is faster.
 - SQWRL — Results are paged with a filter and sort, and very large results are cut with a notice.
+- SWRL functions — Date, time and duration functions, integer division, rounding and a few text and SQWRL functions now give correct results, following the SWRL standard. Other tools that use the same library can still return the old results for these, so a rule that depended on an old result can behave differently. The Function help tab lists what works and what does not.
 
 **Plugins and desktop**
 

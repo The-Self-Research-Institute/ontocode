@@ -190,7 +190,7 @@ export function ControlPanel({
           disabled={loadOff}
           className="px-4 py-1.5 text-sm rounded-lg flex items-center gap-2"
           style={btn(loadOff, !log.loaded)}
-          title={`Step 1 (Protege: OWL+SWRL->Drools). Checks the ontology and the rules and counts what will be sent to the rule engine. ${LOAD_STEP_NOTE}`}
+          title={`Step 1. Checks the ontology and the rules and counts what will be sent to the rule engine. ${LOAD_STEP_NOTE}`}
         >
           {stepBusy === 'load' ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />} Load ontology and rules
         </button>
@@ -199,7 +199,7 @@ export function ControlPanel({
           disabled={runOff}
           className="px-4 py-1.5 text-sm rounded-lg flex items-center gap-2"
           style={btn(runOff, log.loaded)}
-          title="Step 2 (Protege: Run Drools). Runs the rule engine over all enabled rules, or over the ticked rules if you ticked some. Needs step 1 first."
+          title="Step 2. Runs the rule engine over all enabled rules, or over the ticked rules if you ticked some. Needs step 1 first."
         >
           {isExecuting ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Run rules ({formatCount(runScopeCount)})
         </button>
@@ -208,7 +208,7 @@ export function ControlPanel({
           disabled={addOff || confirming}
           className="px-4 py-1.5 text-sm rounded-lg flex items-center gap-2"
           style={btn(addOff || confirming)}
-          title="Step 3 (Protege: Drools->OWL). Saves the inferred facts in the ontology as ordinary statements. Needs a finished run."
+          title="Step 3. Saves the inferred facts in the ontology as ordinary statements. Needs a finished run."
         >
           {stepBusy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <PlusCircle size={14} />} Add inferred facts to ontology
         </button>
