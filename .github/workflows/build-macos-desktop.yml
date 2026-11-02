@@ -7,6 +7,11 @@ on:
         type: choice
         options: [arm64, x64, both]
         default: arm64
+      arm64_runner:
+        description: Which GitHub machine builds the Apple silicon app (switch if one is queued for a long time)
+        type: choice
+        options: [macos-14, macos-15, macos-latest]
+        default: macos-14
       notarize:
         description: Send the app to Apple for notarization (slower, run after signing works)
         type: boolean
@@ -24,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.arch == 'arm64' && '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"}]' || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]' || '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"},{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]') }}
+        include: ${{ fromJSON(inputs.arch == 'arm64' && format('[{{"arch":"arm64","runner":"{0}","mongo":"macos-arm64"}}]', inputs.arm64_runner) || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]' || format('[{{"arch":"arm64","runner":"{0}","mongo":"macos-arm64"}},{{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}}]', inputs.arm64_runner)) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
