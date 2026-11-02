@@ -2185,69 +2185,6 @@
   },
   {
     "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-parent/2.6.5/openllet-parent-2.6.5.pom",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-parent/2.6.5",
-    "dest-filename": "openllet-parent-2.6.5.pom",
-    "sha256": "8b1c98185d7a89dfceca0a9872a6a3308767b491de70432b3876ae61b465c442"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-functions/2.6.5/openllet-functions-2.6.5.jar",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-functions/2.6.5",
-    "dest-filename": "openllet-functions-2.6.5.jar",
-    "sha256": "b9050dedc08ab0118e4f89c3bc8a8ffa1fba5a4b82e1670ea293ed4db6638636"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-functions/2.6.5/openllet-functions-2.6.5.pom",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-functions/2.6.5",
-    "dest-filename": "openllet-functions-2.6.5.pom",
-    "sha256": "f9931abd942562a424d740d64e666a7fac1083702575a419f13d0f502a507599"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-core/2.6.5/openllet-core-2.6.5.jar",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-core/2.6.5",
-    "dest-filename": "openllet-core-2.6.5.jar",
-    "sha256": "47dd4466bc3400f123bed04e809613500604b1c85516f2e6f3b09a4f7d7e6aab"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-core/2.6.5/openllet-core-2.6.5.pom",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-core/2.6.5",
-    "dest-filename": "openllet-core-2.6.5.pom",
-    "sha256": "0a2f0d46911080530d9df34034773e8d1d7e7c0a27f4141901fc688bdf56a99c"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-query/2.6.5/openllet-query-2.6.5.pom",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-query/2.6.5",
-    "dest-filename": "openllet-query-2.6.5.pom",
-    "sha256": "994bc09a3963ef420593253ca59349ef790999f9843aa24c0bdc382d1821053e"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-query/2.6.5/openllet-query-2.6.5.jar",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-query/2.6.5",
-    "dest-filename": "openllet-query-2.6.5.jar",
-    "sha256": "c325e14e9e7374a98ed5ba24dd2302d5ac6eb83b2d031c09bea2ecd805dcd5a4"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-owlapi/2.6.5/openllet-owlapi-2.6.5.pom",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-owlapi/2.6.5",
-    "dest-filename": "openllet-owlapi-2.6.5.pom",
-    "sha256": "b33cae2a9a11ba8b5149a61eaad1bcede29cd1f6f5130810051e366b633eb230"
-  },
-  {
-    "type": "file",
-    "url": "https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-owlapi/2.6.5/openllet-owlapi-2.6.5.jar",
-    "dest": "m2-offline/com/github/galigator/openllet/openllet-owlapi/2.6.5",
-    "dest-filename": "openllet-owlapi-2.6.5.jar",
-    "sha256": "c9f9376f59b0103ac8fe19d715a1f205dc2b4a1b677e8a4289659346c72da588"
-  },
-  {
-    "type": "file",
     "url": "https://repo1.maven.org/maven2/com/github/ben-manes/caffeine/caffeine/3.1.8/caffeine-3.1.8.pom",
     "dest": "m2-offline/com/github/ben-manes/caffeine/caffeine/3.1.8",
     "dest-filename": "caffeine-3.1.8.pom",

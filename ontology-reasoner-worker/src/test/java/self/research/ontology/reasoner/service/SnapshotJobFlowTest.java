@@ -41,7 +41,7 @@ class SnapshotJobFlowTest {
                 .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
         ReasoningSnapshotService snapshots = SnapshotTestSupport.snapshots(sessions);
-        snapshots.snapshot("P1", "OPENLLET", null);
+        snapshots.snapshot("P1", "HERMIT", null);
         ReasoningJobRecordRepository records = mock(ReasoningJobRecordRepository.class);
         ReasoningJobStore jobStore = new ReasoningJobStore(records, 1_000_000, 72);
         ReasoningQueueManagerTest.RecordingSender sender = new ReasoningQueueManagerTest.RecordingSender();
@@ -49,12 +49,12 @@ class SnapshotJobFlowTest {
                 QueueTestSupport.policy(editor.client), QueueTestSupport.retention(), jobStore, sender, snapshots);
         clearInvocations(editor.client);
 
-        ReasoningJob job = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "openllet", null);
+        ReasoningJob job = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "hermit", null);
 
         assertEquals(ReasoningJob.Status.COMPLETED, job.getStatus());
         assertEquals(true, job.getResult().get("cached"));
         assertEquals(true, job.getResult().get("consistent"));
-        assertEquals("OPENLLET", job.getResult().get("requestedReasoner"));
+        assertEquals("HERMIT", job.getResult().get("requestedReasoner"));
         assertEquals(0, manager.queuedJobCount());
         assertEquals(0, manager.activeJobCount());
         assertEquals(1, snapshots.buildCount());
@@ -68,7 +68,7 @@ class SnapshotJobFlowTest {
                 && "COMPLETED".equals(record.getStatus()) && record.getResultJson() != null));
         assertEquals(ReasoningQueueManager.CancelOutcome.ALREADY_FINISHED, manager.cancel(job.getJobId()).outcome());
 
-        ReasoningJob other = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET", null);
+        ReasoningJob other = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "HERMIT", null);
         assertNotEquals(job.getJobId(), other.getJobId());
         assertEquals(ReasoningJob.Status.COMPLETED, other.getStatus());
         manager.shutdown();
@@ -85,22 +85,22 @@ class SnapshotJobFlowTest {
                 QueueTestSupport.policy(editor.client), QueueTestSupport.retention(), ReasoningJobStore.disabled(),
                 new ReasoningQueueManagerTest.RecordingSender(), snapshots);
 
-        ReasoningJob uncached = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET", null);
+        ReasoningJob uncached = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "HERMIT", null);
         assertEquals(ReasoningJob.Status.QUEUED, uncached.getStatus());
 
-        snapshots.snapshot("P1", "OPENLLET", null);
-        ReasoningJob draft = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET",
+        snapshots.snapshot("P1", "HERMIT", null);
+        ReasoningJob draft = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "HERMIT",
                 "alice@example.com");
         assertEquals(ReasoningJob.Status.QUEUED, draft.getStatus());
 
         ReasoningJob otherReasoner = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "ELK", null);
         assertEquals(ReasoningJob.Status.QUEUED, otherReasoner.getStatus());
 
-        ReasoningJob legacy = manager.enqueue(ReasoningJob.JobType.REASONER_HIERARCHY, "P1", null, null, "OPENLLET", null);
+        ReasoningJob legacy = manager.enqueue(ReasoningJob.JobType.REASONER_HIERARCHY, "P1", null, null, "HERMIT", null);
         assertEquals(ReasoningJob.Status.QUEUED, legacy.getStatus());
 
         editor.project("P1", SnapshotTestSupport.CONSISTENT);
-        ReasoningJob changedSize = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET", null);
+        ReasoningJob changedSize = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "HERMIT", null);
         assertEquals(ReasoningJob.Status.QUEUED, changedSize.getStatus());
         manager.shutdown();
     }
@@ -116,8 +116,8 @@ class SnapshotJobFlowTest {
                 QueueTestSupport.policy(editor.client), QueueTestSupport.retention(), ReasoningJobStore.disabled(),
                 new ReasoningQueueManagerTest.RecordingSender(), snapshots);
 
-        snapshots.snapshot("P1", "OPENLLET", null);
-        ReasoningJob job = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET", null);
+        snapshots.snapshot("P1", "HERMIT", null);
+        ReasoningJob job = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "HERMIT", null);
 
         assertEquals(ReasoningJob.Status.QUEUED, job.getStatus());
         manager.shutdown();
@@ -147,10 +147,10 @@ class SnapshotJobFlowTest {
         ReasoningQueueProcessor processor = new ReasoningQueueProcessor(manager, executor, pool,
                 new RunawayReasoningHealthIndicator(), 120_000, 5_000);
 
-        ReasoningJob builder = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "OPENLLET", null);
+        ReasoningJob builder = manager.enqueue(ReasoningJob.JobType.REASONER_SNAPSHOT, "P1", null, null, "HERMIT", null);
         processor.processNext();
         assertTrue(started.await(10, TimeUnit.SECONDS));
-        ReasoningJob waiter = manager.enqueue(ReasoningJob.JobType.REASONER_HIERARCHY, "P1", null, null, "OPENLLET", null);
+        ReasoningJob waiter = manager.enqueue(ReasoningJob.JobType.REASONER_HIERARCHY, "P1", null, null, "HERMIT", null);
         processor.processNext();
         assertTrue(ReasoningQueueProcessorTest.waitUntil(
                 () -> manager.getJob(waiter.getJobId()).getStatus() == ReasoningJob.Status.PROCESSING, 10_000));

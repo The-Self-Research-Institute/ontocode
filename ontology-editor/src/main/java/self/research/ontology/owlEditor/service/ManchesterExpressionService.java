@@ -79,6 +79,18 @@ public class ManchesterExpressionService {
         log.info("Added GCA for project {}: {} SubClassOf {} (draft={})", projectId, subClassExpr, superClassExpr, draft);
     }
 
+    public boolean deleteGeneralClassAxiom(String projectId, String value, boolean draft, String userId,
+                                           String username) throws Exception {
+        OWLOntology ontology = loadOntology(projectId, draft, userId);
+        Optional<GeneralClassAxioms.Entry> match = GeneralClassAxioms.find(ontology, value);
+        if (match.isEmpty()) {
+            return false;
+        }
+        deleteAxioms(projectId, Set.of(match.get().axiom()), draft, userId, username);
+        log.info("Deleted GCA for project {}: {} (draft={})", projectId, value, draft);
+        return true;
+    }
+
     public void addClassExpressionAxiom(String projectId, String classIri, String axiomType, String expression)
             throws Exception {
         addClassExpressionAxiom(projectId, classIri, axiomType, expression, false, null, null);

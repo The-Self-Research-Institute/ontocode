@@ -11,6 +11,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.auth.service.StripeService;
 
@@ -24,6 +25,7 @@ import java.util.Map;
 @RequestMapping("/api/admin/billing")
 @ConditionalOnProperty(prefix = "email.test-endpoints", name = "enabled", havingValue = "true")
 @CrossOrigin(originPatterns = "*")
+@PreAuthorize("hasRole('ROLE_ADMIN')")
 public class BillingReplayController {
 
     private static final Logger log = LoggerFactory.getLogger(BillingReplayController.class);

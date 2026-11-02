@@ -21,6 +21,7 @@ import {
   createShareDeduper,
   summarizeRemoteOps,
 } from "../utils/collabSocketPolicy";
+import { isTrustedMessage } from '../utils/trustedMessage';
 
 export interface ActiveUser {
   userId: string;
@@ -48,6 +49,7 @@ export interface EditNotification {
   username: string;
   userColor: string;
   timestamp: number;
+  durationMs?: number;
 }
 
 export interface CollaborationState {
@@ -284,7 +286,6 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
       dropProjectSubscriptions();
 
       const userId = user?.userId || user?.username || "";
-      const userEmail = user?.email || "";
 
       const METADATA_EVENT_TYPES = new Set([
         "ONTOLOGY_ANNOTATION_ADDED", "ONTOLOGY_ANNOTATION_MODIFIED", "ONTOLOGY_ANNOTATION_DELETED",
@@ -295,7 +296,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
         try {
           const edit = JSON.parse(msg.body);
 
-          const ownEdit = edit.userId === userId || (!!userEmail && edit.userEmail === userEmail);
+          const ownEdit = !!userId && edit.userId === userId;
           if (ownEdit && !METADATA_EVENT_TYPES.has(edit.type)) {
             window.dispatchEvent(new CustomEvent("ownEditReceived", { detail: edit }));
             return;
@@ -379,6 +380,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
 
       switch (message.type) {
@@ -556,7 +558,7 @@ export const CollaborationProvider: React.FC<{ children: ReactNode }> = ({ child
 
     setTimeout(() => {
       removeNotification(id);
-    }, 5000);
+    }, notification.durationMs ?? 5000);
   }, []);
 
   addNotificationRef.current = addNotification;

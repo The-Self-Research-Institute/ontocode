@@ -356,11 +356,16 @@ public class OntologyMutationService {
 
     public void applyRawUpdateWithHistory(String projectId, String sparql, boolean draft,
                                            String userId, String username) {
-        org.eclipse.rdf4j.model.Model before = rawUpdateHistory == null ? null : rawUpdateHistory.snapshot(projectId, draft, userId);
+        applyRawUpdateWithHistory(projectId, sparql, draft, userId, username, null);
+    }
+
+    public void applyRawUpdateWithHistory(String projectId, String sparql, boolean draft,
+                                           String userId, String username, ChangeOrigin origin) {
+        org.eclipse.rdf4j.model.Model before = rawUpdateHistory == null ? null : rawUpdateHistory.snapshot(projectId, draft, userId, origin != null && origin.ruleNote() != null);
         applyRawUpdate(projectId, sparql, draft, userId);
         if (before != null) {
             String actor = RequestActor.recordedId(null, userId, draft);
-            rawUpdateHistory.record(projectId, draft, actor, username == null || username.isBlank() ? actor : username, before);
+            rawUpdateHistory.record(projectId, draft, actor, username == null || username.isBlank() ? actor : username, before, origin);
         }
     }
 

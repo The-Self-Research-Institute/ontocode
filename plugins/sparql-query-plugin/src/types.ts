@@ -49,3 +49,13 @@ export interface SparqlQueryEditorProps {
   context: PluginContext;
   draftMode?: boolean;
 }
+
+export type GraphFormat = 'turtle' | 'jsonld' | 'rdfxml' | 'ntriples';
+
+export interface GraphQueryResult {
+  format: GraphFormat;
+  content: string;
+  tripleCount?: number;
+  truncated?: boolean;
+  executionTime?: number;
+}

@@ -37,7 +37,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     const token = propToken || urlToken;
 
     useEffect(() => {
-        console.log('[InviteAcceptPage] Component mounted, token:', token);
         if (token) {
             fetchInvitationDetails();
         } else {
@@ -47,10 +46,8 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
     }, [token]);
 
     const fetchInvitationDetails = async () => {
-        console.log('[InviteAcceptPage] Fetching invitation details for token:', token);
         try {
             const response = await apiClient.get(`/api/invitations/details/${token}`);
-            console.log('[InviteAcceptPage] Invitation details loaded:', response);
             
             // Check if response is valid
             if (!response) {
@@ -118,7 +115,6 @@ const InviteAcceptPage: React.FC<InviteAcceptPageProps> = ({ token: propToken, o
 
         try {
             setAccepting(true);
-            console.log('[InviteAcceptPage] Accepting invitation with token:', token);
             const response = await apiClient.post(`/api/invitations/accept/${token}`);
             
             console.log('[InviteAcceptPage] Invitation accepted successfully:', response);

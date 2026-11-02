@@ -27,6 +27,7 @@ import { PromptDialog } from "./DashboardDialogs";
 import type { DashboardState } from "./hooks/useDashboardState";
 import type { DashboardInit } from "./hooks/useDashboardInit";
 import type { DashboardHandlers } from "./hooks/useDashboardHandlers";
+import { safeHref } from "../../utils/safeUrl";
 
 interface MainContentRouterProps {
   state: DashboardState;
@@ -169,7 +170,6 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
     return () => {
       if (projectId) {
         syncService.stopMonitoring(projectId);
-        console.log("[Dashboard] Stopped monitoring for project:", projectId);
       }
     };
   }, [projectId]);
@@ -463,7 +463,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
             description="Advanced OWL 2 DL reasoning with classification, consistency checking, explanations, and inferred hierarchies."
             icon={<Zap size={32} className="text-white" />}
             features={[
-              "HermiT, ELK, Pellet, Openllet, Structural support",
+              "HermiT, ELK, Structural support",
               "Full classification with inferred hierarchy",
               "Consistency checks with unsat explanations",
               "Auto-sync with ontology edits",
@@ -518,7 +518,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                     <div className="flex items-center gap-2">
                       <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
                       <a
-                        href={(metadata as any)?.ontologyIRI || "#"}
+                        href={safeHref((metadata as any)?.ontologyIRI)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs break-all font-medium hover:underline"
@@ -1089,11 +1089,12 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                         className="text-[10px] font-mono break-all"
                                         style={{ color: "var(--text-tertiary)" }}
                                       >
-                                        SubClassOf: {axiom.superClass || axiom.superClassIri}
+                                        {(axiom as any).type || "SubClassOf"}: {axiom.superClass || axiom.superClassIri}
                                       </div>
                                     )}
                                   </div>
                                   <div className="flex gap-1 flex-shrink-0">
+                                    {(!(axiom as any).type || (axiom as any).type === "SubClassOf") && (
                                     <button
                                       onClick={() => handleEditAxiom(idx)}
                                       className="p-1 rounded"
@@ -1102,6 +1103,7 @@ export const MainContentRouter: React.FC<MainContentRouterProps> = ({ state, ini
                                     >
                                       <Edit2 size={12} />
                                     </button>
+                                    )}
                                     <button
                                       onClick={() => handleDeleteAxiom(idx)}
                                       className="p-1 rounded"

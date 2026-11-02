@@ -102,6 +102,10 @@ public class ChangeRollbackService {
     @Autowired(required = false)
     private RedoGuard redoGuard;
 
+    @Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private RuleService ruleService;
+
     @Autowired
     public ChangeRollbackService(HistorySyncService historySync, RollbackMutationPlanner planner,
                                  RollbackGraphFacts facts, OntologyMutationService mutations,
@@ -264,8 +268,10 @@ public class ChangeRollbackService {
         String description = recorder.recordHistory(req, entries, applied, audit.getId());
         recorder.broadcast(req, audit.getId(), entries, description);
         String warning = groups == null || !UNDO.equals(req.direction()) ? null : groups.warning(entries);
+        String archive = RollbackDescriptions.archiveNote(req.direction(), entries);
+        String message = warning == null ? archive : archive == null ? warning : warning + ". " + archive;
         refreshStoredMetadata(req, entries);
-        return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), warning);
+        return new Result(200, true, false, req.direction(), scopeId(req), applied, skipped, audit.getId(), message);
     }
 
     private Result failedMidway(Request req, String auditId, List<Work> done, List<Item> skipped, RuntimeException cause) {
@@ -321,8 +327,31 @@ public class ChangeRollbackService {
         return UNDO.equals(req.direction()) ? evaluateUndo(req, entry) : evaluateRedo(req, entry);
     }
 
+    private static final String PLAIN_CHANGED = "It was changed since this edit";
+
+    private String undoRefusal(Request req, HistoryChange entry, String blocker) {
+        String policy = changedSince(req, entry);
+        if (blocker == null) {
+            return policy;
+        }
+        return PLAIN_CHANGED.equals(policy) ? blocker : blocker + ". " + policy;
+    }
+
+    private String importBlocker(Request req, HistoryChange entry) {
+        String rules = entry.getMetadata() == null ? null : entry.getMetadata().get("importRules");
+        if (ruleService == null || rules == null) {
+            return null;
+        }
+        try {
+            return ruleService.importBlocker(req.projectId(), entry.isDraft(), entry.getUserId(), rules).orElse(null);
+        } catch (Exception e) {
+            log.warn("[UNDO] Could not check the rules of an import before undoing it: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private String changedSince(Request req, HistoryChange entry) {
-        String plain = "It was changed since this edit";
+        String plain = PLAIN_CHANGED;
         if (blockers != null && RollbackMutationPlanner.kindOf(entry) == Kind.MERGE && blockers.importRunning(req.projectId())) {
             return UndoBlockers.STILL_LOADING;
         }
@@ -348,12 +377,16 @@ public class ChangeRollbackService {
         }
         if (kind == Kind.RENAME && facts.entityExists(req.projectId(), entry.getOldValue(), entry.isDraft(), entry.getUserId())) { return skip(entry, "The old name is in use again"); }
         if (ENTRY.equals(req.level()) && RollbackWorkSupport.isCreation(entry, kind) && facts.referencedOutside(req.projectId(), entry.getEntityIRI(), entry.isDraft(), entry.getUserId(), RollbackWorkSupport.insertedTriples(List.of(entry)))) { return skip(entry, "Other items still refer to it"); }
-        if (!deltaHolds(req, entry, true)) { return skip(entry, changedSince(req, entry)); }
+        String importBlocker = importBlocker(req, entry);
+        if (importBlocker != null || !deltaHolds(req, entry, true)) { return skip(entry, undoRefusal(req, entry, importBlocker)); }
+        String undoClash = ruleNameClash(req, entry, true);
+        if (undoClash != null) { return skip(entry, undoClash); }
         List<Item> skipped = new ArrayList<>();
         List<HistoryChange.SubChange> targets = kind == Kind.GROUPED_MODIFY
                 ? currentSubChanges(req, entry, RollbackMutationPlanner.active(entry), true, skipped)
                 : RollbackMutationPlanner.active(entry);
         Plan plan = planner.planUndo(entry, targets);
+        if (retiredRules(plan)) { return skip(entry, DocumentRollbackActions.SAVED_RULES_MOVED); }
         if (!actionsHold(req, entry, plan)) { return skip(entry, changedSince(req, entry)); }
         return finish(entry, plan, targets, skipped, kind);
     }
@@ -374,11 +407,14 @@ public class ChangeRollbackService {
             return skip(entry, presence == Presence.REQUIRED ? "It no longer exists" : "It already exists again");
         }
         if (!deltaHolds(req, entry, false)) { return skip(entry, changedSince(req, entry)); }
+        String redoClash = ruleNameClash(req, entry, false);
+        if (redoClash != null) { return skip(entry, redoClash); }
         List<Item> skipped = new ArrayList<>();
         List<HistoryChange.SubChange> targets = kind == Kind.GROUPED_MODIFY
                 ? currentSubChanges(req, entry, undone, false, skipped)
                 : undone;
         Plan plan = planner.planRedo(entry, targets);
+        if (retiredRules(plan)) { return skip(entry, DocumentRollbackActions.SAVED_RULES_MOVED); }
         if (!actionsHold(req, entry, plan)) { return skip(entry, "It was changed since this edit"); }
         return finish(entry, plan, targets, skipped, kind);
     }
@@ -528,6 +564,41 @@ public class ChangeRollbackService {
         return new MutationOp(entry.getOperationType(), entry.getEntityIRI(), entry.getEntityLabel(), null,
                 entry.getAnnotationProperty(), entry.getNewValue(), null, null, null, null, null, entry.getOldValue(),
                 null, null, null);
+    }
+
+    private String ruleNameClash(Request req, HistoryChange entry, boolean undo) {
+        if (!CodeViewHistoryRecorder.RULE_CHANGE.equals(entry.getOperationType())) {
+            return null;
+        }
+        java.util.Optional<self.research.ontology.owlEditor.service.delta.ExactDelta> delta = ExactReversal.deltaOf(entry);
+        if (delta.isEmpty()) {
+            return null;
+        }
+        Set<String> leaving = new java.util.HashSet<>();
+        ruleLabels(undo ? delta.get().inserted() : delta.get().deleted())
+                .forEach(name -> leaving.add(name.toLowerCase(java.util.Locale.ROOT)));
+        for (String name : ruleLabels(undo ? delta.get().deleted() : delta.get().inserted())) {
+            if (!leaving.contains(name.toLowerCase(java.util.Locale.ROOT)) && facts.ruleNameInUse(req.projectId(), name, entry.isDraft(), entry.getUserId())) {
+                return "Another rule is already named \"" + name + "\". Rename or delete that rule first, then "
+                        + (undo ? "undo" : "redo") + " this change";
+            }
+        }
+        return null;
+    }
+
+    private static Set<String> ruleLabels(org.eclipse.rdf4j.model.Model model) {
+        Set<String> names = new java.util.LinkedHashSet<>();
+        for (org.eclipse.rdf4j.model.Statement statement : model) {
+            if (statement.getSubject().isBNode()
+                    && org.eclipse.rdf4j.model.vocabulary.RDFS.LABEL.equals(statement.getPredicate())) {
+                names.add(statement.getObject().stringValue().trim());
+            }
+        }
+        return names;
+    }
+
+    private static boolean retiredRules(Plan plan) {
+        return plan.actions().stream().anyMatch(DocumentRollbackActions::isRetired);
     }
 
     private boolean actionsHold(Request req, HistoryChange entry, Plan plan) {

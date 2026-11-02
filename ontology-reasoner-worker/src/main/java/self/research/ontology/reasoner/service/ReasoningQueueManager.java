@@ -135,6 +135,25 @@ public class ReasoningQueueManager {
                                 String targetIri,
                                 String propertyIri,
                                 String literalValue) {
+        return enqueue(jobType, projectId, expression, queryTypes, reasonerType, ownerEmail,
+                maxJustifications, explanationMode, entailmentType, subjectIri, targetIri, propertyIri,
+                literalValue, (Map<String, Object>) null);
+    }
+
+    public ReasoningJob enqueue(ReasoningJob.JobType jobType,
+                                String projectId,
+                                String expression,
+                                List<String> queryTypes,
+                                String reasonerType,
+                                String ownerEmail,
+                                Integer maxJustifications,
+                                String explanationMode,
+                                String entailmentType,
+                                String subjectIri,
+                                String targetIri,
+                                String propertyIri,
+                                String literalValue,
+                                Map<String, Object> params) {
         long tripleCount = editorClient.getTripleCount(projectId);
         ReasoningJob answered = answerFromCachedSnapshot(jobType, projectId, reasonerType, ownerEmail, tripleCount);
         if (answered != null) {
@@ -146,7 +165,7 @@ public class ReasoningQueueManager {
         synchronized (this) {
             ReasoningJob duplicate = findInFlightDuplicate(jobType, projectId, expression, queryTypes,
                     reasonerType, ownerEmail, maxJustifications, explanationMode,
-                    entailmentType, subjectIri, targetIri, propertyIri, literalValue);
+                    entailmentType, subjectIri, targetIri, propertyIri, literalValue, params);
             if (duplicate != null) {
                 duplicate.setRequesterCount(duplicate.getRequesterCount() + 1);
                 log.info("[Reasoning] Reusing in-flight {} job {} for project {} instead of enqueueing a duplicate ({} requesters)",
@@ -175,6 +194,7 @@ public class ReasoningQueueManager {
                     .targetIri(targetIri)
                     .propertyIri(propertyIri)
                     .literalValue(literalValue)
+                    .params(params == null || params.isEmpty() ? null : params)
                     .status(ReasoningJob.Status.QUEUED)
                     .queuePosition(queue.size() + 1)
                     .estimatedWaitTimeMs(0)
@@ -260,12 +280,12 @@ public class ReasoningQueueManager {
                                                 List<String> queryTypes, String reasonerType, String ownerEmail,
                                                 Integer maxJustifications, String explanationMode,
                                                 String entailmentType, String subjectIri, String targetIri,
-                                                String propertyIri, String literalValue) {
+                                                String propertyIri, String literalValue, Map<String, Object> params) {
         for (ReasoningJob candidate : queue) {
             if (candidate.getStatus() == ReasoningJob.Status.QUEUED
                     && isSameRequest(candidate, jobType, projectId, expression, queryTypes, reasonerType,
                     ownerEmail, maxJustifications, explanationMode,
-                    entailmentType, subjectIri, targetIri, propertyIri, literalValue)) {
+                    entailmentType, subjectIri, targetIri, propertyIri, literalValue, params)) {
                 return candidate;
             }
         }
@@ -276,7 +296,7 @@ public class ReasoningQueueManager {
                                    String expression, List<String> queryTypes, String reasonerType,
                                    String ownerEmail, Integer maxJustifications, String explanationMode,
                                    String entailmentType, String subjectIri, String targetIri,
-                                   String propertyIri, String literalValue) {
+                                   String propertyIri, String literalValue, Map<String, Object> params) {
         return Objects.equals(candidate.getJobType(), jobType)
                 && Objects.equals(candidate.getProjectId(), projectId)
                 && Objects.equals(candidate.getExpression(), expression)
@@ -289,7 +309,8 @@ public class ReasoningQueueManager {
                 && Objects.equals(candidate.getSubjectIri(), subjectIri)
                 && Objects.equals(candidate.getTargetIri(), targetIri)
                 && Objects.equals(candidate.getPropertyIri(), propertyIri)
-                && Objects.equals(candidate.getLiteralValue(), literalValue);
+                && Objects.equals(candidate.getLiteralValue(), literalValue)
+                && Objects.equals(candidate.getParams(), params == null || params.isEmpty() ? null : params);
     }
 
     private static String ownerKey(String ownerEmail) {
@@ -601,6 +622,9 @@ public class ReasoningQueueManager {
         if (type == null || type == ReasoningJob.JobType.DL_QUERY) {
             return "query";
         }
+        if (type == ReasoningJob.JobType.EXPLAIN_INFERENCE) {
+            return "explanation";
+        }
         return "reasoning task";
     }
 
@@ -608,12 +632,18 @@ public class ReasoningQueueManager {
         if (type == ReasoningJob.JobType.DL_QUERY) {
             return "Running your query…";
         }
+        if (type == ReasoningJob.JobType.EXPLAIN_INFERENCE) {
+            return "Working out why…";
+        }
         return "Running reasoning…";
     }
 
     private static String completedMessage(ReasoningJob.JobType type) {
         if (type == ReasoningJob.JobType.DL_QUERY) {
             return "Query complete";
+        }
+        if (type == ReasoningJob.JobType.EXPLAIN_INFERENCE) {
+            return "Explanation ready";
         }
         return "Reasoning complete";
     }

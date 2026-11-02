@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 public class JwtUtil {
 
     private static final Logger log = LoggerFactory.getLogger(JwtUtil.class);
+    private static final long REFRESH_GRACE_MILLIS = 24L * 60 * 60 * 1000;
 
     @Value("${jwt.secret}")
     private String SECRET_KEY;
@@ -69,6 +70,10 @@ public class JwtUtil {
         try {
             return extractClaim(token, Claims::getSubject);
         } catch (io.jsonwebtoken.ExpiredJwtException e) {
+            java.util.Date expired = e.getClaims().getExpiration();
+            if (expired == null || System.currentTimeMillis() - expired.getTime() > REFRESH_GRACE_MILLIS) {
+                throw new IllegalArgumentException("Session expired, please sign in again");
+            }
             return e.getClaims().getSubject();
         } catch (io.jsonwebtoken.JwtException e) {
             throw new IllegalArgumentException("Invalid or expired session token: " + e.getMessage(), e);

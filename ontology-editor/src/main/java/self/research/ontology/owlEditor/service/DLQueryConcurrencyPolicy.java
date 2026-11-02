@@ -3,11 +3,10 @@ package self.research.ontology.owlEditor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.ReasoningHeapMonitor;
+import self.research.ontology.common.admission.MemorySignals;
 import self.research.ontology.owlEditor.model.DLQueryJob;
 
-import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryMXBean;
-import java.lang.management.MemoryUsage;
 import java.util.Collection;
 
 @Slf4j
@@ -34,8 +33,16 @@ public class DLQueryConcurrencyPolicy {
     @Value("${ontocode.dlquery.yield-to-imports:true}")
     private boolean yieldToImports;
 
-    public DLQueryConcurrencyPolicy(ImportQueueManager importQueueManager) {
+    private final MemorySignals signals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public DLQueryConcurrencyPolicy(ImportQueueManager importQueueManager, MemorySignals signals) {
         this.importQueueManager = importQueueManager;
+        this.signals = signals;
+    }
+
+    public DLQueryConcurrencyPolicy(ImportQueueManager importQueueManager) {
+        this(importQueueManager, ReasoningHeapMonitor.signals());
     }
 
     public record ConcurrencySnapshot(
@@ -132,13 +139,6 @@ public class DLQueryConcurrencyPolicy {
     }
 
     private double freeHeapRatio() {
-        MemoryMXBean bean = ManagementFactory.getMemoryMXBean();
-        MemoryUsage heap = bean.getHeapMemoryUsage();
-        long max = heap.getMax();
-        if (max <= 0) {
-            return 1.0;
-        }
-        long used = heap.getUsed();
-        return Math.max(0.0, (double) (max - used) / max);
+        return Math.max(0.0, 1.0 - signals.heapUsedRatio().orElse(0));
     }
 }

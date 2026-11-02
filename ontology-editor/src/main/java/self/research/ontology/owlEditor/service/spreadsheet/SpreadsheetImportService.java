@@ -89,6 +89,14 @@ public class SpreadsheetImportService {
 
     private OntologyIndexService indexService;
 
+    private volatile self.research.ontology.common.admission.CacheAccount parsedItemsAccount =
+        self.research.ontology.owlEditor.service.RetainedMemory.detachedAccount("spreadsheetParsedItems");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        this.parsedItemsAccount = ledger.cacheAccount("spreadsheetParsedItems");
+    }
+
     private final Cache<String, ImportItemsSummary.Parsed> parsedItems = Caffeine.newBuilder()
         .maximumSize(50)
         .expireAfterAccess(Duration.ofMinutes(15))
@@ -388,7 +396,14 @@ public class SpreadsheetImportService {
     }
 
     private ImportItemsSummary.Parsed parsedItems(SpreadsheetImportRecord record) {
-        return parsedItems.get(record.getId(), id -> ImportItemsSummary.parse(record.getAddedTriples()));
+        return parsedItems.get(record.getId(), id -> {
+            List<String> addedTriples = record.getAddedTriples();
+            ImportItemsSummary.Parsed parsed = ImportItemsSummary.parse(addedTriples);
+            int lines = addedTriples == null ? 0 : addedTriples.size();
+            self.research.ontology.owlEditor.service.RetainedMemory.retainUntilCollected(parsedItemsAccount, parsed,
+                lines * self.research.ontology.owlEditor.service.RetainedMemory.BYTES_PER_PARSED_ITEM_LINE);
+            return parsed;
+        });
     }
 
     private Optional<SpreadsheetImportRecord> findRecord(String projectId, String entityIri) {

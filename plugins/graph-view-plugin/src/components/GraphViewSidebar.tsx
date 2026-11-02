@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { OntologyNode as BaseOntologyNode, OntologyEdge } from '../types';
 import { ClassHierarchyPanel } from './ClassHierarchyPanel';
+import { safeHref } from '../utils/safeUrl';
 
 interface OntologyNode extends BaseOntologyNode {
   iri?: string;
@@ -1013,7 +1014,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <div style={styles.entityDetailRow}>
                   <div style={styles.entityDetailLabel}>Ontology IRI</div>
                   <div style={styles.entityDetailValue}>
-                    <a href={ontoIRI} target="_blank" rel="noopener noreferrer" style={styles.iriLink}>
+                    <a href={safeHref(ontoIRI)} target="_blank" rel="noopener noreferrer" style={styles.iriLink}>
                       {String(ontoIRI).length > 50 ? `...${String(ontoIRI).slice(-47)}` : String(ontoIRI)}
                     </a>
                   </div>
@@ -1031,7 +1032,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                   <div style={styles.entityDetailValue}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {imports.slice(0, 10).map((imp, idx) => (
-                        <a key={idx} href={imp} target="_blank" rel="noopener noreferrer" style={{ ...styles.iriLink, fontSize: 11 }}>
+                        <a key={idx} href={safeHref(imp)} target="_blank" rel="noopener noreferrer" style={{ ...styles.iriLink, fontSize: 11 }}>
                           {String(imp).length > 60 ? `...${String(imp).slice(-57)}` : String(imp)}
                         </a>
                       ))}
@@ -1099,7 +1100,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
                 <div style={styles.entityDetailLabel}>IRI</div>
                 <div style={styles.entityDetailValue}>
                   <a 
-                    href={selectedNode.iri} 
+                    href={safeHref(selectedNode.iri)} 
                     target="_blank" 
                     rel="noopener noreferrer"
                     style={styles.iriLink}

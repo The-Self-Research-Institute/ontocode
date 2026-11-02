@@ -1,6 +1,11 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.RequiredArgsConstructor;
+import org.bson.Document;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.mongodb.core.MongoOperations;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -10,7 +15,9 @@ import org.springframework.web.client.HttpClientErrorException;
 import self.research.ontology.owlEditor.document.ProjectShare;
 import self.research.ontology.owlEditor.repository.ProjectShareRepository;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,15 +34,44 @@ public class ProjectShareService {
     
     @Value("${auth.service.url:http://localhost:8086}")
     private String authServiceUrl;
+
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
+    @Autowired(required = false)
+    private MongoOperations mongo;
+
+    private static final String SHARE_QUEUE = "/queue/shares";
+
+    private List<String> notificationRecipients(String email) {
+        String normalized = email.trim().toLowerCase(Locale.ROOT);
+        List<String> recipients = new ArrayList<>();
+        findUserId(email.trim(), normalized).ifPresent(recipients::add);
+        recipients.add(normalized);
+        return recipients;
+    }
+
+    private Optional<String> findUserId(String email, String normalized) {
+        if (mongo == null) {
+            return Optional.empty();
+        }
+        Document user = mongo.findOne(Query.query(Criteria.where("email").in(email, normalized)), Document.class, "users");
+        Object id = user == null ? null : user.get("_id");
+        return id == null ? Optional.empty() : Optional.of(id.toString());
+    }
     
     /**
      * Get user email from auth service by username
      */
     private String getEmailFromUsername(String username) {
         try {
-            String url = authServiceUrl + "/api/auth/user/email?username=" + username;
+            java.net.URI url = org.springframework.web.util.UriComponentsBuilder.fromUriString(authServiceUrl)
+                    .path("/api/internal/users/email").queryParam("username", username).build().encode().toUri();
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.set("X-Ontocode-Internal-Token", internalToken);
             @SuppressWarnings("unchecked")
-            Map<String, String> response = restTemplate.getForObject(url, Map.class);
+            Map<String, String> response = restTemplate.exchange(url, org.springframework.http.HttpMethod.GET,
+                    new org.springframework.http.HttpEntity<>(headers), Map.class).getBody();
             if (response != null && response.containsKey("email")) {
                 return response.get("email");
             }
@@ -123,8 +159,10 @@ public class ProjectShareService {
                     .timestamp(System.currentTimeMillis())
                     .build();
             
-            messagingTemplate.convertAndSend("/topic/shares/" + email, notification);
-            log.info("Sent real-time share notification to {} for project {}", email, projectId);
+            for (String recipient : notificationRecipients(email)) {
+                messagingTemplate.convertAndSendToUser(recipient, SHARE_QUEUE, notification);
+            }
+            log.info("Sent real-time share notification for project {}", projectId);
         } catch (Exception e) {
             log.error("Failed to send WebSocket share notification", e);
             // Don't throw - notification failure shouldn't break sharing

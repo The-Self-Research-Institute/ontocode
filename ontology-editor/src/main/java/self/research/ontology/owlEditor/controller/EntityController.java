@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -14,6 +16,9 @@ import java.util.Map;
 @RequestMapping("/api/ontology/entity")
 @CrossOrigin(originPatterns = "*")
 public class EntityController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final String DESKTOP_USER_ID = "desktop-user-local";
 
@@ -36,6 +41,10 @@ public class EntityController {
                                           @RequestParam(required = false) String userId,
                                           @RequestParam(required = false) String username,
                                           jakarta.servlet.http.HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request == null || isBlank(request.oldIri) || isBlank(request.newIri)) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,

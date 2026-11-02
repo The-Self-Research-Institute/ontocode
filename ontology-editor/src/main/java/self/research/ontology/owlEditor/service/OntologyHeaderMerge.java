@@ -235,7 +235,7 @@ public final class OntologyHeaderMerge {
         return axiom instanceof OWLDatatypeDefinitionAxiom
                 || axiom instanceof OWLHasKeyAxiom
                 || axiom instanceof OWLSubPropertyChainOfAxiom
-                || axiom instanceof SWRLRule;
+                || axiom instanceof SWRLRule rule && SwrlRuleKeys.ruleId(rule).isEmpty();
     }
 
     private static boolean hasNoOwner(OWLClassExpression expression) {

@@ -5,8 +5,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
@@ -51,8 +54,8 @@ class EditorReasonerCacheServiceTest {
 
     @Test
     void invalidatingDraftsWithoutAUserKeepsPublishedEntries() {
-        String published = "proj-1-OPENLLET";
-        String first = EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.OPENLLET, "user-1", "1.0");
+        String published = "proj-1-HERMIT";
+        String first = EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.HERMIT, "user-1", "1.0");
         String second = EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.ELK, "user-2", "4.2");
         put(published);
         put(first);
@@ -63,5 +66,33 @@ class EditorReasonerCacheServiceTest {
         assertFalse(has(first));
         assertFalse(has(second));
         assertTrue(has(published));
+    }
+
+    @Test
+    void hierarchyKeysDifferByRulesAndStayUnchangedWithoutRules() {
+        assertEquals("proj-1-HERMIT", EditorReasonerCacheService.hierarchyKey("proj-1", ReasonerType.HERMIT, "none"));
+        assertNotEquals(EditorReasonerCacheService.hierarchyKey("proj-1", ReasonerType.HERMIT, "aaa"),
+                EditorReasonerCacheService.hierarchyKey("proj-1", ReasonerType.HERMIT, "bbb"));
+        assertEquals(EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.HERMIT, "u", "1.0"),
+                EditorReasonerCacheService.draftHierarchyKey("proj-1", ReasonerType.HERMIT, "u", "1.0", "none"));
+    }
+
+    @Test
+    void snapshotComputedWithDifferentRulesIsAMissAndIsEvicted() {
+        String key = EditorReasonerCacheService.snapshotKey("proj-1", "HERMIT", 3L);
+        cache.putSnapshot(key, Map.of("a", 1), "aaa");
+
+        assertTrue(cache.getSnapshot(key, () -> "aaa").isPresent());
+        assertFalse(cache.getSnapshot(key, () -> "bbb").isPresent());
+        assertFalse(cache.getSnapshot(key, () -> "aaa").isPresent());
+    }
+
+    @Test
+    void snapshotWithoutRulesIsAHitWhenStillWithoutRules() {
+        String key = EditorReasonerCacheService.snapshotKey("proj-1", "HERMIT", 3L);
+        cache.putSnapshot(key, Map.of("a", 1), "none");
+
+        assertTrue(cache.getSnapshot(key, () -> "none").isPresent());
+        assertFalse(cache.getSnapshot(key, () -> "aaa").isPresent());
     }
 }

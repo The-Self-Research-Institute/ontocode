@@ -1,5 +1,10 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
+import self.research.ontology.owlEditor.config.CallerEmail;
+import self.research.ontology.owlEditor.config.CallerIdentity;
+import self.research.ontology.owlEditor.service.AccessDenial;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,6 +82,9 @@ import org.springframework.data.mongodb.gridfs.GridFsResource;
 @RequestMapping("/api/ontology")
 @CrossOrigin
 public class ProjectLoadController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(ProjectLoadController.class);
     private static final java.util.regex.Pattern PCT_PATTERN = java.util.regex.Pattern.compile("(\\d+)%");
@@ -198,11 +206,47 @@ public class ProjectLoadController {
 
     private static final String DESKTOP_USER_ID = "desktop-user-local";
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.upload.UploadSettings uploadSettings;
+
+    private self.research.ontology.owlEditor.upload.ArchiveLimits archiveLimits() {
+        return uploadSettings != null
+                ? uploadSettings.archiveLimits()
+                : self.research.ontology.owlEditor.upload.ArchiveLimits.defaults();
+    }
+
+    private static ResponseEntity<Map<String, Object>> uploadRejected(Throwable e) {
+        self.research.ontology.owlEditor.upload.UploadLimitExceededException exceeded =
+                self.research.ontology.owlEditor.upload.UploadExceptionAdvice.find(e);
+        if (exceeded == null) {
+            for (Throwable t = e; t != null; t = t.getCause()) {
+                if (t instanceof self.research.ontology.owlEditor.service.ImportQueueFullException full) {
+                    return self.research.ontology.owlEditor.upload.UploadExceptionAdvice.busy(full);
+                }
+            }
+            return null;
+        }
+        log.warn("Upload rejected: {}", exceeded.getMessage());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("success", false, "error", exceeded.getMessage(), "limitBytes", exceeded.getLimitBytes()));
+    }
+
+    private static void cleanupStaged(Path... paths) {
+        for (Path path : paths) {
+            try {
+                UploadFileSupport.deleteRecursively(path);
+            } catch (IOException ex) {
+                log.warn("Could not remove staged upload file {}: {}", path, ex.getMessage());
+            }
+        }
+    }
+
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
     private final MongoTemplate mongoTemplate;
     private final CodeViewReimportPipeline codeViewReimportPipeline;
     private final ProjectWriteLockRegistry lockRegistry;
+    private final ProjectAuthorization authorization;
 
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
@@ -221,7 +265,8 @@ public class ProjectLoadController {
                                  MongoTemplate mongoTemplate,
                                  self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService,
                                  CodeViewReimportPipeline codeViewReimportPipeline,
-                                 ProjectWriteLockRegistry lockRegistry) {
+                                 ProjectWriteLockRegistry lockRegistry,
+                                 ProjectAuthorization authorization) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
@@ -240,12 +285,14 @@ public class ProjectLoadController {
         this.exportJobService = exportJobService;
         this.codeViewReimportPipeline = codeViewReimportPipeline;
         this.lockRegistry = lockRegistry;
+        this.authorization = authorization;
     }
 
     @PostMapping("/upload/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> upload(@PathVariable String projectId,
                                                       @RequestParam("file") MultipartFile file,
-                                                      @RequestParam(required = false) String ownerEmail,
+                                                      @CallerEmail String ownerEmail,
+                                                      CallerIdentity caller,
                                                       @RequestParam(required = false) String action,
                                                       @RequestParam(required = false) String importMode,
                                                       @RequestParam(required = false) String partition,
@@ -268,13 +315,21 @@ public class ProjectLoadController {
 
         try {
             return processUploadedFile(projectId, file.getInputStream(), file.getOriginalFilename(),
-                    file.getContentType(), ownerEmail, action, importMode, partition, workspaceId,
+                    file.getContentType(), ownerEmail, caller.userId(), action, importMode, partition, workspaceId,
                     parentProjectId, compressed, uploadStartTime);
         } catch (IOException e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("Upload failed (IO)", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
         } catch (Exception e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("Upload failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error",
@@ -288,6 +343,7 @@ public class ProjectLoadController {
             String originalFilename,
             String contentType,
             String ownerEmail,
+            String ownerId,
             String action,
             String importMode,
             String partition,
@@ -376,6 +432,7 @@ public class ProjectLoadController {
                 UploadFileSupport.deleteRecursively(libraryDir);
                 Files.createDirectories(libraryDir);
 
+                try {
                 try (InputStream in = fileStream;
                      OutputStream out = Files.newOutputStream(packageZip,
                              StandardOpenOption.CREATE,
@@ -390,10 +447,14 @@ public class ProjectLoadController {
                     );
                 }
 
-                UploadFileSupport.extractOntologyPackage(packageZip, libraryDir);
+                UploadFileSupport.extractOntologyPackage(packageZip, libraryDir, archiveLimits());
                 importRoot = UploadFileSupport.selectPackageRootOntology(libraryDir, filename)
                         .orElseThrow(() -> new IOException("Ontology package must contain at least one ontology file (.owl, .rdf, .ttl, .n3, .nt, .xml, .jsonld)"));
                 Files.copy(importRoot, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException | RuntimeException stageFailure) {
+                    cleanupStaged(libraryDir, packageZip, original);
+                    throw stageFailure;
+                }
                 filename = importRoot.getFileName().toString();
                 log.info("[ProjectLoadController] Ontology package root selected: {}", importRoot);
             } else {
@@ -410,15 +471,16 @@ public class ProjectLoadController {
                     
                     if (len == 2 && signature[0] == (byte) 0x1f && signature[1] == (byte) 0x8b) {
                         log.info("[ProjectLoadController] Auto-detected GZIP content. Enabling decompression.");
-                        effectiveStream = new GZIPInputStream(pb);
+                        effectiveStream = self.research.ontology.owlEditor.upload.BoundedGzipInputStream.open(pb, archiveLimits());
                         wasCompressed = true;
                     } else {
                         effectiveStream = pb;
                     }
                 } else {
-                    effectiveStream = new GZIPInputStream(fileStream);
+                    effectiveStream = self.research.ontology.owlEditor.upload.BoundedGzipInputStream.open(fileStream, archiveLimits());
                 }
 
+                try {
                 try (InputStream in = effectiveStream;
                      OutputStream out = Files.newOutputStream(original,
                              StandardOpenOption.CREATE,
@@ -437,6 +499,10 @@ public class ProjectLoadController {
                         tee
                     );
                 }
+                } catch (IOException | RuntimeException stageFailure) {
+                    cleanupStaged(original);
+                    throw stageFailure;
+                }
             }
 
             log.info("[ProjectLoadController] [TIMING] File save (disk + GridFS): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
@@ -454,7 +520,7 @@ public class ProjectLoadController {
 
             stepStart = System.nanoTime();
             ProjectStatus status = ProjectStatus.uploaded(filename);
-            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, workspaceId, parentProjectId);
+            metadataService.updateProjectMetadata(actualProjectId, status, gridfsFileId, ownerEmail, ownerId, workspaceId, parentProjectId);
             log.info("[ProjectLoadController] [TIMING] Metadata update: {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             stepStart = System.nanoTime();
@@ -502,7 +568,8 @@ public class ProjectLoadController {
             @RequestParam int totalChunks,
             @RequestParam String chunkHash,
             @RequestParam String fileName,
-            @RequestParam(required = false) String ownerEmail,
+            @CallerEmail String ownerEmail,
+            CallerIdentity caller,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String importMode,
             @RequestParam(required = false) String partition,
@@ -580,7 +647,7 @@ public class ProjectLoadController {
                 long uploadStartTime = System.nanoTime();
                 try (InputStream reassembledStream = Files.newInputStream(reassembled)) {
                     return processUploadedFile(projectId, reassembledStream, fileName, "application/octet-stream",
-                            ownerEmail, action, importMode, partition, workspaceId, parentProjectId, compressed,
+                            ownerEmail, caller.userId(), action, importMode, partition, workspaceId, parentProjectId, compressed,
                             uploadStartTime);
                 }
             } finally {
@@ -588,10 +655,18 @@ public class ProjectLoadController {
                 UploadFileSupport.deleteRecursively(chunkDir);
             }
         } catch (IOException e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("[ProjectLoadController] Chunk upload failed (IO) uploadId={} chunkIndex={}", uploadId, chunkIndex, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error", e.getMessage()));
         } catch (Exception e) {
+            ResponseEntity<Map<String, Object>> rejected = uploadRejected(e);
+            if (rejected != null) {
+                return rejected;
+            }
             log.error("[ProjectLoadController] Chunk upload failed uploadId={} chunkIndex={}", uploadId, chunkIndex, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "error",
@@ -628,7 +703,8 @@ public class ProjectLoadController {
             @PathVariable String projectId,
             @RequestParam String fileId,
             @RequestParam String parentProjectId,
-            @RequestParam(required = false) String ownerEmail,
+            @CallerEmail String ownerEmail,
+            CallerIdentity caller,
             @RequestParam(required = false) String action,
             @RequestParam(required = false) String importMode,
             @RequestParam(required = false) String partition,
@@ -688,7 +764,7 @@ public class ProjectLoadController {
                 if (shouldSkip) {
                     log.info("[ProjectLoadController] Desktop shortcut — skipping re-import for {}", projectId);
                     if (!owlapiReady && storageManager.findCurrentOntology(projectId).isEmpty()) {
-                        materializeOntologyFromFileRef(projectId, fileId);
+                        materializeOntologyFromFileRef(projectId, fileId, parentProjectId);
                     }
                     Map<String, Object> body = new java.util.LinkedHashMap<>();
                     body.put("success", true);
@@ -708,11 +784,7 @@ public class ProjectLoadController {
                 }
             }
 
-            Document fileMeta = mongoTemplate.getDb()
-                    .getCollection("file_metadata")
-                    .find(new Document("fileId", fileId)
-                            .append("isDeleted", new Document("$ne", true)))
-                    .first();
+            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
 
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] file_metadata not found for fileId: {}", fileId);
@@ -756,7 +828,7 @@ public class ProjectLoadController {
 
             storageManager.extractCitationMappingsFromFile(original, projectId);
             ProjectStatus status = ProjectStatus.uploaded(fileName);
-            metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, workspaceId, parentProjectId);
+            metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, caller.userId(), workspaceId, parentProjectId);
 
             ImportOptions options = UploadFileSupport.resolveImportOptions(importMode, partition);
             importWorkerDispatcher.dispatch(projectId, original, ownerEmail, fileName, gridfsId, options);
@@ -789,6 +861,16 @@ public class ProjectLoadController {
         } finally {
             importInFlight.remove(projectId);
         }
+    }
+
+    private Optional<Document> findFileMetadata(String fileId, String projectId, String parentProjectId) {
+        Document fileMeta = mongoTemplate.getDb()
+                .getCollection("file_metadata")
+                .find(new Document("fileId", fileId).append("isDeleted", new Document("$ne", true)))
+                .first();
+        return Optional.ofNullable(fileMeta)
+                .filter(meta -> projectId.startsWith(parentProjectId + "--")
+                        && parentProjectId.equals(meta.getString("projectId")));
     }
 
     private String generateCopyFilename(String originalFilename, String ownerEmail) {
@@ -891,6 +973,15 @@ public class ProjectLoadController {
     @org.springframework.beans.factory.annotation.Autowired
     private self.research.ontology.owlEditor.service.ExportScopeResolver exportScopeResolver;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private self.research.ontology.owlEditor.service.JobAccess jobAccess;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.OntologyVersionStamps exportStampSource;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleService exportRuleService;
+
     @GetMapping("/export/{projectId:.+}")
     public ResponseEntity<?> export(@PathVariable String projectId,
                                            @RequestParam(defaultValue = "rdfxml") String format,
@@ -905,8 +996,14 @@ public class ProjectLoadController {
                 return ResponseEntity.status(scope.status()).body(Map.of("error", scope.error()));
             }
             if (scope.draft()) {
+                HttpHeaders draftStamp = new HttpHeaders();
+                if (exportStampSource != null) {
+                    draftStamp.set("X-Ontology-Draft-Version", exportStampSource.draftVersion(projectId, scope.userId()));
+                }
+                self.research.ontology.owlEditor.service.DisabledRulesHeader.into(draftStamp, exportRuleService, projectId, true, scope.userId());
                 exportPath = storageManager.resolveCodeViewFile(projectId, format, scope.contentScope());
                 return ResponseEntity.ok()
+                        .headers(draftStamp)
                         .contentType(MediaType.APPLICATION_OCTET_STREAM)
                         .contentLength(Files.size(exportPath))
                         .header(HttpHeaders.CONTENT_DISPOSITION,
@@ -915,6 +1012,12 @@ public class ProjectLoadController {
             }
 
             importService.syncProjectToFuseki(projectId);
+
+            HttpHeaders publicStamp = new HttpHeaders();
+            if (exportStampSource != null) {
+                publicStamp.set("X-Ontology-Revision", String.valueOf(exportStampSource.publicRevision(projectId)));
+            }
+            self.research.ontology.owlEditor.service.DisabledRulesHeader.into(publicStamp, exportRuleService, projectId, false, null);
 
             Optional<String> cachedContent = storageManager.getCodeViewCache(projectId, format);
             if (cachedContent.isPresent()) {
@@ -931,6 +1034,7 @@ public class ProjectLoadController {
             
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
             return ResponseEntity.ok()
+                    .headers(publicStamp)
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(Files.size(exportPath))
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + exportPath.getFileName())
@@ -954,6 +1058,7 @@ public class ProjectLoadController {
                 return ResponseEntity.status(scope.status()).body(Map.of("success", false, "error", scope.error()));
             }
             self.research.ontology.owlEditor.model.ExportJob job = exportJobService.submit(projectId, format, scope.contentScope());
+            jobAccess.register(request, job.getJobId(), projectId);
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "jobId", job.getJobId(),
@@ -966,9 +1071,23 @@ public class ProjectLoadController {
         }
     }
 
+    private ResponseEntity<Map<String, Object>> exportJobRefusal(jakarta.servlet.http.HttpServletRequest request) {
+        if (jobAccess.caller(request).isPresent()) {
+            return null;
+        }
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("success", false, "error", "Authentication required"));
+    }
+
     @GetMapping("/export-async/status/{jobId}")
-    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable String jobId) {
+    public ResponseEntity<Map<String, Object>> exportJobStatus(@PathVariable String jobId,
+                                                               jakarta.servlet.http.HttpServletRequest request) {
+        var unauthorized = exportJobRefusal(request);
+        if (unauthorized != null) {
+            return unauthorized;
+        }
         return exportJobService.getStatus(jobId)
+                .filter(job -> jobAccess.check(request, null, jobId, job.getProjectId()).allowed())
                 .map(job -> {
                     Map<String, Object> data = new java.util.LinkedHashMap<>();
                     data.put("success", true);
@@ -983,8 +1102,14 @@ public class ProjectLoadController {
     }
 
     @GetMapping("/export-async/download/{jobId}")
-    public ResponseEntity<?> downloadExportJobResult(@PathVariable String jobId) {
-        Optional<self.research.ontology.owlEditor.model.ExportJob> jobOpt = exportJobService.getStatus(jobId);
+    public ResponseEntity<?> downloadExportJobResult(@PathVariable String jobId,
+                                                     jakarta.servlet.http.HttpServletRequest request) {
+        var unauthorized = exportJobRefusal(request);
+        if (unauthorized != null) {
+            return unauthorized;
+        }
+        Optional<self.research.ontology.owlEditor.model.ExportJob> jobOpt = exportJobService.getStatus(jobId)
+                .filter(job -> jobAccess.check(request, null, jobId, job.getProjectId()).allowed());
         if (jobOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("success", false, "error", "Export job not found. It may have expired — please retry the export."));
@@ -1001,7 +1126,10 @@ public class ProjectLoadController {
         try {
             Path exportPath = job.getResultPath();
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(exportPath));
+            HttpHeaders jobHeaders = self.research.ontology.owlEditor.service.DisabledRulesHeader.into(
+                    new HttpHeaders(), exportRuleService, job.getProjectId(), job.isDraft(), job.getUserId());
             return ResponseEntity.ok()
+                    .headers(jobHeaders)
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(Files.size(exportPath))
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename="
@@ -1241,13 +1369,9 @@ public class ProjectLoadController {
     @GetMapping("/check-duplicate")
     public ResponseEntity<Map<String, Object>> checkDuplicate(
             @RequestParam String filename,
-            @RequestParam(required = false) String ownerEmail,
-            HttpServletRequest request) {
+            @CallerEmail String ownerEmail) {
         try {
             String email = ownerEmail;
-            if (email == null || email.isBlank()) {
-                email = JwtClaimUtils.extractEmail(request.getHeader("Authorization"));
-            }
             if (email == null || email.isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -1755,6 +1879,10 @@ public class ProjectLoadController {
             @RequestParam(required = false, defaultValue = "false") boolean draft,
             @RequestBody Map<String, Object> request,
             HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (draftOwnerMismatch(httpRequest, draft, userId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("success", false, "error", "You can only save your own draft"));
@@ -2003,14 +2131,17 @@ public class ProjectLoadController {
     @DeleteMapping("/project/{projectId:.+}")
     public ResponseEntity<?> deleteProject(
             @PathVariable String projectId,
-            @RequestParam(required = false) String ownerEmail) {
+            HttpServletRequest request) {
         try {
-            log.info("[ProjectLoadController] DELETE project - projectId: {}, ownerEmail: {}", projectId, ownerEmail);
             
             var statusOpt = metadataService.readStatus(projectId);
             if (statusOpt.isEmpty()) {
                 log.warn("[ProjectLoadController] Project not found for deletion: {}", projectId);
                 return ResponseEntity.status(404).body(Map.of("success", false, "error", "Project not found"));
+            }
+            Optional<AccessDenial> denial = authorization.notOwnerOf(request, projectId);
+            if (denial.isPresent()) {
+                return denial.get().toResponse();
             }
             
             try {
@@ -2083,13 +2214,9 @@ public class ProjectLoadController {
         }
     }
 
-    private void materializeOntologyFromFileRef(String projectId, String fileId) {
+    private void materializeOntologyFromFileRef(String projectId, String fileId, String parentProjectId) {
         try {
-            Document fileMeta = mongoTemplate.getDb()
-                    .getCollection("file_metadata")
-                    .find(new Document("fileId", fileId)
-                            .append("isDeleted", new Document("$ne", true)))
-                    .first();
+            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] Cannot materialize {} — file_metadata missing for fileId {}", projectId, fileId);
                 return;

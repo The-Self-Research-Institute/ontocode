@@ -30,6 +30,9 @@ public class HierarchySnapshotDoc {
 
     private Map<String, Object> meta = Map.of();
 
+    private String chunkSetId;
+    private int chunkCount;
+
     @org.springframework.data.mongodb.core.index.Indexed(expireAfterSeconds = 0)
     private Date expiresAt;
 
@@ -75,6 +78,10 @@ public class HierarchySnapshotDoc {
     }
     public Map<String, Object> getMeta() { return meta; }
     public void setMeta(Map<String, Object> meta) { this.meta = meta != null ? meta : Map.of(); }
+    public String getChunkSetId() { return chunkSetId; }
+    public void setChunkSetId(String chunkSetId) { this.chunkSetId = chunkSetId; }
+    public int getChunkCount() { return chunkCount; }
+    public void setChunkCount(int chunkCount) { this.chunkCount = chunkCount; }
     public Date getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Date expiresAt) { this.expiresAt = expiresAt; }
 }

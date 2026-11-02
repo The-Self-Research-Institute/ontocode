@@ -1,0 +1,53 @@
+@prefix : <http://example.org/hand#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix swrl: <http://www.w3.org/2003/11/swrl#> .
+@prefix swrlb: <http://www.w3.org/2003/11/swrlb#> .
+
+<http://example.org/hand> a owl:Ontology .
+
+:Person a owl:Class .
+:Adult a owl:Class .
+:Senior a owl:Class .
+:age a owl:DatatypeProperty .
+:knows a owl:ObjectProperty .
+:friendOf a owl:ObjectProperty .
+
+:x a swrl:Variable .
+:y a swrl:Variable .
+:a a swrl:Variable .
+
+:AdultRule a swrl:Imp ;
+  rdfs:label "AdultRule" ;
+  rdfs:comment "People of eighteen or more are adults" ;
+  swrl:body (
+    [ a swrl:ClassAtom ; swrl:classPredicate :Person ; swrl:argument1 :x ]
+    [ a swrl:DatavaluedPropertyAtom ; swrl:propertyPredicate :age ; swrl:argument1 :x ; swrl:argument2 :a ]
+    [ a swrl:BuiltinAtom ; swrl:builtin swrlb:greaterThanOrEqual ; swrl:arguments ( :a 18 ) ]
+  ) ;
+  swrl:head (
+    [ a swrl:ClassAtom ; swrl:classPredicate :Adult ; swrl:argument1 :x ]
+  ) .
+
+:SeniorRule a swrl:Imp ;
+  rdfs:label "SeniorRule" ;
+  swrl:body (
+    [ a swrl:ClassAtom ; swrl:classPredicate :Adult ; swrl:argument1 :x ]
+    [ a swrl:DatavaluedPropertyAtom ; swrl:propertyPredicate :age ; swrl:argument1 :x ; swrl:argument2 :a ]
+    [ a swrl:BuiltinAtom ; swrl:builtin swrlb:greaterThanOrEqual ; swrl:arguments ( :a 65 ) ]
+  ) ;
+  swrl:head (
+    [ a swrl:ClassAtom ; swrl:classPredicate :Senior ; swrl:argument1 :x ]
+  ) .
+
+:FriendRule a swrl:Imp ;
+  rdfs:label "FriendRule" ;
+  swrl:body (
+    [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate :knows ; swrl:argument1 :x ; swrl:argument2 :y ]
+    [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate :knows ; swrl:argument1 :y ; swrl:argument2 :x ]
+  ) ;
+  swrl:head (
+    [ a swrl:IndividualPropertyAtom ; swrl:propertyPredicate :friendOf ; swrl:argument1 :x ; swrl:argument2 :y ]
+  ) .

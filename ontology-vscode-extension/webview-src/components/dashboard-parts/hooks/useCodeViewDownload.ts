@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getBaseUrl } from "../../../services/apiClient";
 import { notificationService } from "../../../services/notificationService";
+import { warnAboutRulesInExport } from "../../../services/exportRulesWarning";
 import { isDraftScopeActive, withDraftAndUser } from "../../../utils/draftScope";
 import { resolveMutationActor } from "../../../utils/mutationActor";
+import { isTrustedMessage } from '../../../utils/trustedMessage';
 
 const EXTENSION_BY_FORMAT: Record<string, string> = {
   rdfxml: "owl",
@@ -38,6 +40,7 @@ export function useCodeViewDownload(projectId: string | null | undefined, format
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
       const pending = pendingRef.current;
@@ -56,6 +59,7 @@ export function useCodeViewDownload(projectId: string | null | undefined, format
   const download = useCallback(() => {
     if (!projectId || isDownloading) return;
     const filename = `${projectId}.${EXTENSION_BY_FORMAT[format] || "owl"}`;
+    void warnAboutRulesInExport(getBaseUrl(), projectId, format);
     const url = withDraftAndUser(`${getBaseUrl()}/api/ontology/export/${encodeURIComponent(projectId)}?format=${format}`);
     if (!window.vscode) {
       window.open(url, "_blank");

@@ -1,13 +1,13 @@
 package self.research.ontology.plugins.service;
 
+import java.util.Locale;
+
 /**
  * Supported reasoner types.
  * All reasoners are fully functional and available.
  */
 public enum ReasonerType {
     HERMIT("HermiT"),
-    PELLET("Pellet"),
-    OPENLLET("Openllet"),
     FACTPLUSPLUS("FaCT++"),
     ELK("ELK"), // Temporarily disabled
     STRUCTURAL("Structural");
@@ -20,5 +20,13 @@ public enum ReasonerType {
 
     public String getDisplayName() {
         return displayName;
+    }
+
+    public static ReasonerType parse(String raw) {
+        String name = raw.trim().toUpperCase(Locale.ROOT);
+        if (name.equals("OPENLLET") || name.equals("PELLET")) {
+            return HERMIT;
+        }
+        return valueOf(name);
     }
 }

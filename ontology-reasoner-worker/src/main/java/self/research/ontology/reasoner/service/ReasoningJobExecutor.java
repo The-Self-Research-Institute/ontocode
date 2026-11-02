@@ -36,6 +36,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.EntailmentAxiomBuilder;
 import self.research.ontology.common.JustificationRendering;
+import self.research.ontology.common.rules.DisabledRules;
 import self.research.ontology.reasoner.model.ReasoningJob;
 
 import java.util.*;
@@ -63,14 +64,26 @@ public class ReasoningJobExecutor {
     @Value("${ontocode.reasoner.max-justifications:5}")
     private int defaultMaxJustifications;
 
+    @Value("${ontocode.explain.time-budget-ms:30000}")
+    private long explainBudgetMs = 30_000;
+
+    @Value("${ontocode.explain.max-axioms:50000}")
+    private int explainMaxAxioms = 50_000;
+
+    @Value("${ontocode.explain.max-axioms-elk:500000}")
+    private int explainMaxAxiomsElk = 500_000;
+
+    @Value("${ontocode.explain.max-triples:600000}")
+    private long explainMaxTriples = 600_000;
+
     public ReasoningJobExecutor(OntologySessionService sessionService, ReasoningSnapshotService snapshotService) {
         this.sessionService = sessionService;
         this.snapshotService = snapshotService;
         OWLReasonerFactory factory = null;
         try {
-            factory = openllet.owlapi.OpenlletReasonerFactory.getInstance();
+            factory = new org.semanticweb.HermiT.ReasonerFactory();
         } catch (Exception e) {
-            log.warn("Openllet not available for DL Query: {}", e.getMessage());
+            log.warn("HermiT not available for DL Query: {}", e.getMessage());
         }
         this.dlReasonerFactory = factory;
     }
@@ -89,6 +102,7 @@ public class ReasoningJobExecutor {
             case REASONER_EXPLAIN_INCONSISTENCY -> executeExplainInconsistency(job);
             case REASONER_EXPLAIN_ENTAILMENT -> executeExplainEntailment(job);
             case REASONER_SNAPSHOT -> snapshotService.snapshot(job.getProjectId(), job.getReasonerType(), job.getOwnerEmail());
+            case EXPLAIN_INFERENCE -> executeExplainInference(job);
         };
     }
 
@@ -100,7 +114,7 @@ public class ReasoningJobExecutor {
                 ? Arrays.asList("subclasses", "instances")
                 : job.getQueryTypes();
 
-        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), ReasonerType.OPENLLET, job.getOwnerEmail())) {
+        try (OntologySessionService.ReasoningSession session = sessionService.openSession(job.getProjectId(), ReasonerType.HERMIT, job.getOwnerEmail())) {
             OWLOntology ontology = session.ontology();
             OWLReasoner reasoner = session.reasoner();
             OWLClassExpression expr = parseClassExpression(ontology, job.getExpression());
@@ -111,6 +125,10 @@ public class ReasoningJobExecutor {
                 parseFailure.put("hint", "Check Manchester OWL syntax. Examples: 'Person', 'Person and hasAge some integer'");
                 attachSessionMetadata(parseFailure, session);
                 return parseFailure;
+            }
+
+            if (types.stream().anyMatch(t -> t.equalsIgnoreCase("instances") || t.equalsIgnoreCase("directinstances"))) {
+                reasoner.precomputeInferences(org.semanticweb.owlapi.reasoner.InferenceType.CLASS_ASSERTIONS);
             }
 
             Map<String, Object> results = new HashMap<>();
@@ -321,6 +339,50 @@ public class ReasoningJobExecutor {
             explanation.put("error", e.getMessage());
             return explanation;
         }
+    }
+
+    private Map<String, Object> executeExplainInference(ReasoningJob job) {
+        ReasonerType requestedType = parseReasonerType(job.getReasonerType());
+        long tripleCount = sessionService.currentTripleCount(job.getProjectId());
+        if (tripleCount < 0) {
+            Map<String, Object> failure = new HashMap<>();
+            failure.put("success", false);
+            failure.put("error", "Could not determine the size of this ontology, so the explanation was not started.");
+            return failure;
+        }
+        if (tripleCount > explainMaxTriples) {
+            Map<String, Object> tooLarge = new LinkedHashMap<>();
+            tooLarge.put("success", true);
+            tooLarge.put("explainStatus", InferenceExplainer.Status.TOO_LARGE.name());
+            tooLarge.put("message", "This ontology has " + tripleCount + " triples, above the limit of "
+                    + explainMaxTriples + " for explaining a fact. Try the faster ELK reasoner if the fact is of a kind "
+                    + "it supports, or narrow the ontology first.");
+            tooLarge.put("justification", new ArrayList<>());
+            tooLarge.put("axiomCount", 0);
+            tooLarge.put("reasoner", requestedType.getDisplayName());
+            return tooLarge;
+        }
+        long loadStarted = System.currentTimeMillis();
+        OWLOntology ontology = sessionService.loadForParse(job.getProjectId(), hasOwner(job) ? job.getOwnerEmail() : null);
+        DisabledRules.strip(ontology);
+        long loadMs = System.currentTimeMillis() - loadStarted;
+        Thread caller = Thread.currentThread();
+        Map<String, Object> params = job.getParams() != null ? job.getParams() : Map.of();
+        List<String> operands = params.get("objectIris") instanceof List<?> list
+                ? list.stream().map(String::valueOf).toList() : null;
+        InferenceExplainer.Request request = new InferenceExplainer.Request(job.getEntailmentType(), job.getSubjectIri(),
+                job.getPropertyIri(), job.getTargetIri(), job.getLiteralValue(),
+                params.get("literalDatatypeIri") != null ? params.get("literalDatatypeIri").toString() : null,
+                operands, params.get("objectOperator") != null ? params.get("objectOperator").toString() : null);
+        InferenceExplainer.Outcome outcome = new InferenceExplainer(explainBudgetMs, explainMaxAxioms, explainMaxAxiomsElk)
+                .explain(ontology, request, requestedType, caller::isInterrupted);
+        Map<String, Object> result = new InferenceExplanationView(ontology, this::label)
+                .toMap(outcome, loadMs, explainBudgetMs, requestedType.getDisplayName());
+        long revision = sessionService.currentRevision(job.getProjectId());
+        if (revision >= 0 && !hasOwner(job)) {
+            result.put("ontologyRevision", revision);
+        }
+        return result;
     }
 
     private Map<String, Object> executeExplainEntailment(ReasoningJob job) {
@@ -927,6 +989,7 @@ public class ReasoningJobExecutor {
         if (session.downgradedWarning() != null) {
             result.put("downgradedWarning", session.downgradedWarning());
         }
+        result.put("completion", session.rulesComplete() ? "complete" : "partial");
         if (session.revision() >= 0) {
             result.put("ontologyRevision", session.revision());
         }

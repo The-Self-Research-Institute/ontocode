@@ -40,7 +40,8 @@ public class ReasoningJobController {
                     request.getSubjectIri(),
                     request.getTargetIri(),
                     request.getPropertyIri(),
-                    request.getLiteralValue());
+                    request.getLiteralValue(),
+                    request.getParams());
             queueProcessor.processNext();
 
             Map<String, Object> body = new HashMap<>();

@@ -62,32 +62,35 @@ public class ReasoningSnapshotStore {
         return new ReasoningSnapshotStore((ReasoningSnapshotRecordRepository) null, 0, 0);
     }
 
-    static String id(String projectId, long revision, long tripleCount, String reasoner) {
-        return projectId + "|" + revision + "|" + tripleCount + "|" + reasoner;
+    static String id(String projectId, long revision, long tripleCount, String reasoner, String rulesFingerprint) {
+        return projectId + "|" + revision + "|" + tripleCount + "|" + reasoner + "|" + rulesFingerprint;
     }
 
     private static boolean cacheable(long revision, long tripleCount) {
         return revision > 0 && tripleCount >= 0;
     }
 
-    public void save(String projectId, long revision, long tripleCount, String reasoner, Map<String, Object> snapshot) {
-        if (writer == null || snapshot == null || !cacheable(revision, tripleCount) || !available()) {
+    public void save(String projectId, long revision, long tripleCount, String reasoner, String rulesFingerprint,
+                     Map<String, Object> snapshot) {
+        if (writer == null || snapshot == null || rulesFingerprint == null || !cacheable(revision, tripleCount)
+                || !available()) {
             return;
         }
         try {
-            writer.execute(() -> write(projectId, revision, tripleCount, reasoner, snapshot));
+            writer.execute(() -> write(projectId, revision, tripleCount, reasoner, rulesFingerprint, snapshot));
         } catch (RejectedExecutionException e) {
             log.warn("[SnapshotStore] Write queue full — not saving the {} snapshot of project {} revision {}",
                     reasoner, projectId, revision);
         }
     }
 
-    public Optional<Map<String, Object>> find(String projectId, long revision, long tripleCount, String reasoner) {
-        if (repository == null || !cacheable(revision, tripleCount) || !available()) {
+    public Optional<Map<String, Object>> find(String projectId, long revision, long tripleCount, String reasoner,
+                                              String rulesFingerprint) {
+        if (repository == null || rulesFingerprint == null || !cacheable(revision, tripleCount) || !available()) {
             return Optional.empty();
         }
         try {
-            Optional<ReasoningSnapshotRecord> record = repository.findById(id(projectId, revision, tripleCount, reasoner));
+            Optional<ReasoningSnapshotRecord> record = repository.findById(id(projectId, revision, tripleCount, reasoner, rulesFingerprint));
             markAvailable();
             return record.filter(this::isFresh).flatMap(this::toSnapshot);
         } catch (Exception e) {
@@ -129,7 +132,7 @@ public class ReasoningSnapshotStore {
     }
 
     Optional<ReasoningSnapshotRecord> toRecord(String projectId, long revision, long tripleCount, String reasoner,
-                                               Map<String, Object> snapshot) {
+                                               String rulesFingerprint, Map<String, Object> snapshot) {
         try {
             byte[] json = objectMapper.writeValueAsBytes(snapshot);
             if (json.length > maxResultBytes) {
@@ -139,11 +142,12 @@ public class ReasoningSnapshotStore {
             }
             Instant now = Instant.now();
             return Optional.of(ReasoningSnapshotRecord.builder()
-                    .id(id(projectId, revision, tripleCount, reasoner))
+                    .id(id(projectId, revision, tripleCount, reasoner, rulesFingerprint))
                     .projectId(projectId)
                     .revision(revision)
                     .tripleCount(tripleCount)
                     .reasoner(reasoner)
+                    .rulesFingerprint(rulesFingerprint)
                     .resultJson(new String(json, StandardCharsets.UTF_8))
                     .createdAt(now)
                     .updatedAt(now)
@@ -154,11 +158,12 @@ public class ReasoningSnapshotStore {
         }
     }
 
-    private void write(String projectId, long revision, long tripleCount, String reasoner, Map<String, Object> snapshot) {
+    private void write(String projectId, long revision, long tripleCount, String reasoner, String rulesFingerprint,
+                       Map<String, Object> snapshot) {
         if (!available()) {
             return;
         }
-        Optional<ReasoningSnapshotRecord> record = toRecord(projectId, revision, tripleCount, reasoner, snapshot);
+        Optional<ReasoningSnapshotRecord> record = toRecord(projectId, revision, tripleCount, reasoner, rulesFingerprint, snapshot);
         if (record.isEmpty()) {
             return;
         }

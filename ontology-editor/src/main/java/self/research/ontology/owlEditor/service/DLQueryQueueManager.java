@@ -39,6 +39,13 @@ public class DLQueryQueueManager {
 
     private static final long DEFAULT_ESTIMATE_MS = 120_000;
 
+    @org.springframework.beans.factory.annotation.Value("${ontocode.dlquery.max-queued:50}")
+    private int maxQueued = 50;
+
+    void useMaxQueued(int maxQueued) {
+        this.maxQueued = maxQueued;
+    }
+
     public DLQueryQueueManager(SimpMessagingTemplate messagingTemplate,
                                  SparqlDatasetService datasetService,
                                  DLQueryConcurrencyPolicy concurrencyPolicy) {
@@ -64,6 +71,11 @@ public class DLQueryQueueManager {
             log.info("[DLQuery] Reusing job {} for project {}", existing.getJobId(), projectId);
             notifyJob(existing);
             return existing;
+        }
+
+        if (queue.size() >= maxQueued) {
+            log.warn("[DLQuery] Refusing job for project {}: {} queries are already waiting", projectId, queue.size());
+            throw ReasoningTaskRunner.busy();
         }
 
         long tripleCount = resolveTripleCount(projectId);

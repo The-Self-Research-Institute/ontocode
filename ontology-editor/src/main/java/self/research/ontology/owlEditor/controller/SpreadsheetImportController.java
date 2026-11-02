@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -39,6 +41,9 @@ import java.util.TreeMap;
 @RequestMapping("/api/ontology/spreadsheet-import")
 @CrossOrigin
 public class SpreadsheetImportController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(SpreadsheetImportController.class);
     private static final int MAX_PREVIEW_ROWS = 1_000;
@@ -111,10 +116,16 @@ public class SpreadsheetImportController {
     public ResponseEntity<?> commit(@PathVariable String projectId,
                                     @RequestParam("file") MultipartFile file,
                                     @RequestParam("rules") String rulesJson,
-                                    @RequestParam(defaultValue = "false") boolean draft,
+                                    @RequestParam(name = "draft", required = false) Boolean draftParam,
                                     @RequestParam(required = false) String userId,
                                     @RequestParam(required = false) String username,
                                     HttpServletRequest request) {
+        boolean draft = Boolean.TRUE.equals(draftParam);
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId,
+                !Boolean.FALSE.equals(draftParam));
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         SpreadsheetImportCaller.Caller caller = SpreadsheetImportCaller.resolve(request, userId, username);
         useCallersDraft(caller);
         if (file == null || file.isEmpty()) {

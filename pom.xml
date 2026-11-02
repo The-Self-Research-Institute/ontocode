@@ -12,6 +12,14 @@
 
     <name>Ontology Platform</name>
 
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <modules>
         <module>shared/common-models</module>
         <module>shared/common-utils</module>
@@ -31,10 +39,10 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
         <!-- Latest Spring Boot (December 2024) -->
-        <spring-boot.version>3.4.0</spring-boot.version>
+        <spring-boot.version>3.4.13</spring-boot.version>
 
         <!-- Latest Spring Cloud (compatible with Spring Boot 3.4.x) -->
-        <spring-cloud.version>2024.0.0</spring-cloud.version>
+        <spring-cloud.version>2024.0.3</spring-cloud.version>
 
         <!-- OWLAPI 5.5.0 for main services (Java 21 compatible) -->
         <owlapi.version>5.5.0</owlapi.version>
@@ -89,6 +97,17 @@
                 <groupId>edu.stanford.swrl</groupId>
                 <artifactId>swrlapi-drools-engine</artifactId>
                 <version>${swrlapi.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.thoughtworks.xstream</groupId>
+                <artifactId>xstream</artifactId>
+                <version>1.4.21</version>
+            </dependency>
+            <dependency>
+                <groupId>javax.xml.bind</groupId>
+                <artifactId>jaxb-api</artifactId>
+                <version>2.3.1</version>
             </dependency>
 
             <!-- Lombok -->
@@ -158,6 +177,37 @@
             </plugins>
         </pluginManagement>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>ban-openllet-pellet</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.github.galigator.openllet</exclude>
+                                        <exclude>com.github.galigator.openllet:*</exclude>
+                                        <exclude>com.clarkparsia.pellet</exclude>
+                                        <exclude>com.clarkparsia.pellet:*</exclude>
+                                        <exclude>net.sourceforge.owlapi:*pellet*</exclude>
+                                        <exclude>*:*openllet*</exclude>
+                                    </excludes>
+                                    <message>Openllet and Pellet are not allowed</message>
+                                </bannedDependencies>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>

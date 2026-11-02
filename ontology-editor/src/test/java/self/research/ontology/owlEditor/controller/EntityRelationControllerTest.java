@@ -39,7 +39,7 @@ class EntityRelationControllerTest {
         ExactChangeRecorder recorder = new ExactChangeRecorder(mock(SparqlDatasetService.class),
                 mock(HistoryChangeRepository.class), historyService);
         controller = new EntityRelationController(mutationService, draftTrackingService, new ProjectWriteLockRegistry(),
-                recorder);
+                recorder, mock(self.research.ontology.owlEditor.service.ProjectMetadataService.class));
     }
 
     @Test

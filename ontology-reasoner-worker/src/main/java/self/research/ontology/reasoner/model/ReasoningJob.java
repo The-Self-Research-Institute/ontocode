@@ -23,7 +23,8 @@ public class ReasoningJob {
         REASONER_DATA_PROP_HIERARCHY,
         REASONER_EXPLAIN_INCONSISTENCY,
         REASONER_EXPLAIN_ENTAILMENT,
-        REASONER_SNAPSHOT
+        REASONER_SNAPSHOT,
+        EXPLAIN_INFERENCE
     }
 
     public enum Status {
@@ -43,6 +44,7 @@ public class ReasoningJob {
     private String targetIri;
     private String propertyIri;
     private String literalValue;
+    private Map<String, Object> params;
     private Status status;
     private int queuePosition;
     private long estimatedWaitTimeMs;

@@ -895,7 +895,6 @@ Package|Licenses
 **[onetime (5.1.2)](#onetime-512)**|MIT
 **[open (10.2.0)](#open-1020)**|MIT
 **[opener (1.5.2)](#opener-152)**|WTFPL, MIT
-**[Openllet :: OWL API (2.6.5)](#openllet-owl-api-265)**|AGPL-3.0-only, MIT
 **[optionator (0.9.4)](#optionator-094)**|MIT
 **[OWL Explanation (5.0.0)](#owl-explanation-500)**|LGPL-3.0-only, LGPL-2.1-or-later
 **[OWLAPI :: Distribution (5.5.0)](#owlapi-distribution-550)**|LGPL-3.0-only, GPL-3.0-or-later, Apache-2.0, LGPL-2.1-or-later
@@ -8184,26 +8183,6 @@ Copyright (c) 2012–2020 Domenic Denicola <d@domenic.me>
 **Package Homepage**: https://www.npmjs.com/package/opener
 **Package Download URL**: https://registry.npmjs.org/opener/-/opener-1.5.2.tgz
 **Dependency Paths**: webpack-bundle-analyzer > opener
-
----
-
-### [Openllet :: OWL API (2.6.5)](https://github.com/Galigator/openllet)
-Openllet is open-source future of Pellet OWL Reasoner
-**Usage**: Transitive
-#### Declared Licenses
-AGPL-3.0-only
-#### Other Licenses
-MIT
-#### Copyrights
-  License: MIT
-Copyright (c) 2006 - 2008 Clark & Parsia, LLC. <http://www.clarkparsia.com>
-### Package Info
-
-**Authors**: Kévin Séjourné
-**Package Manager**: Maven
-**Package Homepage**: https://github.com/Galigator/openllet
-**Package Download URL**: https://repo1.maven.org/maven2/com/github/galigator/openllet/openllet-owlapi/2.6.5/openllet-owlapi-2.6.5-sources.jar
-**Dependency Paths**: self.research.ontology:ontology-platform > self.research.ontology:ontology-reasoner-worker > com.github.galigator.openllet:openllet-owlapi > self.research.ontology:ontology-platform > self.research.ontology:owlEditor > com.github.galigator.openllet:openllet-owlapi > self.research.ontology:ontology-plugin-service > com.github.galigator.openllet:openllet-owlapi
 
 ---
 

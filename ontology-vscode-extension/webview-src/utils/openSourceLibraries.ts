@@ -42,7 +42,6 @@ export const OPEN_SOURCE_LIBRARIES: OpenSourceLibrary[] = [
   { name: "HermiT Reasoner", license: "LGPL-2.1", url: "http://www.hermit-reasoner.com/", usedIn: "OWL 2 DL reasoner" },
   { name: "JFact Reasoner", license: "LGPL-2.1", url: "http://jfact.sourceforge.net/", usedIn: "OWL 2 DL reasoner" },
   { name: "ELK Reasoner", license: "LGPL-2.1+", url: "https://github.com/liveontologies/elk-reasoner", usedIn: "OWL 2 EL reasoner" },
-  { name: "Openllet (Pellet)", license: "AGPL-3.0", url: "https://github.com/Galigator/openllet", usedIn: "OWL 2 DL reasoner" },
   { name: "SWRL API", license: "BSD-3-Clause", url: "https://github.com/protegeproject/swrlapi", usedIn: "SWRL rules support" },
 
   { name: "Apache Jena / Fuseki", license: "Apache-2.0", url: "https://jena.apache.org/", usedIn: "SPARQL & RDF store (desktop)" },

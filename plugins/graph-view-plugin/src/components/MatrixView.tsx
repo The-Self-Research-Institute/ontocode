@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
+import { renderEdgeTooltip } from '../utils/tooltipDom';
 import type { OntologyNode, OntologyEdge } from '../types';
 import { generateMatrixVisualization } from '../layouts/MatrixLayout';
 
@@ -69,11 +70,14 @@ export const MatrixView: React.FC<MatrixViewProps> = ({
           .style('font-size', '12px')
           .style('pointer-events', 'none')
           .style('z-index', '10000')
-          .html(`
-            <strong>${d.sourceNode.label}</strong> 
-            <span style="color: ${colorScale(d.edge.type)}">${d.edge.label}</span> 
-            <strong>${d.targetNode.label}</strong>
-          `)
+          .each(function () {
+            renderEdgeTooltip(this as HTMLElement, {
+              sourceLabel: d.sourceNode.label,
+              edgeLabel: d.edge.label,
+              targetLabel: d.targetNode.label,
+              edgeColor: String(colorScale(d.edge.type)),
+            });
+          })
           .style('left', (event.pageX + 10) + 'px')
           .style('top', (event.pageY - 10) + 'px');
       })

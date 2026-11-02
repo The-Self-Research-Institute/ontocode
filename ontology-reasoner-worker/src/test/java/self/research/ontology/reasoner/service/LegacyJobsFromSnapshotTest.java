@@ -90,10 +90,10 @@ class LegacyJobsFromSnapshotTest {
         OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
         ReasoningJobExecutor executor = executor(sessions);
 
-        Map<String, Object> first = executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "OPENLLET", null));
-        Map<String, Object> second = executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "OPENLLET", null));
+        Map<String, Object> first = executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "HERMIT", null));
+        Map<String, Object> second = executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "HERMIT", null));
         Map<String, Object> consistency = executor.execute(
-                job(ReasoningJob.JobType.REASONER_CONSISTENCY, "OPENLLET", null));
+                job(ReasoningJob.JobType.REASONER_CONSISTENCY, "HERMIT", null));
 
         verify(sessions, times(2)).openSnapshotSession(any(), any(), any());
         verify(sessions, times(1)).openSession(any(), any(), any());
@@ -110,9 +110,9 @@ class LegacyJobsFromSnapshotTest {
         OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
         ReasoningJobExecutor executor = executor(sessions);
 
-        Map<String, Object> before = executor.execute(job(ReasoningJob.JobType.REASONER_CLASSIFY, "OPENLLET", null));
+        Map<String, Object> before = executor.execute(job(ReasoningJob.JobType.REASONER_CLASSIFY, "HERMIT", null));
         editor.project("P1", SnapshotTestSupport.CONSISTENT);
-        Map<String, Object> after = executor.execute(job(ReasoningJob.JobType.REASONER_CLASSIFY, "OPENLLET", null));
+        Map<String, Object> after = executor.execute(job(ReasoningJob.JobType.REASONER_CLASSIFY, "HERMIT", null));
 
         verify(sessions, times(2)).openSnapshotSession(any(), any(), any());
         assertEquals(2, editor.loads.get());
@@ -128,13 +128,13 @@ class LegacyJobsFromSnapshotTest {
         OntologySessionService sessions = SnapshotTestSupport.sessions(editor);
         ReasoningJobExecutor executor = executor(sessions);
 
-        executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "OPENLLET", null));
+        executor.execute(job(ReasoningJob.JobType.REASONER_HIERARCHY, "HERMIT", null));
         Map<String, Object> draftClassify = executor.execute(
-                job(ReasoningJob.JobType.REASONER_CLASSIFY, "OPENLLET", "alice@example.com"));
+                job(ReasoningJob.JobType.REASONER_CLASSIFY, "HERMIT", "alice@example.com"));
         Map<String, Object> draftAgain = executor.execute(
-                job(ReasoningJob.JobType.REASONER_CLASSIFY, "OPENLLET", "alice@example.com"));
+                job(ReasoningJob.JobType.REASONER_CLASSIFY, "HERMIT", "alice@example.com"));
         Map<String, Object> publishedClassify = executor.execute(
-                job(ReasoningJob.JobType.REASONER_CLASSIFY, "OPENLLET", null));
+                job(ReasoningJob.JobType.REASONER_CLASSIFY, "HERMIT", null));
 
         verify(sessions, times(3)).openSnapshotSession(any(), any(), any());
         assertEquals(true, draftClassify.get("inconsistent"));
@@ -144,7 +144,7 @@ class LegacyJobsFromSnapshotTest {
         assertEquals(1L, publishedClassify.get("ontologyRevision"));
 
         Map<String, Object> draftConsistency = executor.execute(
-                job(ReasoningJob.JobType.REASONER_CONSISTENCY, "OPENLLET", "alice@example.com"));
+                job(ReasoningJob.JobType.REASONER_CONSISTENCY, "HERMIT", "alice@example.com"));
         assertEquals(false, draftConsistency.get("consistent"));
         verify(sessions, times(1)).openSession(any(), any(), any());
     }
@@ -273,10 +273,10 @@ class LegacyJobsFromSnapshotTest {
         ReasoningJobExecutor executor = new ReasoningJobExecutor(sessions, snapshots);
 
         Map<String, Object> consistency = executor.execute(
-                job(ReasoningJob.JobType.REASONER_CONSISTENCY, "OPENLLET", null));
+                job(ReasoningJob.JobType.REASONER_CONSISTENCY, "HERMIT", null));
 
         assertEquals(true, consistency.get("consistent"));
-        assertEquals("Openllet", consistency.get("reasonerType"));
+        assertEquals("HermiT", consistency.get("reasonerType"));
         verify(sessions, times(1)).openSession(any(), any(), any());
         verify(sessions, never()).openSnapshotSession(any(), any(), any());
         assertEquals(0, snapshots.size());
@@ -299,10 +299,10 @@ class LegacyJobsFromSnapshotTest {
         ReasoningJobExecutor executor = executor(sessions);
 
         Future<Map<String, Object>> snapshot = pool.submit(() ->
-                executor.execute(job(ReasoningJob.JobType.REASONER_SNAPSHOT, "OPENLLET", null)));
+                executor.execute(job(ReasoningJob.JobType.REASONER_SNAPSHOT, "HERMIT", null)));
         assertTrue(started.await(10, TimeUnit.SECONDS));
         Future<Map<String, Object>> consistency = pool.submit(() ->
-                executor.execute(job(ReasoningJob.JobType.REASONER_CONSISTENCY, "OPENLLET", null)));
+                executor.execute(job(ReasoningJob.JobType.REASONER_CONSISTENCY, "HERMIT", null)));
         Thread.sleep(300);
         assertFalse(consistency.isDone());
         release.countDown();
@@ -441,10 +441,8 @@ class LegacyJobsFromSnapshotTest {
             visited.add(iri);
             List<Map<String, Object>> children = new ArrayList<>();
             for (Node<OWLObjectPropertyExpression> node : reasoner.getSubObjectProperties(property, true)) {
-                OWLObjectPropertyExpression rep = node.getRepresentativeElement();
-                if (rep.isAnonymous()) continue;
-                OWLObjectProperty sub = rep.asOWLObjectProperty();
-                if (sub.isOWLBottomObjectProperty() || sub.equals(property)) continue;
+                OWLObjectProperty sub = self.research.ontology.common.ReasonerNodes.namedProperty(node).orElse(null);
+                if (sub == null || sub.isOWLBottomObjectProperty() || sub.equals(property)) continue;
                 children.add(objectPropertyNode(sub, visited));
             }
             children.sort(Comparator.comparing(m -> m.get("label").toString()));

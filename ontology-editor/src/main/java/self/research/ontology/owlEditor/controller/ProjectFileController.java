@@ -15,7 +15,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
@@ -36,22 +38,29 @@ public class ProjectFileController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectFileController.class);
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleService ruleService;
+
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
+    private final ProjectAuthorization authorization;
 
     public ProjectFileController(StorageManager storageManager,
-                                 ProjectMetadataService metadataService) {
+                                 ProjectMetadataService metadataService,
+                                 ProjectAuthorization authorization) {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
+        this.authorization = authorization;
     }
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> listFiles(
             @RequestParam(value = "search", required = false) String search,
-            @RequestParam(value = "caseSensitive", defaultValue = "false") boolean caseSensitive) {
+            @RequestParam(value = "caseSensitive", defaultValue = "false") boolean caseSensitive,
+            CallerIdentity caller) {
 
         List<FileInfo> files = new ArrayList<>();
-        for (String projectId : storageManager.listProjectIds()) {
+        for (String projectId : authorization.accessibleAmong(caller, storageManager.listProjectIds())) {
             buildFileInfo(projectId).ifPresent(files::add);
         }
 
@@ -85,6 +94,7 @@ public class ProjectFileController {
 
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(ontologyPath));
             HttpHeaders headers = new HttpHeaders();
+            self.research.ontology.owlEditor.service.DisabledRulesHeader.into(headers, ruleService, projectId, false, null);
             headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());
             headers.setContentLength(Files.size(ontologyPath));
             headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
