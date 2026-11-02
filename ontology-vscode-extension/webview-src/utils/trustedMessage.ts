@@ -4,14 +4,17 @@ function isEmbeddedInHost(): boolean {
   return typeof window !== 'undefined' && window.parent !== window;
 }
 
-function isInVsCodeWebview(): boolean {
-  return !isDesktop() && !!window.vscode && isEmbeddedInHost() && !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
+function isVsCodeWebview(): boolean {
+  return typeof window !== 'undefined' && !isDesktop() && !!window.vscode && !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
+}
+
+function isWebPageOrigin(event: MessageEvent): boolean {
+  return /^https?:/i.test(event.origin || '') && event.origin !== window.location.origin;
 }
 
 function isFromVsCodeHost(event: MessageEvent): boolean {
-  if (!isEmbeddedInHost()) return false;
-  if (event.source === window.parent || event.source === null) return true;
-  return isInVsCodeWebview() && event.source !== window;
+  if (isEmbeddedInHost() && event.source === window.parent) return true;
+  return isVsCodeWebview() && !isWebPageOrigin(event);
 }
 
 function isFromThisWindow(event: MessageEvent): boolean {
@@ -21,7 +24,7 @@ function isFromThisWindow(event: MessageEvent): boolean {
 export function hasHostChannel(): boolean {
   if (typeof window === 'undefined') return false;
   if (isDesktop()) return true;
-  return !!window.vscode && isEmbeddedInHost() && !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
+  return isVsCodeWebview();
 }
 
 export function isTrustedMessage(event: MessageEvent): boolean {

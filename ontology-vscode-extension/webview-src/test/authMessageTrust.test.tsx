@@ -29,7 +29,10 @@ function Probe() {
   return null;
 }
 
+const originalVscode = (window as any).vscode;
+
 beforeEach(() => {
+  (window as any).vscode = undefined;
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   localStorage.clear();
@@ -40,6 +43,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  (window as any).vscode = originalVscode;
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();

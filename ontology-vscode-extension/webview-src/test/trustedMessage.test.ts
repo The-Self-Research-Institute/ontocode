@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hasHostChannel, isTrustedHostMessage, isTrustedMessage } from '../utils/trustedMessage';
 
 const win = window as any;
@@ -12,6 +12,10 @@ function setParent(value: unknown) {
 function messageFrom(source: unknown, origin: string): MessageEvent {
   return { source, origin, data: {} } as unknown as MessageEvent;
 }
+
+beforeEach(() => {
+  win.vscode = undefined;
+});
 
 afterEach(() => {
   if (originalParent) Object.defineProperty(window, 'parent', originalParent);
@@ -37,15 +41,15 @@ describe('isTrustedMessage', () => {
     expect(isTrustedMessage(messageFrom(null, ''))).toBe(false);
   });
 
-  it('accepts a message from any other window inside the VS Code webview, but not from the page itself', () => {
-    setParent({});
+  it('accepts a message from the host inside the VS Code webview but not one from a web page', () => {
     win.vscode = { postMessage() {} };
     expect(isTrustedMessage(messageFrom({}, 'vscode-webview://x'))).toBe(true);
-    expect(isTrustedHostMessage(messageFrom(window, window.location.origin))).toBe(false);
+    expect(isTrustedMessage(messageFrom(null, ''))).toBe(true);
+    expect(isTrustedMessage(messageFrom({}, 'https://evil.example'))).toBe(false);
   });
 
   it('accepts a message with no source inside a VS Code webview, where the host delivers over a message port', () => {
-    setParent({});
+    win.vscode = { postMessage() {} };
     expect(isTrustedMessage(messageFrom(null, ''))).toBe(true);
   });
 
@@ -66,12 +70,12 @@ describe('isTrustedHostMessage', () => {
     expect(isTrustedHostMessage(messageFrom(window, window.location.origin))).toBe(false);
   });
 
-  it('accepts only the parent frame inside the VS Code webview', () => {
-    const host = {};
-    setParent(host);
+  it('accepts the host channel inside the VS Code webview and nothing outside it', () => {
     win.vscode = { postMessage() {} };
     expect(hasHostChannel()).toBe(true);
-    expect(isTrustedHostMessage(messageFrom(host, 'vscode-webview://x'))).toBe(true);
+    expect(isTrustedHostMessage(messageFrom({}, 'vscode-webview://x'))).toBe(true);
+    win.vscode = undefined;
+    expect(hasHostChannel()).toBe(false);
     expect(isTrustedHostMessage(messageFrom(window, window.location.origin))).toBe(false);
   });
 });
@@ -80,6 +84,7 @@ import { isTrustedAppMessage } from '../utils/trustedMessage';
 
 describe('isTrustedAppMessage', () => {
   it('holds the token message to the stricter host check', () => {
+    win.vscode = undefined;
     const tokenMessage = { source: window, origin: window.location.origin, data: { type: 'storedAuthToken', token: 't' } } as unknown as MessageEvent;
     const otherMessage = { source: window, origin: window.location.origin, data: { type: 'fileReady' } } as unknown as MessageEvent;
     expect(isTrustedAppMessage(tokenMessage)).toBe(false);
