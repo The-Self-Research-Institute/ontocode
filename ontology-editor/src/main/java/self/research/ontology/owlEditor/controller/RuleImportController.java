@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,9 @@ import java.util.Map;
 @CrossOrigin
 public class RuleImportController {
 
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
+
     private static final Logger log = LoggerFactory.getLogger(RuleImportController.class);
     private static final MediaType XLSX = MediaType.parseMediaType(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -61,6 +65,10 @@ public class RuleImportController {
                                          @RequestParam(required = false) String userId,
                                          @RequestParam(required = false) String username,
                                          HttpServletRequest http) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft || dryRun);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             if (file == null || file.isEmpty()) {
                 return message(400, "Choose a file to import");

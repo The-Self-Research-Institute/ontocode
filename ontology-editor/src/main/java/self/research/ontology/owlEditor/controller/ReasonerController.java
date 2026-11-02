@@ -24,6 +24,8 @@ import self.research.ontology.common.rules.RuleExecutionLimits;
 import self.research.ontology.common.rules.RuleExecutionResult;
 import self.research.ontology.owlEditor.service.RuleExecutionPresenter;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
+import self.research.ontology.owlEditor.service.ReasonerLease;
+import self.research.ontology.owlEditor.service.ReasoningTaskRunner;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
@@ -108,6 +110,13 @@ public class ReasonerController {
 
     @Autowired(required = false)
     private self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext owlApiContext;
+
+    private ReasoningTaskRunner taskRunner = ReasoningTaskRunner.standalone();
+
+    @Autowired(required = false)
+    void setTaskRunner(ReasoningTaskRunner taskRunner) {
+        this.taskRunner = taskRunner;
+    }
 
     @Value("${ontocode.reasoner-worker.enabled:false}")
     private boolean reasonerWorkerEnabled;
@@ -582,8 +591,12 @@ public class ReasonerController {
     }
 
     private self.research.ontology.common.PreparedOntology chained(OWLOntology ontology, String projectId) {
-        return SwrlBuiltIns.prepareChained(ontology, ruleStage,
-                input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519", projectId + ":" + ontology.getAxiomCount());
+        try (self.research.ontology.owlEditor.service.HeavyWorkAdmission.Hold hold = heavyWork.admitLoad(
+                "reasoner:" + projectId, self.research.ontology.common.admission.WorkKind.REASONING,
+                ontology.getAxiomCount())) {
+            return SwrlBuiltIns.prepareChained(ontology, ruleStage,
+                    input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519", projectId + ":" + ontology.getAxiomCount());
+        }
     }
 
     private self.research.ontology.common.RuleStage ruleStage = self.research.ontology.common.RestRuleStage.shared();
@@ -626,11 +639,13 @@ public class ReasonerController {
         boolean rulesComplete = prepared == null || prepared.complete();
         OWLOntology classInput = prepared != null ? prepared.forHermit() : ontology;
 
-        OWLReasoner classReasoner;
+        boolean classOneShot = classInput != ontology;
+        ReasonerLease classLease;
         try {
-            classReasoner = reasonerService.getClassHierarchyReasoner(classInput, classType);
+            classLease = reasonerService.leaseClassHierarchy(classInput, classType, classOneShot);
         } catch (RuntimeException e) {
-            if (classType != ReasonerType.HERMIT || run.isStopped() || isStopFailure(e)) {
+            if (classType != ReasonerType.HERMIT || run.isStopped() || isStopFailure(e)
+                    || e instanceof self.research.ontology.owlEditor.service.BusyException) {
                 throw e;
             }
             log.warn("HermiT could not be started for project {}; using JFact instead", projectId, e);
@@ -638,42 +653,53 @@ public class ReasonerController {
             classInput = ontology;
             downgradedWarning = "HermiT could not be started for this ontology (" + rootMessage(e)
                     + "), so JFact was used instead.";
-            classReasoner = reasonerService.getClassHierarchyReasoner(classInput, classType);
+            classLease = reasonerService.leaseClassHierarchy(classInput, classType, false);
         }
-        run.attach(classReasoner);
-        ReasonerType propertyType = classType == ReasonerType.ELK ? ReasonerType.HERMIT : classType;
-        OWLReasoner propertyReasoner = null;
-        OWLOntology propertyInput = ontology;
-        if (propertyType != classType) {
-            self.research.ontology.common.PreparedOntology forProperty = prepared != null
-                    ? prepared : chained(ontology, projectId);
-            propertyInput = forProperty.forHermit();
-            rulesComplete = rulesComplete && forProperty.complete();
-            if (prepared == null && forProperty.note() != null) {
-                downgradedWarning = downgradedWarning == null ? forProperty.note() : downgradedWarning + " " + forProperty.note();
-            }
-            propertyReasoner = reasonerService.getUnwarmedReasoner(propertyInput, propertyType);
-            run.attach(propertyReasoner);
-        }
-
+        ReasonerLease propertyLease = null;
         Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("success", true);
         try {
-            snapshot.putAll(ReasoningSnapshot.build(ontology, classReasoner, propertyReasoner));
-        } catch (RuntimeException e) {
-            if (run.isStopped()) {
-                reasonerService.disposeReasoner(classInput, classType);
-                if (propertyReasoner != null) {
-                    reasonerService.disposeReasoner(propertyInput, propertyType);
+            OWLReasoner classReasoner = classLease.reasoner();
+            run.attach(classReasoner);
+            ReasonerType propertyType = classType == ReasonerType.ELK ? ReasonerType.HERMIT : classType;
+            OWLReasoner propertyReasoner = null;
+            OWLOntology propertyInput = ontology;
+            if (propertyType != classType) {
+                self.research.ontology.common.PreparedOntology forProperty = prepared != null
+                        ? prepared : chained(ontology, projectId);
+                propertyInput = forProperty.forHermit();
+                rulesComplete = rulesComplete && forProperty.complete();
+                if (prepared == null && forProperty.note() != null) {
+                    downgradedWarning = downgradedWarning == null ? forProperty.note() : downgradedWarning + " " + forProperty.note();
                 }
+                propertyLease = reasonerService.leaseUnwarmed(propertyInput, propertyType,
+                        propertyInput != ontology);
+                propertyReasoner = propertyLease.reasoner();
+                run.attach(propertyReasoner);
             }
-            if (!run.isStopped() && downgradedWarning != null && downgradedWarning.contains("HermiT could not be started")) {
-                throw new IllegalStateException(downgradedWarning + " The JFact fallback also failed: " + rootMessage(e), e);
+
+            snapshot.put("success", true);
+            try {
+                snapshot.putAll(ReasoningSnapshot.build(ontology, classReasoner, propertyReasoner));
+            } catch (RuntimeException e) {
+                if (run.isStopped()) {
+                    classLease.retire();
+                    if (propertyLease != null) {
+                        propertyLease.retire();
+                    }
+                }
+                if (!run.isStopped() && downgradedWarning != null && downgradedWarning.contains("HermiT could not be started")) {
+                    throw new IllegalStateException(downgradedWarning + " The JFact fallback also failed: " + rootMessage(e), e);
+                }
+                throw e;
             }
-            throw e;
+            snapshot.put("propertyReasonerType", propertyType.getDisplayName());
+        } finally {
+            if (propertyLease != null) {
+                propertyLease.close();
+            }
+            classLease.close();
         }
         snapshot.put("reasonerType", classType.getDisplayName());
-        snapshot.put("propertyReasonerType", propertyType.getDisplayName());
         snapshot.put("requestedReasoner", requestedType.name());
         snapshot.put("ontologyRevision", revision);
         snapshot.put("draft", isDraft);
@@ -810,6 +836,7 @@ public class ReasonerController {
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request
     ) {
+        ReasonerLease lease = null;
         try {
             OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
             String effectiveType = reasonerType.equalsIgnoreCase("ELK") ? "HERMIT" : reasonerType;
@@ -832,7 +859,8 @@ public class ReasonerController {
 
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
             OWLClass owlClass = df.getOWLClass(IRI.create(classIri));
-            OWLReasoner reasoner = reasonerService.getClassHierarchyReasoner(ontology, type);
+            lease = reasonerService.leaseClassHierarchy(ontology, type, false);
+            OWLReasoner reasoner = lease.reasoner();
 
             Set<OWLClass> subClasses = reasonerService.getInferredSubClasses(reasoner, owlClass, direct);
 
@@ -859,6 +887,10 @@ public class ReasonerController {
         } catch (Exception e) {
             log.error("Error getting inferred subclasses", e);
             return ResponseEntity.ok(friendlyError(e));
+        } finally {
+            if (lease != null) {
+                lease.close();
+            }
         }
     }
 
@@ -943,51 +975,54 @@ public class ReasonerController {
             }
 
             log.info("Building class hierarchy for project {} with {} ({} axioms)", projectId, type, axiomCount);
-            ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
                 ReasonerType finalType = type;
-                Future<Map<String, Object>> future = executor.submit(() -> {
-                    OWLReasoner reasoner = reasonerService.getReasoner(ontology, finalType);
+                ReasoningTaskRunner.Execution<Map<String, Object>> execution = taskRunner.submit("class hierarchy", context -> {
+                    try (ReasonerLease lease = reasonerService.lease(ontology, finalType)) {
+                        context.attach(lease.reasoner());
+                        context.onUncooperative(lease::retire);
+                        OWLReasoner reasoner = lease.reasoner();
 
-                    // Inconsistent ontologies cannot be classified — every reasoner call
-                    // throws InconsistentOntologyException. Return an explicit signal so
-                    // the UI can tell the user instead of rendering an empty tree.
-                    if (finalType != ReasonerType.STRUCTURAL && !reasoner.isConsistent()) {
-                        Map<String, Object> inconsistent = new HashMap<>();
-                        inconsistent.put("hierarchy", List.of());
-                        inconsistent.put("reasonerType", finalType.getDisplayName());
-                        inconsistent.put("totalClasses", 0);
-                        inconsistent.put("inconsistent", true);
-                        return inconsistent;
+                        // Inconsistent ontologies cannot be classified — every reasoner call
+                        // throws InconsistentOntologyException. Return an explicit signal so
+                        // the UI can tell the user instead of rendering an empty tree.
+                        if (finalType != ReasonerType.STRUCTURAL && !reasoner.isConsistent()) {
+                            Map<String, Object> inconsistent = new HashMap<>();
+                            inconsistent.put("hierarchy", List.of());
+                            inconsistent.put("reasonerType", finalType.getDisplayName());
+                            inconsistent.put("totalClasses", 0);
+                            inconsistent.put("inconsistent", true);
+                            return inconsistent;
+                        }
+
+                        OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+                        OWLClass thing = df.getOWLThing();
+                        OWLClass nothing = df.getOWLNothing();
+
+                        Set<String> visited = new HashSet<>();
+                        Map<String, Object> root = buildClassNode(ontology, reasoner, thing, visited, INITIAL_HIERARCHY_DEPTH);
+
+                        List<Map<String, Object>> hierarchy = new ArrayList<>();
+                        hierarchy.add(root);
+
+                        Node<OWLClass> unsatisfiableNode = reasoner.getUnsatisfiableClasses();
+                        if (unsatisfiableNode.getSize() > 1 || !reasoner.getSubClasses(nothing, true).isEmpty()) {
+                            Map<String, Object> nothingNode = buildClassNode(ontology, reasoner, nothing, visited, INITIAL_HIERARCHY_DEPTH);
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> rootChildren = (List<Map<String, Object>>) root.get("children");
+                            rootChildren.add(0, nothingNode);
+                            root.put("hasChildren", true);
+                        }
+
+                        Map<String, Object> result = new HashMap<>();
+                        result.put("hierarchy", hierarchy);
+                        result.put("reasonerType", finalType.getDisplayName());
+                        result.put("totalClasses", visited.size());
+                        return result;
                     }
-
-                    OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
-                    OWLClass thing = df.getOWLThing();
-                    OWLClass nothing = df.getOWLNothing();
-
-                    Set<String> visited = new HashSet<>();
-                    Map<String, Object> root = buildClassNode(ontology, reasoner, thing, visited, INITIAL_HIERARCHY_DEPTH);
-
-                    List<Map<String, Object>> hierarchy = new ArrayList<>();
-                    hierarchy.add(root);
-
-                    Node<OWLClass> unsatisfiableNode = reasoner.getUnsatisfiableClasses();
-                    if (unsatisfiableNode.getSize() > 1 || !reasoner.getSubClasses(nothing, true).isEmpty()) {
-                        Map<String, Object> nothingNode = buildClassNode(ontology, reasoner, nothing, visited, INITIAL_HIERARCHY_DEPTH);
-                        @SuppressWarnings("unchecked")
-                        List<Map<String, Object>> rootChildren = (List<Map<String, Object>>) root.get("children");
-                        rootChildren.add(0, nothingNode);
-                        root.put("hasChildren", true);
-                    }
-
-                    Map<String, Object> result = new HashMap<>();
-                    result.put("hierarchy", hierarchy);
-                    result.put("reasonerType", finalType.getDisplayName());
-                    result.put("totalClasses", visited.size());
-                    return result;
                 });
 
-                Map<String, Object> result = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                Map<String, Object> result = execution.await(HIERARCHY_TIMEOUT_SECONDS * 1000L);
                 if (Boolean.TRUE.equals(result.get("inconsistent"))) {
                     log.warn("Ontology for project {} is inconsistent — cannot build inferred hierarchy", projectId);
                     return ResponseEntity.ok(Map.of(
@@ -1012,7 +1047,6 @@ public class ReasonerController {
                         "lazy", true
                 ));
             } catch (TimeoutException e) {
-                executor.shutdownNow();
                 log.warn("Hierarchy timed out after {}s for project {} — returning timeout signal", HIERARCHY_TIMEOUT_SECONDS, projectId);
                 return ResponseEntity.ok(Map.of(
                         "success", false, "projectId", projectId,
@@ -1021,8 +1055,6 @@ public class ReasonerController {
                         "timeout", true,
                         "lazy", true
                 ));
-            } finally {
-                executor.shutdown();
             }
         } catch (WorkerQueueFullException e) {
             return queueFull(projectId, e);
@@ -1189,30 +1221,30 @@ public class ReasonerController {
             // Bound it the same way, and fall back to asserted (non-inferred) properties on
             // timeout — cheap since it's just reading the ontology signature.
             log.info("Ensuring classification for project {} with {} (Object Properties)", projectId, type);
-            ExecutorService objPropExecutor = Executors.newSingleThreadExecutor();
             Map<String, Object> root;
             try {
                 ReasonerType finalType = type;
-                Future<Map<String, Object>> future = objPropExecutor.submit(() -> {
-                    reasonerService.classify(ontology, finalType);
-                    OWLReasoner reasoner = reasonerService.getReasoner(ontology, finalType);
-                    // ELK does not support property hierarchy inference
-                    // Catch UnsupportedOperationException and fall back to asserted properties
-                    try {
-                        return buildObjectPropertyNode(ontology, reasoner, topProperty, new HashSet<>());
-                    } catch (UnsupportedOperationException e) {
-                        log.warn("Reasoner {} does not support object property hierarchy. Falling back to asserted properties.", finalType.getDisplayName());
-                        return null;
+                ReasoningTaskRunner.Execution<Map<String, Object>> execution = taskRunner.submit("object property hierarchy", context -> {
+                    try (ReasonerLease lease = reasonerService.lease(ontology, finalType)) {
+                        context.attach(lease.reasoner());
+                        context.onUncooperative(lease::retire);
+                        reasonerService.classify(ontology, finalType);
+                        OWLReasoner reasoner = lease.reasoner();
+                        // ELK does not support property hierarchy inference
+                        // Catch UnsupportedOperationException and fall back to asserted properties
+                        try {
+                            return buildObjectPropertyNode(ontology, reasoner, topProperty, new HashSet<>());
+                        } catch (UnsupportedOperationException e) {
+                            log.warn("Reasoner {} does not support object property hierarchy. Falling back to asserted properties.", finalType.getDisplayName());
+                            return null;
+                        }
                     }
                 });
-                root = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                root = execution.await(HIERARCHY_TIMEOUT_SECONDS * 1000L);
             } catch (TimeoutException te) {
-                objPropExecutor.shutdownNow();
                 log.warn("Object property hierarchy classification timed out after {}s for project {} — "
                         + "falling back to asserted properties", HIERARCHY_TIMEOUT_SECONDS, projectId);
                 root = null;
-            } finally {
-                objPropExecutor.shutdown();
             }
             if (root == null) {
                 root = new HashMap<>();
@@ -1305,30 +1337,30 @@ public class ReasonerController {
             // Same unbounded-classification risk as object property hierarchy — bound it and
             // fall back to asserted (non-inferred) properties on timeout.
             log.info("Ensuring classification for project {} with {} (Data Properties)", projectId, type);
-            ExecutorService dataPropExecutor = Executors.newSingleThreadExecutor();
             Map<String, Object> root;
             try {
                 ReasonerType finalType = type;
-                Future<Map<String, Object>> future = dataPropExecutor.submit(() -> {
-                    reasonerService.classify(ontology, finalType);
-                    OWLReasoner reasoner = reasonerService.getReasoner(ontology, finalType);
-                    // ELK does not support property hierarchy inference
-                    // Catch UnsupportedOperationException and fall back to asserted properties
-                    try {
-                        return buildDataPropertyNode(ontology, reasoner, topProperty, new HashSet<>());
-                    } catch (UnsupportedOperationException e) {
-                        log.warn("Reasoner {} does not support data property hierarchy. Falling back to asserted properties.", finalType.getDisplayName());
-                        return null;
+                ReasoningTaskRunner.Execution<Map<String, Object>> execution = taskRunner.submit("data property hierarchy", context -> {
+                    try (ReasonerLease lease = reasonerService.lease(ontology, finalType)) {
+                        context.attach(lease.reasoner());
+                        context.onUncooperative(lease::retire);
+                        reasonerService.classify(ontology, finalType);
+                        OWLReasoner reasoner = lease.reasoner();
+                        // ELK does not support property hierarchy inference
+                        // Catch UnsupportedOperationException and fall back to asserted properties
+                        try {
+                            return buildDataPropertyNode(ontology, reasoner, topProperty, new HashSet<>());
+                        } catch (UnsupportedOperationException e) {
+                            log.warn("Reasoner {} does not support data property hierarchy. Falling back to asserted properties.", finalType.getDisplayName());
+                            return null;
+                        }
                     }
                 });
-                root = future.get(HIERARCHY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                root = execution.await(HIERARCHY_TIMEOUT_SECONDS * 1000L);
             } catch (TimeoutException te) {
-                dataPropExecutor.shutdownNow();
                 log.warn("Data property hierarchy classification timed out after {}s for project {} — "
                         + "falling back to asserted properties", HIERARCHY_TIMEOUT_SECONDS, projectId);
                 root = null;
-            } finally {
-                dataPropExecutor.shutdown();
             }
             if (root == null) {
                 root = new HashMap<>();
@@ -1664,9 +1696,11 @@ public class ReasonerController {
             @RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request) {
+        ReasonerLease lease = null;
         try {
             OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
-            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
+            lease = reasonerService.lease(ontology, type);
+            OWLReasoner reasoner = lease.reasoner();
             
             OWLClass owlClass = ontology.getOWLOntologyManager().getOWLDataFactory().getOWLClass(IRI.create(classIri));
             
@@ -1704,6 +1738,10 @@ public class ReasonerController {
         } catch (Exception e) {
             log.error("Error getting inferred class details", e);
             return ResponseEntity.ok(friendlyError(e));
+        } finally {
+            if (lease != null) {
+                lease.close();
+            }
         }
     }
 
@@ -1719,9 +1757,11 @@ public class ReasonerController {
             @RequestParam(required = false) String userId,
             @RequestParam(defaultValue = "false") boolean draft,
             HttpServletRequest request) {
+        ReasonerLease lease = null;
         try {
             OWLOntology ontology = loadOntologyForRequest(projectId, userId, draft, request);
-            OWLReasoner reasoner = reasonerService.getReasoner(ontology, type);
+            lease = reasonerService.lease(ontology, type);
+            OWLReasoner reasoner = lease.reasoner();
             
             IRI iri = IRI.create(propertyIri);
             OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
@@ -1792,6 +1832,10 @@ public class ReasonerController {
         } catch (Exception e) {
             log.error("Error getting inferred property details", e);
             return ResponseEntity.ok(friendlyError(e));
+        } finally {
+            if (lease != null) {
+                lease.close();
+            }
         }
     }
 

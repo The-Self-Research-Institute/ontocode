@@ -1082,11 +1082,11 @@ public class SparqlDatasetService {
      */
     private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
         long start = System.nanoTime();
-        Repository memRepo = projectRepoCache.getOrLoad(projectId, projectRepoLoader());
-        if (memRepo == null) {
+        ProjectRepoCache.Lease lease = projectRepoCache.borrow(projectId, projectRepoLoader());
+        if (lease == null) {
             return null;
         }
-        try (RepositoryConnection conn = memRepo.getConnection()) {
+        try (lease; RepositoryConnection conn = lease.repository().getConnection()) {
             String finalQuery = sparqlQuery;
             if (!SparqlText.hasFromClause(finalQuery)) {
                 finalQuery = SparqlText.replaceFirstKeyword(finalQuery, "WHERE",
@@ -1284,15 +1284,15 @@ public class SparqlDatasetService {
         SparqlQueryScope scope = resolveUserQueryScope(projectId);
         SparqlQueryGuard.Checked checked = SparqlQueryGuard.check(sparqlQuery, new LinkedHashSet<>(scope.graphs()));
         if (!scope.draft() && projectRepoCache != null && projectRepoCache.isEnabled()) {
-            Repository memRepo = null;
+            ProjectRepoCache.Lease borrowed = null;
             try {
-                memRepo = projectRepoCache.getOrLoad(projectId, projectRepoLoader());
+                borrowed = projectRepoCache.borrow(projectId, projectRepoLoader());
             } catch (Exception e) {
                 log.warn("[MEMCACHE] user query load failed for project={}: {}", projectId, e.getMessage());
             }
-            if (memRepo != null) {
-                try {
-                    return execUserQueryInGraphs(memRepo, scope, List.of(getGraphUri(projectId)), checked, graphCap, retain);
+            if (borrowed != null) {
+                try (ProjectRepoCache.Lease lease = borrowed) {
+                    return execUserQueryInGraphs(lease.repository(), scope, List.of(getGraphUri(projectId)), checked, graphCap, retain);
                 } catch (SparqlQueryRejectedException e) {
                     throw e;
                 } catch (Exception e) {

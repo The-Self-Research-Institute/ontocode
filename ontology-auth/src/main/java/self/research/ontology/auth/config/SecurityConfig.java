@@ -29,6 +29,7 @@ import java.util.List;
 
 @Configuration("authSecurityConfig")
 @EnableWebSecurity
+@org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 @Order(1)
 public class SecurityConfig {
 
@@ -96,6 +97,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll() // Allow public access to auth endpoints
                         .requestMatchers("/api/billing/webhook").permitAll() // Stripe webhook — signature-verified, no JWT
                         .requestMatchers("/api/billing/plans").permitAll() // Plan pricing — public, no auth needed
+                        .requestMatchers("/api/internal/**").permitAll()
                         .requestMatchers("/api/invitations/details/**").permitAll() // Allow public access to view invitation details
                         .requestMatchers("/api/invitations/request-resend/**").permitAll() // Allow public access to request invitation resend
                         .requestMatchers("/invite").permitAll() // Allow public access to web invitation redirect page

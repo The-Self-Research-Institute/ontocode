@@ -1,6 +1,8 @@
 package self.research.ontology.owlEditor.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
@@ -43,7 +45,14 @@ public class GraphViewController {
     private final GridFsTemplate gridfs;
     private final CollaborativeEditService collaborativeEditService;
     private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
-    private final java.util.Map<String, OWLOntology> ontologyCache = new HashMap<>();
+    private final self.research.ontology.owlEditor.cache.BoundedOntologyLru ontologyCache =
+            new self.research.ontology.owlEditor.cache.BoundedOntologyLru(
+                    Integer.getInteger("ontocode.graph.cache.maxProjects", 3), "graphViewOntologies");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        ontologyCache.bindAccount(ledger.cacheAccount("graphViewOntologies"));
+    }
 
     // Desktop lazy Fuseki flag — non-final so Lombok's @RequiredArgsConstructor skips it.
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.owlapi-first:false}")
@@ -58,11 +67,15 @@ public class GraphViewController {
     }
 
     private OWLOntology loadOntology(String projectId, boolean forceReload) throws Exception {
-        if (!forceReload && ontologyCache.containsKey(projectId)) {
-            log.debug("Using cached ontology for project: {}", projectId);
-            return ontologyCache.get(projectId);
+        if (!forceReload) {
+            return ontologyCache.getOrLoad(projectId, () -> readOntologyFromGridFs(projectId));
         }
+        OWLOntology fresh = readOntologyFromGridFs(projectId);
+        ontologyCache.put(projectId, fresh);
+        return fresh;
+    }
 
+    private OWLOntology readOntologyFromGridFs(String projectId) throws Exception {
         GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
         if (file == null) {
             throw new RuntimeException("Ontology file not found for project: " + projectId);
@@ -71,9 +84,7 @@ public class GraphViewController {
         GridFsResource resource = gridfs.getResource(file);
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
-            ontologyCache.put(projectId, ontology);
-            return ontology;
+            return manager.loadOntologyFromOntologyDocument(inputStream);
         }
     }
 
@@ -425,20 +436,15 @@ public class GraphViewController {
 
     // ==================== WebSocket Message Handlers ====================
 
-    /**
-     * Handle node selection from graph view clients.
-     * Broadcasts to other viewers showing which node the user selected.
-     *
-     * STOMP: /app/graph/{projectId}/select
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/select")
     public void handleNodeSelection(
             @DestinationVariable String projectId,
-            @Payload Map<String, Object> payload
+            @Payload Map<String, Object> payload,
+            SimpMessageHeaderAccessor headerAccessor
     ) {
         try {
-            String userId = (String) payload.get("userId");
+            String userId = CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                    .userIdOr((String) payload.get("userId"));
             String username = (String) payload.get("username");
             String nodeId = (String) payload.get("nodeId");
             String userColor = (String) payload.get("userColor");
@@ -456,20 +462,15 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Handle cursor movement in graph view.
-     * Broadcasts cursor position to other viewers (debounced on client side).
-     *
-     * STOMP: /app/graph/{projectId}/cursor
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/cursor")
     public void handleCursorMove(
             @DestinationVariable String projectId,
-            @Payload Map<String, Object> payload
+            @Payload Map<String, Object> payload,
+            SimpMessageHeaderAccessor headerAccessor
     ) {
         try {
-            String userId = (String) payload.get("userId");
+            String userId = CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                    .userIdOr((String) payload.get("userId"));
             String username = (String) payload.get("username");
             String userColor = (String) payload.get("userColor");
 
@@ -493,20 +494,15 @@ public class GraphViewController {
         }
     }
 
-    /**
-     * Handle node expansion request (lazy loading).
-     * Fetches child nodes and broadcasts to all viewers.
-     *
-     * STOMP: /app/graph/{projectId}/expand
-     * Subscribe to: /topic/graph/{projectId}
-     */
     @MessageMapping("/graph/{projectId}/expand")
     public void handleNodeExpansion(
             @DestinationVariable String projectId,
-            @Payload Map<String, Object> payload
+            @Payload Map<String, Object> payload,
+            SimpMessageHeaderAccessor headerAccessor
     ) {
         try {
-            String userId = (String) payload.get("userId");
+            String userId = CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                    .userIdOr((String) payload.get("userId"));
             String username = (String) payload.get("username");
             String nodeId = (String) payload.get("nodeId");
 

@@ -60,7 +60,7 @@ class ExplainConclusionTest {
         assertTrue(response.justifications().isEmpty());
         assertTrue(response.notes().stream().anyMatch(n -> n.contains("Squared age") && n.contains("not explained: unsupported built-in pow")), response.notes().toString());
         assertEquals("origin_only", response.status());
-        assertTrue(response.notes().contains("Produced by OWL reasoning or a rule this explanation cannot evaluate"));
+        assertTrue(response.notes().contains("None of your rules produced this fact. It comes from the standard reasoning the engine always applies, for example \"a Customer is also a Person because Customer is a kind of Person\". It is not an error."));
     }
 
     @Test
@@ -73,7 +73,7 @@ class ExplainConclusionTest {
         assertEquals("explained", senior.status());
         assertEquals("origin_only", highRisk.status(), highRisk.toString());
         assertTrue(highRisk.justifications().isEmpty());
-        assertTrue(highRisk.notes().contains("Produced by OWL reasoning or a rule this explanation cannot evaluate"));
+        assertTrue(highRisk.notes().contains("None of your rules produced this fact. It comes from the standard reasoning the engine always applies, for example \"a Customer is also a Person because Customer is a kind of Person\". It is not an error."));
     }
 
     @Test

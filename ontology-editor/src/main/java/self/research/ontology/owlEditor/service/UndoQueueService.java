@@ -7,6 +7,7 @@ import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import self.research.ontology.owlEditor.service.UserUndoService.Dependent;
 import self.research.ontology.owlEditor.service.UserUndoService.Identity;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,12 +20,12 @@ public class UndoQueueService {
 
     public record Step(String changeId, String changeSetId, String entityIRI, String label, int changeCount,
                        String sourceView, boolean available, String source, String affected,
-                       String restoring) {}
+                       String restoring, String timestamp) {}
 
     public record Blocked(String changeId, String changeSetId, String label, String reason,
                           List<Dependent> dependents) {}
 
-    public record Queue(List<Step> steps, Blocked blocked) {}
+    public record Queue(List<Step> steps, Blocked blocked, String serverTime) {}
 
     private final HistoryChangeRepository history;
     private final UserUndoService undo;
@@ -57,11 +58,11 @@ public class UndoQueueService {
             }
             Blocked blocked = firstBlock(projectId, draft, who, group);
             if (blocked != null) {
-                return new Queue(steps, blocked);
+                return new Queue(steps, blocked, Instant.now().toString());
             }
             steps.add(step(group));
         }
-        return new Queue(steps, null);
+        return new Queue(steps, null, Instant.now().toString());
     }
 
     private Blocked firstBlock(String projectId, boolean draft, Identity who, List<HistoryChange> group) {
@@ -84,6 +85,6 @@ public class UndoQueueService {
         String label = group.size() == 1 ? UserUndoService.labelOf(head) : changes + " changes";
         UndoStepDetail.Detail detail = UndoStepDetail.of(group);
         return new Step(head.getId(), head.getChangeSetId(), head.getEntityIRI(), label, changes, null, true,
-                detail.source(), detail.affected(), detail.restoring());
+                detail.source(), detail.affected(), detail.restoring(), head.getTimestampIso());
     }
 }

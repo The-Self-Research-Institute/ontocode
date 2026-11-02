@@ -1,0 +1,837 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF
+	xmlns="http://example.org/shop#"
+	xmlns:xml="http://www.w3.org/XML/1998/namespace"
+	xmlns:owl="http://www.w3.org/2002/07/owl#"
+	xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+	xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+	xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+	xmlns:swrl="http://www.w3.org/2003/11/swrl#"
+	xmlns:swrla="http://swrl.stanford.edu/ontologies/3.3/swrla.owl#">
+
+<rdf:Description rdf:about="http://example.org/shop">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Ontology"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://swrl.stanford.edu/ontologies/3.3/swrla.owl#isRuleEnabled">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#AnnotationProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#placedOrder">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#ObjectProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#fullName">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#ssn">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#totalSpent">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#yearsOfService">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#DatatypeProperty"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#ActiveCustomer">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#BonusEligible">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Customer">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Employee">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#EmployeeWithMultipleSSN">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#LoyalCustomer">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Order">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#PremiumCustomer">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#RegularCustomer">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#SeniorEmployee">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#Class"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Alice">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/shop#Customer"/>
+	<placedOrder rdf:resource="http://example.org/shop#Order1"/>
+	<fullName>Alice Archer</fullName>
+	<totalSpent rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1500</totalSpent>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Bob">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/shop#Customer"/>
+	<totalSpent rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">250</totalSpent>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Carol">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/shop#Customer"/>
+	<placedOrder rdf:resource="http://example.org/shop#Order2"/>
+	<totalSpent rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">700</totalSpent>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Dave">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/shop#Employee"/>
+	<fullName>Dave Dunn</fullName>
+	<ssn>111-22-3333</ssn>
+	<ssn>111-22-4444</ssn>
+	<yearsOfService rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">8</yearsOfService>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Erin">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/shop#Employee"/>
+	<ssn>222-33-4444</ssn>
+	<yearsOfService rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">2</yearsOfService>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Frank">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+	<rdf:type rdf:resource="http://example.org/shop#Employee"/>
+	<ssn>333445555</ssn>
+	<yearsOfService rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">35</yearsOfService>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Order1">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#Order2">
+	<rdf:type rdf:resource="http://www.w3.org/2002/07/owl#NamedIndividual"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#c">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#o">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#t">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#e">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#s1">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#s2">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+</rdf:Description>
+
+<rdf:Description rdf:about="http://example.org/shop#y">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a1">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</swrla:isRuleEnabled>
+	<rdfs:comment>A customer who placed an order is active.</rdfs:comment>
+	<rdfs:label>ActiveCustomerRule</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a2"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a2">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a3"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a3">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Customer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a2">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a4"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a4">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a5"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a5">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#placedOrder"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#o"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a4">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a1">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a6"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a6">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a7"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a7">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#ActiveCustomer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a6">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a8">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</swrla:isRuleEnabled>
+	<rdfs:comment>Customers who spent more than 200 are loyal customers.</rdfs:comment>
+	<rdfs:label>LoyalCustomerRule</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a9"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a9">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a10"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a10">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Customer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a9">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a11"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a11">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a12"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a12">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#totalSpent"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#t"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a11">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a13"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a13">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a14"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a14">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#greaterThan"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a15"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a15">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:resource="http://example.org/shop#t"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a16"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a16">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">200</rdf:first>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a13">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a8">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a17"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a17">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a18"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a18">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#LoyalCustomer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a17">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a19">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</swrla:isRuleEnabled>
+	<rdfs:comment>Same condition as the loyal customer rule, a different conclusion.</rdfs:comment>
+	<rdfs:label>RegularCustomerRule</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a20"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a20">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a21"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a21">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Customer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a20">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a22"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a22">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a23"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a23">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#totalSpent"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#t"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a22">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a24"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a24">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a25"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a25">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#greaterThan"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a26"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a26">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:resource="http://example.org/shop#t"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a27"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a27">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">200</rdf:first>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a24">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a19">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a28"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a28">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a29"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a29">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#RegularCustomer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a28">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a30">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</swrla:isRuleEnabled>
+	<rdfs:comment>Query: list customers who spent more than 500 and how much.</rdfs:comment>
+	<rdfs:label>BigSpenderQuery</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a31"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a31">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a32"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a32">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Customer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a31">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a33"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a33">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a34"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a34">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#totalSpent"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#t"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a33">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a35"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a35">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a36"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a36">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#greaterThan"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a37"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a37">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:resource="http://example.org/shop#t"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a38"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a38">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">500</rdf:first>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a35">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a30">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a39"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a39">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a40"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a40">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://sqwrl.stanford.edu/ontologies/built-ins/3.4/sqwrl.owl#select"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a41"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a41">
+	<rdf:first rdf:resource="http://example.org/shop#c"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a42"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a42">
+	<rdf:first rdf:resource="http://example.org/shop#t"/>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a39">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a43">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</swrla:isRuleEnabled>
+	<rdfs:comment>Data quality: an employee with two different ssn values.</rdfs:comment>
+	<rdfs:label>DuplicateSSNRule</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a44"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a44">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a45"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a45">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Employee"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a44">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a46"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a46">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a47"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a47">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#ssn"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#s1"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a46">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a48"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a48">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a49"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a49">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#ssn"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#s2"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a48">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a50"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a50">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a51"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a51">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#notEqual"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a52"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a52">
+	<rdf:first rdf:resource="http://example.org/shop#s1"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a53"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a53">
+	<rdf:first rdf:resource="http://example.org/shop#s2"/>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a50">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a43">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a54"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a54">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a55"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a55">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#EmployeeWithMultipleSSN"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a54">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a56">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">false</swrla:isRuleEnabled>
+	<rdfs:comment>Switched off: employees with more than 30 years of service are senior.</rdfs:comment>
+	<rdfs:label>SeniorEmployeeRule</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a57"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a57">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a58"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a58">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Employee"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a57">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a59"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a59">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a60"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a60">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#yearsOfService"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#y"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a59">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a61"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a61">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a62"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a62">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#greaterThan"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a63"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a63">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:resource="http://example.org/shop#y"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a64"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a64">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">30</rdf:first>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a61">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a56">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a65"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a65">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a66"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a66">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#SeniorEmployee"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a65">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a67">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</swrla:isRuleEnabled>
+	<rdfs:comment>Employees with at least 5 years of service get a bonus.</rdfs:comment>
+	<rdfs:label>BonusRule</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a68"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a68">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a69"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a69">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Employee"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a68">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a70"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a70">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a71"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a71">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#yearsOfService"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#y"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a70">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a72"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a72">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a73"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a73">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#greaterThanOrEqual"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a74"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a74">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:resource="http://example.org/shop#y"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a75"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a75">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">5</rdf:first>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a72">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a67">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a76"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a76">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a77"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a77">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#BonusEligible"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#e"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a76">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a78">
+	<swrla:isRuleEnabled rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</swrla:isRuleEnabled>
+	<rdfs:comment>Customers who spent more than 1000 are premium customers.</rdfs:comment>
+	<rdfs:label>PremiumCustomerRule</rdfs:label>
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+	<swrl:body rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a79"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a79">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a80"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a80">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#Customer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a79">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a81"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a81">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a82"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a82">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+	<swrl:propertyPredicate rdf:resource="http://example.org/shop#totalSpent"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+	<swrl:argument2 rdf:resource="http://example.org/shop#t"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a81">
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a83"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a83">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a84"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a84">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+	<swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#greaterThan"/>
+	<swrl:arguments rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a85"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a85">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:resource="http://example.org/shop#t"/>
+	<rdf:rest rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a86"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a86">
+	<rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+	<rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1000</rdf:first>
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a83">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a78">
+	<swrl:head rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a87"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a87">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+	<rdf:first rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a88"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a88">
+	<rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+	<swrl:classPredicate rdf:resource="http://example.org/shop#PremiumCustomer"/>
+	<swrl:argument1 rdf:resource="http://example.org/shop#c"/>
+</rdf:Description>
+
+<rdf:Description rdf:nodeID="genid-start-36bc901f9a6f14c7d92bf381f02efb94a87">
+	<rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+</rdf:Description>
+
+</rdf:RDF>

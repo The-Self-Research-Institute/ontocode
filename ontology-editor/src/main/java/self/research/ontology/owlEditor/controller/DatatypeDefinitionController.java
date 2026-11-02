@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -37,6 +39,9 @@ import java.util.function.Supplier;
 @RequestMapping("/api/ontology/datatypes/definitions")
 @CrossOrigin
 public class DatatypeDefinitionController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private final DatatypeDefinitionService definitionService;
     private final DatatypeDefinitionDraftService drafts;
@@ -135,6 +140,10 @@ public class DatatypeDefinitionController {
                                               @RequestParam(required = false) String userId,
                                               @RequestParam(required = false) String username,
                                               HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request == null || isBlank(request.datatypeIri) || isBlank(request.expression)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "datatypeIri and expression are required"));
         }
@@ -164,6 +173,10 @@ public class DatatypeDefinitionController {
                                               @RequestParam(required = false) String userId,
                                               @RequestParam(required = false) String username,
                                               HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (draft) {
             RequestActor draftActor = draftActor(httpRequest, userId, username);
             Optional<DatatypeDefinitionEntity> visible = drafts.findVisible(projectId, draftActor.userId(), definitionId);
@@ -209,6 +222,10 @@ public class DatatypeDefinitionController {
                                               @RequestParam(required = false) String userId,
                                               @RequestParam(required = false) String username,
                                               HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (draft) {
             RequestActor draftActor = draftActor(httpRequest, userId, username);
             Optional<DatatypeDefinitionEntity> visible = drafts.findVisible(projectId, draftActor.userId(), definitionId);

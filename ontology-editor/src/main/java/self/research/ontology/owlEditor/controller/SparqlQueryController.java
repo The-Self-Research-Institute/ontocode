@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.model.Value;
 import org.springframework.http.ResponseEntity;
@@ -38,6 +40,9 @@ import java.util.Map;
 @CrossOrigin(exposedHeaders = SparqlQueryController.TRUNCATED_HEADER)
 public class SparqlQueryController {
 
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
+
     private final SparqlDatasetService datasetService;
     private final SimpMessagingTemplate messagingTemplate;
     private final SparqlQueryRepository queryRepository;
@@ -75,6 +80,9 @@ public class SparqlQueryController {
             return ResponseEntity.status(503).body(Map.of(
                     "error", TripleStoreErrors.STORE_STARTING_MESSAGE,
                     "retryable", true));
+        }
+        if (TripleStoreErrors.isQueryTimeout(e)) {
+            return ResponseEntity.badRequest().body(Map.of("error", TripleStoreErrors.QUERY_TIMEOUT_MESSAGE));
         }
         String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
         return ResponseEntity.badRequest().body(Map.of("error", msg));
@@ -117,6 +125,7 @@ public class SparqlQueryController {
             @PathVariable String queryId,
             @RequestBody SavedQueryRequest request) {
         return queryRepository.findById(queryId)
+                .filter(entity -> projectId.equals(entity.getProjectId()))
                 .map(entity -> {
                     entity.setName(request.name());
                     entity.setQueryText(request.queryText());
@@ -131,7 +140,7 @@ public class SparqlQueryController {
     public ResponseEntity<?> deleteQuery(
             @PathVariable String projectId,
             @PathVariable String queryId) {
-        if (queryRepository.existsById(queryId)) {
+        if (queryRepository.findById(queryId).filter(entity -> projectId.equals(entity.getProjectId())).isPresent()) {
             queryRepository.deleteById(queryId);
             return ResponseEntity.ok(Map.of("success", true));
         }
@@ -305,8 +314,16 @@ public class SparqlQueryController {
                                     @RequestParam(required = false, defaultValue = "Anonymous") String username,
                                     @RequestParam(required = false, defaultValue = "false") boolean draft,
                                     jakarta.servlet.http.HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request.query() == null || request.query().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Query must not be empty"));
+        }
+        var updateVerdict = self.research.ontology.owlEditor.service.UserSparqlUpdateGuard.check(request.query());
+        if (!updateVerdict.allowed()) {
+            return ResponseEntity.badRequest().body(Map.of("error", updateVerdict.message()));
         }
         try {
         final String actorId = self.research.ontology.owlEditor.service.RequestActor.forScope(httpRequest, userId, draft);

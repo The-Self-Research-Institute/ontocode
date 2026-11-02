@@ -74,7 +74,8 @@ class ProjectLoadControllerUploadBoundsTest {
                 mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class), mock(SparqlDatasetService.class),
                 mock(ProjectRepository.class), mock(OntologyPreparseService.class), dispatcher,
                 mock(MongoTemplate.class), mock(OntologyExportJobService.class), mock(CodeViewReimportPipeline.class),
-                new ProjectWriteLockRegistry());
+                new ProjectWriteLockRegistry(),
+                mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class));
         ReflectionTestUtils.setField(controller, "uploadSettings", new UploadSettings(new MockEnvironment()
                 .withProperty("ontocode.capacity.upload.archive.zip-max-entries", "3")
                 .withProperty("ontocode.capacity.upload.archive.gzip-max-ratio", "50")));
@@ -82,7 +83,7 @@ class ProjectLoadControllerUploadBoundsTest {
 
     private ResponseEntity<Map<String, Object>> upload(String name, byte[] body) {
         return controller.upload("proj-1", new MockMultipartFile("file", name, "application/octet-stream", body),
-                null, null, null, null, null, null, false);
+                null, new self.research.ontology.owlEditor.config.CallerIdentity(null, null), null, null, null, null, null, false);
     }
 
     private static byte[] zip(String... names) throws IOException {

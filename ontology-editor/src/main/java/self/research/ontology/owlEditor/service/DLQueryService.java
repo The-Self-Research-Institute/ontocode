@@ -29,10 +29,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
@@ -41,11 +38,12 @@ public class DLQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(DLQueryService.class);
 
-    private final ExecutorService dlQueryExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "dl-query-get-instances-worker");
-        t.setDaemon(true);
-        return t;
-    });
+    private ReasoningTaskRunner taskRunner = ReasoningTaskRunner.standalone();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTaskRunner(ReasoningTaskRunner taskRunner) {
+        this.taskRunner = taskRunner;
+    }
 
     private final GridFsTemplate gridfs;
     private final SparqlDatasetService datasetService;
@@ -107,19 +105,19 @@ public class DLQueryService {
             for (String queryType : resolvedTypes) {
                 switch (queryType.toLowerCase()) {
                     case "directsuperclasses" ->
-                            results.put("directSuperclasses", getSuperClasses(reasoner, classExpression, ontology, true));
+                            results.put("directSuperclasses", getSuperClasses(session, classExpression, ontology, true));
                     case "superclasses" ->
-                            results.put("superclasses", getSuperClasses(reasoner, classExpression, ontology, false));
+                            results.put("superclasses", getSuperClasses(session, classExpression, ontology, false));
                     case "equivalentclasses" ->
-                            results.put("equivalentClasses", getEquivalentClasses(reasoner, classExpression, ontology));
+                            results.put("equivalentClasses", getEquivalentClasses(session, classExpression, ontology));
                     case "directsubclasses" ->
-                            results.put("directSubclasses", getSubClasses(reasoner, classExpression, ontology, true));
+                            results.put("directSubclasses", getSubClasses(session, classExpression, ontology, true));
                     case "subclasses" ->
-                            results.put("subclasses", getSubClasses(reasoner, classExpression, ontology, false));
+                            results.put("subclasses", getSubClasses(session, classExpression, ontology, false));
                     case "instances" ->
-                            results.put("instances", getInstances(reasoner, classExpression, ontology, false));
+                            results.put("instances", getInstances(session, classExpression, ontology, false));
                     case "directinstances" ->
-                            results.put("directInstances", getInstances(reasoner, classExpression, ontology, true));
+                            results.put("directInstances", getInstances(session, classExpression, ontology, true));
                     default -> log.warn("Unknown DL query type: {}", queryType);
                 }
             }
@@ -324,25 +322,39 @@ public class DLQueryService {
         return null;
     }
 
-    private <T> Set<T> runBounded(java.util.function.Supplier<Set<T>> work, String description,
-            OWLClassExpression expr, OWLOntology ontology) {
-        CompletableFuture<Set<T>> future = CompletableFuture.supplyAsync(work, dlQueryExecutor);
+    private <T> Set<T> runBounded(QuerySession session, java.util.function.Function<OWLReasoner, Set<T>> work,
+            String description, OWLClassExpression expr, OWLOntology ontology) {
+        if (session.abandoned()) {
+            log.warn("Skipping {} for '{}': an earlier step of this query is still running", description, expr);
+            return Collections.emptySet();
+        }
+        ReasoningTaskRunner.Execution<Set<T>> execution = taskRunner.submit("dl-query " + description, context -> {
+            context.attach(session.reasoner());
+            return work.apply(session.reasoner());
+        });
+        session.track(execution);
         try {
-            return future.get((Limit.DL_QUERY_TIMEOUT_SECONDS.value() * 1000L), TimeUnit.MILLISECONDS);
+            return execution.await(Limit.DL_QUERY_TIMEOUT_SECONDS.value() * 1000L);
         } catch (TimeoutException te) {
             log.warn("Timed out computing {} for '{}' ({} classes in signature) — returning empty result",
                     description, expr, ontology.getClassesInSignature().size());
+            if (!execution.stopped()) {
+                session.abandon();
+            }
             return Collections.emptySet();
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Collections.emptySet();
+        } catch (ExecutionException e) {
             log.error("Error computing {} for {}", description, expr, e);
             return Collections.emptySet();
         }
     }
 
-    private List<Map<String, Object>> getSuperClasses(OWLReasoner reasoner,
+    private List<Map<String, Object>> getSuperClasses(QuerySession session,
             OWLClassExpression expr, OWLOntology ontology, boolean direct) {
-        Set<OWLClass> classes = runBounded(
-                () -> reasoner.getSuperClasses(expr, direct).getFlattened(),
+        Set<OWLClass> classes = runBounded(session,
+                reasoner -> reasoner.getSuperClasses(expr, direct).getFlattened(),
                 direct ? "direct superclasses" : "superclasses", expr, ontology);
         return classes.stream()
                 .filter(cls -> !cls.isOWLThing() && !cls.isOWLNothing())
@@ -350,10 +362,10 @@ public class DLQueryService {
                 .collect(Collectors.toList());
     }
 
-    private List<Map<String, Object>> getSubClasses(OWLReasoner reasoner,
+    private List<Map<String, Object>> getSubClasses(QuerySession session,
             OWLClassExpression expr, OWLOntology ontology, boolean direct) {
-        Set<OWLClass> classes = runBounded(
-                () -> reasoner.getSubClasses(expr, direct).getFlattened(),
+        Set<OWLClass> classes = runBounded(session,
+                reasoner -> reasoner.getSubClasses(expr, direct).getFlattened(),
                 direct ? "direct subclasses" : "subclasses", expr, ontology);
         return classes.stream()
                 .filter(cls -> !cls.isOWLThing() && !cls.isOWLNothing())
@@ -361,10 +373,10 @@ public class DLQueryService {
                 .collect(Collectors.toList());
     }
 
-    private List<Map<String, Object>> getEquivalentClasses(OWLReasoner reasoner,
+    private List<Map<String, Object>> getEquivalentClasses(QuerySession session,
             OWLClassExpression expr, OWLOntology ontology) {
-        Set<OWLClass> classes = runBounded(
-                () -> reasoner.getEquivalentClasses(expr).getEntities(),
+        Set<OWLClass> classes = runBounded(session,
+                reasoner -> reasoner.getEquivalentClasses(expr).getEntities(),
                 "equivalent classes", expr, ontology);
         return classes.stream()
                 .filter(cls -> !cls.isOWLThing() && !cls.isOWLNothing())
@@ -372,10 +384,10 @@ public class DLQueryService {
                 .collect(Collectors.toList());
     }
 
-    private List<Map<String, Object>> getInstances(OWLReasoner reasoner,
+    private List<Map<String, Object>> getInstances(QuerySession session,
             OWLClassExpression expr, OWLOntology ontology, boolean direct) {
-        Set<OWLNamedIndividual> individuals = runBounded(
-                () -> reasoner.getInstances(expr, direct).getFlattened(),
+        Set<OWLNamedIndividual> individuals = runBounded(session,
+                reasoner -> reasoner.getInstances(expr, direct).getFlattened(),
                 direct ? "direct instances" : "instances", expr, ontology);
         return individuals.stream()
                 .map(ind -> createResultItem("individual", ind.getIRI().toString(), getLabel(ind, ontology)))
@@ -414,6 +426,8 @@ public class DLQueryService {
         private final String note;
         private final boolean complete;
         private final HeavyWorkAdmission.Hold hold;
+        private final List<ReasoningTaskRunner.Execution<?>> executions = new java.util.concurrent.CopyOnWriteArrayList<>();
+        private volatile boolean abandoned;
 
         private QuerySession(OWLOntologyManager manager, OWLOntology ontology, OWLReasoner reasoner, String note, boolean complete,
                              HeavyWorkAdmission.Hold hold) {
@@ -441,8 +455,24 @@ public class DLQueryService {
             return reasoner;
         }
 
+        void track(ReasoningTaskRunner.Execution<?> execution) {
+            executions.add(execution);
+        }
+
+        void abandon() {
+            abandoned = true;
+        }
+
+        boolean abandoned() {
+            return abandoned;
+        }
+
         @Override
         public void close() {
+            ReasoningTaskRunner.afterAll(executions, this::releaseAll);
+        }
+
+        private void releaseAll() {
             try {
                 reasoner.dispose();
             } catch (Exception e) {

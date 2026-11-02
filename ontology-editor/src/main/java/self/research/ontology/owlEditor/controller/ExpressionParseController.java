@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,6 +19,9 @@ import java.util.Map;
 @RequestMapping("/api/ontology")
 @CrossOrigin(originPatterns = "*")
 public class ExpressionParseController {
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     private static final Logger log = LoggerFactory.getLogger(ExpressionParseController.class);
 
@@ -68,6 +73,10 @@ public class ExpressionParseController {
                                                         @RequestParam(required = false) String userId,
                                                         @RequestParam(required = false) String username,
                                                         @RequestParam(required = false, defaultValue = "false") boolean draft) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request == null || request.propertyIri == null || request.propertyIri.isBlank()
                 || request.expression == null || request.expression.isBlank()
                 || request.relationType == null || request.relationType.isBlank()) {
@@ -123,6 +132,10 @@ public class ExpressionParseController {
                                                          @RequestParam(required = false) String userId,
                                                          @RequestParam(required = false) String username,
                                                          @RequestParam(required = false, defaultValue = "false") boolean draft) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request == null || request.propertyIri == null || request.propertyIri.isBlank()
                 || request.expression == null || request.expression.isBlank()
                 || request.relationType == null || request.relationType.isBlank()) {
@@ -178,6 +191,10 @@ public class ExpressionParseController {
                                                   @RequestParam(required = false) String userId,
                                                   @RequestParam(required = false) String username,
                                                   @RequestParam(required = false, defaultValue = "false") boolean draft) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request == null || request.subClassExpression == null || request.subClassExpression.isBlank()
                 || request.superClassExpression == null || request.superClassExpression.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -219,6 +236,10 @@ public class ExpressionParseController {
                                                      @RequestParam(required = false) String userId,
                                                      @RequestParam(required = false) String username,
                                                      @RequestParam(required = false, defaultValue = "false") boolean draft) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         if (request == null || request.classIri == null || request.classIri.isBlank()
                 || request.expression == null || request.expression.isBlank()
                 || request.axiomType == null || request.axiomType.isBlank()) {

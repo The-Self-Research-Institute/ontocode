@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE } from '../src/ruleModel.ts';
+import { parseRuleText, serializeRule, importSummaryLine, skippedRowsView, importButtonLabel, canRunImport, importOutcomeNotice, newImportId, importSessionFor, staleImportReport, isStaleImport, isImportFile, importErrorMessage, applySavedRule, ruleFromResponse, needsValidation, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageStart, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, EXPIRED_RUN_MESSAGE, cloneRuleBody, assertedAxiomsPath, canGoNextAssertedPage, axiomListErrorMessage, busyMessage, owl2rlStartPath, owl2rlRunPath, owl2rlErrorMessage, owl2rlTruncationNote, OWL2RL_EXPIRED_MESSAGE, resultCounts, resultHeading, searchMatchText, cutoffNote, showMoreLabel, countLabel, sectionTotal, groupLabel, groupTotal } from '../src/ruleModel.ts';
 
 const DEMO = [
   ['Senior', 'Patient(?p) ^ hasAge(?p, ?a) ^ swrlb:greaterThanOrEqual(?a, 65) -> Senior(?p)', true],
@@ -204,6 +204,12 @@ test('friendlyRuleError', () => {
   assert.equal(friendlyRuleError(null, 'fallback'), 'fallback');
 });
 
+test('friendlyRuleError explains that public editing is off', () => {
+  const refusal = { status: 403, data: { code: 'PUBLIC_EDIT_DISABLED', error: 'x', draftAllowed: true } };
+  assert.equal(friendlyRuleError(refusal, 'x'), 'The project owner turned off public editing. Switch to Draft Mode to make your changes.');
+  assert.equal(friendlyRuleError({ status: 403, data: { viewOnly: true, error: 'View only' } }, 'x'), 'x');
+});
+
 test('import summary line wording and plurals', () => {
   const r = { read: 12, imported: new Array(9).fill({}), duplicates: 2, invalid: 1 };
   assert.equal(importSummaryLine(r, false), '12 rows read · 9 imported · 2 duplicates · 1 invalid');
@@ -286,12 +292,11 @@ test('isPagedRun needs a run id and counts', () => {
   assert.equal(isPagedRun({ runId: 'r1', counts: { conclusions: 1, structure: 2 } }), true);
 });
 
-test('derivedSummary uses separators and singular or plural', () => {
-  assert.equal(derivedSummary({ conclusions: 4, structure: 7599 }), '7,603 derived: 4 rule conclusions, 7,599 structure');
-  assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 derived: 1 rule conclusion, 0 structure');
-  assert.equal(derivedSummary({ conclusions: 2, structure: 3, omittedTrivial: 1 }), '5 derived: 2 rule conclusions, 3 structure (1 trivial same-individual fact hidden)');
-  assert.equal(derivedSummary({ conclusions: 2, structure: 3, omittedTrivial: 12 }).endsWith('(12 trivial same-individual facts hidden)'), true);
-  assert.equal(formatCount(1234567), '1,234,567');
+test('derivedSummary words facts, class relationships and hidden trivial ones', () => {
+  assert.equal(derivedSummary({ conclusions: 118, structure: 945, omittedTrivial: 45 }), '1,108 produced: 118 facts about individuals from your rules, 945 class relationships from standard reasoning, 45 trivial ones hidden.');
+  assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 produced: 1 fact about an individual from your rules, no class relationships.');
+  assert.equal(derivedSummary({ conclusions: 0, structure: 1, omittedTrivial: 1 }), '2 produced: 1 class relationship from standard reasoning, 1 trivial one hidden.');
+  assert.equal(derivedSummary({ conclusions: 0, structure: 0 }), '');
 });
 
 test('page math and range text', () => {
@@ -342,4 +347,130 @@ test('a 410 maps to the expired message', () => {
   assert.equal(pageErrorMessage({ status: 410 }), EXPIRED_RUN_MESSAGE);
   assert.equal(pageErrorMessage({ message: 'boom' }), 'Could not load this page: boom');
   assert.equal(pageErrorMessage({}), 'Could not load this page. Try again.');
+});
+
+test('a saved rule wrapped in the server envelope switches to the new id', () => {
+  const rules = [{ id: 'rule-4b0e8dc3f0f155b9', ruleName: 'Old', ruleText: 't', enabled: true }, { id: '2', ruleName: 'B', ruleText: 'u', enabled: true }];
+  const form = { ruleName: 'Old', ruleText: 't', enabled: true };
+  const envelope = { success: true, draft: false, rule: { id: 'new-uuid', ruleName: 'Old', ruleText: 't', enabled: true } };
+  const a = applySavedRule(rules, 'rule-4b0e8dc3f0f155b9', envelope, form);
+  assert.equal(a.saved.id, 'new-uuid');
+  assert.deepEqual(a.rules.map(r => r.id), ['new-uuid', '2']);
+  const b = applySavedRule(a.rules, a.saved.id, { success: true, rule: { id: 'new-uuid', ruleName: 'Renamed', ruleText: 't', enabled: true } }, { ...form, ruleName: 'Renamed' });
+  assert.equal(b.saved.id, 'new-uuid');
+  assert.deepEqual(b.rules.map(r => r.ruleName), ['Renamed', 'B']);
+});
+
+test('ruleFromResponse unwraps the envelope and leaves a plain rule alone', () => {
+  assert.deepEqual(ruleFromResponse({ success: true, rule: { id: 'a' } }), { id: 'a' });
+  assert.deepEqual(ruleFromResponse({ id: 'a' }), { id: 'a' });
+  assert.equal(ruleFromResponse(null), null);
+});
+
+test('needsValidation skips empty and unchanged text', () => {
+  assert.equal(needsValidation('', 'a -> b'), false);
+  assert.equal(needsValidation(' a -> b ', 'a -> b'), false);
+  assert.equal(needsValidation('a -> c', 'a -> b'), true);
+  assert.equal(needsValidation('a -> c', null), true);
+});
+
+test('clone naming adds (copy), then (copy 2), (copy 3), skipping taken names', () => {
+  const rule = { ruleName: 'Senior', ruleText: 'a -> b', comment: 'c', category: 'x', enabled: false };
+  assert.equal(cloneRuleBody(rule, ['Senior']).ruleName, 'Senior (copy)');
+  assert.equal(cloneRuleBody(rule, ['Senior', 'Senior (copy)']).ruleName, 'Senior (copy 2)');
+  assert.equal(cloneRuleBody(rule, ['Senior', 'Senior (copy)', 'Senior (copy 2)']).ruleName, 'Senior (copy 3)');
+  assert.equal(cloneRuleBody(rule, ['Senior (copy)']).ruleName, 'Senior (copy 2)');
+  const body = cloneRuleBody(rule, []);
+  assert.deepEqual([body.ruleText, body.comment, body.category, body.enabled], ['a -> b', 'c', 'x', false]);
+  assert.equal(cloneRuleBody({ ruleName: 'A', ruleText: 't', enabled: true }, []).comment, '');
+});
+
+test('asserted axioms path carries page, size, search, type and draft', () => {
+  const p = assertedAxiomsPath('p 1', { page: 2, pageSize: 50, search: ' dog ', type: 'ClassAssertion' }, true);
+  assert.equal(p, '/api/swrl/p%201/axioms/asserted?page=2&pageSize=50&search=dog&type=ClassAssertion&draft=true');
+  assert.equal(assertedAxiomsPath('p', { page: 0, pageSize: 50, search: '  ', type: '' }, false), '/api/swrl/p/axioms/asserted?page=0&pageSize=50');
+});
+
+test('asserted next page stops at the total and at the 20000 window', () => {
+  assert.equal(canGoNextAssertedPage(0, 50, 50), false);
+  assert.equal(canGoNextAssertedPage(0, 50, 51), true);
+  assert.equal(canGoNextAssertedPage(398, 50, 100000), true);
+  assert.equal(canGoNextAssertedPage(399, 50, 100000), false);
+});
+
+test('axiom list errors are friendly', () => {
+  assert.match(axiomListErrorMessage({ status: 429, data: { retryAfterSeconds: 3 } }), /about 3 seconds/);
+  assert.match(axiomListErrorMessage({ status: 429, retryAfter: '1' }), /about 1 second\./);
+  assert.match(busyMessage({}), /in a moment/);
+  assert.equal(axiomListErrorMessage({ status: 400, data: { message: 'Too deep: narrow the search or type' } }), 'Too deep: narrow the search or type');
+  assert.match(axiomListErrorMessage({ status: 413 }), /too large/);
+  assert.match(axiomListErrorMessage({ status: 504 }), /too long/);
+});
+
+test('owl2rl paths and messages', () => {
+  assert.equal(owl2rlStartPath('p', { pageSize: 50, type: '', filter: '' }, false), '/api/swrl/p/owl2rl?pageSize=50');
+  assert.equal(owl2rlRunPath('p', 'r1', { page: 1, pageSize: 50, type: 'SubClassOf', filter: 'x' }, true), '/api/swrl/p/owl2rl/runs/r1?page=1&pageSize=50&type=SubClassOf&filter=x&draft=true');
+  assert.equal(owl2rlErrorMessage({ status: 410, data: { expired: true } }), OWL2RL_EXPIRED_MESSAGE);
+  assert.equal(owl2rlErrorMessage({ status: 429, data: { busy: true, message: 'Busy now' } }), 'Busy now');
+  assert.equal(owl2rlTruncationNote({ truncated: false }), null);
+  assert.equal(owl2rlTruncationNote({ truncated: true, returnedCount: 1000, derivedCount: 5000 }), 'Showing the first 1,000 of 5,000.');
+});
+
+const TOT = { conclusions: 118, structure: 945 };
+const LOADED = { conclusions: 118, structure: 882 };
+const counts = (filter, shown, extra = {}) => resultCounts({ filter, paged: false, totals: TOT, loaded: LOADED, matched: 0, shown, searching: false, ...extra });
+
+test('result counts use the server total for the selected filter only', () => {
+  assert.deepEqual(counts('conclusions', 100), { filter: 'conclusions', paged: false, total: 118, loaded: 118, matched: 118, shown: 100, remaining: 18, searching: false, partial: false });
+  const s = counts('structure', 100);
+  assert.deepEqual([s.total, s.loaded, s.shown, s.remaining, s.partial], [945, 882, 100, 845, true]);
+  const a = counts('all', 100);
+  assert.deepEqual([a.total, a.loaded, a.remaining, a.partial], [1063, 1000, 963, true]);
+});
+
+test('paged counts reach the total through the pager', () => {
+  const c = resultCounts({ filter: 'structure', paged: true, totals: TOT, loaded: { conclusions: 0, structure: 0 }, matched: 945, shown: 50, searching: false });
+  assert.deepEqual([c.total, c.loaded, c.partial, c.remaining], [945, 945, false, 895]);
+  assert.equal(resultHeading(c), 'Class relationships (945 in total), showing 50');
+  assert.equal(cutoffNote(c), null);
+});
+
+test('headings, notes and buttons for every filter', () => {
+  assert.equal(resultHeading(counts('conclusions', 100)), 'Facts about individuals (118 in total), showing 100');
+  assert.equal(resultHeading(counts('conclusions', 118)), 'Facts about individuals (118 in total)');
+  assert.equal(resultHeading(counts('structure', 100)), 'Class relationships (945 in total), showing 100');
+  assert.equal(resultHeading(counts('all', 100)), 'Everything (1,063 in total), showing 100');
+  assert.equal(cutoffNote(counts('conclusions', 100)), null);
+  assert.equal(cutoffNote(counts('structure', 100)), 'Showing 100 of 945. Search or filter to narrow, or show more.');
+  assert.equal(cutoffNote(counts('structure', 882)), 'Showing 882 of 945 (the rest is not loaded for this run).');
+  assert.equal(cutoffNote(counts('all', 100)), 'Showing 100 of 1,063. Search or filter to narrow, or show more.');
+  assert.equal(showMoreLabel(counts('structure', 100), 100), 'Show 100 more (845 remaining)');
+  assert.equal(showMoreLabel(counts('structure', 800), 100), 'Show 82 more (145 remaining)');
+  assert.equal(showMoreLabel(counts('structure', 882), 100), null);
+  assert.equal(showMoreLabel(counts('conclusions', 118), 100), null);
+});
+
+test('search wording only appears with a search and covers the loaded rows', () => {
+  const c = counts('structure', 100, { searching: true, matched: 111 });
+  assert.equal(searchMatchText(c, 'C1'), '111 match "C1" in the loaded rows');
+  assert.equal(cutoffNote(c), 'Search covers only the 882 loaded rows of 945.');
+  assert.equal(showMoreLabel(c, 100), 'Show 11 more (11 remaining)');
+  const p = resultCounts({ filter: 'structure', paged: true, totals: TOT, loaded: LOADED, matched: 30, shown: 30, searching: true });
+  assert.equal(searchMatchText(p, 'C1'), '30 match "C1"');
+});
+
+test('section and group labels', () => {
+  assert.equal(countLabel('Class relationships', 945, 100), 'Class relationships: 945 in total, showing 100');
+  assert.equal(countLabel('From your rules', 100, 100), 'From your rules: 100 in total');
+  assert.equal(countLabel('From your rules', null, 100), 'From your rules: showing 100');
+  assert.equal(countLabel('Class relationships', 111, 100, true), 'Class relationships: 111 match in the loaded rows, showing 100');
+  assert.equal(groupLabel(null, 100), 'showing 100');
+  assert.equal(groupLabel(118, 100), '118 in total, showing 100');
+  assert.equal(groupLabel(18, 18), '18 in total');
+  assert.equal(groupTotal(false, 5), null);
+  assert.equal(groupTotal(true, 5), 5);
+  const c = counts('conclusions', 100);
+  assert.equal(sectionTotal('structure', c, TOT, LOADED, 0), 945);
+  assert.equal(sectionTotal('rules', c, TOT, LOADED, 100), 100);
+  assert.equal(sectionTotal('rules', c, TOT, { conclusions: 50, structure: 0 }, 40), null);
 });

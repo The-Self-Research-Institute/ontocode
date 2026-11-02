@@ -392,4 +392,4 @@ See also [CITATION.cff](CITATION.cff), [CITATIONS.md](CITATIONS.md), and [refere
 
 ## License
 
-[AGPL v3 License](LICENSE)
+[MIT License](LICENSE)

@@ -110,7 +110,9 @@ public class RateLimitingFilter extends OncePerRequestFilter {
      */
     private boolean isAuthEndpoint(String uri) {
         return uri.contains("/auth/login") ||
-               uri.contains("/auth/register") ||
+               uri.contains("/auth/signup") ||
+               uri.contains("/auth/resend-verification") ||
+               uri.contains("/auth/change-password") ||
                uri.contains("/auth/forgot-password") ||
                uri.contains("/auth/reset-password");
     }

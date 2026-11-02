@@ -407,6 +407,10 @@ public class RuleService {
                 .anyMatch(rule -> id != null && SwrlRuleKeys.ruleId(rule).filter(id::equals).isPresent());
     }
 
+    public int ruleCount(String projectId, boolean draft, String userId) {
+        return client.listEmbedded(projectId, draft, userId).size();
+    }
+
     public List<Map<String, String>> disabledRules(String projectId, boolean draft, String userId) {
         List<Map<String, String>> disabled = new java.util.ArrayList<>();
         for (Map<String, Object> rule : client.listEmbedded(projectId, draft, userId)) {
@@ -460,7 +464,7 @@ public class RuleService {
             IRI property = annotation.getProperty().getIRI();
             if (annotation.getProperty().isLabel() || annotation.getProperty().isComment()
                     || DisabledRules.CATEGORY.equals(property) || DisabledRules.RULE_ID.equals(property)
-                    || DisabledRules.ENABLED.equals(property)) {
+                    || DisabledRules.ENABLED.equals(property) || DisabledRules.SWRLA_ENABLED.equals(property)) {
                 continue;
             }
             keep.add(annotation);

@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
+import self.research.ontology.common.security.InternalToken;
 
 @Component
 public class InternalApiAuthInterceptor implements HandlerInterceptor {
@@ -33,8 +34,7 @@ public class InternalApiAuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        String token = request.getHeader("X-Ontocode-Internal-Token");
-        if (expectedToken != null && expectedToken.equals(token)) {
+        if (InternalToken.matches(expectedToken, request.getHeader(InternalToken.HEADER))) {
             return true;
         }
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

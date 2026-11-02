@@ -8,14 +8,19 @@ import {
 } from 'lucide-react';
 import apiClient from './apiClient';
 import { ExplainPanel, WhyNotPanel } from './ExplainPanel';
+import { toExplainFact } from './explainText';
 import { useUndoRefresh } from './useUndoRefresh';
 import RuleBuilder from './RuleBuilder';
 import { rt, btn } from './resultsTheme';
+import { ControlPanel, useControlSession } from './ControlPanel';
+import type { AddOutcome } from './ControlPanel';
+import { SWRL_BUILTINS, SWRL_BUILTINS_QUICK, BUILT_IN_PREFIXES } from './builtinCatalog';
+import { AssertedAxiomsPanel, Owl2RlPanel } from './AxiomPanels';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
-import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, BuiltInCategory, InferredAxiom, AxiomsPageResponse } from './types';
-import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, ruleWriteBody, friendlyRuleError, applySavedRule, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE } from './ruleModel';
-import type { AxiomKind } from './ruleModel';
+import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, InferredAxiom, AxiomsPageResponse } from './types';
+import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle, INFERRED_NOTE, ADD_INFERRED_CAP, axiomsToOps, collectInferredAxioms, inferredPlan, resultCounts, resultHeading, searchMatchText, cutoffNote, showMoreLabel, countLabel, sectionTotal, groupLabel, groupTotal, ResultFilter } from './ruleModel';
+import type { AxiomKind, FactOp } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
 
@@ -104,128 +109,6 @@ const RULE_TEMPLATES = [
   },
 ];
 
-const SWRL_BUILTINS_QUICK = [
-  { category: 'Compare', items: ['swrlb:equal', 'swrlb:notEqual', 'swrlb:lessThan', 'swrlb:greaterThan', 'swrlb:lessThanOrEqual', 'swrlb:greaterThanOrEqual'] },
-  { category: 'Math', items: ['swrlb:add', 'swrlb:subtract', 'swrlb:multiply', 'swrlb:divide', 'swrlb:abs', 'swrlb:round'] },
-  { category: 'String', items: ['swrlb:stringConcat', 'swrlb:contains', 'swrlb:startsWith', 'swrlb:endsWith', 'swrlb:matches'] },
-];
-
-const SWRL_BUILTINS: BuiltInCategory[] = [
-  {
-    prefix: 'swrlb',
-    name: 'Core Comparisons',
-    description: 'Standard SWRL built-in predicates for comparisons',
-    builtIns: [
-      { name: 'equal', fullName: 'swrlb:equal', description: 'True if arguments are equal', signature: 'swrlb:equal(?x, ?y)', example: 'swrlb:equal(?age, 18)' },
-      { name: 'notEqual', fullName: 'swrlb:notEqual', description: 'True if arguments are not equal', signature: 'swrlb:notEqual(?x, ?y)', example: 'swrlb:notEqual(?x, ?y)' },
-      { name: 'lessThan', fullName: 'swrlb:lessThan', description: 'True if first arg < second arg', signature: 'swrlb:lessThan(?x, ?y)', example: 'swrlb:lessThan(?age, 18)' },
-      { name: 'lessThanOrEqual', fullName: 'swrlb:lessThanOrEqual', description: 'True if first arg <= second arg', signature: 'swrlb:lessThanOrEqual(?x, ?y)', example: 'swrlb:lessThanOrEqual(?score, 100)' },
-      { name: 'greaterThan', fullName: 'swrlb:greaterThan', description: 'True if first arg > second arg', signature: 'swrlb:greaterThan(?x, ?y)', example: 'swrlb:greaterThan(?age, 18)' },
-      { name: 'greaterThanOrEqual', fullName: 'swrlb:greaterThanOrEqual', description: 'True if first arg >= second arg', signature: 'swrlb:greaterThanOrEqual(?x, ?y)', example: 'swrlb:greaterThanOrEqual(?score, 50)' },
-    ]
-  },
-  {
-    prefix: 'swrlb',
-    name: 'Math Operations',
-    description: 'Standard arithmetic operations',
-    builtIns: [
-      { name: 'add', fullName: 'swrlb:add', description: 'Binds first arg to sum of remaining args', signature: 'swrlb:add(?result, ?x, ?y)', example: 'swrlb:add(?total, ?a, ?b)' },
-      { name: 'subtract', fullName: 'swrlb:subtract', description: 'Binds first arg to difference', signature: 'swrlb:subtract(?result, ?x, ?y)', example: 'swrlb:subtract(?diff, ?x, ?y)' },
-      { name: 'multiply', fullName: 'swrlb:multiply', description: 'Binds first arg to product', signature: 'swrlb:multiply(?result, ?x, ?y)', example: 'swrlb:multiply(?product, ?a, ?b)' },
-      { name: 'divide', fullName: 'swrlb:divide', description: 'Binds first arg to quotient', signature: 'swrlb:divide(?result, ?x, ?y)', example: 'swrlb:divide(?ratio, ?x, ?y)' },
-      { name: 'mod', fullName: 'swrlb:mod', description: 'Binds first arg to remainder', signature: 'swrlb:mod(?result, ?x, ?y)', example: 'swrlb:mod(?rem, ?x, 2)' },
-      { name: 'pow', fullName: 'swrlb:pow', description: 'Binds first arg to x^y', signature: 'swrlb:pow(?result, ?x, ?y)', example: 'swrlb:pow(?square, ?x, 2)' },
-      { name: 'abs', fullName: 'swrlb:abs', description: 'Binds first arg to absolute value', signature: 'swrlb:abs(?result, ?x)', example: 'swrlb:abs(?pos, ?val)' },
-      { name: 'ceiling', fullName: 'swrlb:ceiling', description: 'Rounds up to nearest integer', signature: 'swrlb:ceiling(?result, ?x)', example: 'swrlb:ceiling(?ceil, ?val)' },
-      { name: 'floor', fullName: 'swrlb:floor', description: 'Rounds down to nearest integer', signature: 'swrlb:floor(?result, ?x)', example: 'swrlb:floor(?floor, ?val)' },
-      { name: 'round', fullName: 'swrlb:round', description: 'Rounds to nearest integer', signature: 'swrlb:round(?result, ?x)', example: 'swrlb:round(?rounded, ?val)' },
-    ]
-  },
-  {
-    prefix: 'swrlb',
-    name: 'String Operations',
-    description: 'String manipulation and matching',
-    builtIns: [
-      { name: 'stringConcat', fullName: 'swrlb:stringConcat', description: 'Concatenates strings', signature: 'swrlb:stringConcat(?result, ?s1, ?s2)', example: 'swrlb:stringConcat(?full, ?first, ?last)' },
-      { name: 'stringLength', fullName: 'swrlb:stringLength', description: 'Returns string length', signature: 'swrlb:stringLength(?result, ?s)', example: 'swrlb:stringLength(?len, ?name)' },
-      { name: 'substring', fullName: 'swrlb:substring', description: 'Extracts substring', signature: 'swrlb:substring(?result, ?s, ?start, ?len)', example: 'swrlb:substring(?sub, ?s, 0, 3)' },
-      { name: 'contains', fullName: 'swrlb:contains', description: 'True if string contains substring', signature: 'swrlb:contains(?s, ?sub)', example: 'swrlb:contains(?name, "John")' },
-      { name: 'containsIgnoreCase', fullName: 'swrlb:containsIgnoreCase', description: 'True if string contains substring (case-insensitive)', signature: 'swrlb:containsIgnoreCase(?s, ?sub)', example: 'swrlb:containsIgnoreCase(?name, "john")' },
-      { name: 'startsWith', fullName: 'swrlb:startsWith', description: 'True if string starts with prefix', signature: 'swrlb:startsWith(?s, ?prefix)', example: 'swrlb:startsWith(?name, "Dr.")' },
-      { name: 'endsWith', fullName: 'swrlb:endsWith', description: 'True if string ends with suffix', signature: 'swrlb:endsWith(?s, ?suffix)', example: 'swrlb:endsWith(?email, ".edu")' },
-      { name: 'upperCase', fullName: 'swrlb:upperCase', description: 'Converts to uppercase', signature: 'swrlb:upperCase(?result, ?s)', example: 'swrlb:upperCase(?upper, ?name)' },
-      { name: 'lowerCase', fullName: 'swrlb:lowerCase', description: 'Converts to lowercase', signature: 'swrlb:lowerCase(?result, ?s)', example: 'swrlb:lowerCase(?lower, ?name)' },
-      { name: 'matches', fullName: 'swrlb:matches', description: 'True if string matches regex', signature: 'swrlb:matches(?s, ?pattern)', example: 'swrlb:matches(?email, ".*@.*\\\\.com")' },
-      { name: 'replace', fullName: 'swrlb:replace', description: 'Replaces pattern in string', signature: 'swrlb:replace(?result, ?s, ?pattern, ?replacement)', example: 'swrlb:replace(?clean, ?s, " ", "_")' },
-    ]
-  },
-  {
-    prefix: 'swrlb',
-    name: 'Date & Time',
-    description: 'Temporal operations',
-    builtIns: [
-      { name: 'date', fullName: 'swrlb:date', description: 'Creates xsd:date', signature: 'swrlb:date(?result, ?y, ?m, ?d, ?tz)', example: 'swrlb:date(?d, 2024, 1, 15, "")' },
-      { name: 'time', fullName: 'swrlb:time', description: 'Creates xsd:time', signature: 'swrlb:time(?result, ?h, ?m, ?s, ?tz)', example: 'swrlb:time(?t, 14, 30, 0, "")' },
-      { name: 'dateTime', fullName: 'swrlb:dateTime', description: 'Creates xsd:dateTime', signature: 'swrlb:dateTime(?result, ?y, ?m, ?d, ?h, ?min, ?s, ?tz)', example: 'swrlb:dateTime(?dt, 2024, 1, 15, 14, 30, 0, "")' },
-      { name: 'yearMonthDuration', fullName: 'swrlb:yearMonthDuration', description: 'Creates duration (years/months)', signature: 'swrlb:yearMonthDuration(?result, ?y, ?m)', example: 'swrlb:yearMonthDuration(?dur, 1, 6)' },
-      { name: 'dayTimeDuration', fullName: 'swrlb:dayTimeDuration', description: 'Creates duration (days/time)', signature: 'swrlb:dayTimeDuration(?result, ?d, ?h, ?m, ?s)', example: 'swrlb:dayTimeDuration(?dur, 2, 12, 0, 0)' },
-    ]
-  },
-  {
-    prefix: 'swrlm',
-    name: 'Advanced Math',
-    description: 'Extended mathematical operations (Trig, Log, Exp)',
-    builtIns: [
-      { name: 'sqrt', fullName: 'swrlm:sqrt', description: 'Square root', signature: 'swrlm:sqrt(?result, ?x)', example: 'swrlm:sqrt(?root, ?val)' },
-      { name: 'log', fullName: 'swrlm:log', description: 'Natural logarithm', signature: 'swrlm:log(?result, ?x)', example: 'swrlm:log(?ln, ?val)' },
-      { name: 'log10', fullName: 'swrlm:log10', description: 'Base-10 logarithm', signature: 'swrlm:log10(?result, ?x)', example: 'swrlm:log10(?log, ?val)' },
-      { name: 'exp', fullName: 'swrlm:exp', description: 'Exponential function (e^x)', signature: 'swrlm:exp(?result, ?x)', example: 'swrlm:exp(?e, ?val)' },
-      { name: 'sin', fullName: 'swrlm:sin', description: 'Sine function (radians)', signature: 'swrlm:sin(?result, ?x)', example: 'swrlm:sin(?s, ?angle)' },
-      { name: 'cos', fullName: 'swrlm:cos', description: 'Cosine function (radians)', signature: 'swrlm:cos(?result, ?x)', example: 'swrlm:cos(?c, ?angle)' },
-      { name: 'tan', fullName: 'swrlm:tan', description: 'Tangent function (radians)', signature: 'swrlm:tan(?result, ?x)', example: 'swrlm:tan(?t, ?angle)' },
-      { name: 'asin', fullName: 'swrlm:asin', description: 'Arc sine', signature: 'swrlm:asin(?result, ?x)', example: 'swrlm:asin(?angle, ?val)' },
-      { name: 'acos', fullName: 'swrlm:acos', description: 'Arc cosine', signature: 'swrlm:acos(?result, ?x)', example: 'swrlm:acos(?angle, ?val)' },
-      { name: 'atan', fullName: 'swrlm:atan', description: 'Arc tangent', signature: 'swrlm:atan(?result, ?x)', example: 'swrlm:atan(?angle, ?val)' },
-      { name: 'toDegrees', fullName: 'swrlm:toDegrees', description: 'Convert radians to degrees', signature: 'swrlm:toDegrees(?result, ?rad)', example: 'swrlm:toDegrees(?deg, ?rad)' },
-      { name: 'toRadians', fullName: 'swrlm:toRadians', description: 'Convert degrees to radians', signature: 'swrlm:toRadians(?result, ?deg)', example: 'swrlm:toRadians(?rad, ?deg)' },
-      { name: 'eval', fullName: 'swrlm:eval', description: 'Evaluates math expression', signature: 'swrlm:eval(?result, "expr", ?vars...)', example: 'swrlm:eval(?r, "x^2 + y", ?x, ?y)' },
-    ]
-  },
-  {
-    prefix: 'temporal',
-    name: 'Temporal Intervals',
-    description: 'Allen temporal interval relations',
-    builtIns: [
-      { name: 'equals', fullName: 'temporal:equals', description: 'Intervals are equal', signature: 'temporal:equals(?i1, ?i2)', example: 'temporal:equals(?period1, ?period2)' },
-      { name: 'before', fullName: 'temporal:before', description: 'First interval before second', signature: 'temporal:before(?i1, ?i2)', example: 'temporal:before(?start, ?end)' },
-      { name: 'after', fullName: 'temporal:after', description: 'First interval after second', signature: 'temporal:after(?i1, ?i2)', example: 'temporal:after(?end, ?start)' },
-      { name: 'meets', fullName: 'temporal:meets', description: 'First interval meets second', signature: 'temporal:meets(?i1, ?i2)', example: 'temporal:meets(?phase1, ?phase2)' },
-      { name: 'overlaps', fullName: 'temporal:overlaps', description: 'Intervals overlap', signature: 'temporal:overlaps(?i1, ?i2)', example: 'temporal:overlaps(?event1, ?event2)' },
-      { name: 'contains', fullName: 'temporal:contains', description: 'First contains second', signature: 'temporal:contains(?i1, ?i2)', example: 'temporal:contains(?parent, ?child)' },
-      { name: 'during', fullName: 'temporal:during', description: 'First during second', signature: 'temporal:during(?i1, ?i2)', example: 'temporal:during(?meeting, ?workday)' },
-      { name: 'starts', fullName: 'temporal:starts', description: 'First starts second', signature: 'temporal:starts(?i1, ?i2)', example: 'temporal:starts(?intro, ?presentation)' },
-      { name: 'finishes', fullName: 'temporal:finishes', description: 'First finishes second', signature: 'temporal:finishes(?i1, ?i2)', example: 'temporal:finishes(?outro, ?presentation)' },
-    ]
-  },
-  {
-    prefix: 'sqwrl',
-    name: 'SQWRL Query',
-    description: 'Query result selection and aggregation',
-    builtIns: [
-      { name: 'select', fullName: 'sqwrl:select', description: 'Select variables for output', signature: 'sqwrl:select(?vars...)', example: 'sqwrl:select(?person, ?age)' },
-      { name: 'selectDistinct', fullName: 'sqwrl:selectDistinct', description: 'Select distinct values', signature: 'sqwrl:selectDistinct(?vars...)', example: 'sqwrl:selectDistinct(?class)' },
-      { name: 'count', fullName: 'sqwrl:count', description: 'Count matching results', signature: 'sqwrl:count(?var)', example: 'sqwrl:count(?person)' },
-      { name: 'min', fullName: 'sqwrl:min', description: 'Minimum value', signature: 'sqwrl:min(?var)', example: 'sqwrl:min(?age)' },
-      { name: 'max', fullName: 'sqwrl:max', description: 'Maximum value', signature: 'sqwrl:max(?var)', example: 'sqwrl:max(?salary)' },
-      { name: 'sum', fullName: 'sqwrl:sum', description: 'Sum of values', signature: 'sqwrl:sum(?var)', example: 'sqwrl:sum(?amount)' },
-      { name: 'avg', fullName: 'sqwrl:avg', description: 'Average of values', signature: 'sqwrl:avg(?var)', example: 'sqwrl:avg(?score)' },
-      { name: 'orderBy', fullName: 'sqwrl:orderBy', description: 'Order results', signature: 'sqwrl:orderBy(?var)', example: 'sqwrl:orderBy(?name)' },
-      { name: 'orderByDescending', fullName: 'sqwrl:orderByDescending', description: 'Order results descending', signature: 'sqwrl:orderByDescending(?var)', example: 'sqwrl:orderByDescending(?age)' },
-      { name: 'limit', fullName: 'sqwrl:limit', description: 'Limit number of results', signature: 'sqwrl:limit(?n)', example: 'sqwrl:limit(10)' },
-    ]
-  }
-];
-
 const extractLocalName = (uri: string): string => {
   if (!uri) return uri;
   const cleanUri = uri.replace(/^<|>$/g, '');
@@ -242,7 +125,6 @@ type OntologySchemaNames = {
   dataProperties: Set<string>;
 };
 
-const BUILT_IN_PREFIXES = new Set(['swrlb', 'swrlm', 'sqwrl', 'temporal']);
 const isBuiltinPredicate = (predicate: string) => {
   const prefix = predicate.includes(':') ? predicate.split(':')[0] : '';
   return BUILT_IN_PREFIXES.has(prefix);
@@ -340,12 +222,15 @@ interface RuleListItemProps {
   onDelete: () => void;
   onMakeLocalCopy: () => void;
   isCopying: boolean;
+  busyAction?: 'delete' | 'toggle' | 'copy' | null;
 }
 
 const RuleListItem: React.FC<RuleListItemProps> = ({ 
-  rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete, onMakeLocalCopy, isCopying
+  rule, isSelected, isChecked, onSelect, onToggle, onToggleEnabled, onDelete, onMakeLocalCopy, isCopying, busyAction = null
 }) => {
+  const busy = busyAction !== null;
   const imported = isImportedRule(rule);
+  const { title, tooltip } = ruleTitle(rule);
   return (
   <div
     className={`group relative flex items-start gap-3 p-3 cursor-pointer transition-all duration-150 border-l-3 ${
@@ -368,8 +253,8 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
 
     <div className="flex-1 min-w-0">
       <div className="flex items-center gap-2">
-        <span className={`font-medium text-sm truncate ${isSelected ? 'text-purple-900' : 'text-gray-800'}`}>
-          {rule.ruleName}
+        <span className={`font-medium text-sm truncate ${isSelected ? 'text-purple-900' : 'text-gray-800'}`} title={tooltip}>
+          {title}
         </span>
         {rule.category && (
           <span className="px-1.5 py-0.5 text-[10px] font-medium bg-gray-200 text-gray-600 rounded">
@@ -383,7 +268,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
           <div className="text-[11px] text-gray-600 truncate" title={sourceLabel(rule)}>{sourceLabel(rule)}</div>
           <button
             onClick={onMakeLocalCopy}
-            disabled={isCopying}
+            disabled={isCopying || busy}
             className="mt-0.5 text-xs text-purple-700 hover:underline disabled:opacity-50"
           >
             {isCopying ? 'Copying...' : 'Make a local copy'}
@@ -397,6 +282,7 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
     <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
       <button
         onClick={onToggleEnabled}
+        disabled={busy}
         className={`p-1.5 rounded-md transition-colors ${
           rule.enabled 
             ? 'bg-green-100 text-green-600 hover:bg-green-200' 
@@ -404,14 +290,15 @@ const RuleListItem: React.FC<RuleListItemProps> = ({
         }`}
         title={rule.enabled ? 'Enabled - Click to disable' : 'Disabled - Click to enable'}
       >
-        {rule.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
+        {busyAction === 'toggle' ? <Loader2 size={14} className="animate-spin" /> : rule.enabled ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
       </button>
       <button
         onClick={onDelete}
-        className="p-1.5 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50 opacity-60 group-hover:opacity-100 transition-all"
+        disabled={busy}
+        className="p-1.5 rounded-md text-gray-500 hover:text-red-600 hover:bg-red-50 opacity-60 group-hover:opacity-100 disabled:opacity-60 disabled:hover:bg-transparent transition-all flex items-center gap-1 text-xs"
         title="Delete rule"
       >
-        <Trash2 size={14} />
+        {busyAction === 'delete' ? <><Loader2 size={14} className="animate-spin" /> Deleting…</> : <Trash2 size={14} />}
       </button>
     </div>
     )}
@@ -719,13 +606,13 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
   const queryExamples = [
     { label: 'All Persons with Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)' },
     { label: 'Adults (age > 18)', query: 'Person(?p) ^ hasAge(?p, ?age) ^ swrlb:greaterThan(?age, 18) -> sqwrl:select(?p, ?age) ^ sqwrl:orderBy(?age)' },
-    { label: 'Count Persons', query: 'Person(?p) -> sqwrl:select(?p) ^ sqwrl:count(?p)' },
-    { label: 'Average Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p) ^ sqwrl:avg(?age)' },
+    { label: 'Count Persons', query: 'Person(?p) -> sqwrl:count(?p)' },
+    { label: 'Average Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:avg(?age)' },
     { label: 'Min/Max Age', query: 'Person(?p) ^ hasAge(?p, ?age) -> sqwrl:min(?age) ^ sqwrl:max(?age)' },
   ];
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="flex flex-col h-full min-h-0 bg-gray-50">
       <div className="p-4 border-b border-gray-300 flex justify-between items-center">
         <h3 className="text-lg font-semibold text-gray-800">SQWRL Query</h3>
         <select 
@@ -739,7 +626,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
           ))}
         </select>
       </div>
-      <div className="p-4 flex-grow flex flex-col gap-4">
+      <div className="p-4 flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
         <textarea 
           className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-black placeholder-gray-500"
           value={query} 
@@ -750,7 +637,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
           {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} Execute Query
         </button>
         
-        <div className="flex-grow overflow-auto border-2 border-gray-300 rounded-lg bg-white">
+        <div className="flex-1 min-h-0 overflow-auto border-2 border-gray-300 rounded-lg bg-white" style={{ minHeight: '18rem' }}>
           {!results ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-500 p-4">
               <HelpCircle size={32} className="mb-2 opacity-50" />
@@ -857,7 +744,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
               {!expired && filteredCount === 0 && (runId ? serverPage !== null : true) && (
                 <div className="p-4 text-sm text-center" style={rt.muted}>No rows match the filter.</div>
               )}
-              <div className="p-2 flex flex-wrap items-center gap-2 text-xs" style={rt.panelHeader}>
+              <div className="p-2 flex flex-wrap items-center gap-2 text-xs sticky bottom-0" style={rt.panelHeader}>
                 <span data-testid="sqwrl-showing">{showingText(filteredCount, storedRows, safePage, pageSize)}</span>
                 <span className="ml-auto flex items-center gap-1">
                   <button onClick={() => setPage(0)} disabled={safePage === 0} className="px-2 py-1 rounded" style={btn(safePage === 0)} aria-label="First page">First</button>
@@ -882,13 +769,15 @@ interface ResultsPanelProps {
   isExecuting: boolean;
   onAdd?: (axioms: InferredAxiom[]) => Promise<{ ok: boolean; message: string }>;
   onRerun?: () => void;
+  rules?: SwrlRule[];
 }
 
 
 
-const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: string; predicate?: string; object?: string; formatted: string } => {
-  const readable = axiom.readable || '';
-  
+type ParsedAxiom = { type: string; subject: string; predicate?: string; object?: string; formatted: string; recognized?: boolean };
+
+const parseAxiomText = (axiom: InferredAxiom, readable: string): ParsedAxiom => {
+
   const clean = (s: string) => extractLocalName(s);
   
   const classAssertionMatch = readable.match(/ClassAssertion\s*\(\s*(?:<)?([^>\s)]+)(?:>)?\s+(?:<)?([^>\s)]+)(?:>)?\s*\)/i);
@@ -1096,8 +985,17 @@ const formatInferredAxiom = (axiom: InferredAxiom): { type: string; subject: str
   return {
     type: axiom.axiomType || 'Unknown',
     subject: simplified,
-    formatted: simplified || readable
+    formatted: simplified || readable,
+    recognized: false
   };
+};
+
+const formatInferredAxiom = (axiom: InferredAxiom): ParsedAxiom => {
+  const technical = parseAxiomText(axiom, axiom.description || '');
+  if (technical.recognized !== false) return technical;
+  const friendly = parseAxiomText(axiom, axiom.readable || '');
+  if (friendly.recognized !== false) return friendly;
+  return parseAxiomText(axiom, axiom.readable || axiom.description || '');
 };
 
 interface GroupedAxiomItem {
@@ -1145,13 +1043,85 @@ const getAxiomTypeStyle = (type: string): { icon: string } => ({ icon: AXIOM_ICO
 
 const canExplain = (ax: InferredAxiom): boolean => ax.category === 'conclusion' && !!ax.subjectIri && !!ax.predicateIri;
 
-const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: boolean; onToggle?: (key: string) => void; onWhy?: (axiom: InferredAxiom) => void }> = ({ item, index, selected, onToggle, onWhy }) => {
+const canExplainIn = (ax: InferredAxiom, section: string): boolean => (section === 'rules' ? canExplain(ax) : toExplainFact(ax) !== null);
+
+type FactSection = 'rules' | 'standard' | 'structure';
+
+const SECTION_TITLES: Record<FactSection, string> = { rules: 'From your rules', standard: 'From standard reasoning', structure: 'Class relationships' };
+const SECTION_ORDER: FactSection[] = ['rules', 'standard', 'structure'];
+const STANDARD_NOTE = 'These follow from the class tree and the standard reasoning the engine always applies, not from a rule you wrote. For example, a Customer is also a Person because Customer is a kind of Person. They are not errors, and no rule explanation exists for them.';
+
+const atomLocalName = (raw: string): string => raw.replace(/^<|>$/g, '').split(/[#/:]/).pop() || '';
+
+const ruleHeadNames = (rules: SwrlRule[]): Set<string> => {
+  const names = new Set<string>();
+  rules.forEach(rule => {
+    const text = rule.ruleText || '';
+    if (!rule.enabled || /sqwrl:/i.test(text)) return;
+    const ascii = text.lastIndexOf('->');
+    const unicode = text.lastIndexOf('\u2192');
+    if (ascii < 0 && unicode < 0) return;
+    const head = ascii > unicode ? text.slice(ascii + 2) : text.slice(unicode + 1);
+    const pattern = /([^\s(),^]+)\s*\(/g;
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(head)) !== null) {
+      const name = atomLocalName(m[1]);
+      if (name) names.add(name);
+    }
+  });
+  return names;
+};
+
+const sectionOf = (ax: InferredAxiom, heads: Set<string>): FactSection => {
+  if (ax.category !== 'conclusion') return 'structure';
+  const parsed = formatInferredAxiom(ax);
+  const name = parsed.type === 'ClassAssertion' ? parsed.object : parsed.predicate;
+  return name && heads.has(name) ? 'rules' : 'standard';
+};
+
+interface SectionData {
+  key: FactSection;
+  title: string;
+  note?: string;
+  axioms: InferredAxiom[];
+  groups: Map<string, GroupedAxiomItem[]>;
+}
+
+const splitSections = (axioms: InferredAxiom[], heads: Set<string>): SectionData[] => {
+  const buckets: Record<FactSection, InferredAxiom[]> = { rules: [], standard: [], structure: [] };
+  axioms.forEach(ax => buckets[sectionOf(ax, heads)].push(ax));
+  return SECTION_ORDER.filter(key => buckets[key].length > 0).map(key => ({
+    key,
+    title: SECTION_TITLES[key],
+    note: key === 'rules' ? undefined : STANDARD_NOTE,
+    axioms: buckets[key],
+    groups: groupAxiomsByType(buckets[key]),
+  }));
+};
+
+const WHY_STYLE = '.swrl-why{opacity:.8}.swrl-why-host:hover .swrl-why,.swrl-why-host:focus-within .swrl-why,.swrl-why:hover,.swrl-why:focus-visible,.swrl-why[aria-expanded="true"]{opacity:1}';
+
+const WhyButton: React.FC<{ onClick: () => void; open?: boolean }> = ({ onClick, open }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="swrl-why inline-flex items-center text-xs font-semibold underline"
+    style={rt.link}
+    aria-label="Why was this concluded?"
+    aria-expanded={!!open}
+    title="Why was this concluded?"
+  >
+    Why?
+  </button>
+);
+
+const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: boolean; onToggle?: (key: string) => void; onWhy?: (axiom: InferredAxiom) => void; canWhy?: boolean; whyOpen?: boolean }> = ({ item, index, selected, onToggle, onWhy, canWhy, whyOpen }) => {
   const [showTooltip, setShowTooltip] = useState(false);
   const displaySubject = item.subject || item.formatted || `Item ${index + 1}`;
   
   return (
     <div 
-      className="relative group"
+      className="relative group swrl-why-host"
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
@@ -1175,8 +1145,8 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
             </span>
           </>
         )}
-        {onWhy && canExplain(item.axiom) && (
-          <button onClick={() => onWhy(item.axiom)} className="text-xs font-medium whitespace-nowrap" style={rt.link}>Why?</button>
+        {onWhy && canWhy && (
+          <WhyButton onClick={() => onWhy(item.axiom)} open={whyOpen} />
         )}
       </div>
       {showTooltip && item.rawReadable && (
@@ -1190,13 +1160,14 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
   );
 };
 
-const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, draftMode = false }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, rules = [], draftMode = false }) => {
+  const ruleHeads = useMemo(() => ruleHeadNames(rules), [rules]);
   const [explained, setExplained] = useState<InferredAxiom | null>(null);
   const toggleWhy = (ax: InferredAxiom) => setExplained(prev => (prev === ax ? null : ax));
   const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
   const [showInferredAxioms, setShowInferredAxioms] = useState(true);
   const [viewMode, setViewMode] = useState<'grouped' | 'table' | 'raw'>('grouped');
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [searchFilter, setSearchFilter] = useState('');
   const [showWarning, setShowWarning] = useState(false);
   const [scopeChoice, setScopeChoice] = useState<'conclusions' | 'structure' | 'all' | null>(null);
@@ -1278,30 +1249,33 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     setSelectedMap(prev => toggleSelection(prev, ax));
   };
 
+  useEffect(() => {
+    setCollapsedGroups(new Set());
+  }, [results]);
+
   const toggleGroup = (type: string) => {
-    const newExpanded = new Set(expandedGroups);
-    if (newExpanded.has(type)) {
-      newExpanded.delete(type);
-    } else {
-      newExpanded.add(type);
-    }
-    setExpandedGroups(newExpanded);
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
   };
 
-  const expandAll = () => {
-    if (results) {
-      const allTypes = new Set(results.inferredAxioms.map(ax => formatInferredAxiom(ax).type));
-      setExpandedGroups(allTypes);
-    }
-  };
-
-  const collapseAll = () => {
-    setExpandedGroups(new Set());
-  };
+  if (!results && isExecuting) return (
+    <div className="p-8 text-center flex flex-col items-center gap-3" style={rt.label}>
+      <Loader2 size={32} className="animate-spin" />
+      <p className="text-lg">Running rules…</p>
+    </div>
+  );
 
   if (!results) return (
     <div className="p-8 text-center" style={rt.label}>
       <AlertCircle size={48} className="mx-auto mb-4 opacity-50" />
+      <p className="text-sm mb-3" data-testid="inferred-note">{INFERRED_NOTE}</p>
       <p className="text-lg">Run rule execution to see results.</p>
       <p className="text-sm mt-2">Click "Execute All Rules" to run SWRL inference</p>
     </div>
@@ -1325,7 +1299,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                parsed.type?.toLowerCase().includes(searchLower);
       })
     : inScope;
-  const filteredAxioms = matchedAxioms.slice(0, visibleLimit);
+  const filteredAxioms = paged ? matchedAxioms : matchedAxioms.slice(0, visibleLimit);
   const matchedConclusions = matchedAxioms.filter(ax => ax.category === 'conclusion');
   const selectedConclusions = Array.from(selectedMap.values());
   const selectedCount = selectedConclusions.length;
@@ -1336,25 +1310,58 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const pagerPrev = previousOffset(offset);
   const pagerNext = nextOffset(offset, pageTotal);
 
-  const groupedAxioms = groupAxiomsByType(filteredAxioms);
-  
-  const classAssertions = results.inferredAxioms.filter(ax => {
-    const parsed = formatInferredAxiom(ax);
-    return parsed.type === 'ClassAssertion';
+  const modelTotals = {
+    conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
+    structure: paged ? (results.counts?.structure ?? 0) : (results.structureCount ?? structureTotal),
+  };
+  const modelFilter: ResultFilter = paged ? pagedKind : scope;
+  const counts = resultCounts({
+    filter: modelFilter,
+    paged,
+    totals: modelTotals,
+    loaded: { conclusions: conclusionTotal, structure: structureTotal },
+    matched: paged ? pageTotal : matchedAxioms.length,
+    shown: filteredAxioms.length,
+    searching: searchFilter.trim() !== '',
   });
+  const matchedSections = splitSections(matchedAxioms, ruleHeads);
+  const sections = splitSections(filteredAxioms, ruleHeads);
+  const loadedTotals = { conclusions: conclusionTotal, structure: structureTotal };
+  const sectionLabel = (sec: SectionData): string => {
+    if (paged) {
+      return counts.searching || sec.key !== 'structure' ? countLabel(sec.title, null, sec.axioms.length) : countLabel(sec.title, modelTotals.structure, sec.axioms.length);
+    }
+    const inSection = matchedSections.find(m => m.key === sec.key)?.axioms.length ?? 0;
+    return countLabel(sec.title, sectionTotal(sec.key, counts, modelTotals, loadedTotals, inSection), sec.axioms.length, counts.searching);
+  };
+  const groupText = (sec: SectionData, type: string, shown: number): string => {
+    const fullyLoaded = !paged && (sec.key === 'structure' ? structureTotal >= modelTotals.structure : conclusionTotal >= modelTotals.conclusions);
+    const inGroup = matchedSections.find(m => m.key === sec.key)?.groups.get(type)?.length ?? 0;
+    return groupLabel(groupTotal(!paged && (counts.searching || fullyLoaded), inGroup), shown, counts.searching && !paged);
+  };
+  const groupCount = sections.reduce((n, sec) => n + sec.groups.size, 0);
+  const orderedRows = sections.flatMap(sec => sec.axioms.map((ax, i) => ({ ax, sec, first: i === 0 })));
+  const expandAll = () => setCollapsedGroups(new Set());
+  const collapseAll = () => setCollapsedGroups(new Set(sections.flatMap(sec => Array.from(sec.groups.keys()).map(t => `${sec.key}|${t}`))));
   
-  const hasSwrlResults = classAssertions.length > 0;
+  const summaryLine = derivedSummary({
+    conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
+    structure: paged ? (results.counts?.structure ?? 0) : (results.structureCount ?? structureTotal),
+    omittedTrivial: results.omittedTrivialCount ?? results.counts?.omittedTrivial ?? 0,
+  });
 
   return (
     <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-4">
+      <style>{WHY_STYLE}</style>
+      <p className="text-sm" style={rt.label} data-testid="inferred-note">{INFERRED_NOTE}</p>
       <div className="rounded-xl p-5 shadow-sm" style={rt.panel}>
         <h3 className="font-bold mb-4 text-lg flex items-center gap-2" style={rt.heading}>
           <BarChart2 size={20} />
           Execution Summary
           {results.executionMode && (
             <span className="text-xs px-2 py-0.5 rounded-full" style={rt.chip}>
-              {results.executionMode === 'selected' ? 'Selected Rules' : 'All Rules'}
+              {results.executionMode === 'test' ? 'This rule only' : results.executionMode === 'selected' ? 'Selected Rules' : 'All Rules'}
             </span>
           )}
         </h3>
@@ -1372,13 +1379,14 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           </div>
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
             <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Rules Run</div>
-            <div className="text-lg font-bold" style={rt.value}>{results.totalRulesExecuted}</div>
+            <div className="text-lg font-bold" style={rt.value}>{results.totalRulesExecuted ?? results.executedRuleNames?.length ?? 0}</div>
           </div>
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
-            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Inferred</div>
+            <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>{results.executionMode === 'test' ? 'New conclusions' : 'Inferred'}</div>
             <div className="text-lg font-bold" style={rt.value}>{results.inferredAxiomsCount}</div>
           </div>
         </div>
+        {summaryLine && <p className="mt-3 text-sm" style={rt.value} data-testid="results-summary">{summaryLine}</p>}
 
         {results.executedRuleNames && results.executedRuleNames.length > 0 && (
           <div className="mt-4 pt-4" style={rt.divider}>
@@ -1407,37 +1415,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           {results.limitations.map((text, i) => <div key={i}>{text}</div>)}
         </div>
       )}
-      {results.success && hasSwrlResults && (
-        <div className="rounded-xl overflow-hidden shadow-md" style={rt.bannerSuccess}>
-          <div className="p-4 flex justify-between items-center" style={rt.rowBorder}>
-            <h3 className="font-bold text-lg flex items-center gap-2" style={rt.heading}>
-              <span className="text-2xl">🎯</span>
-              SWRL Rule Results
-              <span className="text-sm font-normal" style={rt.label}>({classAssertions.length} individuals classified)</span>
-            </h3>
-          </div>
-          <div className="p-4">
-            <div className="flex flex-wrap gap-2">
-              {classAssertions.map((ax, i) => {
-                const parsed = formatInferredAxiom(ax);
-                return (
-                  <div
-                    key={i}
-                    className="px-3 py-2 rounded-lg shadow-sm hover:shadow-md transition-all cursor-default" style={rt.card}
-                    title={ax.readable || ax.description}
-                  >
-                    <span className="font-bold" style={rt.value}>{parsed.subject}</span>
-                    <span className="mx-2" style={rt.label}>→</span>
-                    <span className="font-bold" style={rt.value}>{parsed.object}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {results.success && !hasSwrlResults && results.inferredAxioms.length > 0 && (
+      {results.success && results.inferredAxioms.length > 0 && !results.inferredAxioms.some(ax => formatInferredAxiom(ax).type === 'ClassAssertion') && (
         <div className="rounded-xl overflow-hidden" style={rt.bannerWarning}>
           <div 
             className="p-4 flex items-start gap-3 cursor-pointer"
@@ -1510,10 +1488,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             <div className="flex justify-between items-center">
               <h3 className="font-bold text-lg flex items-center gap-2" style={rt.heading}>
                 <span>📚</span>
-                All Inferred Axioms
-                <span className="text-sm font-normal" style={rt.label}>
-                  ({paged ? formatCount(pageTotal) : matchedAxioms.length} matching{matchedAxioms.length > filteredAxioms.length ? `, showing ${filteredAxioms.length}` : ''}, {groupedAxioms.size} types)
-                </span>
+                <span data-testid="inferred-heading">{resultHeading(counts)}</span>
               </h3>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1 rounded-lg p-1" style={{ backgroundColor: 'var(--surface-3)' }}>
@@ -1544,10 +1519,10 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                 </div>
                 {viewMode === 'grouped' && (
                   <div className="flex gap-1">
-                    <button onClick={expandAll} className="px-2 py-1 text-xs rounded" style={rt.button} title="Expand all">
+                    <button onClick={expandAll} disabled={groupCount === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Expand all" aria-label="Expand all">
                       <Maximize2 size={14} />
                     </button>
-                    <button onClick={collapseAll} className="px-2 py-1 text-xs rounded" style={rt.button} title="Collapse all">
+                    <button onClick={collapseAll} disabled={groupCount === 0} className="px-2 py-1 text-xs rounded disabled:opacity-50" style={rt.button} title="Collapse all" aria-label="Collapse all">
                       <Minimize2 size={14} />
                     </button>
                   </div>
@@ -1583,7 +1558,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               </div>
               {searchFilter && (
                 <div className="mt-2 text-xs" style={rt.label}>
-                  Found {paged ? formatCount(pageTotal) : matchedAxioms.length} axioms matching "{searchFilter}"
+                  {searchMatchText(counts, searchFilter.trim())}
                 </div>
               )}
               {onAdd && (matchedConclusions.length > 0 || (paged && selectedCount > 0)) && (
@@ -1641,9 +1616,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               )}
               {paged && results.counts && (
                 <div className="mt-3 space-y-2 text-xs">
-                  <div style={rt.value}>{derivedSummary(results.counts)}</div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {([['conclusions', `Rule conclusions (${formatCount(results.counts.conclusions)})`], ['structure', `Structure (${formatCount(results.counts.structure)})`]] as const).map(([key, label]) => (
+                    {([['conclusions', `Facts about individuals (${formatCount(results.counts.conclusions)})`], ['structure', `Class relationships (${formatCount(results.counts.structure)})`]] as const).map(([key, label]) => (
                       <button
                         key={key}
                         onClick={() => { setTabChoice(key); setOffset(0); }}
@@ -1657,7 +1631,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
               )}
               {!paged && conclusionTotal + structureTotal > 0 && results.conclusionCount !== undefined && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                  {([['conclusions', `Rule conclusions (${results.conclusionCount})`], ['structure', `Ontology structure (${results.structureCount ?? structureTotal})`], ['all', 'Everything']] as const).map(([key, label]) => (
+                  {([['conclusions', `Facts about individuals (${formatCount(results.conclusionCount)})`], ['structure', `Class relationships (${formatCount(results.structureCount ?? structureTotal)})`], ['all', 'Everything']] as const).map(([key, label]) => (
                     <button
                       key={key}
                       onClick={() => { setScopeChoice(key); setVisibleLimit(100); }}
@@ -1666,8 +1640,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       {label}
                     </button>
                   ))}
-                  {results.omittedTrivialCount ? <span style={rt.label}>{results.omittedTrivialCount} trivial same-individual facts hidden</span> : null}
-                  {results.truncated ? <span style={rt.value}>Only the first {results.inferredAxioms.length} are listed; the rest are cut off.</span> : null}
+                  {results.omittedTrivialCount ? <span style={rt.label}>{formatCount(results.omittedTrivialCount)} trivial same-individual facts hidden</span> : null}
+                  {cutoffNote(counts) ? <span style={rt.value} data-testid="cutoff-note">{cutoffNote(counts)}</span> : null}
                 </div>
               )}
             </div>
@@ -1676,13 +1650,29 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
 
           {showList && viewMode === 'grouped' && (
             <div className="max-h-[70vh] overflow-y-auto">
-              {Array.from(groupedAxioms.entries()).map(([type, items]) => {
-                const style = getAxiomTypeStyle(type);
-                const isExpanded = expandedGroups.has(type);
+              {sections.map(sec => {
+                const secOpen = !collapsedGroups.has(`sec:${sec.key}`);
                 return (
-                  <div key={type} style={rt.rowBorder}>
+                <div key={sec.key} data-testid={`section-${sec.key}`}>
+                  <button
+                    onClick={() => toggleGroup(`sec:${sec.key}`)}
+                    aria-expanded={secOpen}
+                    className="w-full px-4 py-2 flex items-center justify-between text-left" style={{ ...rt.panelHeader, color: 'var(--text-primary)' }}
+                  >
+                    <span className="text-sm font-bold">{sectionLabel(sec)}</span>
+                    <ChevronRight size={16} className={`transition-transform ${secOpen ? 'rotate-90' : ''}`} style={rt.label} />
+                  </button>
+                  {secOpen && sec.note && <div className="px-4 py-2 text-xs" style={rt.label}>{sec.note}</div>}
+                  {secOpen && Array.from(sec.groups.entries()).map(([type, items]) => {
+                const style = getAxiomTypeStyle(type);
+                const groupKey = `${sec.key}|${type}`;
+                const isExpanded = !collapsedGroups.has(groupKey);
+                return (
+                  <div key={groupKey} style={rt.rowBorder}>
                     <button
-                      onClick={() => toggleGroup(type)}
+                      onClick={() => toggleGroup(groupKey)}
+                      aria-expanded={isExpanded}
+                      data-testid="group-header"
                       className="w-full p-4 flex items-center justify-between transition-colors" style={{ backgroundColor: 'var(--surface-1)', color: 'var(--text-primary)' }}
                     >
                       <div className="flex items-center gap-3">
@@ -1691,7 +1681,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                           {type}
                         </span>
                         <span className="text-sm font-medium" style={rt.label}>
-                          {items.length} inferred
+                          {groupText(sec, type, items.length)}
                         </span>
                       </div>
                       <ChevronRight size={20} className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`} style={rt.label} />
@@ -1700,17 +1690,20 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       <div className="p-4 pt-2" style={{ backgroundColor: 'var(--surface-1)' }}>
                         <div className="flex flex-wrap gap-2">
                           {items.map((item, i) => (
-                            <AxiomCard key={i} item={item} index={i} selected={selectedKeys.has(item.key)} onToggle={onAdd ? toggleSelected : undefined} onWhy={toggleWhy} />
+                            <AxiomCard key={i} item={item} index={i} selected={selectedKeys.has(item.key)} onToggle={onAdd ? toggleSelected : undefined} onWhy={toggleWhy} canWhy={canExplainIn(item.axiom, sec.key)} whyOpen={explained === item.axiom} />
                           ))}
                         </div>
                         {explained && items.some(it => it.axiom === explained) && (
                           <div className="mt-2">
-                            <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={explained} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={explained} onClose={() => setExplained(null)} />
                           </div>
                         )}
                       </div>
                     )}
                   </div>
+                );
+              })}
+                </div>
                 );
               })}
             </div>
@@ -1731,12 +1724,20 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                   </tr>
                 </thead>
                 <tbody style={{ color: 'var(--text-primary)' }}>
-                  {filteredAxioms.map((ax, i) => {
+                  {orderedRows.map(({ ax, sec, first }, i) => {
                     const parsed = formatInferredAxiom(ax);
                     const style = getAxiomTypeStyle(parsed.type);
                     return (
                       <React.Fragment key={i}>
-                      <tr style={rt.rowBorder} title={ax.readable}>
+                      {first && (
+                        <tr style={rt.panelHeader}>
+                          <td colSpan={onAdd ? 7 : 6} className="px-4 py-2 text-xs">
+                            <div className="font-bold text-sm" style={rt.heading}>{sectionLabel(sec)}</div>
+                            {sec.note && <div style={rt.label}>{sec.note}</div>}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="swrl-why-host" style={rt.rowBorder} title={ax.readable}>
                         {onAdd && (
                           <td className="px-4 py-2">
                             {ax.category === 'conclusion' && (
@@ -1759,15 +1760,15 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                         <td className="px-4 py-2 font-bold text-center" style={rt.label}>{parsed.predicate || '→'}</td>
                         <td className="px-4 py-2 font-medium max-w-[200px] truncate" style={rt.value}>{parsed.object || '-'}</td>
                         <td className="px-4 py-2">
-                          {canExplain(ax) && (
-                            <button onClick={() => toggleWhy(ax)} className="text-xs font-medium" style={rt.link}>Why?</button>
+                          {canExplainIn(ax, sec.key) && (
+                            <WhyButton onClick={() => toggleWhy(ax)} open={explained === ax} />
                           )}
                         </td>
                       </tr>
                       {explained === ax && (
                         <tr>
                           <td colSpan={onAdd ? 7 : 6} className="px-4 py-2">
-                            <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={ax} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
                           </td>
                         </tr>
                       )}
@@ -1798,20 +1799,27 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
             </div>
           )}
 
-          {showInferredAxioms && matchedAxioms.length > filteredAxioms.length && (
+          {showInferredAxioms && !paged && showMoreLabel(counts, 100) && (
             <div className="p-3 text-center" style={rt.divider}>
               <button onClick={() => setVisibleLimit(visibleLimit + 100)} className="px-4 py-1.5 text-sm rounded-lg" style={rt.button}>
-                Show 100 more ({matchedAxioms.length - filteredAxioms.length} remaining)
+                {showMoreLabel(counts, 100)}
               </button>
             </div>
           )}
 
           {showList && viewMode === 'raw' && (
             <div className="max-h-[70vh] overflow-y-auto">
-              {filteredAxioms.map((ax, i) => {
+              {orderedRows.map(({ ax, sec, first }, i) => {
                 const style = getAxiomTypeStyle(ax.axiomType);
                 return (
-                  <div key={i} className="p-4" style={{ ...rt.rowBorder, backgroundColor: i % 2 === 0 ? 'var(--surface-1)' : 'var(--surface-2)', color: 'var(--text-primary)' }}>
+                  <React.Fragment key={i}>
+                  {first && (
+                    <div className="px-4 py-2 text-xs" style={rt.panelHeader}>
+                      <div className="font-bold text-sm" style={rt.heading}>{sectionLabel(sec)}</div>
+                      {sec.note && <div style={rt.label}>{sec.note}</div>}
+                    </div>
+                  )}
+                  <div className="p-4 swrl-why-host" style={{ ...rt.rowBorder, backgroundColor: i % 2 === 0 ? 'var(--surface-1)' : 'var(--surface-2)', color: 'var(--text-primary)' }}>
                     <div className="flex items-center gap-2 mb-2">
                       {onAdd && ax.category === 'conclusion' && (
                         <input
@@ -1825,17 +1833,18 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded" style={rt.chip}>
                         {style.icon} {ax.axiomType}
                       </span>
-                      {canExplain(ax) && (
-                        <button onClick={() => toggleWhy(ax)} className="text-xs font-medium" style={rt.link}>Why?</button>
+                      {canExplainIn(ax, sec.key) && (
+                        <WhyButton onClick={() => toggleWhy(ax)} open={explained === ax} />
                       )}
                     </div>
                     <pre className="text-sm font-mono p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all" style={rt.code}>{ax.readable}</pre>
                     {explained === ax && (
                       <div className="mt-2">
-                        <ExplainPanel projectId={projectId} draftMode={draftMode} axiom={ax} onClose={() => setExplained(null)} />
+                        <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
                       </div>
                     )}
                   </div>
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -1876,11 +1885,26 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
+  const saveInFlightRef = useRef(false);
+  const runInFlightRef = useRef(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
+  const [ranAt, setRanAt] = useState<number | null>(null);
+  useEffect(() => {
+    setRanAt(executionResult ? Date.now() : null);
+  }, [executionResult]);
   const [validationResult, setValidationResult] = useState<SwrlValidationResult | null>(null);
   const [unmigrated, setUnmigrated] = useState<UnmigratedRule[]>([]);
   const [copyingId, setCopyingId] = useState<string | null>(null);
-  const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query'>('editor');
+  const cloneInFlightRef = useRef(false);
+  const [isCloning, setIsCloning] = useState(false);
+  const [busyRules, setBusyRules] = useState<Record<string, 'delete' | 'toggle' | 'copy'>>({});
+  const busyRulesRef = useRef<Set<string>>(new Set());
+  const [assertedVersion, setAssertedVersion] = useState(0);
+  const controlSession = useControlSession(`${projectId}|${draftMode}`);
+  const [activePanel, setActivePanel] = useState<'editor' | 'results' | 'reference' | 'query' | 'control' | 'asserted' | 'owl2rl'>('editor');
   const [expandedBuiltInCategory, setExpandedBuiltInCategory] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; ruleName: string; ruleId: string }>({ isOpen: false, ruleName: '', ruleId: '' });
   const [searchQuery, setSearchQuery] = useState('');
@@ -2028,25 +2052,25 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         
         generated.push({
           name: `Count ${cls}`,
-          template: `${cls}(?x) -> sqwrl:select(?x) ^ sqwrl:count(?x)`,
+          template: `${cls}(?x) -> sqwrl:count(?x)`,
           description: `Count total number of ${cls} instances`
         });
         
         generated.push({
           name: `${cls} Min ${prop}`,
-          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:min(?val)`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:min(?val)`,
           description: `Find minimum ${prop} value in ${cls}`
         });
         
         generated.push({
           name: `${cls} Max ${prop}`,
-          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?val) ^ sqwrl:max(?val)`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:max(?val)`,
           description: `Find maximum ${prop} value in ${cls}`
         });
         
         generated.push({
           name: `${cls} Avg ${prop}`,
-          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:select(?x) ^ sqwrl:avg(?val)`,
+          template: `${cls}(?x) ^ ${prop}(?x, ?val) -> sqwrl:avg(?val)`,
           description: `Calculate average ${prop} for all ${cls}`
         });
       }
@@ -2066,6 +2090,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   const loadRules = useCallback(async () => {
     const myVersion = rulesVersionRef.current;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const res = await apiClient.get<unknown>(withDraft(`/api/ontology/${projectId}/rules`, draftMode));
       if (rulesVersionRef.current === myVersion) {
@@ -2075,6 +2100,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       }
     } catch (e) {
       console.error('Failed to load rules:', e);
+      setLoadError(friendlyRuleError(e, 'Could not load the rules.'));
     } finally {
       setIsLoading(false);
     }
@@ -2088,8 +2114,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
   useUndoRefresh(projectId, () => { void loadRules(); });
 
+  const savedRuleText = selectedRule ? selectedRule.ruleText : null;
+
   useEffect(() => {
-    if (!debouncedRuleText.trim() || !isEditing) {
+    if (!isEditing || !needsValidation(debouncedRuleText, savedRuleText)) {
       setValidationResult(null);
       return;
     }
@@ -2122,7 +2150,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [debouncedRuleText, projectId, isEditing, draftMode]);
+  }, [debouncedRuleText, savedRuleText, projectId, isEditing, draftMode]);
 
   const filteredRules = useMemo(() => {
     if (!searchQuery.trim()) return rules;
@@ -2135,6 +2163,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
   }, [rules, searchQuery]);
 
   const enabledCount = rules.filter(r => r.enabled).length;
+  const rulesCountText = isLoading ? 'Loading rules…' : loadError ? 'Rules unavailable' : `${enabledCount} of ${rules.length} rules enabled`;
 
   const handleSelectRule = (rule: SwrlRule) => {
     setSelectedRule(rule);
@@ -2168,26 +2197,28 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
   const handleSave = async () => {
     if (!editForm.ruleName.trim() || !editForm.ruleText.trim()) return;
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     setIsSaving(true);
     setSaveError(null);
 
     try {
       const body = ruleWriteBody(editForm, (selectedRule ? 'Edited rule ' : 'Added rule ') + editForm.ruleName.trim());
       if (selectedRule) {
-        const res = await apiClient.put<SwrlRule>(
+        const res = ruleFromResponse<SwrlRule>(await apiClient.put<unknown>(
           withDraft(`/api/ontology/${projectId}/rules/${selectedRule.id}`, draftMode),
           body
-        );
+        ));
         rulesVersionRef.current++;
         const applied = applySavedRule(rules, selectedRule.id, res, editForm);
         setRules(prev => applySavedRule(prev, selectedRule.id, res, editForm).rules);
         setSelectedRule(applied.saved);
         setEditForm(prev => ({ ...prev, ruleName: applied.saved.ruleName }));
       } else {
-        const res = await apiClient.post<SwrlRule>(
+        const res = ruleFromResponse<SwrlRule>(await apiClient.post<unknown>(
           withDraft(`/api/ontology/${projectId}/rules`, draftMode),
           body
-        );
+        ));
         rulesVersionRef.current++;
         setRules([...rules, res]);
         setSelectedRule(res);
@@ -2198,25 +2229,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       console.error('Save failed:', e);
       setSaveError(friendlyRuleError(e, 'Failed to save rule - please try again.'));
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   };
 
-  const handleAddConclusions = async (axioms: InferredAxiom[]): Promise<{ ok: boolean; message: string }> => {
-    const ops = axioms.flatMap<Record<string, string | undefined>>(ax => {
-      if (!ax.subjectIri || !ax.predicateIri) return [];
-      if (ax.predicateIri === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' && ax.objectIri) {
-        return [{ type: 'addClassAssertion', iri: ax.subjectIri, classIri: ax.objectIri }];
-      }
-      if (ax.objectIri) {
-        return [{ type: 'addObjectPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, target: ax.objectIri }];
-      }
-      if (ax.objectLiteral != null) {
-        return [{ type: 'addDataPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, value: ax.objectLiteral, datatype: ax.literalDatatypeIri || undefined }];
-      }
-      return [];
-    });
-    if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
+  const postFactOps = async (ops: FactOp[], label: string, run: ExecutionResponse | null): Promise<{ ok: boolean; message: string }> => {
     try {
       const res = await apiClient.post<{ changeSetId?: string }>(
         withDraft(`/api/ontology/mutations/${projectId}`, draftMode),
@@ -2224,12 +2242,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
           ops,
           username: 'SWRL rules',
           sessionId: `swrl-add-${Date.now()}`,
-          precondition: executionResult?.stamp ?? null,
-          origin: { source: 'swrl-rules', label: 'Added from rule results (' + ops.length + ' facts)' }
+          precondition: run?.stamp ?? null,
+          origin: { source: 'swrl-rules', label }
         }
       );
       window.dispatchEvent(new CustomEvent('ontocode:committed-change', { detail: { projectId, direction: 'APPLY', changeSetId: res?.changeSetId } }));
-      return { ok: true, message: `Added ${ops.length} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.` };
+      return { ok: true, message: '' };
     } catch (e: any) {
       if (/stale|out of date|\(409\)|changed since/i.test(String(e?.message || ''))) {
         return { ok: false, message: 'The ontology or the rules changed since you ran this. Run the rules again, then add.' };
@@ -2238,62 +2256,145 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     }
   };
 
+  const handleAddConclusions = async (axioms: InferredAxiom[]): Promise<{ ok: boolean; message: string }> => {
+    const { ops } = axiomsToOps(axioms.filter(ax => ax.category !== 'structure'));
+    if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
+    const outcome = await postFactOps(ops, 'Added from rule results (' + ops.length + ' facts)', executionResult);
+    if (!outcome.ok) return outcome;
+    return { ok: true, message: `Added ${ops.length} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.` };
+  };
+
+  const handleAddInferred = async (includeStructure: boolean): Promise<AddOutcome> => {
+    const run = executionResult;
+    if (!run || !run.success) return { ok: false, message: 'Run the rules first, then add the inferred facts.' };
+    const plan = inferredPlan(run, includeStructure);
+    let axioms: InferredAxiom[];
+    try {
+      axioms = await collectInferredAxioms(apiClient.get.bind(apiClient), projectId, run, draftMode, includeStructure, ADD_INFERRED_CAP);
+    } catch (e: any) {
+      if (isExpiredRunError(e)) return { ok: false, message: EXPIRED_RUN_MESSAGE };
+      return { ok: false, message: pageErrorMessage(e) };
+    }
+    const { ops, unsupported } = axiomsToOps(axioms);
+    if (ops.length === 0) return { ok: false, message: 'Nothing to add: none of these can be written as simple facts.' };
+    const outcome = await postFactOps(ops, `Added from the Control tab (${ops.length} inferred facts)`, run);
+    if (!outcome.ok) return outcome;
+    setAssertedVersion(v => v + 1);
+    const parts = [`Added ${formatCount(ops.length)} fact${ops.length === 1 ? '' : 's'} to the ontology. You can undo this from the history.`];
+    if (plan.overCap) parts.push(`Only the first ${formatCount(ADD_INFERRED_CAP)} of ${formatCount(plan.total)} are added in one go. Run the rules again to add the rest.`);
+    if (unsupported > 0) parts.push(`${formatCount(unsupported)} could not be written as simple facts and were left out.`);
+    return { ok: true, message: parts.join(' '), added: ops.length };
+  };
+
+  const startRuleBusy = (id: string, action: 'delete' | 'toggle' | 'copy') => {
+    if (busyRulesRef.current.has(id)) return false;
+    busyRulesRef.current.add(id);
+    setBusyRules(prev => ({ ...prev, [id]: action }));
+    return true;
+  };
+
+  const endRuleBusy = (id: string) => {
+    busyRulesRef.current.delete(id);
+    setBusyRules(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
   const handleMakeLocalCopy = async (rule: SwrlRule) => {
+    if (!startRuleBusy(rule.id, 'copy')) return;
     setCopyingId(rule.id);
+    setRowError(null);
     setSaveError(null);
     try {
       const body = localCopyBody({ ...rule, comment: rule.comment ?? '' }, rules.map(r => r.ruleName));
-      const res = await apiClient.post<SwrlRule>(
+      const res = ruleFromResponse<SwrlRule>(await apiClient.post<unknown>(
         withDraft(`/api/ontology/${projectId}/rules`, draftMode),
         { ...body, origin: { source: 'swrl-rules', label: 'Made a local copy of ' + rule.ruleName } }
-      );
+      ));
       rulesVersionRef.current++;
       setRules(prev => [...prev, res]);
       handleSelectRule(res);
       announceRuleChange('ruleAdded');
     } catch (e: any) {
       console.error('Copy failed:', e);
-      setSaveError(friendlyRuleError(e, 'Could not make a local copy of this rule.'));
+      setRowError(friendlyRuleError(e, 'Could not make a local copy of this rule.'));
     } finally {
+      endRuleBusy(rule.id);
       setCopyingId(null);
     }
   };
 
-  const handleDelete = async () => {
-    if (!confirmDialog.ruleId) return;
+  const handleCloneRule = async (rule: SwrlRule) => {
+    if (cloneInFlightRef.current) return;
+    cloneInFlightRef.current = true;
+    setIsCloning(true);
+    setSaveError(null);
     try {
-      await apiClient.delete(withDraft(`/api/ontology/${projectId}/rules/${confirmDialog.ruleId}`, draftMode));
+      const body = cloneRuleBody({ ...rule, comment: rule.comment ?? '' }, rules.map(r => r.ruleName));
+      const res = ruleFromResponse<SwrlRule>(await apiClient.post<unknown>(
+        withDraft(`/api/ontology/${projectId}/rules`, draftMode),
+        ruleWriteBody(body, 'Cloned rule ' + rule.ruleName)
+      ));
       rulesVersionRef.current++;
-      setRules(rules.filter(r => r.id !== confirmDialog.ruleId));
-      if (selectedRule?.id === confirmDialog.ruleId) {
+      setRules(prev => [...prev, res]);
+      handleSelectRule(res);
+      announceRuleChange('ruleAdded');
+    } catch (e: any) {
+      console.error('Clone failed:', e);
+      setSaveError(friendlyRuleError(e, 'Could not clone this rule.'));
+    } finally {
+      cloneInFlightRef.current = false;
+      setIsCloning(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    const ruleId = confirmDialog.ruleId;
+    if (!ruleId) return;
+    setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' });
+    if (!startRuleBusy(ruleId, 'delete')) return;
+    setRowError(null);
+    try {
+      try {
+        await apiClient.delete(withDraft(`/api/ontology/${projectId}/rules/${ruleId}`, draftMode));
+      } catch (e: any) {
+        if (e?.status !== 404) throw e;
+      }
+      rulesVersionRef.current++;
+      setRules(prev => prev.filter(r => r.id !== ruleId));
+      if (selectedRule?.id === ruleId) {
         setSelectedRule(null);
         setEditForm({ ruleName: '', ruleText: '', comment: '', category: '', enabled: true });
       }
       setSelectedRuleIds(prev => {
         const next = new Set(prev);
-        next.delete(confirmDialog.ruleId);
+        next.delete(ruleId);
         return next;
       });
       announceRuleChange('ruleDeleted');
     } catch (e: any) {
       console.error('Delete failed:', e);
-      setSaveError(friendlyRuleError(e, 'Could not delete the rule.'));
+      setRowError(friendlyRuleError(e, 'Could not delete the rule.'));
     } finally {
-      setConfirmDialog({ isOpen: false, ruleName: '', ruleId: '' });
+      endRuleBusy(ruleId);
     }
   };
 
   const handleToggleEnabled = async (rule: SwrlRule) => {
+    if (!startRuleBusy(rule.id, 'toggle')) return;
+    setRowError(null);
     try {
-      const res = await apiClient.put<SwrlRule>(
+      const res = ruleFromResponse<SwrlRule>(await apiClient.put<unknown>(
         withDraft(`/api/ontology/${projectId}/rules/${rule.id}`, draftMode),
         ruleWriteBody(
           { ruleName: rule.ruleName, ruleText: rule.ruleText, comment: rule.comment || '', category: rule.category || '', enabled: !rule.enabled },
           (rule.enabled ? 'Turned off rule ' : 'Turned on rule ') + rule.ruleName
         )
-      );
+      ));
       rulesVersionRef.current++;
-      setRules(rules.map(r => r.id === rule.id ? res : r));
+      setRules(prev => prev.map(r => r.id === rule.id ? res : r));
       if (selectedRule?.id === rule.id) {
         setSelectedRule(res);
         setEditForm(prev => ({ ...prev, enabled: res.enabled }));
@@ -2301,7 +2402,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       announceRuleChange('ruleToggled');
     } catch (e: any) {
       console.error('Toggle failed:', e);
-      setSaveError(friendlyRuleError(e, 'Could not change this rule.'));
+      setRowError(friendlyRuleError(e, 'Could not change this rule.'));
+    } finally {
+      endRuleBusy(rule.id);
     }
   };
 
@@ -2314,34 +2417,42 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     });
   };
 
-  const handleExecuteAll = async () => {
+  const handleExecuteAll = async (): Promise<ExecutionResponse | null> => {
+    if (runInFlightRef.current) return null;
+    runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
-    setActivePanel('results');
+    setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
       const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode));
       setExecutionResult(res);
+      return res;
     } catch (e) {
       console.error('Execution failed:', e);
-      setExecutionResult({
+      const failed = {
         success: false,
         errorMessage: 'Execution failed',
         executionTimeMs: 0,
         totalRulesExecuted: 0,
         inferredAxiomsCount: 0,
         inferredAxioms: []
-      } as ExecutionResponse);
+      } as ExecutionResponse;
+      setExecutionResult(failed);
+      return failed;
     } finally {
+      runInFlightRef.current = false;
       setIsExecuting(false);
     }
   };
 
-  const handleExecuteSelected = async () => {
-    if (selectedRuleIds.size === 0) return;
+  const handleExecuteSelected = async (): Promise<ExecutionResponse | null> => {
+    if (selectedRuleIds.size === 0) return null;
+    if (runInFlightRef.current) return null;
+    runInFlightRef.current = true;
     setIsExecuting(true);
     setExecutionResult(null);
-    setActivePanel('results');
+    setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
       const ruleIds = Array.from(selectedRuleIds);
@@ -2350,18 +2461,24 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         { ruleIds }
       );
       setExecutionResult(res);
+      return res;
     } catch (e) {
       console.error('Execution failed:', e);
+      return null;
     } finally {
+      runInFlightRef.current = false;
       setIsExecuting(false);
     }
   };
 
   const handleTestRule = async () => {
     if (!selectedRule) return;
+    if (runInFlightRef.current) return;
+    runInFlightRef.current = true;
     setIsExecuting(true);
+    setIsTesting(true);
     setExecutionResult(null);
-    setActivePanel('results');
+    setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
       const res = await apiClient.post<ExecutionResponse>(
@@ -2371,6 +2488,8 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     } catch (e) {
       console.error('Test failed:', e);
     } finally {
+      runInFlightRef.current = false;
+      setIsTesting(false);
       setIsExecuting(false);
     }
   };
@@ -2490,7 +2609,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold text-gray-900">SWRL Rule Editor</h1>
-            <p className="text-xs text-gray-500">{enabledCount} of {rules.length} rules enabled</p>
+            <p className="text-xs text-gray-500">{rulesCountText}</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 border-r border-gray-200 pr-2 mr-2">
@@ -2524,11 +2643,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
             )}
             <button
               onClick={handleExecuteAll}
-              disabled={isExecuting || enabledCount === 0}
+              disabled={isExecuting || isLoading || enabledCount === 0}
               className="flex items-center gap-2 px-4 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:bg-purple-300"
             >
               {isExecuting ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-              Execute All ({enabledCount})
+              {isExecuting && !isTesting ? 'Executing…' : `Execute All (${enabledCount})`}
             </button>
           </div>
         </div>
@@ -2645,8 +2764,19 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
           <div className="flex-1 overflow-y-auto">
             {isLoading ? (
-              <div className="flex items-center justify-center p-8">
+              <div className="flex flex-col items-center justify-center gap-2 p-8 text-sm text-gray-500">
                 <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
+                Loading rules…
+              </div>
+            ) : loadError ? (
+              <div className="p-6 flex flex-col items-center gap-3 text-center text-sm text-red-700" role="alert">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={14} />
+                  {loadError}
+                </div>
+                <button onClick={loadRules} className="px-3 py-1.5 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100">
+                  Retry
+                </button>
               </div>
             ) : filteredRules.length === 0 ? (
               <div className="p-6 text-center text-gray-400">
@@ -2654,6 +2784,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               </div>
             ) : (
               <div className="divide-y divide-gray-100">
+                {rowError && (
+                  <div className="px-3 py-2 flex items-start gap-2 text-xs bg-red-50 text-red-700" role="alert">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                    {rowError}
+                  </div>
+                )}
                 {filteredRules.map(rule => (
                   <RuleListItem
                     key={rule.id}
@@ -2666,6 +2802,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                     onDelete={() => setConfirmDialog({ isOpen: true, ruleName: rule.ruleName, ruleId: rule.id })}
                     onMakeLocalCopy={() => handleMakeLocalCopy(rule)}
                     isCopying={copyingId === rule.id}
+                    busyAction={busyRules[rule.id] ?? null}
                   />
                 ))}
               </div>
@@ -2711,12 +2848,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                   : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
-              <BarChart2 size={14} /> Results
+              <BarChart2 size={14} /> Inferred Axioms
               {executionResult && (
                 <span className={`ml-1 px-1.5 py-0.5 text-[10px] rounded-full ${
                   executionResult.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                 }`}>
-                  {executionResult.inferredAxiomsCount}
+                  {inferredTotal(executionResult)}
                 </span>
               )}
             </button>
@@ -2740,6 +2877,22 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
             >
               <Search size={14} /> SQWRL Query
             </button>
+            {([
+              ['control', 'Control', Zap, 'Run the rules and see a summary of the last run'],
+              ['asserted', 'Asserted Axioms', List, 'Asserted means typed into the ontology, as opposed to worked out by a reasoner'],
+              ['owl2rl', 'OWL 2 RL', Sparkles, 'Work out every fact that follows from the ontology using the standard OWL 2 RL rules'],
+            ] as const).map(([id, label, Icon, hint]) => (
+              <button
+                key={id}
+                onClick={() => setActivePanel(id)}
+                title={hint}
+                className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  activePanel === id ? 'bg-purple-100 text-purple-700' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Icon size={14} /> {label}
+              </button>
+            ))}
           </div>
 
           {activePanel === 'editor' ? (
@@ -2933,25 +3086,36 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                     <div className="flex items-center gap-3 pt-2">
                       <button
                         onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule?.ruleName || '', ruleId: selectedRule?.id || '' })}
-                        disabled={!selectedRule}
+                        disabled={!selectedRule || isSaving}
                         className="px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 disabled:opacity-50 flex items-center gap-2"
                       >
                         <Trash2 size={14} /> Delete
                       </button>
                       <div className="flex-1" />
+                      {selectedRule && (
+                        <button
+                          onClick={() => handleCloneRule(selectedRule)}
+                          disabled={isCloning || isSaving}
+                          title="Make a copy of this rule under a new name"
+                          className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {isCloning ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />} Clone
+                        </button>
+                      )}
                       <button
                         onClick={handleTestRule}
-                        disabled={!selectedRule || !editForm.ruleText.trim()}
+                        disabled={!selectedRule || !editForm.ruleText.trim() || isExecuting || isSaving}
                         className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
                       >
-                        <Play size={14} /> Test
+                        {isTesting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} {isTesting ? 'Testing…' : 'Test'}
                       </button>
                       <button
+                        disabled={isSaving}
                         onClick={() => {
                           setIsEditing(false);
                           if (selectedRule) handleSelectRule(selectedRule);
                         }}
-                        className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+                        className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -2961,7 +3125,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         className="px-5 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:bg-purple-300 flex items-center gap-2"
                       >
                         {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        {selectedRule ? 'Update' : 'Save'}
+                        {isSaving ? 'Saving…' : selectedRule ? 'Update' : 'Save'}
                       </button>
                     </div>
                   ) : selectedRule && isImportedRule(selectedRule) ? (
@@ -2977,6 +3141,14 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         >
                           Make a local copy
                         </button>
+                        <button
+                          onClick={() => handleCloneRule(selectedRule)}
+                          disabled={isCloning}
+                          title="Make a copy of this rule under a new name"
+                          className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50"
+                        >
+                          Clone
+                        </button>
                       </div>
                     </div>
                   ) : selectedRule && (
@@ -2991,11 +3163,19 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                       </button>
                       <div className="flex-1" />
                       <button
-                        onClick={handleTestRule}
-                        disabled={!editForm.ruleText.trim()}
+                        onClick={() => handleCloneRule(selectedRule)}
+                        disabled={isCloning}
+                        title="Make a copy of this rule under a new name"
                         className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
                       >
-                        <Play size={14} /> Test
+                        {isCloning ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />} Clone
+                      </button>
+                      <button
+                        onClick={handleTestRule}
+                        disabled={!editForm.ruleText.trim() || isExecuting}
+                        className="px-4 py-2 text-sm font-medium text-purple-600 bg-purple-50 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {isTesting ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} {isTesting ? 'Testing…' : 'Test'}
                       </button>
                       <button
                         onClick={() => setIsEditing(true)}
@@ -3010,13 +3190,37 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               )}
             </div>
           ) : activePanel === 'results' ? (
-            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} />
+            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} rules={rules} />
+          ) : activePanel === 'control' ? (
+            <ControlPanel
+              projectId={projectId}
+              draftMode={draftMode}
+              session={controlSession}
+              onAddInferred={handleAddInferred}
+              result={executionResult}
+              isExecuting={isExecuting}
+              enabledCount={enabledCount}
+              selectedCount={selectedRuleIds.size}
+              onRunAll={handleExecuteAll}
+              onRunSelected={handleExecuteSelected}
+              onClear={() => setExecutionResult(null)}
+              rules={rules}
+              selectedIds={selectedRuleIds}
+              onToggleRule={toggleRuleSelection}
+              onSelectAllEnabled={() => setSelectedRuleIds(new Set(rules.filter(r => r.enabled && !isSqwrlRule(r)).map(r => r.id)))}
+              onSelectNone={() => setSelectedRuleIds(new Set())}
+              ranAt={ranAt}
+            />
+          ) : activePanel === 'asserted' ? (
+            <AssertedAxiomsPanel key={assertedVersion} projectId={projectId} draftMode={draftMode} />
+          ) : activePanel === 'owl2rl' ? (
+            <Owl2RlPanel projectId={projectId} draftMode={draftMode} />
           ) : activePanel === 'query' ? (
             <SQWRLQueryPanel projectId={projectId} context={context!} draftMode={draftMode} />
           ) : (
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="text-sm text-gray-600 mb-4">
-                <p>SWRL built-in predicates. Click a built-in to insert it into your rule.</p>
+                <p>Functions you can use in rules and queries. Click one to insert it into your rule. Functions marked "Not available" are listed so you know they exist, but the rule engine cannot run them.</p>
               </div>
               {SWRL_BUILTINS.map(category => (
                 <div key={category.name} className="border border-gray-200 rounded-lg overflow-hidden">
@@ -3036,7 +3240,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                         <div
                           key={builtin.name}
                           onClick={() => {
-                            if (isEditing) {
+                            if (isEditing && builtin.status !== 'unavailable') {
                               setEditForm(prev => ({
                                 ...prev,
                                 ruleText: prev.ruleText + (prev.ruleText ? ' ^ ' : '') + builtin.signature
@@ -3044,13 +3248,15 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                               setActivePanel('editor');
                             }
                           }}
-                          className={`p-3 hover:bg-purple-50 transition-colors ${isEditing ? 'cursor-pointer' : 'cursor-default'}`}
+                          className={`p-3 transition-colors ${builtin.status === 'unavailable' ? 'opacity-60 cursor-not-allowed' : `hover:bg-purple-50 ${isEditing ? 'cursor-pointer' : 'cursor-default'}`}`}
+                          data-testid={`builtin-${builtin.fullName}`}
                         >
                           <div className="flex items-center justify-between mb-1">
                             <code className="text-sm font-mono bg-purple-100 text-purple-800 px-2 py-0.5 rounded border border-purple-200">{builtin.fullName}</code>
-                            {isEditing && <span className="text-xs text-gray-400">Click to insert</span>}
+                            {builtin.status === 'unavailable' ? <span className="text-xs text-red-600">Not available</span> : builtin.status === 'caution' ? <span className="text-xs text-amber-600">Works with limits</span> : isEditing && <span className="text-xs text-gray-400">Click to insert</span>}
                           </div>
                           <p className="text-xs text-gray-600 mb-1">{builtin.description}</p>
+                          {builtin.note && <p className="text-xs text-amber-700 mb-1">{builtin.note}</p>}
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{builtin.signature}</span>
                             {builtin.example && (

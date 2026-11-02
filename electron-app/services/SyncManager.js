@@ -7,6 +7,8 @@ const fs    = require('fs');
 const http  = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const guard = require('./SharedGuard');
+const logHygiene = require('./LogHygiene');
 
 const SYNC_PORT     = 18384;   // Syncthing GUI/REST API port (offset from default 8384)
 const SYNC_TCP_PORT = 22000;   // Syncthing sync protocol port
@@ -66,9 +68,11 @@ module.exports = {
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
         });
+        guard.register('Syncthing', process.platform === 'win32' ? 'syncthing.exe' : 'syncthing', syncProcess);
 
         const logFile = path.join(app.getPath('userData'), 'logs', 'syncthing.log');
-        const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+        fs.mkdirSync(path.dirname(logFile), { recursive: true });
+        const logStream = logHygiene.createRotatingStream(logFile);
 
         syncProcess.stdout.on('data', d => { logStream.write(d); });
         syncProcess.stderr.on('data', d => { logStream.write(d); });
@@ -91,12 +95,21 @@ module.exports = {
         if (!syncProcess || syncProcess.killed) return;
         return new Promise(resolve => {
             syncProcess.once('exit', resolve);
-            try { syncProcess.kill('SIGTERM'); } catch (_) {}
+            if (process.platform === 'win32' && syncProcess.pid) {
+                guard.killTree(syncProcess.pid);
+            } else {
+                try { syncProcess.kill('SIGTERM'); } catch (_) {}
+            }
             setTimeout(() => {
+                if (syncProcess.pid) guard.killTree(syncProcess.pid);
                 try { syncProcess.kill('SIGKILL'); } catch (_) {}
                 resolve();
             }, 4000);
         });
+    },
+
+    killNow() {
+        if (syncProcess && syncProcess.pid) guard.killTree(syncProcess.pid);
     },
 
     isRunning() {

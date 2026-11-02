@@ -247,7 +247,7 @@ branch_web_remote_build() {
       echo "VITE_CLOUD_PLUGIN_URL=${API[$m]}:8087"
     } > "$webapp_env"
     echo "[progress][$m-web] regenerated webview .env.production → ${API[$m]}"
-    rsync_paths+=(ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/)
+    rsync_paths+=(ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ plugins/)
   fi
   if [[ " ${SERVICES[*]} " == *" plugin-init "* ]]; then
     rsync_paths+=(plugins/ scripts/package.json scripts/manage-plugins.js)

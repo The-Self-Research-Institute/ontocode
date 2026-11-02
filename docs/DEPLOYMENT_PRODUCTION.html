@@ -49,6 +49,7 @@
   <tbody>
     <tr><td><code>BASE_URL</code></td><td>Canonical public HTTPS origin of the customer-facing webapp. Wrong values break password reset and invitation links.</td></tr>
     <tr><td><code>AUTH_SERVICE_URL</code> / <code>GATEWAY_URL</code></td><td>Stable URLs your clients and reverse proxy use; must match TLS certificates and DNS.</td></tr>
+    <tr><td><code>ONTOCODE_INTERNAL_TOKEN</code></td><td>Required. Long random value shared by editor, reasoner worker, SWRL, plugin service and auth. Compose refuses to start without it, and strict mode refuses the old public default. <code>ONTOCODE_SECURITY_STRICT</code> now defaults to true in production.</td></tr>
     <tr><td><code>JWT_SECRET</code></td><td>Cryptographically strong, unique to production; must match the value injected into gateway and any service that validates JWTs.</td></tr>
     <tr><td><code>MONGO_ROOT_PASSWORD</code></td><td>Strong unique password; restrict MongoDB to internal network only.</td></tr>
     <tr><td><code>MONGODB_URI</code> (if used outside compose)</td><td>Must target the production cluster; include auth and TLS parameters if you use MongoDB TLS.</td></tr>

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import axios from 'axios';
+import { zoteroKeyStore } from './zoteroKeyStoreHost';
 
 interface ZoteroConfig {
     apiKey: string;
@@ -45,7 +46,7 @@ class ZoteroApiService {
      */
     private getConfig(): ZoteroConfig | null {
         const config = vscode.workspace.getConfiguration('ontocode.zotero');
-        const apiKey = config.get<string>('apiKey', '');
+        const apiKey = zoteroKeyStore().get();
         const userId = config.get<string>('userId', '');
         const libraryType = config.get<'user' | 'group'>('libraryType', 'user');
         const groupId = config.get<string>('groupId', '');
@@ -117,7 +118,6 @@ class ZoteroApiService {
         const config = this.getConfig();
         
         if (!config) {
-            console.log('[ZoteroAPI] Not configured, skipping fetch');
             return [];
         }
 
@@ -364,7 +364,7 @@ class ZoteroApiService {
         // Step 3: Save to settings
         try {
             const config = vscode.workspace.getConfiguration('ontocode.zotero');
-            await config.update('apiKey', apiKey.trim(), vscode.ConfigurationTarget.Global);
+            await zoteroKeyStore().set(apiKey);
             await config.update('userId', userId, vscode.ConfigurationTarget.Global);
 
             vscode.window.showInformationMessage(
@@ -395,7 +395,7 @@ class ZoteroApiService {
      */
     async saveConfig(cfg: ZoteroConfig): Promise<void> {
         const config = vscode.workspace.getConfiguration('ontocode.zotero');
-        await config.update('apiKey', cfg.apiKey, vscode.ConfigurationTarget.Global);
+        await zoteroKeyStore().set(cfg.apiKey);
         await config.update('userId', cfg.userId, vscode.ConfigurationTarget.Global);
         await config.update('libraryType', cfg.libraryType, vscode.ConfigurationTarget.Global);
         await config.update('groupId', cfg.groupId || '', vscode.ConfigurationTarget.Global);
@@ -406,7 +406,7 @@ class ZoteroApiService {
      */
     async clearConfig(): Promise<void> {
         const config = vscode.workspace.getConfiguration('ontocode.zotero');
-        await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+        await zoteroKeyStore().clear();
         await config.update('userId', undefined, vscode.ConfigurationTarget.Global);
         await config.update('libraryType', undefined, vscode.ConfigurationTarget.Global);
         await config.update('groupId', undefined, vscode.ConfigurationTarget.Global);

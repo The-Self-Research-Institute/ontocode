@@ -1,4 +1,5 @@
 import { isDesktop, isRealVSCode } from "../utils/desktop";
+import { isTrustedMessage } from '../utils/trustedMessage';
 
 export type KeyPersistence = "secure" | "session";
 
@@ -58,6 +59,7 @@ function vscodeRequest(message: Record<string, unknown>): Promise<{ value: strin
       reject(new Error("VS Code did not answer the key request"));
     }, VSCODE_REPLY_TIMEOUT_MS);
     function onMessage(event: MessageEvent) {
+      if (!isTrustedMessage(event)) return;
       const data = event.data;
       if (!data || data.type !== "assistantKeyResult" || data.requestId !== requestId) return;
       clearTimeout(timer);

@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.config;
 
+import self.research.ontology.common.logging.LogContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.FilterChain;
@@ -82,13 +83,6 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
             JsonNode claims = MAPPER.readTree(decoded);
 
-            // Email is the operator-facing identity. Prefer the explicit
-            // `email` claim; fall back to `sub` (which is the username, but
-            // many of our users sign up with their email as the username).
-            String email = textClaim(claims, "email");
-            if (email == null) email = textClaim(claims, "sub");
-            if (email != null) MDC.put("userEmail", email);
-
             // Stable internal id, kept for joining against Mongo if needed.
             String userId = textClaim(claims, "userId");
             if (userId != null) MDC.put("userId", userId);
@@ -170,31 +164,13 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
     // Cascade
     // ─────────────────────────────────────────────────────────────────
 
-    /**
-     * Render the cascading identifier string. Picks the most specific
-     * identifier available and pairs it with the user's email so that one
-     * grep is enough to find every line for a user's most recent activity.
-     *
-     * Examples:
-     *   email=alice@x.com file=file-123
-     *   email=alice@x.com proj=proj-abc
-     *   email=alice@x.com ws=ws-xyz
-     *   email=alice@x.com
-     *   (anon) ws=ws-xyz                  ← rare: pre-auth path with workspace
-     *   (anon)                            ← truly unauthenticated
-     */
     private String buildContext() {
-        String email = MDC.get("userEmail");
+        String userId = MDC.get("userId");
         String fileId = MDC.get("fileId");
         String projectId = MDC.get("projectId");
         String workspaceId = MDC.get("workspaceId");
 
-        StringBuilder sb = new StringBuilder();
-        if (email != null && !email.isBlank()) {
-            sb.append("email=").append(email);
-        } else {
-            sb.append("(anon)");
-        }
+        StringBuilder sb = new StringBuilder(LogContext.userLabel(userId));
 
         // Append the most specific scope we have. Cascading:
         //   file > project > workspace.

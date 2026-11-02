@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +38,9 @@ import java.util.concurrent.Callable;
 @CrossOrigin
 public class RuleController {
 
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
+
     private static final Logger log = LoggerFactory.getLogger(RuleController.class);
 
     private final RuleService ruleService;
@@ -52,6 +56,11 @@ public class RuleController {
     private RuleWriteAccess writeAccess;
 
     public static final String DISABLED_WARNING = "Other tools ignore the disabled flag and will run these rules.";
+
+    public static final String MANCHESTER_WARNING = "The Manchester export does not include rule names or comments, "
+            + "and disabled rules would run as normal rules in other tools.";
+
+    public static final String OBO_WARNING = "The OBO format does not support rules, so the rules are not included.";
 
     public RuleController(RuleService ruleService, ProjectWriteLockRegistry lockRegistry) {
         this.ruleService = ruleService;
@@ -114,17 +123,29 @@ public class RuleController {
     public ResponseEntity<?> exportCheck(@PathVariable String projectId,
                                          @RequestParam(defaultValue = "false") boolean draft,
                                          @RequestParam(required = false) String userId,
+                                         @RequestParam(required = false) String format,
                                          HttpServletRequest http) {
         try {
             String actor = draft ? RequestActor.forScope(http, userId, true) : null;
             List<Map<String, String>> disabled = ruleService.disabledRules(projectId, draft, actor);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("disabledRules", disabled);
-            body.put("warning", disabled.isEmpty() ? null : DISABLED_WARNING);
+            body.put("warning", exportWarning(format, disabled, () -> ruleService.ruleCount(projectId, draft, actor)));
             return ResponseEntity.ok(body);
         } catch (RuntimeException e) {
             return failure(e);
         }
+    }
+
+    static String exportWarning(String format, List<Map<String, String>> disabled,
+                                java.util.function.IntSupplier ruleCount) {
+        String normalized = format == null ? "" : format.trim().toLowerCase(java.util.Locale.ROOT);
+        boolean manchester = normalized.equals("manchester") || normalized.equals("omn");
+        boolean obo = normalized.equals("obo");
+        if ((manchester || obo) && ruleCount.getAsInt() > 0) {
+            return manchester ? MANCHESTER_WARNING : OBO_WARNING;
+        }
+        return disabled.isEmpty() ? null : DISABLED_WARNING;
     }
 
     @PostMapping
@@ -167,6 +188,10 @@ public class RuleController {
 
     private ResponseEntity<?> write(String projectId, boolean draft, RuleRequest request, HttpServletRequest http,
                                     Write work) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         String actor = RequestActor.forScope(http, request.userId(), draft);
         String username = RequestActor.displayName(http, request.username());
         ChangeOrigin origin = request.origin() == null ? ChangeOrigin.manual()

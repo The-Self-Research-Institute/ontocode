@@ -20,6 +20,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import self.research.ontology.common.ReasoningFriendlyErrors;
+import self.research.ontology.plugins.config.RequestUserIds;
 import self.research.ontology.plugins.service.ReasonerService;
 import self.research.ontology.plugins.service.ReasonerType;
 import self.research.ontology.plugins.service.ReasonerWorkerClient;
@@ -257,25 +258,6 @@ public class ReasonerController {
     }
 
  
-    private String resolveUserId(String clientSuppliedUserId) {
-        if (clientSuppliedUserId == null || clientSuppliedUserId.isBlank()) {
-            return clientSuppliedUserId;
-        }
-        org.springframework.web.context.request.RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
-        if (attrs instanceof ServletRequestAttributes servletAttrs) {
-            Object verified = servletAttrs.getRequest().getAttribute(
-                self.research.ontology.plugins.config.JwtAuthenticationFilter.AUTHENTICATED_USER_ID_ATTRIBUTE);
-            if (verified instanceof String verifiedUserId && !verifiedUserId.isBlank()) {
-                if (!verifiedUserId.equals(clientSuppliedUserId)) {
-                    log.warn("Ignoring client-supplied userId '{}' for draft load — using authenticated userId '{}' instead",
-                        clientSuppliedUserId, verifiedUserId);
-                }
-                return verifiedUserId;
-            }
-        }
-        return clientSuppliedUserId;
-    }
-
     /**
      * Load ontology from multiple sources in priority order:
      * 1. Editor service (for ontologies being edited)
@@ -290,7 +272,7 @@ public class ReasonerController {
     private OWLOntology loadOntology(String projectId, String clientSuppliedUserId) throws Exception {
         lastLoadFailure.remove();
         try {
-            String userId = resolveUserId(clientSuppliedUserId);
+            String userId = RequestUserIds.resolve(clientSuppliedUserId);
             log.info("Loading ontology for project: {} (userId={})", projectId, userId);
 
             OWLOntology ontology = tryLoadOntologyForId(projectId, userId);

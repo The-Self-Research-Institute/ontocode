@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { 
-  Package, Search, Settings, Power, PowerOff, Download,
-  Loader2, CheckCircle, XCircle, Info, Filter, RefreshCw
+  Package, Search, Settings, Power, PowerOff, Download, Loader2, CheckCircle, XCircle, Info, Filter, RefreshCw
 } from 'lucide-react';
 import apiClient from '../services/apiClient';
+import { safeHref } from '../utils/safeUrl';
 
 interface PluginMetadata {
   id: string;
@@ -372,7 +372,7 @@ const PluginManager: React.FC = () => {
                       <div className="flex">
                         <dt className="w-32 text-gray-600">Website:</dt>
                         <dd className="text-indigo-600">
-                          <a href={selectedPlugin.website} target="_blank" rel="noopener noreferrer">
+                          <a href={safeHref(selectedPlugin.website)} target="_blank" rel="noopener noreferrer">
                             {selectedPlugin.website}
                           </a>
                         </dd>

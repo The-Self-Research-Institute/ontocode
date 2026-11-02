@@ -24,6 +24,7 @@ import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.AuditService;
+import self.research.ontology.auth.service.AuthenticatedUsers;
 import self.research.ontology.auth.service.EmailService;
 import self.research.ontology.auth.service.EnterpriseBypassService;
 import self.research.ontology.auth.service.IssueReportClient;
@@ -60,6 +61,7 @@ public class AuthController {
     private final SystemSettingsService systemSettingsService;
     private final EnterpriseBypassService enterpriseBypassService;
     private final IssueReportClient issueReportClient;
+    private final AuthenticatedUsers authenticatedUsers;
 
     @Value("${app.admin.password:}")
     private String adminPassword;
@@ -98,7 +100,8 @@ public class AuthController {
                           AuditService auditService,
                           SystemSettingsService systemSettingsService,
                           EnterpriseBypassService enterpriseBypassService,
-                          IssueReportClient issueReportClient) {
+                          IssueReportClient issueReportClient,
+                          AuthenticatedUsers authenticatedUsers) {
         this.authenticationManager = authenticationManager;
         this.userDetailsService = userDetailsService;
         this.jwtUtil = jwtUtil;
@@ -115,6 +118,7 @@ public class AuthController {
         this.systemSettingsService = systemSettingsService;
         this.enterpriseBypassService = enterpriseBypassService;
         this.issueReportClient = issueReportClient;
+        this.authenticatedUsers = authenticatedUsers;
     }
 
     private boolean isDomainAllowed(String email) {
@@ -329,6 +333,9 @@ public class AuthController {
             }
 
             User user = userOpt.get();
+            if (!user.isEnabled() || user.isAccountLocked()) {
+                return ResponseEntity.status(401).body(Map.of("error", "This account cannot refresh its session"));
+            }
 
             // Maintenance mode: block token refresh.
             // Bypass list is the DB-managed maintenanceAllowedDomains (admin UI).
@@ -707,7 +714,7 @@ public class AuthController {
                     })
                     .collect(Collectors.toList());
 
-            List<Map<String, Object>> projects = projectRepository.findByOwnerId(userId).stream()
+            List<Map<String, Object>> projects = ownedAuthProjects(userId).stream()
                     .map(p -> {
                         List<Map<String, Object>> otherMembers = p.getMembers().stream()
                                 .filter(m -> m.getUserId() != null && !m.getUserId().equals(userId))
@@ -732,6 +739,12 @@ public class AuthController {
             log.error("Error computing account deletion impact", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to compute deletion impact: " + e.getMessage()));
         }
+    }
+
+    private List<Project> ownedAuthProjects(String userId) {
+        return projectRepository.findByOwnerId(userId).stream()
+                .filter(p -> p.getProjectId() != null && !p.getProjectId().contains("--"))
+                .collect(Collectors.toList());
     }
 
     public static class OwnershipResolution {
@@ -779,7 +792,7 @@ public class AuthController {
             }
 
             List<Workspace> ownedWorkspaces = workspaceRepository.findByOwnerId(userId);
-            List<Project> ownedProjects = projectRepository.findByOwnerId(userId);
+            List<Project> ownedProjects = ownedAuthProjects(userId);
 
             if (user.getStripeSubscriptionId() != null && !user.getStripeSubscriptionId().isBlank()) {
                 try {
@@ -793,10 +806,7 @@ public class AuthController {
             for (Workspace workspace : ownedWorkspaces) {
                 boolean hasOtherMembers = workspace.getMembers().stream()
                         .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
-                if (hasOtherMembers) {
-                    workspaceService.deleteWorkspace(workspace.getWorkspaceId(), userId);
-                } else {
-                    workspaceService.hardDeleteWorkspaceCompletely(workspace.getWorkspaceId(), userId);
+                if (!hasOtherMembers) {
                     hardDeletedWorkspaceIds.add(workspace.getWorkspaceId());
                 }
             }
@@ -807,15 +817,28 @@ public class AuthController {
                 }
                 boolean hasOtherMembers = project.getMembers().stream()
                         .anyMatch(m -> m.getUserId() != null && !m.getUserId().equals(userId));
-                if (hasOtherMembers) {
-                    projectService.deleteProject(project.getProjectId(), userId);
+                try {
+                    if (hasOtherMembers) {
+                        projectService.deleteProject(project.getProjectId(), userId);
+                    } else {
+                        projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+                    }
+                } catch (SecurityException | IllegalStateException e) {
+                    log.warn("Skipping project {} during account deletion for {}: {}",
+                            project.getProjectId(), email, e.getMessage());
+                }
+            }
+
+            for (Workspace workspace : ownedWorkspaces) {
+                if (hardDeletedWorkspaceIds.contains(workspace.getWorkspaceId())) {
+                    workspaceService.hardDeleteWorkspaceCompletely(workspace.getWorkspaceId(), userId);
                 } else {
-                    projectService.hardDeleteProjectCompletely(project.getProjectId(), userId);
+                    workspaceService.deleteWorkspace(workspace.getWorkspaceId(), userId);
                 }
             }
 
             for (Project project : projectRepository.findByMembers_UserId(userId)) {
-                if (!project.getOwnerId().equals(userId)) {
+                if (!userId.equals(project.getOwnerId())) {
                     project.removeMember(userId);
                     projectRepository.save(project);
                 }
@@ -842,94 +865,55 @@ public class AuthController {
     }
 
     /**
-     * Get user email by username
-     * Used by other services to lookup user email
-     */
-    @GetMapping("/user/email")
-    public ResponseEntity<?> getUserEmail(@RequestParam String username) {
-        try {
-            Optional<User> userOpt = userRepository.findByUsername(username);
-            if (userOpt.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
-            
-            User user = userOpt.get();
-            return ResponseEntity.ok(Map.of(
-                "username", user.getUsername(),
-                "email", user.getEmail()
-            ));
-        } catch (Exception e) {
-            log.error("Failed to get user email", e);
-            return ResponseEntity.badRequest().body(Map.of(
-                "error", e.getMessage()
-            ));
-        }
-    }
-
-    /**
      * Update user role based on deployment type
      */
     @PutMapping("/update-role")
-    public ResponseEntity<?> updateRole(@RequestBody Map<String, String> request) {
+    public ResponseEntity<?> updateRole(@RequestBody Map<String, String> request,
+                                        org.springframework.security.core.Authentication authentication) {
         try {
+            Optional<User> signedIn = authenticatedUsers.find(authentication);
+            if (signedIn.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Authentication required"));
+            }
+            User user = signedIn.get();
             String username = request.get("username");
             String deploymentType = request.get("deploymentType");
-            
-            log.info("Update role request - username: {}, deploymentType: {}", username, deploymentType);
-            
+
+            log.info("Update role request for the signed-in user, deploymentType: {}", deploymentType);
+
             if (username == null || deploymentType == null) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "Username and deploymentType are required"
                 ));
             }
-            
-            Optional<User> userOpt = userRepository.findByUsername(username)
-                    .or(() -> userRepository.findByEmail(username));
-            if (userOpt.isEmpty()) {
-                log.error("User not found by username or email: {}", username);
-                return ResponseEntity.notFound().build();
+            if (!user.isKnownAs(username)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", "You can only update your own role"));
             }
-            
-            User user = userOpt.get();
             log.info("Current user roles: {}", user.getRoles());
             
             Set<String> currentRoles = user.getRoles() != null ? user.getRoles() : new HashSet<>();
-            boolean isDesignatedAdmin = user.getEmail().equalsIgnoreCase(adminEmail);
-            if (isDesignatedAdmin && currentRoles.contains("ROLE_ADMIN")) {
+            if (user.getEmail().equalsIgnoreCase(adminEmail) && currentRoles.contains("ROLE_ADMIN")) {
                 log.info("Skipping role update — user {} is designated admin", username);
-            } else if ("self-hosted".equalsIgnoreCase(deploymentType)) {
-                user.setRoles(Set.of("ROLE_USER"));
-                log.info("Setting desktop roles (ROLE_USER) for user: {}", username);
             } else {
                 user.setRoles(Set.of("ROLE_USER"));
-                log.info("Setting cloud roles (ROLE_USER) for user: {}", username);
+                log.info("Setting {} roles (ROLE_USER) for user: {}",
+                        "self-hosted".equalsIgnoreCase(deploymentType) ? "desktop" : "cloud", username);
             }
             
             userRepository.save(user);
             log.info("User roles saved. New roles: {}", user.getRoles());
             
-            // Generate new JWT token with updated roles
-            try {
-                UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
-                String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
-                
-                boolean isAdmin = user.getRoles().contains("ROLE_ADMIN");
-                
-                Map<String, Object> response = new HashMap<>();
-                response.put("jwt", jwt);
-                response.put("username", user.getUsername());
-                response.put("email", user.getEmail());
-                response.put("roles", user.getRoles());
-                response.put("isAdmin", isAdmin);
-                response.put("message", "Role updated successfully");
-                
-                log.info("Successfully updated role for user: {} to deployment type: {}", username, deploymentType);
-                
-                return ResponseEntity.ok(response);
-            } catch (Exception tokenError) {
-                log.error("Failed to generate JWT token for user: {}", username, tokenError);
-                throw new RuntimeException("Failed to generate authentication token: " + tokenError.getMessage());
-            }
+            UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
+            String jwt = jwtUtil.generateToken(userDetails, user.getEmail(), user.getId(), user.getSubscriptionPlanName());
+            log.info("Successfully updated role for user: {} to deployment type: {}", username, deploymentType);
+            return ResponseEntity.ok(Map.of(
+                    "jwt", jwt,
+                    "username", user.getUsername(),
+                    "email", user.getEmail(),
+                    "roles", user.getRoles(),
+                    "isAdmin", user.getRoles().contains("ROLE_ADMIN"),
+                    "message", "Role updated successfully"));
         } catch (Exception e) {
             log.error("Failed to update user role for username: {}", request.get("username"), e);
             return ResponseEntity.internalServerError().body(Map.of(

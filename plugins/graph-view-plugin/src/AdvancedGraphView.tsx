@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
+import { renderNodeTooltip } from './utils/tooltipDom';
 import {
   RefreshCw,
   ZoomIn,
@@ -4458,11 +4459,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           .style('opacity', '0')
           .style('transform', 'translateY(4px)')
           .style('transition', 'opacity 160ms ease, transform 160ms ease')
-          .html(`
-            <div style="font-weight:600;font-size:13px;margin-bottom:4px;">${d.label}</div>
-            <span style="display:inline-block;padding:1px 8px;border-radius:9999px;font-size:10px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase;background:${hexToRgba(accent, 0.15)};color:${accent};">${d.type}</span>
-            ${d.description ? `<div style="margin-top:6px;opacity:0.75;">${d.description.substring(0, 140)}${d.description.length > 140 ? '…' : ''}</div>` : ''}
-          `);
+          .each(function () {
+            renderNodeTooltip(this as HTMLElement, d, {
+              badgeBackground: hexToRgba(accent, 0.15),
+              badgeColor: accent,
+            });
+          });
         requestAnimationFrame(() => {
           tooltip.style('opacity', '1').style('transform', 'translateY(0)');
         });

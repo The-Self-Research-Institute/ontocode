@@ -1,5 +1,6 @@
 import undoRedoService, { type ForeignTarget, type OtherChange, type RevertPrHint, type QueueResponse, type QueueStep, type StepOutcome, type UndoState, type UndoStep } from './undoRedoService';
 
+export const EARLIER_SESSION_TEXT = 'This change was made in an earlier session. Undo it anyway?';
 export const MAX_WAITING = 25;
 export const REQUEST_TIMEOUT_MS = 30000;
 export const CHECK_DELAY_MS = 3000;
@@ -10,7 +11,7 @@ export const MAX_FINISHED_ITEMS = 5;
 
 export type UndoKind = 'undo' | 'redo';
 export type UndoRunPhase = 'idle' | 'running' | 'paused' | 'checking' | 'finished';
-export type PauseReason = 'Conflict' | 'Result unknown';
+export type PauseReason = 'Conflict' | 'Result unknown' | 'Earlier session';
 
 export interface FinishedItem {
   label: string;
@@ -68,6 +69,7 @@ export interface Entry {
   label: string;
   opId: string;
   unknown: boolean;
+  confirmedEarlier?: boolean;
   confirmOther?: boolean | 'target';
 }
 

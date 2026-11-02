@@ -313,7 +313,7 @@ public class ProjectController {
                 request.description
             );
 
-            // Persist visibility so invitation acceptance can make the right auto-add decision
+            // Persist visibility so later joins and role changes can make the right auto-add decision
             if ("all".equals(request.shareWith)) {
                 project.setVisibility("WORKSPACE");
             } else if ("specific".equals(request.shareWith)) {
@@ -738,8 +738,10 @@ public class ProjectController {
             }
             
             Project project = projectOpt.get();
+            if (!project.hasMember(user.getId())) {
+                return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
+            }
             
-            // Check if user with this email is already a member
             boolean isMember = project.getMembers().stream()
                     .anyMatch(m -> m.getEmail().equalsIgnoreCase(email.trim()));
             
@@ -787,7 +789,6 @@ public class ProjectController {
 
             User user = userOpt.get();
             
-            // Find target user
             Optional<User> targetUserOpt = userRepository.findByEmail(request.email);
             if (targetUserOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Target user not found"));
@@ -804,10 +805,6 @@ public class ProjectController {
                 request.role
             );
 
-            // When the project transitions from private (1 member) to shared (>1 members),
-            // apply implicit workspace leadership editors so owner/admin are always present
-            // in non-private projects. Also idempotently re-applies for already-shared projects
-            // in case new workspace admins were promoted after project creation.
             Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
             if (wsOpt.isPresent() && project.getMembers().size() > 1) {
                 boolean touched = projectService.applyImplicitWorkspaceLeadershipEditors(project, wsOpt.get());
@@ -816,7 +813,6 @@ public class ProjectController {
                 }
             }
 
-            // Notify the new member via email (best-effort — never block the response)
             try {
                 emailService.sendProjectAccessEmail(
                     targetUser.getEmail(),
@@ -1888,8 +1884,19 @@ public ResponseEntity<?> renameFile(
                 project.setDescription(request.get("description"));
             }
 
-            project.setUpdatedAt(java.time.LocalDateTime.now());
-            projectService.updateProject(project);
+            if (request.containsKey("visibility")) {
+                if (!"WORKSPACE".equals(request.get("visibility"))) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Visibility can only be changed to WORKSPACE"));
+                }
+                Optional<Workspace> workspaceOpt = projectService.getWorkspace(project.getWorkspaceId());
+                if (workspaceOpt.isEmpty()) {
+                    return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
+                }
+                projectService.shareWithAllWorkspaceMembers(project, workspaceOpt.get());
+            } else {
+                project.setUpdatedAt(java.time.LocalDateTime.now());
+                projectService.updateProject(project);
+            }
 
             return ResponseEntity.ok(Map.of(
                 "message", "Project updated successfully",

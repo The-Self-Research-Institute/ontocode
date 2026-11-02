@@ -20,13 +20,10 @@ const relay = (event: string, pick: (payload: any) => any = (p) => p) => (msg: I
 export function subscribeGlobalTopics(
   client: Client,
   subs: Map<string, StompSubscription>,
-  user: { email?: string; workspaceId?: string } | null | undefined,
+  user: { workspaceId?: string } | null | undefined,
   filters: TopicFilters,
 ): void {
   const onShare = relay("fileShared", (n) => (filters.shareIsNew(n) ? n : undefined));
-  if (user?.email) {
-    subs.set("shares", client.subscribe(`/topic/shares/${user.email}`, onShare));
-  }
   subs.set("userShares", client.subscribe("/user/queue/shares", onShare));
   subs.set("errors", client.subscribe("/user/queue/errors", (msg) => {
     try {

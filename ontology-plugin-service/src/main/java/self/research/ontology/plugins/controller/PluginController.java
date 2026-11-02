@@ -150,9 +150,7 @@ public class PluginController {
             return ResponseEntity.badRequest().build();
         }
 
-        String authorEmail = (authentication != null) ? authentication.getName() : "admin@ontocode.dev";
-
-        PluginDTO plugin = pluginService.publishPlugin(request, vsixFile, authorEmail);
+        PluginDTO plugin = pluginService.publishPlugin(request, vsixFile, authentication);
         return ResponseEntity.status(HttpStatus.CREATED).body(plugin);
     }
 

@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import self.research.ontology.owlEditor.util.SafeUrlFetch;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,7 +38,6 @@ import jakarta.annotation.PreDestroy;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -69,6 +69,13 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @Service
 public class ProjectImportService {
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.import.allow-internal-hosts:false}")
+    private boolean allowInternalImportHosts;
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.import.max-download-bytes:524288000}")
+    private long maxImportDownloadBytes;
+
 
     private static final Logger log = LoggerFactory.getLogger(ProjectImportService.class);
     private static final Logger importLog = LoggerFactory.getLogger("IMPORT");
@@ -1705,30 +1712,7 @@ public class ProjectImportService {
      */
     private Path downloadToTemp(String uri) {
         try {
-            java.net.URL url = URI.create(uri).toURL();
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setConnectTimeout(15_000);   // 15 s
-            conn.setReadTimeout(60_000);      // 60 s max — 10 min was causing hung imports
-            conn.setRequestProperty("Accept",
-                    "application/rdf+xml, text/turtle, application/n-triples, */*");
-            conn.connect();
-            int code = conn.getResponseCode();
-            if (code < 200 || code >= 300) {
-                log.warn("[Import] HTTP {} fetching import: {}", code, uri);
-                conn.disconnect();
-                return null;
-            }
-            // Derive a sensible filename from the URI
-            String uriPath = URI.create(uri).getPath();
-            String leaf = uriPath.substring(uriPath.lastIndexOf('/') + 1);
-            if (leaf.isBlank()) leaf = "import";
-            String suffix = leaf.contains(".") ? leaf.substring(leaf.lastIndexOf('.')) : ".owl";
-            Path tmp = Files.createTempFile("owl-import-", suffix);
-            try (InputStream is = conn.getInputStream()) {
-                Files.copy(is, tmp, StandardCopyOption.REPLACE_EXISTING);
-            } finally {
-                conn.disconnect();
-            }
+            Path tmp = SafeUrlFetch.downloadToTemp(uri, maxImportDownloadBytes, allowInternalImportHosts);
             log.info("[Import] Downloaded {} -> {} ({} bytes)", uri, tmp.getFileName(), Files.size(tmp));
             return tmp;
         } catch (Exception e) {
