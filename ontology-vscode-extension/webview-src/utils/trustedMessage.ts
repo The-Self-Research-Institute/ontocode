@@ -4,8 +4,14 @@ function isEmbeddedInHost(): boolean {
   return typeof window !== 'undefined' && window.parent !== window;
 }
 
+function isInVsCodeWebview(): boolean {
+  return !isDesktop() && !!window.vscode && isEmbeddedInHost() && !(window as any).__ONTOCODE_BROWSER_BRIDGE__;
+}
+
 function isFromVsCodeHost(event: MessageEvent): boolean {
-  return isEmbeddedInHost() && event.source === window.parent;
+  if (!isEmbeddedInHost()) return false;
+  if (event.source === window.parent || event.source === null) return true;
+  return isInVsCodeWebview() && event.source !== window;
 }
 
 function isFromThisWindow(event: MessageEvent): boolean {
