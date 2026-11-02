@@ -389,7 +389,7 @@ export interface ExportOptions {
 }
 
 export interface ReasonerConfig {
-  name: 'HermiT' | 'Pellet' | 'ELK' | 'Openllet';
+  name: 'HermiT' | 'ELK';
   enabled: boolean;
   inferSubClasses: boolean;
   inferTypes: boolean;

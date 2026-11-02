@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { runOperation } from './changeSetApi';
 import { ChangeSet, OperationTarget, RollbackEvent } from './types';
@@ -22,15 +22,19 @@ interface Props {
 
 function useRealUndoCount(projectId: string, target: OperationTarget | null, enabled: boolean): number | undefined {
   const [count, setCount] = useState<number | undefined>(undefined);
+  const targetKey = target ? JSON.stringify(target) : '';
+  const targetRef = useRef(target);
+  targetRef.current = target;
   useEffect(() => {
     setCount(undefined);
-    if (!enabled || !target) return;
+    const current = targetRef.current;
+    if (!enabled || !current) return;
     let live = true;
-    runOperation(projectId, target, true).then(result => {
+    runOperation(projectId, current, true).then(result => {
       if (live && result.data?.applied) setCount(result.data.applied.length);
     });
     return () => { live = false; };
-  }, [projectId, target, enabled]);
+  }, [projectId, targetKey, enabled]);
   return count;
 }
 

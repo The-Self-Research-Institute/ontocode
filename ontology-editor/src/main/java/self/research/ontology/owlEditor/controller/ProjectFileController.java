@@ -36,6 +36,9 @@ public class ProjectFileController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectFileController.class);
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private self.research.ontology.owlEditor.service.RuleService ruleService;
+
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
 
@@ -85,6 +88,7 @@ public class ProjectFileController {
 
             InputStreamResource resource = new InputStreamResource(Files.newInputStream(ontologyPath));
             HttpHeaders headers = new HttpHeaders();
+            self.research.ontology.owlEditor.service.DisabledRulesHeader.into(headers, ruleService, projectId, false, null);
             headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());
             headers.setContentLength(Files.size(ontologyPath));
             headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);

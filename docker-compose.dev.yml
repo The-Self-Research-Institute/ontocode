@@ -268,7 +268,7 @@ services:
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
-      JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
+      JAVA_OPTS: -Xms128m -Xmx320m -XX:+UseG1GC
     depends_on:
       mongo:
         condition: service_healthy
@@ -279,7 +279,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 320m
+          memory: 512m
     healthcheck:
       test: ["CMD-SHELL", "pgrep java || exit 1"]
       interval: 15s

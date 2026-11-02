@@ -397,10 +397,8 @@ public final class ReasoningSnapshot {
 
         List<Map<String, Object>> children = new ArrayList<>();
         for (Node<OWLObjectPropertyExpression> node : propertyReasoner.getSubObjectProperties(property, true)) {
-            OWLObjectPropertyExpression rep = node.getRepresentativeElement();
-            if (rep.isAnonymous()) continue;
-            OWLObjectProperty sub = rep.asOWLObjectProperty();
-            if (sub.isOWLBottomObjectProperty() || sub.equals(property)) continue;
+            OWLObjectProperty sub = ReasonerNodes.namedProperty(node).orElse(null);
+            if (sub == null || sub.isOWLBottomObjectProperty() || sub.equals(property)) continue;
             children.add(objectPropertyNode(sub, visited));
         }
         children.sort(Comparator.comparing(m -> m.get("label").toString()));

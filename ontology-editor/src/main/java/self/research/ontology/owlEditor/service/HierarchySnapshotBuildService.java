@@ -13,7 +13,6 @@ import self.research.ontology.owlEditor.dto.OntologyDto;
 import self.research.ontology.owlEditor.hierarchy.HierarchyAlgorithmVersion;
 import self.research.ontology.owlEditor.hierarchy.HierarchySnapshotBuilder;
 import self.research.ontology.owlEditor.hierarchy.OntologyMetricsComputer;
-import self.research.ontology.owlEditor.repository.HierarchySnapshotRepository;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,7 +26,7 @@ public class HierarchySnapshotBuildService {
     private final StorageManager storageManager;
     private final HierarchySnapshotBuilder snapshotBuilder;
     private final OntologyMetricsComputer metricsComputer;
-    private final HierarchySnapshotRepository snapshotRepository;
+    private final HierarchySnapshotStore snapshotRepository;
     private final ProjectMetadataService projectMetadataService;
 
     @Value("${ontocode.hierarchy.snapshot.enabled:true}")
@@ -36,7 +35,7 @@ public class HierarchySnapshotBuildService {
     public HierarchySnapshotBuildService(StorageManager storageManager,
                                          HierarchySnapshotBuilder snapshotBuilder,
                                          OntologyMetricsComputer metricsComputer,
-                                         HierarchySnapshotRepository snapshotRepository,
+                                         HierarchySnapshotStore snapshotRepository,
                                          ProjectMetadataService projectMetadataService) {
         this.storageManager = storageManager;
         this.snapshotBuilder = snapshotBuilder;
@@ -109,7 +108,7 @@ public class HierarchySnapshotBuildService {
             meta.put("hierarchyBuiltAt", java.time.Instant.now().toString());
             meta.put("hierarchyBuildMs", System.currentTimeMillis() - start);
 
-            HierarchySnapshotDoc doc = snapshotRepository.findById(projectId).orElse(building);
+            HierarchySnapshotDoc doc = snapshotRepository.findRaw(projectId).orElse(building);
             doc.setTopLevelNodes(topLevel);
             doc.setTopLevelTotal(topLevelTotal);
             doc.setTopLevelComputedLimit(Limit.HIERARCHY_TOP_LEVEL_STORE_LIMIT.value());
@@ -118,7 +117,14 @@ public class HierarchySnapshotBuildService {
             doc.setAlgorithmVersion(HierarchyAlgorithmVersion.CURRENT);
             doc.setRevision(revision);
             doc.markReady();
-            snapshotRepository.save(doc);
+            try {
+                snapshotRepository.save(doc);
+            } catch (HierarchySnapshotStore.SnapshotTooLargeException | org.springframework.dao.DataAccessException tooBig) {
+                log.warn("[HierarchyIndex] Snapshot for {} could not be stored: {}", projectId, tooBig.getMessage());
+                fail(projectId, "The class hierarchy of this ontology is too large to store as a saved index, "
+                        + "so the tree is built directly from the ontology instead. " + tooBig.getMessage());
+                return;
+            }
 
             mergeMetaIntoProject(projectId, meta);
 
@@ -155,7 +161,7 @@ public class HierarchySnapshotBuildService {
     }
 
     private void fail(String projectId, String message) {
-        HierarchySnapshotDoc doc = snapshotRepository.findById(projectId).orElse(new HierarchySnapshotDoc());
+        HierarchySnapshotDoc doc = snapshotRepository.findRaw(projectId).orElse(new HierarchySnapshotDoc());
         doc.setProjectId(projectId);
         doc.setStatus(HierarchySnapshotDoc.Status.FAILED);
         doc.setErrorMessage(message);

@@ -81,7 +81,7 @@ public class PublishedHistory {
         List<HistoryChange> changed = new ArrayList<>();
         for (HistoryChange carrier : carriers) {
             ExactDelta delta = ExactReversal.deltaOf(carrier).orElse(null);
-            if (delta != null && delta.coveredBy(committed)) {
+            if (delta != null && ExactReversal.checkedDeltaOf(carrier).orElse(delta).coveredBy(committed)) {
                 accountedDeleted.addAll(delta.deleted());
                 accountedInserted.addAll(delta.inserted());
             } else {

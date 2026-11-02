@@ -11,10 +11,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.ChangeOrigin;
 import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ExactChangeRecorder;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
+import self.research.ontology.common.preview.PreviewStamp;
+import self.research.ontology.owlEditor.service.MutationPreconditionGuard;
+import self.research.ontology.owlEditor.service.StalePreviewException;
 import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import self.research.ontology.owlEditor.service.RequestActor;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
@@ -115,11 +119,16 @@ public class OntologyCrudController {
                 final String draftUserId = userId;
                 final String draftUsername = username;
                 final String draftSessionId = sessionId;
-                draftChangeSetId = lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, true,
-                        draftUserId, draftUsername, request.ops(), () -> {
-                            mutationService.applyDraft(projectId, draftUserId, request.ops());
-                            draftTrackingService.recordDrafts(projectId, draftUserId, draftUsername, request.ops(), draftSessionId);
-                        }));
+                draftChangeSetId = lockRegistry.runExclusive(projectId, () -> {
+                    checkPrecondition(projectId, true, draftUserId, request.precondition());
+                    Runnable draftApply = () -> {
+                        mutationService.applyDraft(projectId, draftUserId, request.ops());
+                        draftTrackingService.recordDrafts(projectId, draftUserId, draftUsername, request.ops(), draftSessionId);
+                    };
+                    return recordMutation(projectId, true, draftUserId, draftUsername, request, draftApply);
+                });
+            } catch (StalePreviewException e) {
+                return stalePreview(true, e);
             } catch (IllegalArgumentException e) {
                 return ResponseEntity.status(409).body(Map.of(
                     "success", false,
@@ -161,8 +170,11 @@ public class OntologyCrudController {
                 final String finalUserId = userId;
                 final String finalUsername = username;
                 final List<OntologyMutationService.MutationOp> ops = request.ops();
-                String changeSetId = lockRegistry.runExclusive(projectId, () -> exactRecorder.recordGrouped(projectId, false,
-                        finalUserId, finalUsername, ops, () -> mutationService.apply(projectId, ops)));
+                String changeSetId = lockRegistry.runExclusive(projectId, () -> {
+                    checkPrecondition(projectId, false, finalUserId, request.precondition());
+                    return recordMutation(projectId, false, finalUserId, finalUsername, request,
+                        () -> mutationService.apply(projectId, ops));
+                });
 
                 CompletableFuture.runAsync(() -> {
                     for (OntologyMutationService.MutationOp op : ops) {
@@ -175,6 +187,8 @@ public class OntologyCrudController {
                 }, historyExecutor);
 
                 return ResponseEntity.ok(ExactChangeRecorder.appliedBody(false, "Changes applied directly", changeSetId));
+            } catch (StalePreviewException e) {
+                return stalePreview(false, e);
             } catch (IllegalArgumentException e) {
                 log.warn("[MUTATION] Rejected mutation request for project {}: {}", projectId, e.getMessage());
                 return ResponseEntity.badRequest().body(Map.of(
@@ -261,8 +275,51 @@ public class OntologyCrudController {
         List<OntologyMutationService.MutationOp> ops,
         String userId,
         String username,
-        String sessionId
-    ) {}
+        String sessionId,
+        PreviewStamp precondition,
+        MutationOrigin origin
+    ) {
+        public MutationRequest(List<OntologyMutationService.MutationOp> ops, String userId, String username, String sessionId) {
+            this(ops, userId, username, sessionId, null, null);
+        }
+
+        public MutationRequest(List<OntologyMutationService.MutationOp> ops, String userId, String username, String sessionId,
+                               PreviewStamp precondition) {
+            this(ops, userId, username, sessionId, precondition, null);
+        }
+    }
+
+    public record MutationOrigin(String source, String label) {
+    }
+
+    private String recordMutation(String projectId, boolean draft, String userId, String username,
+                                  MutationRequest request, Runnable apply) {
+        if (request.origin() == null) {
+            return exactRecorder.recordGrouped(projectId, draft, userId, username, request.ops(), apply);
+        }
+        ChangeOrigin origin = ChangeOrigin.fromTool(request.origin().source(), request.origin().label());
+        return exactRecorder.recordGrouped(projectId, draft, userId, username, request.ops(), apply, origin);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private MutationPreconditionGuard preconditionGuard;
+
+    private void checkPrecondition(String projectId, boolean draft, String userId,
+                                   PreviewStamp precondition) {
+        if (preconditionGuard != null) {
+            preconditionGuard.check(projectId, draft, userId, precondition);
+        }
+    }
+
+    private static ResponseEntity<?> stalePreview(boolean draft, StalePreviewException e) {
+        return ResponseEntity.status(409).body(Map.of(
+            "success", false,
+            "draft", draft,
+            "stale", true,
+            "error", e.getMessage(),
+            "reasons", e.reasons()
+        ));
+    }
     
     public record MakeSiblingsDisjointRequest(List<String> classIds) {}
 }

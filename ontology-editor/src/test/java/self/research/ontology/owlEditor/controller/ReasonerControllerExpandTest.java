@@ -46,7 +46,7 @@ class ReasonerControllerExpandTest {
         NodeSet<OWLClass> none = mock(NodeSet.class);
         when(none.getNodes()).thenReturn(Set.of());
         when(reasoner.getSubClasses(any(OWLClass.class), anyBoolean())).thenReturn(none);
-        when(reasonerService.getClassHierarchyReasoner(ontology, ReasonerType.OPENLLET)).thenReturn(reasoner);
+        when(reasonerService.getClassHierarchyReasoner(ontology, ReasonerType.HERMIT)).thenReturn(reasoner);
         when(reasonerService.getInferredSubClasses(eq(reasoner), any(OWLClass.class), eq(true))).thenReturn(Set.of(dog));
 
         Map<String, Object> body = controller.getInferredSubClasses("proj-1", "http://example.org#Animal",

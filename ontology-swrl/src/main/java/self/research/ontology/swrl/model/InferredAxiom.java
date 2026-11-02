@@ -10,6 +10,7 @@ public class InferredAxiom {
     private String objectLiteral;
     private String literalDatatypeIri;
     private String literalLangTag;
+    private String category;
 
     public InferredAxiom() {}
 
@@ -32,6 +33,9 @@ public class InferredAxiom {
         this.literalDatatypeIri = literalDatatypeIri;
         this.literalLangTag = literalLangTag;
     }
+
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
 
     public String getAxiomType() { return axiomType; }
     public void setAxiomType(String axiomType) { this.axiomType = axiomType; }

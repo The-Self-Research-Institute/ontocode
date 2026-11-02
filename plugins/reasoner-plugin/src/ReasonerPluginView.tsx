@@ -626,8 +626,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
-        'pellet': 'PELLET',
-        'openllet': 'OPENLLET',
         'fact++': 'FACTPLUSPLUS',
         'elk': 'ELK',
         'structural': 'STRUCTURAL'
@@ -819,8 +817,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     try {
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
-        'pellet': 'PELLET',
-        'openllet': 'OPENLLET',
         'fact++': 'FACTPLUSPLUS',
         'elk': 'ELK',
         'structural': 'STRUCTURAL'
@@ -896,8 +892,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     try {
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
-        'pellet': 'PELLET',
-        'openllet': 'OPENLLET',
         'fact++': 'FACTPLUSPLUS',
         'elk': 'ELK',
         'structural': 'STRUCTURAL'
@@ -1441,8 +1435,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               {[
                 { name: 'HermiT', desc: 'Full OWL 2 DL - Best for complex ontologies' },
                 { name: 'ELK', desc: 'EL++ optimized - Fast for large taxonomies' },
-                { name: 'Pellet', desc: 'Complete OWL DL with SWRL support' },
-                { name: 'Openllet', desc: 'Modern Pellet fork - Improved performance' },
                 { name: 'Structural', desc: 'Lightweight - Fast but limited' }
               ].map(reasoner => (
                 <button
@@ -1656,8 +1648,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     <span className={`font-medium ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
                       {selectedReasoner === 'HermiT' ? '1.4.5.519' : 
                        selectedReasoner === 'ELK' ? '0.4.3' :
-                       selectedReasoner === 'Openllet' ? '2.6.5' : 
-                       selectedReasoner === 'Pellet' ? '2.3.1' : 
                        '1.0.0'}
                     </span>
                   </div>

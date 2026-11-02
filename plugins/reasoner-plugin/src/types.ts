@@ -1,6 +1,6 @@
 
 
-export type ReasonerType = 'hermit' | 'pellet' | 'fact++' | 'elk';
+export type ReasonerType = 'hermit' | 'fact++' | 'elk';
 
 export type ReasoningTask = 
   | 'consistency'

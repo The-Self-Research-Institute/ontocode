@@ -79,10 +79,12 @@ class ApiClient {
 
     if (!response.ok) {
       let detail = '';
+      let data: any = undefined;
       try {
         const body = await response.text();
         if (body) {
           const parsed = JSON.parse(body);
+          data = parsed;
           // parsed.error is a boolean flag on this API's error shape ({error:true,
           // message:"..."}), not a description — `error || message` picked the boolean
           // first (truthy) and `new Error(true)` below stringified it to the literal
@@ -90,7 +92,10 @@ class ApiClient {
           detail = parsed.message || (typeof parsed.error === 'string' ? parsed.error : '') || body;
         }
       } catch { /* ignore parse failure */ }
-      throw new Error(detail || `Request failed (${response.status})`);
+      const err: any = new Error(detail || `Request failed (${response.status})`);
+      err.status = response.status;
+      err.data = data;
+      throw err;
     }
 
     const text = await response.text();
@@ -99,6 +104,43 @@ class ApiClient {
     }
 
     return JSON.parse(text);
+  }
+
+  private async rawRequest(method: string, url: string, body?: FormData): Promise<Response> {
+    const baseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).__ONTOCODE_CONFIG__?.CLOUD_GATEWAY_URL || window.API_BASE_URL || '';
+    const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
+    const headers: Record<string, string> = {};
+    const token = localStorage.getItem('authToken');
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(fullUrl, { method, headers, body });
+    if (!response.ok) {
+      let detail = '';
+      let data: any = undefined;
+      try {
+        const text = await response.text();
+        if (text) {
+          const parsed = JSON.parse(text);
+          data = parsed;
+          detail = parsed.message || (typeof parsed.error === 'string' ? parsed.error : '') || text;
+        }
+      } catch { /* ignore parse failure */ }
+      const err: any = new Error(detail || `Request failed (${response.status})`);
+      err.status = response.status;
+      err.data = data;
+      throw err;
+    }
+    return response;
+  }
+
+  public async postForm<T>(url: string, form: FormData): Promise<T> {
+    const response = await this.rawRequest('POST', url, form);
+    const text = await response.text();
+    return (text && text.trim() ? JSON.parse(text) : {}) as T;
+  }
+
+  public async getBlob(url: string): Promise<Blob> {
+    const response = await this.rawRequest('GET', url);
+    return response.blob();
   }
 
   public get<T>(url: string): Promise<T> {

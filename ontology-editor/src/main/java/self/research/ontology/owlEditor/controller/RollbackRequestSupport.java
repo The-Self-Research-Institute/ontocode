@@ -122,7 +122,9 @@ public class RollbackRequestSupport {
         body.put("applied", items(result.applied()));
         body.put("skipped", items(result.skipped()));
         String firstReason = result.skipped().isEmpty() ? null : result.skipped().get(0).reason();
-        String message = result.message() != null ? result.message()
+        boolean genericNothing = result.message() != null && result.message().startsWith("Nothing to ") && firstReason != null;
+        String message = genericNothing ? firstReason
+                : result.message() != null ? result.message()
                 : alreadyUndone ? "Already reverted"
                 : result.ok() ? (result.dryRun() ? "Preview ready" : "Rolled back") : firstReason;
         body.put("message", message);

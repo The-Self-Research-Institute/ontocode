@@ -53,6 +53,14 @@ public record DraftPublishDiff(boolean available,
     }
 
     static String labelOf(IRI iri, OWLOntology... sides) {
+        if (SwrlRuleKeys.isKey(iri.toString())) {
+            for (OWLOntology side : sides) {
+                for (var rule : SwrlRuleKeys.rulesFor(side, iri.toString())) {
+                    return SwrlRuleKeys.name(rule).orElse("Rule");
+                }
+            }
+            return "Rule";
+        }
         for (OWLOntology side : sides) {
             for (OWLAnnotationAssertionAxiom axiom : side.getAnnotationAssertionAxioms(iri)) {
                 if (axiom.getProperty().isLabel() && axiom.getValue().asLiteral().isPresent()) {
@@ -67,6 +75,9 @@ public record DraftPublishDiff(boolean available,
     }
 
     static String kindOf(IRI iri, OWLOntology... sides) {
+        if (SwrlRuleKeys.isKey(iri.toString())) {
+            return "rule";
+        }
         for (OWLOntology side : sides) {
             if (side.containsClassInSignature(iri)) {
                 return "class";

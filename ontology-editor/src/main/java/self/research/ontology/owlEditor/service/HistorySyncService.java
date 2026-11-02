@@ -144,6 +144,21 @@ public class HistorySyncService {
                 new Update().set("publishedPrId", prId), HistoryChange.class).getModifiedCount();
     }
 
+    public java.util.Set<String> setsUndoneForPr(String projectId, String prId) {
+        java.util.Set<String> undone = new java.util.LinkedHashSet<>();
+        if (projectId == null || prId == null) {
+            return undone;
+        }
+        mongoTemplate.find(Query.query(Criteria.where("projectId").is(projectId).and("publishedPrId").is(prId)
+                .and("source").is(ChangeOrigin.ROLLBACK).and("operationType").regex("^ROLLBACK_")), HistoryChange.class)
+                .forEach(row -> {
+                    if (row.getMetadata() != null && row.getMetadata().get("revertsChangeSetId") instanceof String id) {
+                        undone.add(id);
+                    }
+                });
+        return undone;
+    }
+
     public long markPrPublicationRestored(String projectId, String prId) {
         return setReverted(Criteria.where("projectId").is(projectId).and("entityIRI").is(PrEntries.iriOf(prId))
                 .and("operationType").is(RollbackWorkSupport.PR_PUBLISHED).and("reverted").is(true), false);
@@ -377,11 +392,24 @@ public class HistorySyncService {
         if (changeData.get("ai") instanceof HistoryChange.AiInfo ai) {
             builder.ai(ai);
         }
+        if (changeData.get("toolSource") instanceof String toolSource) {
+            builder.metadata("toolSource", toolSource);
+        }
+        if (changeData.get("toolLabel") instanceof String toolLabel) {
+            builder.metadata("toolLabel", toolLabel);
+        }
         if (changeData.get("revertsChangeSetId") instanceof String reverts) {
             builder.metadata("revertsChangeSetId", reverts);
         }
         if (changeData.get("rollbackAuditId") instanceof String rollbackAuditId) {
             builder.metadata("rollbackAuditId", rollbackAuditId);
+        }
+        if (changeData.get("batch") instanceof Map<?, ?> batch) {
+            batch.forEach((key, value) -> {
+                if (key instanceof String name && value instanceof String text) {
+                    builder.metadata(name, text);
+                }
+            });
         }
     }
 
@@ -557,7 +585,8 @@ public class HistorySyncService {
     }
 
     private boolean isGenuineConflict(HistoryChange earlier, HistoryChange later, long windowMillis) {
-        if (Objects.equals(earlier.getUserId(), later.getUserId())) {
+        if (Objects.equals(earlier.getUserId(), later.getUserId()) || sameNamedPerson(earlier, later)
+                || isUndoOrRedoRecord(earlier) || isUndoOrRedoRecord(later)) {
             return false;
         }
         if (earlier.getResolvedAt() != null || later.getResolvedAt() != null) {
@@ -575,6 +604,17 @@ public class HistorySyncService {
             return false;
         }
         return !Objects.equals(later.getNewValue(), earlier.getNewValue());
+    }
+
+    private static boolean sameNamedPerson(HistoryChange first, HistoryChange second) {
+        String name = first.getUsername();
+        return name != null && !name.isBlank() && !"anonymous".equalsIgnoreCase(name.trim())
+                && name.trim().equalsIgnoreCase(second.getUsername() == null ? "" : second.getUsername().trim());
+    }
+
+    private static boolean isUndoOrRedoRecord(HistoryChange change) {
+        String type = change.getOperationType();
+        return type != null && (type.startsWith("ROLLBACK_") || type.startsWith("REDO_"));
     }
 
     private static ConflictMatch conflictMatchFor(HistoryChange change) {

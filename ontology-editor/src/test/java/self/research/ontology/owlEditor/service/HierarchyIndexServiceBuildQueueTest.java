@@ -3,7 +3,6 @@ package self.research.ontology.owlEditor.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
-import self.research.ontology.owlEditor.repository.HierarchySnapshotRepository;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,7 +31,7 @@ class HierarchyIndexServiceBuildQueueTest {
     void setUp() {
         buildService = mock(HierarchySnapshotBuildService.class);
         when(buildService.isEnabled()).thenReturn(true);
-        service = new HierarchyIndexService(mock(HierarchySnapshotRepository.class), buildService, queued::add);
+        service = new HierarchyIndexService(mock(HierarchySnapshotStore.class), buildService, queued::add);
         ReflectionTestUtils.setField(service, "snapshotEnabled", true);
     }
 
@@ -79,7 +78,7 @@ class HierarchyIndexServiceBuildQueueTest {
 
     @Test
     void aRejectedSubmissionIsNotLeftQueued() {
-        HierarchyIndexService rejecting = new HierarchyIndexService(mock(HierarchySnapshotRepository.class), buildService,
+        HierarchyIndexService rejecting = new HierarchyIndexService(mock(HierarchySnapshotStore.class), buildService,
                 task -> {
                     throw new RejectedExecutionException("full");
                 });

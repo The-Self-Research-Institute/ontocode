@@ -71,6 +71,18 @@ class UndoQueueServiceTest {
     }
 
     @Test
+    void aDiscardedDraftEntryIsNotOfferedAsAStep() {
+        HistoryChange discarded = change("d", "Me@x.com", "e:D", 5);
+        discarded.setDraftDiscarded(true);
+        own(discarded, change("a", "Me@x.com", "e:A", 1));
+
+        Queue queue = service.queue(P, true, me, 5);
+
+        assertEquals(1, queue.steps().size());
+        assertEquals("a", queue.steps().get(0).changeId());
+    }
+
+    @Test
     void returnsNewestSetsFirstAndGroupsEntriesOfOneSet() {
         HistoryChange c = change("c", "Me@x.com", "e:C", 5);
         HistoryChange b2 = change("b2", "Me@x.com", "e:B2", 4);

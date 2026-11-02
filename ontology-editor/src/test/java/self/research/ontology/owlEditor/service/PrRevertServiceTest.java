@@ -158,7 +158,7 @@ class PrRevertServiceTest {
         assertEquals("owner", pr.getRevertedBy());
         ArgumentCaptor<Actor> actors = ArgumentCaptor.forClass(Actor.class);
         verify(rollback).undoChangeSet(eq(P), eq("cs-new"), actors.capture(), eq(false));
-        assertEquals("pr1:cs-new", actors.getValue().opId());
+        assertEquals("pr1:" + pr.getRevertStartedAt().toEpochMilli() + ":cs-new", actors.getValue().opId());
         verify(drafts).recordPrReversal(P, "pr1", "Add toppings", "Owner", 2, "Wrong merge order");
         verify(historySync).markPrPublicationReverted(P, "pr1");
         assertEquals("Wrong merge order", pr.getRevertReason());
@@ -254,6 +254,44 @@ class PrRevertServiceTest {
         assertEquals(409, outcome.status());
         assertEquals(DraftPullRequest.Status.REVERTED, pr.getStatus());
         verify(rollback).redoChangeSetForPr(eq(P), eq("cs-old"), any(Actor.class), eq(false));
+    }
+
+    @Test
+    void aSecondRevertAfterApplyingAgainDoesNotReuseTheFirstRevertsOperationKeys() {
+        pr.setRevertStartedAt(java.time.Instant.parse("2026-01-01T00:00:00Z"));
+        when(rollback.undoChangeSet(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+        org.mockito.ArgumentCaptor<Actor> undoKeys = org.mockito.ArgumentCaptor.forClass(Actor.class);
+        org.mockito.ArgumentCaptor<Actor> redoKeys = org.mockito.ArgumentCaptor.forClass(Actor.class);
+
+        assertTrue(service.revert(P, "pr1", "owner", "Owner", "First", false).ok());
+        pr.setRevertedAt(java.time.Instant.parse("2026-01-01T01:00:00Z"));
+        assertTrue(service.reapply(P, "pr1", "owner", "Owner", false).ok());
+        pr.setRevertedAt(java.time.Instant.parse("2026-01-01T02:00:00Z"));
+        pr.setStatus(DraftPullRequest.Status.APPROVED);
+        assertTrue(service.revert(P, "pr1", "owner", "Owner", "Second", false).ok());
+        pr.setRevertedAt(java.time.Instant.parse("2026-01-01T03:00:00Z"));
+        assertTrue(service.reapply(P, "pr1", "owner", "Owner", false).ok());
+
+        verify(rollback, org.mockito.Mockito.atLeastOnce()).undoChangeSet(eq(P), anyString(), undoKeys.capture(), eq(false));
+        verify(rollback, org.mockito.Mockito.atLeastOnce()).redoChangeSetForPr(eq(P), anyString(), redoKeys.capture(), eq(false));
+        java.util.List<String> undo = undoKeys.getAllValues().stream().map(Actor::opId).toList();
+        java.util.List<String> redo = redoKeys.getAllValues().stream().map(Actor::opId).toList();
+        assertEquals(undo.size(), new java.util.HashSet<>(undo).size());
+        assertEquals(redo.size(), new java.util.HashSet<>(redo).size());
+    }
+
+    @Test
+    void applyingAgainLeavesAloneASetThatTheRevertNeverUndid() {
+        pr.setStatus(DraftPullRequest.Status.REVERTED);
+        when(historySync.setsUndoneForPr(P, "pr1")).thenReturn(java.util.Set.of("cs-new"));
+        when(rollback.redoChangeSetForPr(eq(P), anyString(), any(Actor.class), anyBoolean())).thenReturn(ok(false, 1));
+
+        PrRevertService.Outcome outcome = service.reapply(P, "pr1", "owner", "Owner", false);
+
+        assertTrue(outcome.ok());
+        verify(rollback, never()).redoChangeSetForPr(eq(P), eq("cs-old"), any(Actor.class), anyBoolean());
+        verify(rollback).redoChangeSetForPr(eq(P), eq("cs-new"), any(Actor.class), eq(false));
     }
 
     @Test

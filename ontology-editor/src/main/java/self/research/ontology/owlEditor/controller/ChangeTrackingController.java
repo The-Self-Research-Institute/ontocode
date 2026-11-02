@@ -345,6 +345,12 @@ public class ChangeTrackingController {
             ai.put("summary", change.getAi().getSummary());
             map.put("ai", ai);
         }
+        if (change.getMetadata() != null && change.getMetadata().get("toolSource") != null) {
+            map.put("toolSource", change.getMetadata().get("toolSource"));
+        }
+        if (change.getMetadata() != null && change.getMetadata().get("toolLabel") != null) {
+            map.put("toolLabel", change.getMetadata().get("toolLabel"));
+        }
         if (change.getMetadata() != null && change.getMetadata().get("revertsChangeSetId") != null) {
             map.put("revertsChangeSetId", change.getMetadata().get("revertsChangeSetId"));
         }

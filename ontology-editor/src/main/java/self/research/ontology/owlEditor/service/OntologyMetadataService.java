@@ -70,6 +70,14 @@ public class OntologyMetadataService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private self.research.ontology.owlEditor.cache.ProjectOntologyCache ontologyCache;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private ExactChangeRecorder exactRecorder;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.context.annotation.Lazy
+    private DesktopOwlApiMutationService desktopOwlApi;
+
     public OntologyMetadataService(SparqlDatasetService datasetService,
                                    ProjectMetadataService projectMetadataService,
                                    @Lazy OntologyMutationService mutationService,
@@ -860,16 +868,29 @@ public class OntologyMetadataService {
             throw new IllegalArgumentException(
                     "GCA could not be parsed. Use Manchester syntax (e.g. 'A and (p some B) SubClassOf C')");
         }
-        if (draft) {
-            mutationService.applyDraft(projectId, userId, List.of(op));
-        } else {
-            mutationService.apply(projectId, List.of(op));
-        }
-        if (historyService != null) {
-            String changeSetId = historyService.recordGroupedMutations(projectId, userId, username, List.of(op), draft);
+        applyRecorded(projectId, userId, username, draft, List.of(op));
+    }
+
+    private void applyRecorded(String projectId, String userId, String username, boolean draft,
+                               List<OntologyMutationService.MutationOp> ops) {
+        Runnable apply = () -> {
             if (draft) {
-                DraftRecordScope.link(changeSetId);
+                mutationService.applyDraft(projectId, userId, ops);
+            } else {
+                mutationService.apply(projectId, ops);
             }
+        };
+        String changeSetId = null;
+        if (exactRecorder != null && historyService != null) {
+            changeSetId = exactRecorder.recordGrouped(projectId, draft, userId, username, ops, apply);
+        } else {
+            apply.run();
+            if (historyService != null) {
+                changeSetId = historyService.recordGroupedMutations(projectId, userId, username, ops, draft);
+            }
+        }
+        if (draft && historyService != null) {
+            DraftRecordScope.link(changeSetId);
         }
     }
 
@@ -925,17 +946,7 @@ public class OntologyMetadataService {
                     new OntologyMutationService.MutationOp(
                             "deleteAxiom", blankNodeId, null, null, null, null,
                             null, null, null, null, null, null, null, null, null));
-            if (draft) {
-                mutationService.applyDraft(projectId, userId, ops);
-            } else {
-                mutationService.apply(projectId, ops);
-            }
-            if (historyService != null) {
-                String changeSetId = historyService.recordGroupedMutations(projectId, userId, username, ops, draft);
-                if (draft) {
-                    DraftRecordScope.link(changeSetId);
-                }
-            }
+            applyRecorded(projectId, userId, username, draft, ops);
         }
     }
 
@@ -1071,11 +1082,25 @@ public class OntologyMetadataService {
         ontologyIriCache.remove(event.projectId());
     }
 
+    private String[] liveOntologyIds(String projectId) {
+        if (desktopOwlApi == null || ontologyCache == null || !desktopOwlApi.isAuthoritative(projectId)) {
+            return null;
+        }
+        return ontologyCache.get(projectId).map(entry -> {
+            var id = entry.ontology().getOntologyID();
+            return new String[] {
+                    id.getOntologyIRI().map(Object::toString).orElse(null),
+                    id.getVersionIRI().map(Object::toString).orElse(null)
+            };
+        }).orElse(null);
+    }
+
     public void refreshOntologyMetadata(String projectId) {
         ontologyIriCache.remove(projectId);
-        String iri = getOntologyIri(projectId);
-        String version = null;
-        if (iri != null) {
+        String[] live = liveOntologyIds(projectId);
+        String iri = live != null ? live[0] : getOntologyIri(projectId);
+        String version = live != null ? live[1] : null;
+        if (live == null && iri != null) {
             try (TupleQueryResult rs = datasetService.execSelect(projectId,
                     PREFIXES + "SELECT ?v WHERE { " + formatResource(iri) + " owl:versionIRI ?v } LIMIT 1")) {
                 version = rs.hasNext() ? rs.next().getValue("v").stringValue() : null;
@@ -1403,6 +1428,13 @@ public class OntologyMetadataService {
     }
 
     private String resolveOntologyIri(String projectId, boolean useCache) {
+        if (useCache) {
+            String[] live = liveOntologyIds(projectId);
+            if (live != null && live[0] != null) {
+                ontologyIriCache.put(projectId, live[0]);
+                return live[0];
+            }
+        }
         // 1. Check cache
         if (useCache && ontologyIriCache.containsKey(projectId)) {
             return ontologyIriCache.get(projectId);

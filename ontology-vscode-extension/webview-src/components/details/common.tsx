@@ -1983,7 +1983,7 @@ export const MultiSelectSection: React.FC<{
     };
     
     return (
-         <div className="mb-3 last:mb-0">
+         <div className="mb-3 last:mb-0" data-testid={`multi-section-${title}`}>
              {/* Clean minimal clickable header */}
              <button 
                 onClick={handleHeaderClick}
