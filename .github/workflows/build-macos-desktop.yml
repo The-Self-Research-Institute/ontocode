@@ -75,6 +75,15 @@ jobs:
           for d in electron-app ontology-vscode-extension ontology-vscode-extension/webview-src plugins/*; do
             (cd "$d" && npm ci)
           done
+      - name: Point the web build at the production API
+        run: |
+          api="https://${ONTOCODE_UPDATE_HOST}"
+          {
+            echo "VITE_CLOUD_GATEWAY_URL=$api"
+            echo "VITE_CLOUD_EDITOR_URL=$api"
+            echo "VITE_CLOUD_PLUGIN_URL=$api:8087"
+          } > ontology-vscode-extension/webview-src/.env.production
+          cat ontology-vscode-extension/webview-src/.env.production
       - name: Build the plugin bundles
         working-directory: electron-app
         run: node scripts/build-desktop.js --plugins
@@ -129,6 +138,15 @@ jobs:
             fi
             echo "Apple could not be reached while stapling, trying again (attempt $((attempt + 1)) of 3)"
           done
+      - name: Check the app points at the production API
+        run: |
+          dist=ontology-vscode-extension/webview-src/dist
+          if grep -rIl "ontocodedevapi" "$dist"; then
+            echo "The web build still points at the dev API"
+            exit 1
+          fi
+          grep -rIq "ontocodeapi.selfresearch.org" "$dist" || { echo "The production API address is missing from the web build"; exit 1; }
+          echo "The web build points at the production API"
       - name: Check the app is signed
         if: inputs.target != 'mas-dev'
         working-directory: electron-app
