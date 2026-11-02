@@ -740,6 +740,14 @@ if [[ "$UPLOAD_ONLY" -eq 0 ]]; then
     echo "ERROR: ontology-desktop jar build failed — no target can be built" >&2
     exit 1
   fi
+  J17_HOME=$(ls -d /usr/lib/jvm/*17* 2>/dev/null | head -1)
+  if [ -n "$J17_HOME" ]; then
+    echo "[progress] building the SWRL jar with Java 17"
+    if ! JAVA_HOME="$J17_HOME" mvn -pl ontology-swrl -am clean package -DskipTests -q -Djava.version=17 -Dmaven.compiler.release=17 -Dmaven.compiler.source=17 -Dmaven.compiler.target=17; then
+      echo "ERROR: SWRL jar build failed — no target can be built" >&2
+      exit 1
+    fi
+  fi
   (cd ontology-vscode-extension/webview-src && [ -d node_modules ] || npm install)
   cd electron-app || exit 1
   [ -d node_modules ] || npm install
