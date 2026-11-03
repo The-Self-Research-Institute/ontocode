@@ -18,6 +18,7 @@ const path     = require('path');
 const fs       = require('fs');
 const Store    = require('electron-store');
 const svcMgr   = require('./services/ServiceManager');
+const { loadDesktopSecrets } = require('./services/DesktopSecrets');
 const syncMgr  = require('./services/SyncManager');
 const proxy    = require('./services/ProxyServer');
 const autoUpdater = require('./services/AutoUpdater');
@@ -459,6 +460,11 @@ app.whenReady().then(async () => {
         sendSplashLog('ok', `Java ${javaOk} detected`);
 
         try {
+            const desktopSecrets = loadDesktopSecrets({ store, safeStorage });
+            svcMgr.setDesktopSecrets(desktopSecrets);
+            if (desktopSecrets.created && !desktopSecrets.sealed) {
+                sendSplashLog('warn', 'This system has no secure key storage, so the generated login secrets are kept in a file only you can read');
+            }
             await svcMgr.startAll();
             await proxy.start(svcMgr.DESKTOP_PORT, svcMgr.SWRL_PORT);
             sendSplashLog('ok', `Routing proxy ready on port ${proxy.PROXY_PORT}`);

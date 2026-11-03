@@ -149,7 +149,21 @@ async function resolveAllPorts() {
 
 const DESKTOP_LAUNCH_KEY = crypto.randomBytes(32).toString('hex');
 
+let desktopSecrets = null;
+
+function setDesktopSecrets(secrets) {
+    desktopSecrets = secrets;
+}
+
+function requireDesktopSecrets() {
+    if (!desktopSecrets || !desktopSecrets.jwtSecret || !desktopSecrets.adminPassword) {
+        throw new Error('Desktop secrets must be loaded before the services start');
+    }
+    return desktopSecrets;
+}
+
 module.exports = {
+    setDesktopSecrets,
     get DESKTOP_LAUNCH_KEY() { return DESKTOP_LAUNCH_KEY; },
     get MONGO_PORT()   { return MONGO_PORT; },
     get FUSEKI_PORT()  { return FUSEKI_PORT; },
@@ -967,7 +981,6 @@ async function startDesktop() {
 
         `--ontology.editor.url=http://127.0.0.1:${DESKTOP_PORT}`,
 
-        '--jwt.secret=b250b2NvZGUtZGVza3RvcC1qd3Qtc2VjcmV0LWtleS12MQ==',
         `--app.base-url=http://127.0.0.1:${DESKTOP_PORT}`,
 
         '--spring.main.allow-bean-definition-overriding=true',
@@ -989,6 +1002,8 @@ async function startDesktop() {
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
         ONTOCODE_DESKTOP_LAUNCH_KEY: DESKTOP_LAUNCH_KEY,
+        JWT_SECRET: requireDesktopSecrets().jwtSecret,
+        APP_ADMIN_PASSWORD: requireDesktopSecrets().adminPassword,
     };
 
     const { launchJar, cdsFlags } = await prepareCds(
@@ -1049,7 +1064,6 @@ async function startSwrl() {
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
 
         `--ontology.editor.service.url=http://127.0.0.1:${DESKTOP_PORT}`,
-        '--jwt.secret=b250b2NvZGUtZGVza3RvcC1qd3Qtc2VjcmV0LWtleS12MQ==',
         '--app.email.enabled=false',
         '--spring.mail.host=localhost',
         '--management.health.mail.enabled=false',
@@ -1059,6 +1073,7 @@ async function startSwrl() {
         JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8',
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
+        JWT_SECRET: requireDesktopSecrets().jwtSecret,
     };
 
     const swrlJava = swrlJavaBin();
