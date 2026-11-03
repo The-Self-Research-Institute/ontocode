@@ -203,8 +203,8 @@ Expected response format:
 
 ## Support
 
-- Report issues: [GitHub Issues](https://github.com/ontocode/graph-view-plugin/issues)
-- Documentation: [Plugin Wiki](https://github.com/ontocode/graph-view-plugin/wiki)
+- Report issues: [GitHub Issues](https://github.com/The-Self-Research-Institute/ontocode/issues)
+- Documentation: [Plugin Wiki](https://github.com/The-Self-Research-Institute/ontocode/wiki)
 - Contact: support@ontocode.dev
 
 ## License

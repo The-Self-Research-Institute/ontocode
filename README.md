@@ -386,7 +386,7 @@ If you use this software in your research, please cite it:
 }
 ```
 
-See also [CITATION.cff](CITATION.cff), [CITATIONS.md](CITATIONS.md), and [references.bib](references.bib).
+See also [CITATION.cff](CITATION.cff).
 
 ---
 

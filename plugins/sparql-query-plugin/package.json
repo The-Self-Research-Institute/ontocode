@@ -20,7 +20,8 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ontocode/sparql-query-plugin"
+    "url": "https://github.com/The-Self-Research-Institute/ontocode",
+    "directory": "plugins/sparql-query-plugin"
   },
   "engines": {
     "vscode": "^1.80.0"
