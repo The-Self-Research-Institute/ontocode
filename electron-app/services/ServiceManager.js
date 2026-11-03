@@ -238,8 +238,15 @@ module.exports = {
 
     async ensureSwrl() {
         idle.touch('SWRL');
-        if (swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null) {
+        const alive = () => Boolean(swrlProcess && !swrlProcess.killed && swrlProcess.exitCode === null);
+        if (alive() && swrlProcess._ontoReady) {
             return { running: true, port: SWRL_PORT };
+        }
+        if (alive() && !swrlStartPromise) {
+            await waitForHttp(`http://127.0.0.1:${SWRL_PORT}/actuator/health`, STARTUP_HEALTH_TIMEOUT_MS, 'SWRL',
+                () => hasExited(swrlProcess));
+            if (swrlProcess) swrlProcess._ontoReady = true;
+            return { running: alive(), port: SWRL_PORT };
         }
         if (!swrlStartPromise) {
             swrlStartPromise = startSwrl().then(() => {
