@@ -382,7 +382,7 @@ If you use this software in your research, please cite it:
   title = {OntoCode Ontology Platform},
   version = {1.0.0},
   date = {2025-12-23},
-  url = {https://github.com/ontocode/ontocode}
+  url = {https://github.com/The-Self-Research-Institute/ontocode}
 }
 ```
 
