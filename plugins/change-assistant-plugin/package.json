@@ -27,7 +27,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ontocode/change-assistant-plugin"
+    "url": "https://github.com/The-Self-Research-Institute/ontocode",
+    "directory": "plugins/change-assistant-plugin"
   },
   "main": "./dist/index.js",
   "scripts": {
