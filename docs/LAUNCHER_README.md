@@ -3,7 +3,7 @@
 This folder contains launchers for all platforms:
 
 ## Windows
-- **OntoCodeLauncher.exe** - Windows executable
+- **OntoCodeLauncher.exe** - Windows executable (not stored in the repository; build it from `OntoCodeLauncher.cs` with `scripts/windows/build-exe.bat`)
 - Build: `.\build-exe.bat`
 - Run directly by double-clicking
 
