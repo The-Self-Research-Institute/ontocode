@@ -903,3 +903,5 @@ ontology-vscode-extension/test-invitation-helper.js
 __pycache__/
 
 /.env.production
+/.tmp/
+/OntoCodeLauncher.exe
