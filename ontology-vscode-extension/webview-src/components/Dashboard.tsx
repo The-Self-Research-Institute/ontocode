@@ -300,6 +300,7 @@ const TopMenuBar = ({
   onToggleSyncMode,
   requireDraftForMembers,
   isProjectOwner,
+  isProjectShared,
   isDraftEditorRole,
   autoDraftStatus,
   onToggleRequireDraftForMembers,
@@ -361,6 +362,7 @@ const TopMenuBar = ({
   onToggleSyncMode: () => void;
   requireDraftForMembers?: boolean;
   isProjectOwner?: boolean;
+  isProjectShared?: boolean;
   isDraftEditorRole?: boolean;
   autoDraftStatus?: 'idle' | 'copying' | 'ready';
   onToggleRequireDraftForMembers?: () => void;
@@ -1092,7 +1094,7 @@ const TopMenuBar = ({
                 />
               </button>
             )}
-            {isProjectOwner && onToggleRequireDraftForMembers && (
+            {isProjectOwner && (isProjectShared || requireDraftForMembers) && onToggleRequireDraftForMembers && (
               <button
                 onClick={onToggleRequireDraftForMembers}
                 className={`ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${requireDraftForMembers
@@ -4840,7 +4842,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               startDraftCopySession(currentProjectId, effectiveUserId, { showModal: true });
             }
 
-            if (currentProjectId && !isNonWorkspaceMode && !isShared) {
+            if (currentProjectId && !isNonWorkspaceMode) {
               const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
               void loadDraftSettings(currentProjectId, effectiveUserId).then((settings) => {
                 if (!settings) return;
@@ -17624,6 +17626,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           syncMode={syncMode}
           requireDraftForMembers={requireDraftForMembers}
           isProjectOwner={isProjectOwner}
+          isProjectShared={isCurrentFileShared}
           isDraftEditorRole={isProjectDraftEditorRole}
           autoDraftStatus={autoDraftStatus}
           onSwitchToDraftMode={handleSwitchToDraftMode}
