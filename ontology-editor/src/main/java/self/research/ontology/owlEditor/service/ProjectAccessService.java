@@ -115,6 +115,10 @@ public class ProjectAccessService {
         if (projectId == null || projectId.isBlank() || (noUserId && noEmail)) {
             return false;
         }
+        Optional<ProjectDocument> workspaceRecord = WorkspaceProjectRecord.find(mongoTemplate, projectId);
+        if (workspaceRecord.isPresent()) {
+            return WorkspaceProjectRecord.ownedBy(workspaceRecord.get(), userId, email);
+        }
         Optional<ProjectDocument> direct = projectRepository.findById(projectId);
         if (direct.isPresent() && ownedBy(direct.get(), userId, email)) {
             return true;

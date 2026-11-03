@@ -104,4 +104,53 @@ class ProjectAccessServiceTest {
         assertTrue(sent.contains("ownerId") && sent.contains("members.userId") || sent.contains("\"userId\""), sent);
         assertTrue(sent.contains("u-1"), sent);
     }
+
+    private static ProjectDocument workspaceProject(String ownerId, String ownerEmail) {
+        ProjectDocument record = new ProjectDocument();
+        record.setOwnerId(ownerId);
+        ProjectDocument.MemberRef owner = new ProjectDocument.MemberRef();
+        owner.setUserId(ownerId);
+        owner.setEmail(ownerEmail);
+        owner.setRole("OWNER");
+        ProjectDocument.MemberRef editor = new ProjectDocument.MemberRef();
+        editor.setUserId("u-editor");
+        editor.setEmail("editor@x.org");
+        editor.setRole("EDITOR");
+        record.setMembers(java.util.List.of(owner, editor));
+        return record;
+    }
+
+    private static ProjectAccessService withWorkspaceProject(ProjectDocument fileRecord, ProjectDocument workspaceRecord) {
+        ProjectRepository repository = mock(ProjectRepository.class);
+        MongoTemplate mongo = mock(MongoTemplate.class);
+        when(repository.findById("proj-1")).thenReturn(Optional.ofNullable(fileRecord));
+        when(mongo.findOne(any(Query.class), eq(ProjectDocument.class), eq("projects"))).thenReturn(workspaceRecord);
+        return new ProjectAccessService(repository, mongo);
+    }
+
+    @Test
+    void aMemberWhoUploadedTheFileIsNotTheOwner() {
+        ProjectAccessService service = withWorkspaceProject(
+                ownedBy("u-editor", "editor@x.org"), workspaceProject("u-owner", "owner@x.org"));
+
+        assertFalse(service.isOwner("proj-1", "u-editor", "editor@x.org"));
+        assertFalse(service.isProjectOwner("proj-1", "editor@x.org"));
+    }
+
+    @Test
+    void theRealOwnerStaysTheOwnerEvenAfterAMemberUploaded() {
+        ProjectAccessService service = withWorkspaceProject(
+                ownedBy("u-editor", "editor@x.org"), workspaceProject("u-owner", "owner@x.org"));
+
+        assertTrue(service.isOwner("proj-1", "u-owner", "owner@x.org"));
+        assertTrue(service.isProjectOwner("proj-1", "OWNER@x.org"));
+    }
+
+    @Test
+    void withoutAWorkspaceProjectTheFileRecordOwnerStillCounts() {
+        ProjectAccessService service = withWorkspaceProject(ownedBy("u-solo", "solo@x.org"), null);
+
+        assertTrue(service.isOwner("proj-1", "u-solo", "solo@x.org"));
+        assertFalse(service.isOwner("proj-1", "u-other", "other@x.org"));
+    }
 }
