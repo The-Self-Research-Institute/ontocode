@@ -3,7 +3,8 @@ import { EditorPage } from './EditorPage';
 import { loadDesktopAuth } from './desktopApi';
 
 const DESKTOP_USER = process.env.DESKTOP_E2E_USER || 'admin@ontocode.local';
-const DESKTOP_PASS = process.env.DESKTOP_E2E_PASSWORD || 'ontocode-desktop';
+import { DESKTOP_E2E_PASSWORD } from './desktopCredentials';
+const DESKTOP_PASS = DESKTOP_E2E_PASSWORD;
 
 export class DesktopEditorPage extends EditorPage {
   constructor(page: Page) {

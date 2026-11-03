@@ -6,7 +6,8 @@ import type { FullConfig } from '@playwright/test';
 
 const API_BASE = (process.env.DESKTOP_API_BASE || 'http://127.0.0.1:18085').replace(/\/$/, '');
 const DESKTOP_USER = process.env.DESKTOP_E2E_USER || 'admin@ontocode.local';
-const DESKTOP_PASS = process.env.DESKTOP_E2E_PASSWORD || 'ontocode-desktop';
+import { DESKTOP_E2E_PASSWORD } from './helpers/desktopCredentials';
+const DESKTOP_PASS = DESKTOP_E2E_PASSWORD;
 
 const STATE_PATH = path.join(__dirname, '.desktop-auth.json');
 
