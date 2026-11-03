@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import type { ElectronApplication, Page } from '@playwright/test';
 import { _electron as electron } from '@playwright/test';
+import { DESKTOP_E2E_PASSWORD } from './desktopCredentials';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 export const ELECTRON_DIR = path.join(REPO_ROOT, 'electron-app');
@@ -45,7 +46,7 @@ export async function launchOntocodeElectron(): Promise<LaunchedElectron> {
   const userDataArg = `--user-data-dir=${userDataDir}`;
 
   if (resolved.isPackagedApp) {
-    const packagedEnv: NodeJS.ProcessEnv = { ...process.env };
+    const packagedEnv: NodeJS.ProcessEnv = { ...process.env, ONTOCODE_DESKTOP_ADMIN_PASSWORD: DESKTOP_E2E_PASSWORD };
     delete packagedEnv.ELECTRON_RUN_AS_NODE;
     const app = await electron.launch({
       executablePath: resolved.path,
@@ -75,7 +76,7 @@ export async function launchOntocodeElectron(): Promise<LaunchedElectron> {
     );
   }
 
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env, ONTOCODE_DESKTOP_ADMIN_PASSWORD: DESKTOP_E2E_PASSWORD };
   delete env.ELECTRON_RUN_AS_NODE;
   if (useDevShell) {
     env.ELECTRON_IS_DEV = '1';

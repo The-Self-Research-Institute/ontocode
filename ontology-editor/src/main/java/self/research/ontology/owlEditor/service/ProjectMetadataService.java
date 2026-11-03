@@ -150,14 +150,14 @@ public class ProjectMetadataService {
                 .set("updatedAt", now);
 
         if (ownerEmail != null && !ownerEmail.isEmpty()) {
-            update.set("ownerEmail", ownerEmail);
-            log.info("[ProjectMetadataService] Setting owner email: {} for project: {}", ownerEmail, projectId);
+            update.setOnInsert("ownerEmail", ownerEmail);
+            log.info("[ProjectMetadataService] Owner email {} applies only if project {} is new", ownerEmail, projectId);
         } else {
             log.warn("[ProjectMetadataService] No owner email provided for project: {}", projectId);
         }
 
         if (ownerId != null && !ownerId.isBlank()) {
-            update.set("ownerId", ownerId);
+            update.setOnInsert("ownerId", ownerId);
         }
 
         if (workspaceId != null && !workspaceId.isEmpty()) {
@@ -176,8 +176,9 @@ public class ProjectMetadataService {
     }
     
     public Optional<String> getOwnerEmail(String projectId) {
-        return projectRepository.findById(projectId)
-                .map(ProjectDocument::getOwnerEmail);
+        return WorkspaceProjectRecord.find(mongoTemplate, projectId)
+                .flatMap(WorkspaceProjectRecord::ownerEmail)
+                .or(() -> projectRepository.findById(projectId).map(ProjectDocument::getOwnerEmail));
     }
 
     public boolean isRequireDraftForMembers(String projectId) {

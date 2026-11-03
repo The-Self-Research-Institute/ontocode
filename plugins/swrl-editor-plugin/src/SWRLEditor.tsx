@@ -628,7 +628,8 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
       </div>
       <div className="p-4 flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
         <textarea 
-          className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-black placeholder-gray-500"
+          className="w-full h-32 p-3 font-mono text-sm border-2 border-gray-400 rounded-lg bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-black placeholder-gray-500 shrink-0 resize-y"
+          style={{ minHeight: '8rem', flexShrink: 0 }}
           value={query} 
           onChange={(e) => setQuery(e.target.value)} 
           placeholder="Enter SQWRL query… e.g., Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)" 

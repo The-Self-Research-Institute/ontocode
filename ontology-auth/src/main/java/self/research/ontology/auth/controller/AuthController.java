@@ -152,6 +152,12 @@ public class AuthController {
                 admin.setSubscriptionPlanName("FREE");
                 needsSave = true;
             }
+            if (desktopMode && adminPassword != null && !adminPassword.isBlank()
+                    && (admin.getPassword() == null || !passwordEncoder.matches(adminPassword, admin.getPassword()))) {
+                admin.setPassword(passwordEncoder.encode(adminPassword));
+                needsSave = true;
+                log.warn("✓ Desktop admin password replaced with the generated one (email={})", adminEmail);
+            }
             if (needsSave) userRepository.save(admin);
         }, () -> {
             if (adminPassword == null || adminPassword.isBlank()) {
