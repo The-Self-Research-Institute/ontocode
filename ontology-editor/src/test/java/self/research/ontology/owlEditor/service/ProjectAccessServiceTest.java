@@ -153,4 +153,45 @@ class ProjectAccessServiceTest {
         assertTrue(service.isOwner("proj-1", "u-solo", "solo@x.org"));
         assertFalse(service.isOwner("proj-1", "u-other", "other@x.org"));
     }
+
+    private static ProjectDocument withMembers(String id, String... emails) {
+        ProjectDocument doc = new ProjectDocument(id, "p", "p.owl");
+        java.util.List<ProjectDocument.MemberRef> members = new java.util.ArrayList<>();
+        for (String email : emails) {
+            ProjectDocument.MemberRef ref = new ProjectDocument.MemberRef();
+            ref.setEmail(email);
+            members.add(ref);
+        }
+        doc.setMembers(members);
+        return doc;
+    }
+
+    @Test
+    void aProjectWithMoreThanOneMemberIsShared() {
+        ProjectRepository repository = mock(ProjectRepository.class);
+        MongoTemplate mongo = mock(MongoTemplate.class);
+        when(mongo.findOne(any(Query.class), eq(ProjectDocument.class), eq("projects")))
+                .thenReturn(withMembers("proj-1", "owner@x.org", "editor@x.org"));
+
+        assertTrue(new ProjectAccessService(repository, mongo).isShared("proj-1--file-9"));
+    }
+
+    @Test
+    void aProjectWithOnlyItsOwnerIsNotShared() {
+        ProjectRepository repository = mock(ProjectRepository.class);
+        MongoTemplate mongo = mock(MongoTemplate.class);
+        when(mongo.findOne(any(Query.class), eq(ProjectDocument.class), eq("projects")))
+                .thenReturn(withMembers("proj-1", "owner@x.org"));
+
+        assertFalse(new ProjectAccessService(repository, mongo).isShared("proj-1"));
+    }
+
+    @Test
+    void anUnknownOrBlankProjectIsNotShared() {
+        ProjectAccessService service = new ProjectAccessService(mock(ProjectRepository.class), mock(MongoTemplate.class));
+
+        assertFalse(service.isShared("missing"));
+        assertFalse(service.isShared(" "));
+        assertFalse(service.isShared(null));
+    }
 }

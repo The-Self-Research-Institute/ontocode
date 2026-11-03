@@ -148,4 +148,15 @@ public class ProjectAccessService {
     public boolean isProjectOwner(String projectId, String email) {
         return isOwner(projectId, null, email);
     }
+
+    public boolean isShared(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            return false;
+        }
+        Optional<ProjectDocument> record = WorkspaceProjectRecord.find(mongoTemplate, projectId);
+        if (record.isEmpty()) {
+            record = projectRepository.findById(projectId);
+        }
+        return record.map(ProjectDocument::getMembers).map(members -> members.size() > 1).orElse(false);
+    }
 }
