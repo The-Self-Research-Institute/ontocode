@@ -666,4 +666,20 @@ class DraftControllerTest {
         assertEquals(200, response.getStatusCode().value());
         org.mockito.Mockito.verify(draftTrackingService).applyDrafts(eq("p1"), eq("reviewer1"), eq(false), eq(false), any());
     }
+
+    @Test
+    void draftSettingsTellTheOwnerWhetherTheProjectIsShared() {
+        var access = mock(self.research.ontology.owlEditor.service.ProjectAccessService.class);
+        when(access.isOwner("p1", "u1", "o@x.org")).thenReturn(true);
+        when(access.isShared("p1")).thenReturn(true);
+        var sharedController = new DraftController(draftTrackingService, draftCopyService, metadataService,
+                prRepository, ownershipService, draftPublishMergeService,
+                new self.research.ontology.owlEditor.service.ProjectAuthorization(access, false));
+
+        var body = sharedController.getDraftSettings("p1",
+                new self.research.ontology.owlEditor.config.CallerIdentity("u1", "o@x.org")).getBody();
+
+        assertEquals(true, body.get("isOwner"));
+        assertEquals(true, body.get("shared"));
+    }
 }

@@ -1530,6 +1530,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const {
     requireDraftForMembers,
     isProjectOwner,
+    isProjectShared: isProjectSharedBySettings,
     setRequireDraftForMembers,
     loadDraftSettings,
     resetDraftSettings,
@@ -4909,6 +4910,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         } else {
           console.log("[Dashboard] ℹ️ Admin flow detected - skipping user file fetch (will use project files)");
+          if (!isDesktop()) {
+            const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
+            void loadDraftSettings(currentProjectId, effectiveUserId);
+          }
         }
 
         syncService.stopMonitoring(currentProjectId);
@@ -17626,7 +17631,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           syncMode={syncMode}
           requireDraftForMembers={requireDraftForMembers}
           isProjectOwner={isProjectOwner}
-          isProjectShared={isCurrentFileShared}
+          isProjectShared={isCurrentFileShared || isProjectSharedBySettings}
           isDraftEditorRole={isProjectDraftEditorRole}
           autoDraftStatus={autoDraftStatus}
           onSwitchToDraftMode={handleSwitchToDraftMode}

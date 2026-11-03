@@ -342,7 +342,8 @@ public class DraftController {
         return ResponseEntity.ok(Map.of(
                 "projectId", projectId,
                 "requireDraftForMembers", requireDraft,
-                "isOwner", isOwner
+                "isOwner", isOwner,
+                "shared", authorization.isShared(projectId)
         ));
     }
 
