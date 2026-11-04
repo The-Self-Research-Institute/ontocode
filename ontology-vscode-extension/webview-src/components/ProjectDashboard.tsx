@@ -86,6 +86,12 @@ interface ShareSelection {
 
 const EMPTY_SHARE_SELECTION: ShareSelection = { shareWith: "none", members: [] };
 
+const shareSelectionForVisibility = (visibility?: string): ShareSelection => {
+  if (visibility === "WORKSPACE") return { shareWith: "all", members: [] };
+  if (visibility === "SPECIFIC") return { shareWith: "specific", members: [] };
+  return EMPTY_SHARE_SELECTION;
+};
+
 const SHARE_MEMBER_SEARCH_THRESHOLD = 5;
 
 const shareNormalizeEmail = (email?: string | null) => (email || "").trim().toLowerCase();
@@ -433,6 +439,7 @@ interface Project {
   fileCount: number;
   createdAt: string;
   updatedAt: string;
+  visibility?: string;
   isPrivateRestricted?: boolean;
 }
 
@@ -2154,9 +2161,11 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                     {canManageOpenProject && (
                       <button
                         onClick={() => {
-                          if (showAddMemberForm) {
-                            setAddMemberSelection(EMPTY_SHARE_SELECTION);
-                          }
+                          setAddMemberSelection(
+                            showAddMemberForm
+                              ? EMPTY_SHARE_SELECTION
+                              : shareSelectionForVisibility(projectSettingsModal.visibility),
+                          );
                           setShowAddMemberForm(!showAddMemberForm);
                         }}
                         className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
