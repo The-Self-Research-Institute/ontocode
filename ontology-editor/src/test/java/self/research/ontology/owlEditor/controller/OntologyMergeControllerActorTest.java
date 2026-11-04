@@ -7,6 +7,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import self.research.ontology.owlEditor.model.merge.MergeOptions;
 import self.research.ontology.owlEditor.model.merge.MergeResult;
 import self.research.ontology.owlEditor.model.merge.MergeStrategy;
+import self.research.ontology.owlEditor.service.MergeTargetResolver;
 import self.research.ontology.owlEditor.service.OntologyMergeService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 
@@ -31,7 +32,7 @@ class OntologyMergeControllerActorTest {
         OntologyMergeService merge = mock(OntologyMergeService.class);
         when(merge.mergeOntologies(anyString(), any(Path.class), any(), any(), any(), any(MergeOptions.class), anyString(), anyString(), anyBoolean()))
                 .thenReturn(new MergeResult());
-        OntologyMergeController controller = new OntologyMergeController(merge, mock(ProjectMetadataService.class));
+        OntologyMergeController controller = new OntologyMergeController(merge, new MergeTargetResolver(mock(ProjectMetadataService.class), mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class)));
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
                 "{\"email\":\"real@x.org\"}".getBytes(StandardCharsets.UTF_8));
@@ -59,7 +60,7 @@ class OntologyMergeControllerActorTest {
         OntologyMergeService merge = mock(OntologyMergeService.class);
         when(merge.mergeOntologies(anyString(), any(Path.class), any(), any(), any(), any(MergeOptions.class), anyString(), anyString(), anyBoolean()))
                 .thenReturn(new MergeResult());
-        OntologyMergeController controller = new OntologyMergeController(merge, mock(ProjectMetadataService.class));
+        OntologyMergeController controller = new OntologyMergeController(merge, new MergeTargetResolver(mock(ProjectMetadataService.class), mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class)));
 
         controller.executeMerge("p1", new MockMultipartFile("file", "a.owl", "text/plain", "x".getBytes()),
                 MergeStrategy.SIMPLE_UNION, null, null, null, null, null, null, null, true, signedIn());
@@ -75,7 +76,7 @@ class OntologyMergeControllerActorTest {
         OntologyMergeService merge = mock(OntologyMergeService.class);
         when(merge.mergeOntologies(anyString(), any(Path.class), any(), any(), any(), any(MergeOptions.class), anyString(), anyString(), anyBoolean()))
                 .thenThrow(new self.research.ontology.owlEditor.service.DraftMergeTooLargeException());
-        OntologyMergeController controller = new OntologyMergeController(merge, mock(ProjectMetadataService.class));
+        OntologyMergeController controller = new OntologyMergeController(merge, new MergeTargetResolver(mock(ProjectMetadataService.class), mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class)));
 
         var response = controller.executeMerge("p1", new MockMultipartFile("file", "a.owl", "text/plain", "x".getBytes()),
                 MergeStrategy.SIMPLE_UNION, null, null, null, null, null, null, null, true, signedIn());
@@ -88,7 +89,7 @@ class OntologyMergeControllerActorTest {
         OntologyMergeService merge = mock(OntologyMergeService.class);
         when(merge.mergeOntologies(anyString(), any(Path.class), any(), any(), any(), any(MergeOptions.class), anyString(), anyString(), anyBoolean()))
                 .thenThrow(new self.research.ontology.owlEditor.service.DraftNotReadyException());
-        OntologyMergeController controller = new OntologyMergeController(merge, mock(ProjectMetadataService.class));
+        OntologyMergeController controller = new OntologyMergeController(merge, new MergeTargetResolver(mock(ProjectMetadataService.class), mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class)));
 
         var response = controller.executeMerge("p1", new MockMultipartFile("file", "a.owl", "text/plain", "x".getBytes()),
                 MergeStrategy.SIMPLE_UNION, null, null, null, null, null, null, null, true, signedIn());

@@ -94,4 +94,17 @@ describe("assistantKeyStore", () => {
     expect(listener).toHaveBeenCalledTimes(2);
     expect(getApiKey()).toBe("");
   });
+
+  it("never writes the key to localStorage and clears a leftover copy", async () => {
+    localStorage.setItem(LEGACY, "sk-old");
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    resetApiKeyStoreForTests(secureBackend().backend);
+
+    await initApiKeyStore(LEGACY);
+    await setApiKey("sk-new");
+
+    expect(localStorage.getItem(LEGACY)).toBeNull();
+    expect(setItem.mock.calls.some(([name]) => name === LEGACY)).toBe(false);
+    setItem.mockRestore();
+  });
 });

@@ -1,9 +1,22 @@
 
 
+import type {
+  ExplainFact,
+  ExplainJobResponse,
+  ExplainRunOptions,
+  ExplainSubmitResponse,
+} from './types';
+
 declare global {
   interface Window {
     vscode?: { postMessage: (message: any) => void };
     API_BASE_URL?: string;
+  }
+}
+
+function announcePublicEditDisabled(err: any): void {
+  if (err.status === 403 && err.data?.code === 'PUBLIC_EDIT_DISABLED') {
+    window.dispatchEvent(new CustomEvent('ontocode:public-edit-disabled'));
   }
 }
 
@@ -79,10 +92,12 @@ class ApiClient {
 
     if (!response.ok) {
       let detail = '';
+      let data: any = undefined;
       try {
         const body = await response.text();
         if (body) {
           const parsed = JSON.parse(body);
+          data = parsed;
           // parsed.error is a boolean flag on this API's error shape ({error:true,
           // message:"..."}), not a description — `error || message` picked the boolean
           // first (truthy) and `new Error(true)` below stringified it to the literal
@@ -90,7 +105,12 @@ class ApiClient {
           detail = parsed.message || (typeof parsed.error === 'string' ? parsed.error : '') || body;
         }
       } catch { /* ignore parse failure */ }
-      throw new Error(detail || `Request failed (${response.status})`);
+      const err: any = new Error(detail || `Request failed (${response.status})`);
+      err.status = response.status;
+      err.data = data;
+      err.retryAfter = response.headers.get('Retry-After');
+      announcePublicEditDisabled(err);
+      throw err;
     }
 
     const text = await response.text();
@@ -99,6 +119,44 @@ class ApiClient {
     }
 
     return JSON.parse(text);
+  }
+
+  private async rawRequest(method: string, url: string, body?: FormData): Promise<Response> {
+    const baseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).__ONTOCODE_CONFIG__?.CLOUD_GATEWAY_URL || window.API_BASE_URL || '';
+    const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
+    const headers: Record<string, string> = {};
+    const token = localStorage.getItem('authToken');
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(fullUrl, { method, headers, body });
+    if (!response.ok) {
+      let detail = '';
+      let data: any = undefined;
+      try {
+        const text = await response.text();
+        if (text) {
+          const parsed = JSON.parse(text);
+          data = parsed;
+          detail = parsed.message || (typeof parsed.error === 'string' ? parsed.error : '') || text;
+        }
+      } catch { /* ignore parse failure */ }
+      const err: any = new Error(detail || `Request failed (${response.status})`);
+      err.status = response.status;
+      err.data = data;
+      announcePublicEditDisabled(err);
+      throw err;
+    }
+    return response;
+  }
+
+  public async postForm<T>(url: string, form: FormData): Promise<T> {
+    const response = await this.rawRequest('POST', url, form);
+    const text = await response.text();
+    return (text && text.trim() ? JSON.parse(text) : {}) as T;
+  }
+
+  public async getBlob(url: string): Promise<Blob> {
+    const response = await this.rawRequest('GET', url);
+    return response.blob();
   }
 
   public get<T>(url: string): Promise<T> {
@@ -115,6 +173,50 @@ class ApiClient {
 
   public delete<T>(url: string): Promise<T> {
     return this.request<T>('DELETE', url);
+  }
+
+  private explainPath(projectId: string, jobId?: string, draft?: boolean): string {
+    const base = `/api/ontology/${encodeURIComponent(projectId)}/explain-inference`;
+    const path = jobId ? `${base}/${encodeURIComponent(jobId)}` : base;
+    return draft ? `${path}?draft=true` : path;
+  }
+
+  public submitExplainInference(projectId: string, fact: ExplainFact, draft = false): Promise<ExplainSubmitResponse> {
+    return this.post<ExplainSubmitResponse>(this.explainPath(projectId, undefined, draft), fact);
+  }
+
+  public getExplainInference(projectId: string, jobId: string): Promise<ExplainJobResponse> {
+    return this.get<ExplainJobResponse>(this.explainPath(projectId, jobId));
+  }
+
+  public cancelExplainInference(projectId: string, jobId: string): Promise<{ success: boolean; cancelled: boolean }> {
+    return this.delete<{ success: boolean; cancelled: boolean }>(this.explainPath(projectId, jobId));
+  }
+
+  public async explainInference(
+    projectId: string,
+    fact: ExplainFact,
+    options: ExplainRunOptions = {},
+  ): Promise<ExplainJobResponse> {
+    const { draft = false, pollIntervalMs = 1000, timeoutMs = 120000, signal, onUpdate } = options;
+    const submitted = await this.submitExplainInference(projectId, fact, draft);
+    const started = Date.now();
+    for (;;) {
+      if (signal?.aborted) {
+        await this.cancelExplainInference(projectId, submitted.jobId).catch(() => undefined);
+        throw new DOMException('The explanation was cancelled.', 'AbortError');
+      }
+      const job = await this.getExplainInference(projectId, submitted.jobId);
+      if (onUpdate) onUpdate(job);
+      if (job.status === 'COMPLETED' || job.status === 'FAILED') {
+        return job;
+      }
+      if (Date.now() - started > timeoutMs) {
+        await this.cancelExplainInference(projectId, submitted.jobId).catch(() => undefined);
+        throw new Error('The explanation is taking too long. Please try again.');
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
   }
 }
 

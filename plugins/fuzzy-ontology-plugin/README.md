@@ -258,7 +258,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-GPL v3 License - see [LICENSE](LICENSE)
+MIT License - see [LICENSE](../../LICENSE)
 
 ## Citation
 
@@ -269,12 +269,12 @@ If you use this plugin in research, please cite:
   title = {Fuzzy Ontology Plugin for OntoCode},
   year = {2024},
   author = {OntoCode Team},
-  url = {https://github.com/ontocode/fuzzy-ontology-plugin}
+  url = {https://github.com/The-Self-Research-Institute/ontocode}
 }
 ```
 
 ## Support
 
 - Documentation: [docs.ontocode.org/fuzzy](https://docs.ontocode.org/fuzzy)
-- Issues: [GitHub Issues](https://github.com/ontocode/fuzzy-ontology-plugin/issues)
+- Issues: [GitHub Issues](https://github.com/The-Self-Research-Institute/ontocode/issues)
 - Community: [Discord](https://discord.gg/ontocode)

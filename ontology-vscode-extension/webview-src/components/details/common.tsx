@@ -1079,7 +1079,8 @@ export const AxiomSubsection: React.FC<{
   parentEntityIri?: string;
   resolveGCAAxiom?: (definition: string) => { subjectIris: string[]; targetIri: string } | null;
   conflictIris?: Set<string>;
-}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, resolveGCAAxiom, conflictIris }) => {
+  renderRowFooter?: (axiom: Axiom) => React.ReactNode;
+}> = ({ title, axioms, inferredAxioms, viewMode = 'asserted', onAdd, onEdit, onEditClick, onDelete, emptyMessage, onAddClick, activeOntologyIri, properties = [], dataProperties = [], themeColor, onNavigate, isViewOnly = false, onViewOnlyAction, projectId, parentEntityIri, resolveGCAAxiom, conflictIris, renderRowFooter }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
@@ -1215,8 +1216,8 @@ export const AxiomSubsection: React.FC<{
           <>
             {/* Asserted axioms */}
             {axioms?.map(axiom => (
+              <React.Fragment key={axiom.id}>
               <AxiomRow
-                key={axiom.id}
                 axiom={axiom}
                 onDelete={onDelete}
                 onEdit={onEdit}
@@ -1235,6 +1236,8 @@ export const AxiomSubsection: React.FC<{
                 resolveGCAAxiom={resolveGCAAxiom}
                 conflictIris={conflictIris}
               />
+              {renderRowFooter?.(axiom)}
+              </React.Fragment>
             ))}
             {/* Inferred axioms (only in inferred view) */}
             {visibleInferred.map(axiom => (

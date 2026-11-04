@@ -1,9 +1,12 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.service.PublicEditGate;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +19,7 @@ import self.research.ontology.owlEditor.service.DLQueryQueueManager;
 import self.research.ontology.owlEditor.service.DLQueryQueueProcessor;
 import self.research.ontology.owlEditor.service.DLQueryService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
+import self.research.ontology.owlEditor.service.JobAccess;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
@@ -31,6 +35,9 @@ import java.util.stream.Collectors;
 @CrossOrigin(originPatterns = "*")
 public class DLQueryController {
 
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
+
     private static final Logger log = LoggerFactory.getLogger(DLQueryController.class);
     private static final String DESKTOP_USER_ID = "desktop-user-local";
 
@@ -42,6 +49,9 @@ public class DLQueryController {
 
     @Autowired
     private DLQueryService dlQueryService;
+
+    @Autowired
+    private JobAccess jobAccess;
 
     @Autowired
     private DLQueryQueueManager dlQueryQueueManager;
@@ -64,9 +74,12 @@ public class DLQueryController {
     @PostMapping("/{projectId}/dl-query")
     public ResponseEntity<Map<String, Object>> executeDLQuery(
             @PathVariable String projectId,
-            @RequestBody DLQueryRequest request
+            @RequestBody DLQueryRequest request,
+            CallerIdentity caller,
+            HttpServletRequest httpRequest
     ) {
         try {
+            String ownerEmail = desktopMode ? request.getUserEmail() : caller.email();
             if (request.getExpression() == null || request.getExpression().isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
@@ -87,7 +100,7 @@ public class DLQueryController {
                         request.getExpression().trim(),
                         request.getQueryTypes(),
                         null,
-                        draftUserId != null ? draftUserId : request.getUserEmail());
+                        draftUserId != null ? draftUserId : ownerEmail);
                 if (Boolean.FALSE.equals(worker.get("success"))) {
                     return ResponseEntity.status(500).body(Map.of(
                             "success", false,
@@ -96,6 +109,7 @@ public class DLQueryController {
                     ));
                 }
                 String jobId = stringOrNull(worker.get("jobId"));
+                jobAccess.register(httpRequest, jobId, projectId);
                 reasoningJobRelayService.rememberSubmittedJob(
                         jobId, projectId, request.getExpression().trim(), "DL_QUERY", worker);
 
@@ -120,8 +134,9 @@ public class DLQueryController {
                     projectId,
                     request.getExpression().trim(),
                     request.getQueryTypes(),
-                    request.getUserEmail(),
+                    ownerEmail,
                     draftUserId);
+            jobAccess.register(httpRequest, job.getJobId(), projectId);
             if (dlQueryQueueProcessor != null) {
                 dlQueryQueueProcessor.processNext();
             }
@@ -136,6 +151,8 @@ public class DLQueryController {
             response.put("query", request.getExpression());
             return ResponseEntity.accepted().body(response);
 
+        } catch (self.research.ontology.owlEditor.service.BusyException busy) {
+            throw busy;
         } catch (Exception e) {
             log.error("DL Query enqueue error for project {}: {}", projectId, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of(
@@ -154,8 +171,13 @@ public class DLQueryController {
     public ResponseEntity<Map<String, Object>> addDLQueryToOntology(
             @PathVariable String projectId,
             @RequestBody DLAddRequest request,
-            @RequestParam(required = false, defaultValue = "true") boolean draft
+            @RequestParam(required = false, defaultValue = "true") boolean draft,
+            CallerIdentity caller
     ) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
         try {
             if (request.getExpression() == null || request.getExpression().isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of(
@@ -196,8 +218,9 @@ public class DLQueryController {
                 axioms.add(df.getOWLEquivalentClassesAxiom(newClass, classExpression));
 
                 String sparql = buildInsertDataFromAxioms(axioms);
-                String userId = resolveDraftUserId(request);
-                String username = request.getUsername() != null ? request.getUsername() : "Anonymous";
+                String userId = desktopMode ? DESKTOP_USER_ID : caller.userIdOr(caller.email());
+                String username = !desktopMode && caller.email() != null ? caller.email()
+                        : request.getUsername() != null ? request.getUsername() : "Anonymous";
                 if (draft) {
                     OntologyMutationService.MutationOp dlOp = new OntologyMutationService.MutationOp(
                             "addDlQueryClass", classIri, request.getClassName().trim(), null, null, null, null,
@@ -230,19 +253,6 @@ public class DLQueryController {
                     "error", e.getMessage() != null ? e.getMessage() : "Failed to add DL query expression"
             ));
         }
-    }
-
-    private String resolveDraftUserId(DLAddRequest request) {
-        if (desktopMode) {
-            return DESKTOP_USER_ID;
-        }
-        if (request.getUserId() != null && !request.getUserId().isBlank()) {
-            return request.getUserId();
-        }
-        if (request.getUserEmail() != null && !request.getUserEmail().isBlank()) {
-            return request.getUserEmail();
-        }
-        return "anonymous";
     }
 
     private String resolveNewClassIri(OWLOntology ontology, String className) {

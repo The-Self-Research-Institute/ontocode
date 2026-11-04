@@ -67,12 +67,10 @@ Edit ontologies in **6 serialization formats** with real-time synchronization:
 
 ### Reasoner Engine
 
-Run OWL reasoning directly from the editor with support for **5 reasoners**:
+Run OWL reasoning directly from the editor with support for **3 reasoners**:
 
 - **HermiT** (default) — Full OWL 2 DL reasoning
 - **ELK** — Optimized for OWL 2 EL ontologies
-- **Pellet** — OWL 2 DL with SWRL rule support
-- **Openllet** — Open-source Pellet fork
 - **Structural Reasoner** — Lightweight structural checks
 
 **Capabilities:**
@@ -384,14 +382,14 @@ If you use this software in your research, please cite it:
   title = {OntoCode Ontology Platform},
   version = {1.0.0},
   date = {2025-12-23},
-  url = {https://github.com/ontocode/ontocode}
+  url = {https://github.com/The-Self-Research-Institute/ontocode}
 }
 ```
 
-See also [CITATION.cff](CITATION.cff), [CITATIONS.md](CITATIONS.md), and [references.bib](references.bib).
+See also [CITATION.cff](CITATION.cff).
 
 ---
 
 ## License
 
-[AGPL v3 License](LICENSE)
+[MIT License](LICENSE)

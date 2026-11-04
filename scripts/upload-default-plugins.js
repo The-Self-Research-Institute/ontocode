@@ -73,7 +73,7 @@ const DEFAULT_PLUGINS = [
   {
     pluginId: 'reasoner-plugin',
     name: 'OWL Reasoner',
-    description: 'Advanced OWL 2 DL reasoning with HermiT, ELK, Pellet, and Openllet. Provides classification, consistency checking, explanations, and inferred hierarchies.',
+    description: 'Advanced OWL 2 DL reasoning with HermiT, ELK, JFact, and structural reasoners. Provides classification, consistency checking, explanations, and inferred hierarchies.',
     version: '1.0.0',
     category: 'Reasoning',
     author: 'OntoCode Team',

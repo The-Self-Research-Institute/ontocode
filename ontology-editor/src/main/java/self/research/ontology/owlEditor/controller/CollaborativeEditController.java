@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import lombok.RequiredArgsConstructor;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -52,6 +53,8 @@ public class CollaborativeEditController {
         String sessionId = headerAccessor.getSessionId();
         operation.setSessionId(sessionId);
         operation.setProjectId(projectId);
+        operation.setUserId(CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                .userIdOr(operation.getUserId()));
 
         // Enforce FREE plan restriction via session attributes populated by WebSocketAuthChannelInterceptor
         Map<String, Object> attrs = headerAccessor.getSessionAttributes();
@@ -61,7 +64,7 @@ public class CollaborativeEditController {
             if ("FREE".equalsIgnoreCase(plan) && !workspaceOwnershipService.isUserOwnerOfProject(userId, projectId)) {
                 log.warn("[WS-Auth] FREE plan user {} blocked from editing project {}", userId, projectId);
                 messagingTemplate.convertAndSendToUser(
-                    sessionId, "/queue/errors",
+                    errorRecipient(headerAccessor), "/queue/errors",
                     Map.of("error", "Your current plan is Free. Upgrade to Pro to edit ontologies.",
                            "requiresUpgrade", true)
                 );
@@ -88,6 +91,8 @@ public class CollaborativeEditController {
         String sessionId = headerAccessor.getSessionId();
         message.setSessionId(sessionId);
         message.setProjectId(projectId);
+        message.setUserId(CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                .userIdOr(message.getUserId()));
         
         log.debug("Presence update for project {} from session {}: {}", 
                 projectId, sessionId, message.getType());
@@ -107,6 +112,8 @@ public class CollaborativeEditController {
         String sessionId = headerAccessor.getSessionId();
         message.setSessionId(sessionId);
         message.setProjectId(projectId);
+        message.setUserId(CallerIdentity.ofSession(headerAccessor.getSessionAttributes())
+                .userIdOr(message.getUserId()));
 
         // Same FREE-plan/ownership gate as handleEdit — locking was previously
         // ungated, so a FREE non-owner could lock nodes on a project they don't own.
@@ -117,7 +124,7 @@ public class CollaborativeEditController {
             if ("FREE".equalsIgnoreCase(plan) && !workspaceOwnershipService.isUserOwnerOfProject(userId, projectId)) {
                 log.warn("[WS-Auth] FREE plan user {} blocked from locking in project {}", userId, projectId);
                 messagingTemplate.convertAndSendToUser(
-                    sessionId, "/queue/errors",
+                    errorRecipient(headerAccessor), "/queue/errors",
                     Map.of("error", "Your current plan is Free. Upgrade to Pro to edit ontologies.",
                            "requiresUpgrade", true)
                 );
@@ -154,5 +161,9 @@ public class CollaborativeEditController {
         String destination = String.format("/queue/ontology/%s", projectId);
         messagingTemplate.convertAndSendToUser(userId, destination, message);
         log.debug("Sent private message to user {} for project {}", userId, projectId);
+    }
+
+    private static String errorRecipient(SimpMessageHeaderAccessor headerAccessor) {
+        return headerAccessor.getUser() != null ? headerAccessor.getUser().getName() : headerAccessor.getSessionId();
     }
 }

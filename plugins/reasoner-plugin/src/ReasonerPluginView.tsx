@@ -137,6 +137,7 @@ interface ReasonerPluginProps {
   apiBaseUrl?: string;
   draftUserId?: string;
   selectedReasoner?: string;
+  reasonerAdvice?: string | null;
   isReasonerRunning?: boolean;
   isReasonerLoading?: boolean;
   reasonerResults?: any;
@@ -313,6 +314,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   apiBaseUrl = '',
   draftUserId,
   selectedReasoner: dashboardSelectedReasoner,
+  reasonerAdvice,
   isReasonerRunning: dashboardIsRunning,
   isReasonerLoading: dashboardIsLoading,
   reasonerResults: dashboardReasonerResults,
@@ -626,8 +628,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
 
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
-        'pellet': 'PELLET',
-        'openllet': 'OPENLLET',
         'fact++': 'FACTPLUSPLUS',
         'elk': 'ELK',
         'structural': 'STRUCTURAL'
@@ -819,8 +819,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     try {
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
-        'pellet': 'PELLET',
-        'openllet': 'OPENLLET',
         'fact++': 'FACTPLUSPLUS',
         'elk': 'ELK',
         'structural': 'STRUCTURAL'
@@ -896,8 +894,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
     try {
       const reasonerMap: Record<string, string> = {
         'hermit': 'HERMIT',
-        'pellet': 'PELLET',
-        'openllet': 'OPENLLET',
         'fact++': 'FACTPLUSPLUS',
         'elk': 'ELK',
         'structural': 'STRUCTURAL'
@@ -1441,8 +1437,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               {[
                 { name: 'HermiT', desc: 'Full OWL 2 DL - Best for complex ontologies' },
                 { name: 'ELK', desc: 'EL++ optimized - Fast for large taxonomies' },
-                { name: 'Pellet', desc: 'Complete OWL DL with SWRL support' },
-                { name: 'Openllet', desc: 'Modern Pellet fork - Improved performance' },
                 { name: 'Structural', desc: 'Lightweight - Fast but limited' }
               ].map(reasoner => (
                 <button
@@ -1577,6 +1571,25 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
         )}
       </div>
 
+      {reasonerAdvice && (
+        <div
+          role="status"
+          className={`flex items-center gap-3 px-3 py-2 text-xs border-b flex-shrink-0 ${
+            isDark ? 'bg-yellow-900/20 border-yellow-800 text-yellow-300' : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+          }`}
+        >
+          <span className="flex-1">{reasonerAdvice}</span>
+          {dashboardSelectReasoner && selectedReasoner !== 'ELK' && (
+            <button
+              className="px-3 py-1 font-medium bg-blue-600 text-white rounded hover:bg-blue-700 flex-shrink-0"
+              onClick={() => dashboardSelectReasoner('ELK')}
+            >
+              Switch to ELK
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 flex overflow-hidden">
         {!reasonerResults && !isLoading ? (
           <div className={`flex-1 flex flex-col items-center justify-center gap-4 text-center p-8 ${
@@ -1656,8 +1669,6 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
                     <span className={`font-medium ${isDark ? 'text-gray-200' : 'text-gray-900'}`}>
                       {selectedReasoner === 'HermiT' ? '1.4.5.519' : 
                        selectedReasoner === 'ELK' ? '0.4.3' :
-                       selectedReasoner === 'Openllet' ? '2.6.5' : 
-                       selectedReasoner === 'Pellet' ? '2.3.1' : 
                        '1.0.0'}
                     </span>
                   </div>

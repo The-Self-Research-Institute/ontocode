@@ -32,11 +32,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ontocode/graph-view-plugin"
+    "url": "https://github.com/The-Self-Research-Institute/ontocode",
+    "directory": "plugins/graph-view-plugin"
   },
-  "homepage": "https://github.com/ontocode/graph-view-plugin#readme",
+  "homepage": "https://github.com/The-Self-Research-Institute/ontocode/tree/main/plugins/graph-view-plugin#readme",
   "bugs": {
-    "url": "https://github.com/ontocode/graph-view-plugin/issues"
+    "url": "https://github.com/The-Self-Research-Institute/ontocode/issues"
   },
   "engines": {
     "vscode": "^1.80.0"

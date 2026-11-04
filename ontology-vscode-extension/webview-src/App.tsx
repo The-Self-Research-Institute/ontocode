@@ -31,6 +31,7 @@ import { isDesktop, getDesktopLicense, isLicenseExpired, licensePlan, DesktopLic
 import AdminSettingsModal from "./components/AdminSettingsModal";
 import MaintenancePage from "./components/MaintenancePage";
 import { isDownloadLocation, leaveStandalonePage } from "./utils/feedback";
+import { isTrustedMessage } from './utils/trustedMessage';
 const BillingManagement = lazy(() => import("./components/BillingManagement"));
 const DesktopDownloadPage = lazy(() => import("./components/DesktopDownloadPage"));
 const DesktopUpdateBanner = lazy(() => import("./components/DesktopUpdateBanner"));
@@ -1003,6 +1004,7 @@ const AppContent = () => {
   // Listen for pending file upload and invitation token messages from extension
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       console.log("[App] Received message from extension:", message.type, message);
 
@@ -1035,7 +1037,6 @@ const AppContent = () => {
         setInviteEmail(null);
         setShowAuthForInvitation(false);
       } else if (message.type === "invitationToken") {
-        console.log("[App] 📧 Received invitation token from extension:", message.token?.substring(0, 20) + "...");
         console.log(
           "[App] Current state - inviteToken:",
           !!inviteToken,
@@ -1215,7 +1216,6 @@ const AppContent = () => {
           projectId: projectId,
           fileName: pendingFile.fileName,
           fileContent: pendingFile.fileContent,
-          ownerEmail: user.email || undefined,
           workspaceId: user.workspaceId || undefined,
           skipDuplicateCheck: false,
         });
@@ -1731,19 +1731,14 @@ const AppContent = () => {
   };
 
   const handleInvitationLoginRequired = (email: string) => {
-    console.log("[App] ⚠️  Login required for invitation, email:", email);
-    // Store invitation token to restore after login
-    const currentToken = inviteToken;
     setInviteEmail(email);
     // Keep the token so user can accept invitation after logging in
-    console.log("[App] Keeping invitation token for post-login acceptance:", currentToken);
     // Show auth form while keeping the invite token for later
     setShowAuthForInvitation(true);
     setIsLoginView(true);
   };
 
   const handleInvitationSignupRequired = (email: string) => {
-    console.log("[App] 📝 Signup required for invitation, email:", email);
     setInviteEmail(email);
     // Show signup form while keeping the invite token for later
     setShowAuthForInvitation(true);
@@ -1970,7 +1965,6 @@ const AppContent = () => {
   // Show invitation acceptance page if there's an invite token (whether logged in or not)
   // But if user clicked login/signup, show auth form first
   if (inviteToken && !showAuthForInvitation) {
-    console.log("[App] 🎫 Rendering InviteAcceptPage with token:", inviteToken.substring(0, 20) + "...");
     return (
       <InviteAcceptPage
         token={inviteToken}
@@ -2141,7 +2135,6 @@ const AppContent = () => {
           onSkipWorkspace={() => {
             console.log("[App] 🚀 User chose to continue without workspace");
             console.log("[App] Current needsWorkspaceSelection:", needsWorkspaceSelection);
-            console.log("[App] Current user:", { email: user?.email, workspaceId: user?.workspaceId });
             setSkipWorkspaceRequested(true);
             selectWorkspace({ skipWorkspace: true });
             setForceShowWorkspace(false);

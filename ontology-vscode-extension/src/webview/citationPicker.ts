@@ -282,39 +282,53 @@ export class CitationPickerPanel {
                         renderCitations(message.items);
                         break;
                     case 'error':
-                        document.getElementById('citationList').innerHTML = 
-                            '<div class="loading" style="color: var(--vscode-errorForeground);">' + 
-                            message.message + '</div>';
+                        showListNotice(message.message, true);
                         break;
                 }
             });
+
+            function showListNotice(text, isError) {
+                const listEl = document.getElementById('citationList');
+                const notice = document.createElement('div');
+                notice.className = 'loading';
+                if (isError) {
+                    notice.style.color = 'var(--vscode-errorForeground)';
+                }
+                notice.textContent = text;
+                listEl.replaceChildren(notice);
+            }
+
+            function buildCitationNode(item) {
+                const title = item.data?.title || 'Untitled';
+                const creators = item.data?.creators?.map(c => 
+                    ((c.firstName || '') + ' ' + (c.lastName || '')).trim()
+                ).join(', ') || 'Unknown';
+                const year = item.data?.date ? 
+                    new Date(item.data.date).getFullYear() : '';
+                const type = item.data?.itemType || 'Item';
+
+                const node = document.createElement('div');
+                node.className = 'citation-item';
+                node.dataset.key = String(item.key);
+                const titleEl = document.createElement('div');
+                titleEl.className = 'citation-title';
+                titleEl.textContent = title;
+                const metaEl = document.createElement('div');
+                metaEl.className = 'citation-meta';
+                metaEl.textContent = creators + ' • ' + type + (year ? ' (' + year + ')' : '');
+                node.append(titleEl, metaEl);
+                return node;
+            }
 
             function renderCitations(items) {
                 const listEl = document.getElementById('citationList');
 
                 if (items.length === 0) {
-                    listEl.innerHTML = '<div class="loading">No citations found</div>';
+                    showListNotice('No citations found', false);
                     return;
                 }
 
-                listEl.innerHTML = items.map(item => {
-                    const title = item.data?.title || 'Untitled';
-                    const creators = item.data?.creators?.map(c => 
-                        (c.firstName + ' ' + c.lastName).trim()
-                    ).join(', ') || 'Unknown';
-                    const year = item.data?.date ? 
-                        new Date(item.data.date).getFullYear() : '';
-                    const type = item.data?.itemType || 'Item';
-
-                    return \`
-                        <div class="citation-item" data-key="\${item.key}">
-                            <div class="citation-title">\${title}</div>
-                            <div class="citation-meta">
-                                \${creators} • \${type} \${year ? '(' + year + ')' : ''}
-                            </div>
-                        </div>
-                    \`;
-                }).join('');
+                listEl.replaceChildren(...items.map(buildCitationNode));
 
                 // Add click handlers
                 document.querySelectorAll('.citation-item').forEach(el => {

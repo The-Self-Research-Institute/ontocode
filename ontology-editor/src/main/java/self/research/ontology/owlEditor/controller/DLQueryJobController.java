@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,11 +10,13 @@ import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.model.DLQueryJob;
 import self.research.ontology.owlEditor.model.collaboration.DLQueryJobMessage;
 import self.research.ontology.owlEditor.service.DLQueryQueueManager;
+import self.research.ontology.owlEditor.service.JobAccess;
 import self.research.ontology.owlEditor.service.ReasonerWorkerClient;
 import self.research.ontology.owlEditor.service.ReasoningJobRelayService;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @RestController
@@ -29,6 +32,9 @@ public class DLQueryJobController {
 
     private final DLQueryQueueManager queueManager;
 
+    @Autowired
+    private JobAccess jobAccess;
+
     @Autowired(required = false)
     private ReasonerWorkerClient reasonerWorkerClient;
 
@@ -39,7 +45,29 @@ public class DLQueryJobController {
     private boolean reasonerWorkerEnabled;
 
     @GetMapping("/jobs/{jobId}")
-    public ResponseEntity<Map<String, Object>> getJob(@PathVariable String jobId) {
+    public ResponseEntity<Map<String, Object>> getJob(@PathVariable String jobId, HttpServletRequest request) {
+        Optional<JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
+        if (jobAccess.isRegistered(jobId) && !jobAccess.check(caller.get(), null, jobId, null).allowed()) {
+            return ResponseEntity.notFound().build();
+        }
+        ResponseEntity<Map<String, Object>> loaded = loadJob(jobId);
+        if (loaded.getStatusCode().is2xxSuccessful()) {
+            Object project = loaded.getBody() != null ? loaded.getBody().get("projectId") : null;
+            if (project == null && reasoningJobRelayService != null) {
+                DLQueryJob relayed = reasoningJobRelayService.getJob(jobId);
+                project = relayed != null ? relayed.getProjectId() : null;
+            }
+            if (!jobAccess.check(caller.get(), null, jobId, project != null ? project.toString() : null).allowed()) {
+                return ResponseEntity.notFound().build();
+            }
+        }
+        return loaded;
+    }
+
+    private ResponseEntity<Map<String, Object>> loadJob(String jobId) {
         if (reasonerWorkerEnabled && reasoningJobRelayService != null) {
             DLQueryJob relayed = reasoningJobRelayService.getJob(jobId);
             boolean relayedIsTerminal = relayed != null
@@ -71,9 +99,17 @@ public class DLQueryJobController {
     }
 
     @DeleteMapping("/jobs/{jobId}")
-    public ResponseEntity<Map<String, Object>> cancelJob(@PathVariable String jobId) {
+    public ResponseEntity<Map<String, Object>> cancelJob(@PathVariable String jobId, HttpServletRequest request) {
+        Optional<JobAccess.Caller> caller = jobAccess.caller(request);
+        if (caller.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("success", false, "error", "Authentication required"));
+        }
         if (!reasonerWorkerEnabled || reasonerWorkerClient == null) {
             return ResponseEntity.ok(Map.of("success", true, "cancelled", false));
+        }
+        DLQueryJob known = reasoningJobRelayService != null ? reasoningJobRelayService.getJob(jobId) : null;
+        if (!jobAccess.check(caller.get(), null, jobId, known != null ? known.getProjectId() : null).allowed()) {
+            return ResponseEntity.notFound().build();
         }
         Map<String, Object> result = reasonerWorkerClient.cancelJob(jobId);
         if (Boolean.TRUE.equals(result.get("cancelled")) && reasoningJobRelayService != null) {

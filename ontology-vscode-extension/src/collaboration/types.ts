@@ -132,6 +132,6 @@ export interface ICollaborationManager {
         onCursorUpdate?: (cursor: { userId: string; userName: string; position: { x: number; y: number }; timestamp: number }) => void;
     }): void;
     isConnected(): boolean;
-    subscribeToShareNotifications(userEmail: string): void;
+    subscribeToShareNotifications(): void;
     broadcastCursorPosition(projectId: string, userId: string, userName: string, position: { x: number; y: number }): void;
 }

@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +24,9 @@ import java.util.Map;
 @CrossOrigin
 public class OntologyIriController {
 
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
+
     private final OntologyMetadataService metadataService;
     private final ImportReferenceUpdater importReferenceUpdater;
 
@@ -40,6 +45,10 @@ public class OntologyIriController {
             String ontologyIri = request.get("ontologyIri");
             String versionIri = request.get("versionIri");
             boolean draft = RequestActor.draftRequested(httpRequest, request.get("draft"));
+            ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+            if (publicEditOff != null) {
+                return publicEditOff;
+            }
             String userId = RequestActor.userIdOr(httpRequest, request.get("userId"));
 
             String username = request.get("username");

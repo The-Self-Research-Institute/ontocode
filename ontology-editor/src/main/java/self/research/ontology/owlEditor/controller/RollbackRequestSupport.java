@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
@@ -8,6 +9,7 @@ import self.research.ontology.owlEditor.config.JwtClaimUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.service.ChangeRollbackService;
 import self.research.ontology.owlEditor.service.PrEntries;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import self.research.ontology.owlEditor.service.WorkspaceOwnershipService;
 import self.research.ontology.owlEditor.util.JwtIdentityExtractor;
 
@@ -23,6 +25,9 @@ public class RollbackRequestSupport {
 
     @Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
+
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
 
     public RollbackRequestSupport(WorkspaceOwnershipService workspaceOwnershipService) {
         this.workspaceOwnershipService = workspaceOwnershipService;
@@ -96,6 +101,11 @@ public class RollbackRequestSupport {
                 && changes.stream().anyMatch(change -> !change.isDraft())) {
             return ResponseEntity.status(403).body(Map.of("success", false,
                     "error", "You can only roll back changes in your own draft."));
+        }
+        boolean touchesPublicData = changes.stream().anyMatch(change -> !change.isDraft());
+        boolean preview = request != null && "true".equalsIgnoreCase(request.getParameter("dryRun"));
+        if (touchesPublicData && !preview) {
+            return PublicEditGate.refuse(publicEditGate, projectId, false, request);
         }
         return null;
     }

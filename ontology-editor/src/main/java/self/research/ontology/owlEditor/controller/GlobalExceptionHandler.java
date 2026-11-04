@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import self.research.ontology.owlEditor.service.AccessDeniedApiException;
 import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.ProjectWriteLeaseUnavailableException;
 
@@ -25,6 +26,11 @@ public class GlobalExceptionHandler {
     public void handleClientAbort(AsyncRequestNotUsableException ex) {
         log.debug("Client disconnected before response was fully sent (ignored): {}", ex.getMessage());
 
+    }
+
+    @ExceptionHandler(AccessDeniedApiException.class)
+    public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedApiException ex) {
+        return ex.denial().toResponse();
     }
 
     @ExceptionHandler(DraftNotReadyException.class)

@@ -29,6 +29,7 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
 
     private static final List<String> READ_ONLY_POST_PATTERNS = List.of(
         "/**/dl-query",
+        "/api/ontology/*/explain-inference",
         "/api/sparql/query/**",
         "/api/sparql/*/queries",
         "/api/v1/issues/report",
@@ -64,7 +65,8 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/api/sparql/*/queries/**",
         "/api/preferences/**",
         "/api/ontology/*/reasoner/jobs/*",
-        "/api/dl-query/jobs/*"
+        "/api/dl-query/jobs/*",
+        "/api/ontology/*/explain-inference/*"
     );
 
     private static final String PROPOSE_PATTERN = "/api/v1/code-assistant/sessions/{sessionId}/propose";
@@ -200,10 +202,10 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     private String resolveProjectId(HttpServletRequest request, String path) {
         String projectId = resolveCodeAssistantProjectId(path).orElse(null);
         if (projectId == null || projectId.isBlank()) {
-            projectId = request.getParameter("projectId");
+            projectId = workspaceOwnershipService.resolveProjectIdFromRequestPath(path).orElse(null);
         }
         if (projectId == null || projectId.isBlank()) {
-            projectId = workspaceOwnershipService.resolveProjectIdFromRequestPath(path).orElse(null);
+            projectId = request.getParameter("projectId");
         }
         return projectId == null || projectId.isBlank() ? null : projectId;
     }

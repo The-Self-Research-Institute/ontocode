@@ -24,6 +24,7 @@ import java.util.Optional;
 @Component
 public class RollbackGraphFacts {
 
+    private static final String SWRL_IMP = "http://www.w3.org/2003/11/swrl#Imp";
     private static final String SNAPSHOT_GRAPH = "urn:ontocode:in-memory-snapshot";
 
     private final SparqlDatasetService datasetService;
@@ -106,7 +107,7 @@ public class RollbackGraphFacts {
         boolean draft = entry.isDraft() && entry.getUserId() != null && !entry.getUserId().isBlank();
         String graph = draft ? datasetService.getDraftGraphUri(projectId, entry.getUserId())
                 : datasetService.getGraphUri(projectId);
-        for (ExactDelta whole : ExactReversal.deltaOf(entry).stream().toList()) {
+        for (ExactDelta whole : ExactReversal.checkedDeltaOf(entry).stream().toList()) {
             for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {
                 for (String query : DeltaSparql.holds(delta, undo, graph)) {
                     if (!datasetService.execAskInGraph(projectId, graph, query)) {
@@ -128,7 +129,7 @@ public class RollbackGraphFacts {
         try (RepositoryConnection connection = repository.getConnection()) {
             org.eclipse.rdf4j.model.IRI graph = SimpleValueFactory.getInstance().createIRI(SNAPSHOT_GRAPH);
             connection.add(snapshot.get(), graph);
-            for (ExactDelta whole : ExactReversal.deltaOf(entry).stream().toList()) {
+            for (ExactDelta whole : ExactReversal.checkedDeltaOf(entry).stream().toList()) {
                 for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {
                     for (String query : DeltaSparql.holds(delta, undo, SNAPSHOT_GRAPH)) {
                         if (!connection.prepareBooleanQuery(query).evaluate()) {
@@ -158,6 +159,29 @@ public class RollbackGraphFacts {
         String query = "ASK { { SELECT (COUNT(*) AS ?n) WHERE { SELECT DISTINCT ?s ?p ?o WHERE { ?s ?p ?o "
                 + "FILTER(?s = <" + safe + "> || ?p = <" + safe + "> || ?o = <" + safe + ">) } } } FILTER(?n > " + recorded + ") }";
         return ask(projectId, query, entry.isDraft(), entry.getUserId());
+    }
+
+    public boolean ruleNameInUse(String projectId, String name, boolean draft, String draftOwner) {
+        String wanted = name.trim().toLowerCase(java.util.Locale.ROOT);
+        boolean owned = draft && draftOwner != null && !draftOwner.isBlank();
+        if (!owned && inMemoryIsAuthoritative(projectId)) {
+            return OwlApiModelSnapshot.of(ontologyCache, projectId).map(model -> {
+                org.eclipse.rdf4j.model.ValueFactory vf = SimpleValueFactory.getInstance();
+                for (org.eclipse.rdf4j.model.Resource rule : model.filter(null, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE,
+                        vf.createIRI(SWRL_IMP)).subjects()) {
+                    for (org.eclipse.rdf4j.model.Value label : model.filter(rule, org.eclipse.rdf4j.model.vocabulary.RDFS.LABEL, null).objects()) {
+                        if (label.stringValue().trim().toLowerCase(java.util.Locale.ROOT).equals(wanted)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }).orElse(false);
+        }
+        String query = "ASK { ?r a <" + SWRL_IMP + "> . ?r <http://www.w3.org/2000/01/rdf-schema#label> ?l "
+                + "FILTER(LCASE(REPLACE(STR(?l), \"^\\\\s+|\\\\s+$\", \"\")) = "
+                + RollbackMutationPlanner.stringLiteral(wanted) + ") }";
+        return ask(projectId, query, draft, draftOwner);
     }
 
     public boolean storeRecordsExact(String projectId, boolean draft) {

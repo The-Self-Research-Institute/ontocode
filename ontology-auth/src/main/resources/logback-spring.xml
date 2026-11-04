@@ -22,6 +22,8 @@
       time, so logging itself stays cheap.
 -->
 <configuration>
+    <conversionRule conversionWord="maskedMsg" converterClass="self.research.ontology.common.logging.EmailMaskingMessageConverter"/>
+    <conversionRule conversionWord="maskedEx" converterClass="self.research.ontology.common.logging.EmailMaskingThrowableConverter"/>
 
     <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="ontology-auth"/>
     <property name="LOG_DIR" value="${LOG_DIR:-logs}"/>
@@ -33,7 +35,7 @@
          Individual MDC fields (userEmail, userId, workspaceId, projectId)
          are still in MDC for tools that filter by exact id. -->
     <property name="LOG_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [${APP_NAME},%thread] %logger{36} [%X{ctx:-no-ctx}] - %msg%n"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [${APP_NAME},%thread] %logger{36} [%X{ctx:-no-ctx}] - %maskedMsg%n%maskedEx"/>
 
     <!-- ──── Console ──── -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">

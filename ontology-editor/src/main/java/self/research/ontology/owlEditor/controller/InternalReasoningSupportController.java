@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.lang.Nullable;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import self.research.ontology.common.security.InternalToken;
 import self.research.ontology.owlEditor.service.ImportQueueManager;
 import self.research.ontology.owlEditor.service.MainGraphRevisionService;
 import self.research.ontology.owlEditor.service.ProjectAccessService;
@@ -54,7 +55,7 @@ public class InternalReasoningSupportController {
     private String internalToken;
 
     private boolean draftAccessDenied(String projectId, HttpServletRequest request) {
-        if (internalToken != null && internalToken.equals(request.getHeader("X-Ontocode-Internal-Token"))) {
+        if (InternalToken.matches(internalToken, request.getHeader(InternalToken.HEADER))) {
             return false;
         }
         return JwtIdentityExtractor.extractEmail(request)

@@ -137,7 +137,7 @@ public class ProjectMetadataService {
      * Improves performance by avoiding 3 separate DB writes
      * Creates MongoDB project document for both cloud and self-hosted deployments
      */
-    public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail, String workspaceId, String parentProjectId) {
+    public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail, String ownerId, String workspaceId, String parentProjectId) {
         log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, workspace: {}, parentProject: {}, status: {}", 
             projectId, ownerEmail, workspaceId, parentProjectId, status.status());
             
@@ -150,10 +150,14 @@ public class ProjectMetadataService {
                 .set("updatedAt", now);
 
         if (ownerEmail != null && !ownerEmail.isEmpty()) {
-            update.set("ownerEmail", ownerEmail);
-            log.info("[ProjectMetadataService] Setting owner email: {} for project: {}", ownerEmail, projectId);
+            update.setOnInsert("ownerEmail", ownerEmail);
+            log.info("[ProjectMetadataService] Owner email {} applies only if project {} is new", ownerEmail, projectId);
         } else {
             log.warn("[ProjectMetadataService] No owner email provided for project: {}", projectId);
+        }
+
+        if (ownerId != null && !ownerId.isBlank()) {
+            update.setOnInsert("ownerId", ownerId);
         }
 
         if (workspaceId != null && !workspaceId.isEmpty()) {
@@ -172,8 +176,9 @@ public class ProjectMetadataService {
     }
     
     public Optional<String> getOwnerEmail(String projectId) {
-        return projectRepository.findById(projectId)
-                .map(ProjectDocument::getOwnerEmail);
+        return WorkspaceProjectRecord.find(mongoTemplate, projectId)
+                .flatMap(WorkspaceProjectRecord::ownerEmail)
+                .or(() -> projectRepository.findById(projectId).map(ProjectDocument::getOwnerEmail));
     }
 
     public boolean isRequireDraftForMembers(String projectId) {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { resolveMutationActor } from '../utils/mutationActor';
+import { MissingUserIdError, resolveMutationActor, userIdFromAuthToken } from '../utils/mutationActor';
 
 function signIn(claims: Record<string, string>) {
   const payload = btoa(JSON.stringify(claims)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -8,6 +8,17 @@ function signIn(claims: Record<string, string>) {
 
 describe('resolveMutationActor', () => {
   afterEach(() => localStorage.clear());
+
+  it('refuses to use the email as the identity when the token has no user id', () => {
+    signIn({ email: 'real@x.org', username: 'real' });
+    expect(userIdFromAuthToken()).toBeNull();
+    expect(() => resolveMutationActor()).toThrow(MissingUserIdError);
+  });
+
+  it('never returns the email claim as the user id', () => {
+    signIn({ userId: 'mongo-1', email: 'real@x.org' });
+    expect(userIdFromAuthToken()).toBe('mongo-1');
+  });
 
   it('names an edit after the signed-in email when no username is given', () => {
     signIn({ userId: 'mongo-1', email: 'real@x.org' });
@@ -31,8 +42,8 @@ describe('readerUserId', () => {
 
   it('reads under the same id the draft was written under, not the email', () => {
     signIn({ userId: 'mongo-1', email: 'real@x.org' });
-    expect(readerUserId({ userId: 'mongo-1', email: 'real@x.org' })).toBe('mongo-1');
-    expect(readerUserId({ email: 'real@x.org' })).toBe('mongo-1');
+    expect(readerUserId({ userId: 'mongo-1' })).toBe('mongo-1');
+    expect(readerUserId({})).toBe('mongo-1');
   });
 
   it('has no id when nobody is signed in', () => {

@@ -10,13 +10,15 @@ export function isSparqlQuery(text: string): boolean {
 interface SparqlResponse {
   head?: { vars?: string[] };
   results?: Array<Record<string, string>>;
+  bindings?: Array<Record<string, { value?: string } | string>>;
   error?: string;
 }
 
 export async function runSparqlHighlight(
   graph: Graph,
   query: string,
-  projectId: string
+  projectId: string,
+  draftMode: boolean = false
 ): Promise<AskResult> {
   const apiBaseUrl = (window as any).__DESKTOP_API_URL__ || (window as any).API_BASE_URL;
   if (!apiBaseUrl) {
@@ -29,7 +31,7 @@ export async function runSparqlHighlight(
 
   let data: SparqlResponse;
   try {
-    const res = await fetch(`${apiBaseUrl}/api/sparql/query/${encodeURIComponent(projectId)}`, {
+    const res = await fetch(`${apiBaseUrl}/api/sparql/query/${encodeURIComponent(projectId)}${draftMode ? '?draft=true' : ''}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ query })
@@ -40,7 +42,11 @@ export async function runSparqlHighlight(
     return emptyResult(`SPARQL request failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  const rows = data.results ?? [];
+  const rows: Array<Record<string, string>> = Array.isArray(data.bindings)
+    ? data.bindings.map(row => Object.fromEntries(
+        Object.entries(row ?? {}).map(([k, v]) => [k, typeof v === 'string' ? v : String(v?.value ?? '')])
+      ))
+    : Array.isArray(data.results) ? data.results : [];
   const vars = data.head?.vars ?? [];
 
   const answers = new Set<string>();

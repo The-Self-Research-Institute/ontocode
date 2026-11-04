@@ -13,6 +13,8 @@
   via env vars. Spring Boot auto-binds them.
 -->
 <configuration>
+    <conversionRule conversionWord="maskedMsg" converterClass="self.research.ontology.common.logging.EmailMaskingMessageConverter"/>
+    <conversionRule conversionWord="maskedEx" converterClass="self.research.ontology.common.logging.EmailMaskingThrowableConverter"/>
 
     <property name="LOG_DIR" value="${LOG_DIR:-logs}"/>
     <property name="APP_NAME" value="gateway"/>
@@ -21,7 +23,7 @@
          The gateway is reactive (no per-thread MDC), so `ctx` is usually
          empty here; downstream services populate it. -->
     <property name="LOG_PATTERN"
-              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{ctx:-no-ctx}] - %msg%n"/>
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{ctx:-no-ctx}] - %maskedMsg%n%maskedEx"/>
 
     <!-- ──── Console ──── -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
@@ -61,7 +63,7 @@
             <cleanHistoryOnStart>true</cleanHistoryOnStart>
         </rollingPolicy>
         <encoder>
-            <pattern>${LOG_PATTERN}%xException</pattern>
+            <pattern>${LOG_PATTERN}</pattern>
         </encoder>
     </appender>
 

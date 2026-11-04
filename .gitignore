@@ -125,6 +125,7 @@ electron-app/resources/backend/plugin-bundles/
 !/CONTRIBUTING.md
 !/CODE_OF_CONDUCT.md
 !/SECURITY.md
+!/CHANGELOG.md
 !/ontology-vscode-extension/CHANGELOG.md
 !/docs/LAUNCHER_README.md
 !/docs/INSTALLATION_GUIDE.md
@@ -188,7 +189,6 @@ temp-runimport.txt
 
 # Citation metadata auto-appended by the citation-insertion feature (local noise)
 /references.bib
-/CITATION.cff
 
 # GraphDB license files (project now runs on Fuseki — see README.md)
 /CORETOPIA_GRAPHDB_FREE_v11.1.license
@@ -901,3 +901,10 @@ ontology-vscode-extension/test-invitation-helper.js
 .deploy-app/
 
 __pycache__/
+
+/.env.production
+/.tmp/
+/OntoCodeLauncher.exe
+/fuseki-docker/fuseki-server.jar
+/electron-app/fuseki-docker/
+/ontology-vscode-extension/webview-src/.env.production

@@ -2,6 +2,25 @@
 
 All notable changes to OntoCode Studio are listed here, newest first. The same notes appear in the app under What's new.
 
+## [1.2.8] - 2026-10-29
+
+**SPARQL and SWRL**
+
+- SPARQL — Include inferred now works on a new project. The first use computes the inferred facts, and later queries use them straight away. CONSTRUCT returns graphs, and results are paged with a filter and sort.
+- SPARQL — The results panel fills the tab, and its drag handle resizes in the natural direction.
+- SWRL — Execute lists what the rules conclude first. The Test button shows only what that rule adds, saved rules keep their id after the first save, and checking a rule while typing is faster.
+- SQWRL — Results are paged with a filter and sort, and very large results are cut with a notice.
+- SWRL functions — Date, time and duration functions, integer division, rounding and a few text and SQWRL functions now give correct results, following the SWRL standard. Other tools that use the same library can still return the old results for these, so a rule that depended on an old result can behave differently. The Function help tab lists what works and what does not.
+
+**Plugins and desktop**
+
+- Plugins — The plugin tabs load again in the web app.
+- Desktop — The app keeps within half of the computer's memory, cleans up leftover processes, rotates its logs and checks free disk space. The Description panel shows the full ancestor chain, and the add class dialog says Local Mode.
+
+**License**
+
+- License — OntoCode is released under the MIT License.
+
 ## [1.2.7] - 2026-10-26
 
 **macOS desktop app**
@@ -12,7 +31,7 @@ All notable changes to OntoCode Studio are listed here, newest first. The same n
 
 **Undo and Redo**
 
-- ONTOCODE-194: Undo and Redo — Edit > Undo and Edit > Redo now work, with Ctrl+Z and Ctrl+Shift+Z. They reverse creating and deleting entities, adding and removing axioms, drag-and-drop in the class hierarchy, annotation and axiom-annotation edits, characteristic changes, prefix changes, renames, and ontology IRI changes.
+- ONTOCODE-194: Undo and Redo — Edit > Undo and Edit > Redo now work, with Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z (Cmd+Z and Cmd+Shift+Z on a Mac). They reverse creating and deleting entities, adding and removing axioms, drag-and-drop in the class hierarchy, annotation and axiom-annotation edits, characteristic changes, prefix changes, renames, and ontology IRI changes.
 - ONTOCODE-194: Undo and Redo — An operation that changes several things at once, such as Change IRI or an AI edit, is undone as a single unit. Undo restores the exact previous triples.
 - ONTOCODE-194: Undo and Redo — In shared projects, Undo only reverses your own changes. If someone else has since changed or built on the same item, Undo tells you why it can't proceed instead of silently reverting their work.
 - ONTOCODE-194: Undo and Redo — Every undo and redo is recorded in the Change Assistant and is safe if the connection drops or the server restarts partway through. Repeating the same request never applies it twice.

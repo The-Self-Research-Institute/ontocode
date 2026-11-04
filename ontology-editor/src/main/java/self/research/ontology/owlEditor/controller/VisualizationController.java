@@ -41,20 +41,32 @@ public class VisualizationController {
     @Autowired
     private SparqlDatasetService datasetService;
 
-    private final Map<String, OWLOntology> ontologyCache = new HashMap<>();
+    private final self.research.ontology.owlEditor.cache.BoundedOntologyLru ontologyCache =
+            new self.research.ontology.owlEditor.cache.BoundedOntologyLru(
+                    Integer.getInteger("ontocode.graph.cache.maxProjects", 3), "visualizationOntologies");
+
+    @Autowired(required = false)
+    void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
+        ontologyCache.bindAccount(ledger.cacheAccount("visualizationOntologies"));
+    }
+
+    private static final class ExportBuffer extends java.io.ByteArrayOutputStream {
+        java.io.InputStream asInputStream() {
+            return new ByteArrayInputStream(buf, 0, count);
+        }
+    }
 
     private OWLOntology loadOntology(String projectId) throws Exception {
-        if (ontologyCache.containsKey(projectId)) {
-            return ontologyCache.get(projectId);
-        }
+        return ontologyCache.getOrLoad(projectId, () -> readOntology(projectId));
+    }
 
+    private OWLOntology readOntology(String projectId) throws Exception {
         try {
-            String rdfData = datasetService.exportDataset(projectId, RDFFormat.RDFXML);
-            if (rdfData != null && !rdfData.isBlank()) {
+            ExportBuffer buffer = new ExportBuffer();
+            datasetService.exportDatasetToStream(projectId, RDFFormat.RDFXML, buffer);
+            if (buffer.size() > 0) {
                 OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-                OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
-                        new ByteArrayInputStream(rdfData.getBytes(StandardCharsets.UTF_8)));
-                ontologyCache.put(projectId, ontology);
+                OWLOntology ontology = manager.loadOntologyFromOntologyDocument(buffer.asInputStream());
                 log.info("Loaded ontology from GraphDB for project: {} ({} axioms)", projectId, ontology.getAxiomCount());
                 return ontology;
             }
@@ -71,7 +83,6 @@ public class VisualizationController {
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
-            ontologyCache.put(projectId, ontology);
             log.info("Loaded ontology from GridFS for project: {}", projectId);
             return ontology;
         }

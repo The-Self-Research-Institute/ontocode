@@ -37,7 +37,7 @@ class ReasoningJobControllerTest {
     @Test
     void submittingPastTheProjectLimitReturnsTooManyRequests() throws Exception {
         when(queueManager.enqueue(any(), eq("P1"), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any()))
+                any(), any(), any(), any(), any(), any()))
                 .thenThrow(new ReasoningQueueManager.ProjectQueueFullException("This project already has 5 reasoning jobs waiting"));
 
         mvc.perform(post("/api/reasoning/jobs")
@@ -58,7 +58,7 @@ class ReasoningJobControllerTest {
                 .result(Map.of("success", true, "consistent", true, "cached", true))
                 .build();
         when(queueManager.enqueue(any(), eq("P1"), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any())).thenReturn(job);
+                any(), any(), any(), any(), any(), any())).thenReturn(job);
 
         mvc.perform(post("/api/reasoning/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -82,7 +82,7 @@ class ReasoningJobControllerTest {
                 .queuePosition(1)
                 .build();
         when(queueManager.enqueue(any(), eq("P1"), any(), any(), any(), any(), any(), any(),
-                any(), any(), any(), any(), any())).thenReturn(job);
+                any(), any(), any(), any(), any(), any())).thenReturn(job);
 
         mvc.perform(post("/api/reasoning/jobs")
                         .contentType(MediaType.APPLICATION_JSON)

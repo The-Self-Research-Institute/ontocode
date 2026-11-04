@@ -14,7 +14,8 @@ import { STATE_PATH } from '../electron-global-setup';
 import { prepareIsolatedDesktopProject, warmOntology, waitForOwlApiReady } from '../helpers/desktopApi';
 
 const DESKTOP_USER = process.env.DESKTOP_E2E_USER || 'admin@ontocode.local';
-const DESKTOP_PASS = process.env.DESKTOP_E2E_PASSWORD || 'ontocode-desktop';
+import { DESKTOP_E2E_PASSWORD } from '../helpers/desktopCredentials';
+const DESKTOP_PASS = DESKTOP_E2E_PASSWORD;
 
 async function loginDesktopApi(apiBase: string): Promise<string> {
   const res = await fetch(`${apiBase}/api/auth/login`, {

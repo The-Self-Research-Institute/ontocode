@@ -2011,12 +2011,20 @@ public class OntologyQueryService {
         String owlPred = "intersectionOf".equals(listPred) ? "owl:intersectionOf"
                 : "unionOf".equals(listPred) ? "owl:unionOf" : "owl:oneOf";
         String query = PREFIXES + """
-            SELECT ?bnode ?member ?memberLabel WHERE {
+            SELECT ?bnode ?member ?memberLabel ?memberProp ?memberPropLabel ?memberType ?memberFiller ?memberFillerLabel WHERE {
               <%s> (owl:equivalentClass|rdfs:subClassOf) ?bnode .
               FILTER(isBlank(?bnode))
               ?bnode %s ?list .
               ?list rdf:rest*/rdf:first ?member .
               OPTIONAL { ?member rdfs:label ?memberLabel }
+              OPTIONAL {
+                ?member owl:onProperty ?memberProp .
+                OPTIONAL { ?memberProp rdfs:label ?memberPropLabel }
+                { ?member owl:someValuesFrom ?memberFiller . BIND("some" AS ?memberType) }
+                UNION { ?member owl:allValuesFrom ?memberFiller . BIND("only" AS ?memberType) }
+                UNION { ?member owl:hasValue ?memberFiller . BIND("value" AS ?memberType) }
+                OPTIONAL { ?memberFiller rdfs:label ?memberFillerLabel }
+              }
             }
             """.formatted(classIri, owlPred);
         List<String> labels = new ArrayList<>();
@@ -2027,6 +2035,15 @@ public class OntologyQueryService {
                 if (!blankNodeBindingMatches(sol, "bnode", normalizedBlankId)) continue;
                 String member = resourceOrBlank(sol, "member");
                 if (member == null) continue;
+                if (sol.hasBinding("memberProp") && sol.hasBinding("memberType") && sol.hasBinding("memberFiller")) {
+                    String prop = sol.getValue("memberProp").stringValue();
+                    String filler = sol.getValue("memberFiller").stringValue();
+                    String propText = sol.hasBinding("memberPropLabel") ? literal(sol, "memberPropLabel") : formatIriWithPrefix(prop);
+                    String fillerText = sol.hasBinding("memberFillerLabel") ? literal(sol, "memberFillerLabel") : formatIriWithPrefix(filler);
+                    String restriction = propText + " " + literal(sol, "memberType") + " " + fillerText;
+                    if (!labels.contains(restriction)) labels.add(restriction);
+                    continue;
+                }
                 String label = sol.hasBinding("memberLabel") ? literal(sol, "memberLabel") : localName(member);
                 labels.add(label.isBlank() ? member : label);
             }
@@ -3123,14 +3140,14 @@ WHERE {
         // path, exactly like every restriction shape did before this fix existed.
         CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
-                SELECT DISTINCT ?ancestor ?super ?label
+                SELECT DISTINCT ?ancestor ?super ?label ?fromDefinition
                        ?onProp ?propLabel ?restrictionType ?filler ?fillerLabel ?card
                 WHERE {
                   <%1$s> rdfs:subClassOf+ ?ancestor .
                   { ?ancestor rdfs:subClassOf ?super . }
                   UNION
-                  { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) }
-                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%1$s>))
+                  { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) BIND(true AS ?fromDefinition) }
+                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != owl:Nothing && ?super != <%1$s>))
                   OPTIONAL { ?super rdfs:label ?label }
                   OPTIONAL {
                     ?super owl:onProperty ?onProp .
@@ -3553,6 +3570,9 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
                 }
                 boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
                 axiom.put("navigable", String.valueOf(navigable));
+                if (sol.hasBinding("fromDefinition")) {
+                    axiom.put("fromDefinition", "true");
+                }
                 if (!navigable) {
                     // Restriction structural fields (?onProp/?restrictionType/?filler/?card) were
                     // resolved INLINE in the same query/solution row as ?super above — no separate
@@ -3583,7 +3603,7 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
                             axiom.put("manchester", known);
                             axiom.put("definition", known);
                         } else {
-                            String manchester = describeBlankNodeManchester(projectId, classIri, superIri);
+                            String manchester = describeBlankNodeManchester(projectId, ancestorIri != null ? ancestorIri : classIri, superIri);
                             if (manchester != null && !manchester.isBlank()) {
                                 axiom.put("manchester", manchester);
                                 axiom.put("definition", manchester);
@@ -3603,7 +3623,7 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
         // anonymous supers). Without this, owl:hasValue / someValuesFrom restrictions declared
         // directly on a class are invisible in the Anonymous Ancestor section for the webapp path.
         for (Map<String, String> subAxiom : subClassAxioms) {
-            if (!"true".equals(subAxiom.get("isRestriction"))) continue;
+            if (!"true".equals(subAxiom.get("isRestriction")) && !"true".equals(subAxiom.get("isComplex"))) continue;
             String restrictionId = subAxiom.get("id");
             if (restrictionId == null) continue;
             String ancestorKey = classIri + "|" + restrictionId;
@@ -3618,7 +3638,8 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
             // Carry the same structural fields subClassOfAxioms already has for this restriction,
             // so deleting it from this mirrored section can match by content (property/filler/
             // cardinality) instead of blank-node identity, same as the inherited-ancestor case above.
-            entry.put("isRestriction", "true");
+            if ("true".equals(subAxiom.get("isRestriction"))) entry.put("isRestriction", "true");
+            if (subAxiom.get("definition") != null) entry.put("manchester", subAxiom.get("definition"));
             if (subAxiom.get("propertyIri") != null) entry.put("propertyIri", subAxiom.get("propertyIri"));
             if (subAxiom.get("restrictionType") != null) entry.put("restrictionType", subAxiom.get("restrictionType"));
             if (subAxiom.get("fillerIri") != null) entry.put("fillerIri", subAxiom.get("fillerIri"));
@@ -3824,12 +3845,12 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
 
         CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
-                SELECT DISTINCT ?ancestor ?super ?label WHERE {
+                SELECT DISTINCT ?ancestor ?super ?label ?fromDefinition WHERE {
                   <%s> rdfs:subClassOf+ ?ancestor .
                   { ?ancestor rdfs:subClassOf ?super . }
                   UNION
-                  { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) }
-                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != <%s>))
+                  { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) BIND(true AS ?fromDefinition) }
+                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != owl:Nothing && ?super != <%s>))
                   OPTIONAL { ?super rdfs:label ?label }
                 }
                 LIMIT 500
@@ -4075,8 +4096,11 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
                 }
                 boolean navigable = superIri.startsWith("http://") || superIri.startsWith("https://") || superIri.startsWith("urn:");
                 axiom.put("navigable", String.valueOf(navigable));
+                if (sol.hasBinding("fromDefinition")) {
+                    axiom.put("fromDefinition", "true");
+                }
                 if (!navigable) {
-                    String manchester = describeBlankNodeManchester(projectId, classIri, superIri);
+                    String manchester = describeBlankNodeManchester(projectId, ancestorIri != null ? ancestorIri : classIri, superIri);
                     if (manchester != null && !manchester.isBlank()) {
                         axiom.put("manchester", manchester);
                         axiom.put("definition", manchester);

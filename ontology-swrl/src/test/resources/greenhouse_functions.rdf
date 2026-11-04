@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<rdf:RDF xml:base="http://example.org/gh" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:owl="http://www.w3.org/2002/07/owl#" xmlns:xsd="http://www.w3.org/2001/XMLSchema#" xmlns:g="http://example.org/gh#">
+  <owl:Ontology rdf:about="http://example.org/gh"/>
+  <owl:Class rdf:about="http://example.org/gh#Item"/>
+  <owl:Class rdf:about="http://example.org/gh#Hit"/>
+  <owl:Class rdf:about="http://example.org/gh#Other"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#strText"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#plainText"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#spaced"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#intVal"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#decVal"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#dblVal"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#flag"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#day"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#stamp"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#clock"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#outS"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#outI"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#outD"/>
+  <owl:DatatypeProperty rdf:about="http://example.org/gh#outB"/>
+  <owl:ObjectProperty rdf:about="http://example.org/gh#partOf"/>
+  <owl:NamedIndividual rdf:about="http://example.org/gh#r1">
+    <rdf:type rdf:resource="http://example.org/gh#Item"/>
+    <g:strText rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Alpha Beta</g:strText>
+    <g:plainText>Alpha Beta</g:plainText>
+    <g:spaced rdf:datatype="http://www.w3.org/2001/XMLSchema#string">  a   b  </g:spaced>
+    <g:intVal rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">7</g:intVal>
+    <g:decVal rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">2.5</g:decVal>
+    <g:dblVal rdf:datatype="http://www.w3.org/2001/XMLSchema#double">9.0</g:dblVal>
+    <g:flag rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">true</g:flag>
+    <g:day rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2024-03-15</g:day>
+    <g:stamp rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2024-03-15T10:30:00</g:stamp>
+    <g:clock rdf:datatype="http://www.w3.org/2001/XMLSchema#time">10:30:00</g:clock>
+  </owl:NamedIndividual>
+  <owl:NamedIndividual rdf:about="http://example.org/gh#r2">
+    <rdf:type rdf:resource="http://example.org/gh#Item"/>
+    <g:partOf rdf:resource="http://example.org/gh#r1"/>
+    <g:strText rdf:datatype="http://www.w3.org/2001/XMLSchema#string">gamma</g:strText>
+    <g:plainText>gamma</g:plainText>
+    <g:spaced rdf:datatype="http://www.w3.org/2001/XMLSchema#string">x</g:spaced>
+    <g:intVal rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">12</g:intVal>
+    <g:decVal rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-3.5</g:decVal>
+    <g:dblVal rdf:datatype="http://www.w3.org/2001/XMLSchema#double">0.5</g:dblVal>
+    <g:flag rdf:datatype="http://www.w3.org/2001/XMLSchema#boolean">false</g:flag>
+    <g:day rdf:datatype="http://www.w3.org/2001/XMLSchema#date">2025-01-01</g:day>
+    <g:stamp rdf:datatype="http://www.w3.org/2001/XMLSchema#dateTime">2025-01-01T00:00:00</g:stamp>
+    <g:clock rdf:datatype="http://www.w3.org/2001/XMLSchema#time">23:15:00</g:clock>
+  </owl:NamedIndividual>
+</rdf:RDF>

@@ -247,7 +247,7 @@ branch_web_remote_build() {
       echo "VITE_CLOUD_PLUGIN_URL=${API[$m]}:8087"
     } > "$webapp_env"
     echo "[progress][$m-web] regenerated webview .env.production → ${API[$m]}"
-    rsync_paths+=(ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/)
+    rsync_paths+=(ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ plugins/)
   fi
   if [[ " ${SERVICES[*]} " == *" plugin-init "* ]]; then
     rsync_paths+=(plugins/ scripts/package.json scripts/manage-plugins.js)
@@ -255,12 +255,29 @@ branch_web_remote_build() {
 
   echo "[progress][$m-web] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:${DIR[$m]}"
   echo "[progress][$m-web] rsync build context (${SERVICES[*]})"
-  rsync -azR -e "$rsync_rsh" \
+  # --delete only prunes inside the directory arguments (shared/, */src/, plugins/, webview-src/);
+  # single files and the rest of the remote dir (compose volumes, .env, data) are never touched,
+  # and the --exclude entries are kept on the remote because --delete-excluded is not used.
+  local rsync_flags=(-azR --delete --itemize-changes)
+  [[ "${DEPLOY_RSYNC_DRY:-0}" == "1" ]] && rsync_flags+=(-n)
+  local rsync_log rsync_rc=0
+  rsync_log=$(mktemp)
+  rsync "${rsync_flags[@]}" -e "$rsync_rsh" \
     --exclude 'target' \
     --exclude '*.class' \
     --exclude 'node_modules' \
     "${rsync_paths[@]}" \
-    "${HOST[$m]}:${DIR[$m]}/" || return 1
+    "${HOST[$m]}:${DIR[$m]}/" > "$rsync_log" || rsync_rc=$?
+  grep '^\*deleting' "$rsync_log" || true
+  local deleted_count
+  deleted_count=$(grep -c '^\*deleting' "$rsync_log" || true)
+  rm -f "$rsync_log"
+  [[ $rsync_rc -eq 0 ]] || return 1
+  echo "[progress][$m-web] rsync removed $deleted_count stale remote file(s)"
+  if [[ "${DEPLOY_RSYNC_DRY:-0}" == "1" ]]; then
+    echo "[progress][$m-web] DEPLOY_RSYNC_DRY=1 — dry run only, nothing synced or built"
+    return 0
+  fi
 
   echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote: ${compose_services[*]}"
   ssh "${ssh_opts[@]}" "${HOST[$m]}" \
@@ -722,6 +739,14 @@ if [[ "$UPLOAD_ONLY" -eq 0 ]]; then
   if ! (cd ontology-desktop && mvn clean package -DskipTests -q -Dgit.commit="$GIT_COMMIT"); then
     echo "ERROR: ontology-desktop jar build failed — no target can be built" >&2
     exit 1
+  fi
+  J17_HOME=$(ls -d /usr/lib/jvm/*17* 2>/dev/null | head -1)
+  if [ -n "$J17_HOME" ]; then
+    echo "[progress] building the SWRL jar with Java 17"
+    if ! JAVA_HOME="$J17_HOME" mvn -pl ontology-swrl -am clean package -DskipTests -q -Djava.version=17 -Dmaven.compiler.release=17 -Dmaven.compiler.source=17 -Dmaven.compiler.target=17; then
+      echo "ERROR: SWRL jar build failed — no target can be built" >&2
+      exit 1
+    fi
   fi
   (cd ontology-vscode-extension/webview-src && [ -d node_modules ] || npm install)
   cd electron-app || exit 1

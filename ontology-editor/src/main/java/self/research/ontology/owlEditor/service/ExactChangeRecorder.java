@@ -52,6 +52,18 @@ public class ExactChangeRecorder {
         });
     }
 
+    public String recordGrouped(String projectId, boolean draft, String userId, String username, List<MutationOp> ops,
+                                Runnable apply, ChangeOrigin origin) {
+        return recordAround(projectId, draft, userId, ops, apply, () -> {
+            try {
+                return historyService.recordGroupedMutations(projectId, userId, username, ops, draft, origin);
+            } catch (RuntimeException e) {
+                log.warn("[MUTATION] Failed to record mutation history for project {}: {}", projectId, e.getMessage());
+                return null;
+            }
+        });
+    }
+
     public static java.util.Map<String, Object> appliedBody(boolean draft, String message, String changeSetId) {
         java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("success", true);

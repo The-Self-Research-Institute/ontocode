@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import self.research.ontology.common.ReasoningHeapMonitor;
 import self.research.ontology.common.ReasoningSnapshot;
+import self.research.ontology.common.rules.OntologyRulesFingerprint;
 
 import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
@@ -26,11 +27,12 @@ import java.util.concurrent.atomic.AtomicLong;
 @Service
 public class ReasoningSnapshotService {
 
-    record Key(String projectId, long revision, long tripleCount, String reasoner) {}
+    record Key(String projectId, long revision, long tripleCount, String reasoner, String rulesFingerprint) {}
 
     private record Entry(Map<String, Object> snapshot, long storedAtMs) {}
 
-    private record Built(Map<String, Object> snapshot, long revision, long tripleCount) {}
+    private record Built(Map<String, Object> snapshot, long revision, long tripleCount, String rulesFingerprint,
+                         boolean complete) {}
 
     static final class AbandonedSnapshotException extends RuntimeException {
         AbandonedSnapshotException(Throwable cause) {
@@ -99,8 +101,12 @@ public class ReasoningSnapshotService {
         if (revision <= 0) {
             return Optional.empty();
         }
+        String rulesFingerprint = sessionService.currentRulesFingerprint(projectId, revision, tripleCount);
+        if (rulesFingerprint == null) {
+            return Optional.empty();
+        }
         Map<String, Object> hit = lookup(new Key(projectId, revision, tripleCount,
-                ReasonerType.fromRequest(reasonerType).name()));
+                ReasonerType.fromRequest(reasonerType).name(), rulesFingerprint));
         return hit != null ? Optional.of(served(hit, true)) : Optional.empty();
     }
 
@@ -155,7 +161,11 @@ public class ReasoningSnapshotService {
         if (tripleCount < 0) {
             return null;
         }
-        return new Key(projectId, revision, tripleCount, requested.name());
+        String rulesFingerprint = sessionService.currentRulesFingerprint(projectId, revision, tripleCount);
+        if (rulesFingerprint == null) {
+            return null;
+        }
+        return new Key(projectId, revision, tripleCount, requested.name(), rulesFingerprint);
     }
 
     int size() {
@@ -178,7 +188,11 @@ public class ReasoningSnapshotService {
                 return served(hit, true);
             }
             Built built = build(key.projectId(), requested, null);
-            remember(key, built);
+            if (built.complete()) {
+                remember(key, built);
+            } else {
+                log.info("[Snapshot] Not keeping the {} snapshot of project {}: some rules could not be applied", key.reasoner(), key.projectId());
+            }
             inFlight.remove(key, mine);
             mine.complete(built.snapshot());
             return served(built.snapshot(), false);
@@ -193,8 +207,17 @@ public class ReasoningSnapshotService {
         builds.incrementAndGet();
         try (OntologySessionService.ReasoningSession session =
                      sessionService.openSnapshotSession(projectId, requested, owner)) {
-            Map<String, Object> built = ReasoningSnapshot.build(session.ontology(), session.reasoner(),
-                    session.propertyReasoner());
+            Map<String, Object> built;
+            try {
+                built = ReasoningSnapshot.build(session.ontology(), session.reasoner(), session.propertyReasoner());
+            } catch (RuntimeException e) {
+                String note = session.downgradedWarning();
+                if (note != null && note.contains("HermiT could not be started")) {
+                    throw new IllegalStateException(note + " The JFact fallback also failed: "
+                            + OntologySessionService.rootMessage(e), e);
+                }
+                throw e;
+            }
             Map<String, Object> response = new LinkedHashMap<>(built);
             response.put("success", true);
             response.put("reasonerType", session.actualReasonerType().getDisplayName());
@@ -202,13 +225,15 @@ public class ReasoningSnapshotService {
             response.put("requestedReasoner", requested.name());
             response.put("ontologyRevision", session.revision());
             response.put("draft", owner != null);
+            response.put("completion", session.rulesComplete() ? "complete" : "partial");
             if (session.downgradedWarning() != null) {
                 response.put("downgradedWarning", session.downgradedWarning());
             }
             log.info("[Snapshot] Built {} snapshot for project {} revision {} with {} / {} in {} ms",
                     requested, projectId, session.revision(), session.actualReasonerType(),
                     session.propertyReasonerType(), built.get("durationMs"));
-            return new Built(response, session.revision(), session.tripleCount());
+            return new Built(response, session.revision(), session.tripleCount(),
+                    OntologyRulesFingerprint.of(session.ontology()), session.rulesComplete());
         }
     }
 
@@ -216,9 +241,10 @@ public class ReasoningSnapshotService {
         if (built.revision() <= 0 || built.tripleCount() < 0) {
             return;
         }
-        Key key = new Key(requestedKey.projectId(), built.revision(), built.tripleCount(), requestedKey.reasoner());
+        Key key = new Key(requestedKey.projectId(), built.revision(), built.tripleCount(), requestedKey.reasoner(),
+                built.rulesFingerprint());
         keepInMemory(key, built.snapshot());
-        store.save(key.projectId(), key.revision(), key.tripleCount(), key.reasoner(), built.snapshot());
+        store.save(key.projectId(), key.revision(), key.tripleCount(), key.reasoner(), key.rulesFingerprint(), built.snapshot());
     }
 
     private void keepInMemory(Key key, Map<String, Object> snapshot) {
@@ -248,7 +274,7 @@ public class ReasoningSnapshotService {
         if (inMemory != null) {
             return inMemory;
         }
-        Optional<Map<String, Object>> saved = store.find(key.projectId(), key.revision(), key.tripleCount(), key.reasoner());
+        Optional<Map<String, Object>> saved = store.find(key.projectId(), key.revision(), key.tripleCount(), key.reasoner(), key.rulesFingerprint());
         if (saved.isEmpty()) {
             return null;
         }

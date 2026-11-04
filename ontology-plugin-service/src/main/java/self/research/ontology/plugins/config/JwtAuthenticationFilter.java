@@ -13,6 +13,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -24,6 +26,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.List;
 
 @Slf4j
 @Component("pluginJwtAuthFilter")
@@ -66,6 +69,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 "Current length: " + decoded.length + " bytes.");
         }
         log.info("Plugin service JWT secret validated \u2014 {} bytes.", decoded.length);
+    }
+
+    private static List<GrantedAuthority> authoritiesOf(Claims claims) {
+        Object roles = claims.get("roles");
+        List<GrantedAuthority> authorities = new ArrayList<>();
+        if (roles instanceof List<?> names) {
+            names.stream().filter(String.class::isInstance).map(String.class::cast)
+                    .map(SimpleGrantedAuthority::new).forEach(authorities::add);
+        }
+        return authorities;
     }
 
     @Override
@@ -117,7 +130,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     UserDetails userDetails = User.builder()
                         .username(email)
                         .password("")
-                        .authorities(new ArrayList<>())
+                        .authorities(authoritiesOf(claims))
                         .build();
 
                     UsernamePasswordAuthenticationToken authentication =

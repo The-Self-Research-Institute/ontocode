@@ -21,6 +21,9 @@ public class ImportWorkerDispatcher {
     @Value("${import.worker.url:}")
     private String workerUrl;
 
+    @Value("${ontocode.internal.token:ontocode-internal}")
+    private String internalToken;
+
     public ImportWorkerDispatcher(WebClient.Builder webClientBuilder,
                                   ProjectImportService importService) {
         this.webClientBuilder = webClientBuilder;
@@ -51,6 +54,7 @@ public class ImportWorkerDispatcher {
         webClientBuilder.build()
                 .post()
                 .uri(workerUrl + "/api/import-worker/submit")
+                .header("X-Ontocode-Internal-Token", internalToken)
                 .bodyValue(request)
                 .retrieve()
                 .toBodilessEntity()

@@ -40,8 +40,6 @@ export const DATATYPE_IRI_MAP: Record<string, string> = {
 export const REASONER_ID_MAP: Record<string, string> = {
   HermiT: "HERMIT",
   ELK: "ELK",
-  Pellet: "PELLET",
-  Openllet: "OPENLLET",
   Structural: "STRUCTURAL",
 };
 

@@ -2,6 +2,7 @@ import { MessageSquare, Pencil, Search, type LucideIcon } from "lucide-react";
 import { getGatewayUrl } from "../config/deploymentConfig";
 import type { HistoryTurn, LoopStageEvent } from "../services/codeAssistantLoop";
 import type { ProviderUsage } from "../services/codeAssistantProviders";
+import { userScopedKey } from '../utils/userScopedKey';
 
 export type CodeAssistantAction = "ask" | "local-edit" | "project-findings";
 
@@ -124,7 +125,7 @@ const CHAT_STORAGE_PREFIX = "ontocode.askAi.chat.";
 const MAX_STORED_ENTRIES = 120;
 
 export function chatHistoryStorageKey(projectId: string): string {
-  return `${CHAT_STORAGE_PREFIX}${projectId}`;
+  return userScopedKey(`${CHAT_STORAGE_PREFIX}${projectId}`);
 }
 
 export function loadStoredChatEntries<T>(projectId: string): T[] | null {
