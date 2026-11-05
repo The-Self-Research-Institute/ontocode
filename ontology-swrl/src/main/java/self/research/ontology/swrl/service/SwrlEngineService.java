@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import self.research.ontology.swrl.builtin.BuiltInLibraries;
 import self.research.ontology.swrl.builtin.SqwrlRewrites;
 import org.swrlapi.core.SWRLRuleEngine;
+import org.swrlapi.factory.SWRLAPIInternalFactory;
 import org.swrlapi.exceptions.SWRLBuiltInException;
 import org.swrlapi.parser.SWRLParseException;
 import self.research.ontology.swrl.model.*;
@@ -468,10 +469,9 @@ public class SwrlEngineService {
         }
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology, entry -> true, true);
         try {
-            SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
-            OntologyRules.fillTexts(engine, entries);
-        } catch (RuntimeException e) {
-            logger.warn("The rule engine could not load the rules of project {}, listing them from the ontology instead: {}",
+            OntologyRules.fillTexts(SWRLAPIInternalFactory.createSWRLAPIOntology(ontology), ontology, entries);
+        } catch (RuntimeException | SWRLBuiltInException e) {
+            logger.warn("The rules of project {} could not be read by the rule library, listing them from the ontology instead: {}",
                     projectId, e.getMessage());
         }
         OntologyRules.fillFallbackTexts(entries);

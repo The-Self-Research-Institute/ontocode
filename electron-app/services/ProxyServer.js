@@ -125,11 +125,15 @@ function proxyWs(req, socket, head) {
     socket.on('error', () => upstream.destroy());
 }
 
-async function start(desktopPort, swrlPort) {
+async function start(desktopPort, swrlPort, proxyPort) {
 
     if (desktopPort) DESKTOP_PORT = desktopPort;
     if (swrlPort)    SWRL_PORT    = swrlPort;
-    await findFreeProxyPort();
+    if (proxyPort) {
+        PROXY_PORT = proxyPort;
+    } else {
+        await findFreeProxyPort();
+    }
 
     return new Promise((resolve, reject) => {
         proxyServer = http.createServer(proxyHttp);
@@ -157,4 +161,10 @@ function stop() {
     });
 }
 
-module.exports = { start, stop, PROXY_PORT, DESKTOP_PORT, SWRL_PORT };
+module.exports = {
+    start,
+    stop,
+    get PROXY_PORT() { return PROXY_PORT; },
+    DESKTOP_PORT,
+    SWRL_PORT,
+};
