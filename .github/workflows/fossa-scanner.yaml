@@ -1,7 +1,6 @@
 name: FOSSA Scanner
 
 on:
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -9,7 +8,6 @@ permissions:
 
 jobs:
   fossa-scan:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +24,6 @@ jobs:
           run-tests: true
 
   fossa-container-scan:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
