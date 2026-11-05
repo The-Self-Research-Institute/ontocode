@@ -179,7 +179,7 @@ public class SwrlRuleClient {
         @Override
         public Answer send(String method, String url, String body, String internalToken) throws Exception {
             HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(30))
+                    .timeout(Duration.ofSeconds(120))
                     .header(TOKEN_HEADER, internalToken);
             if (body == null) {
                 request.method(method, HttpRequest.BodyPublishers.noBody());
