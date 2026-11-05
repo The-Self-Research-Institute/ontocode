@@ -147,7 +147,7 @@ public class DraftTrackingService {
             .peek(draft -> draft.setSessionId(sessionId))
             .collect(Collectors.toList());
 
-        return draftRepository.saveAll(drafts);
+        return BulkWrites.saveAll(draftRepository, drafts);
     }
 
     private static Map<String, Object> operationData(MutationOp op) {
@@ -240,7 +240,7 @@ public class DraftTrackingService {
                 : stash.stream().filter(d -> describedBy(d, changeSetId)).toList();
         if (!matching.isEmpty()) {
             matching.forEach(d -> d.setApplied(false));
-            draftRepository.saveAll(matching);
+            BulkWrites.saveAll(draftRepository, matching);
             stash.removeAll(matching);
             return true;
         }
@@ -583,7 +583,7 @@ public class DraftTrackingService {
                 projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
         int recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
         unappliedDrafts.forEach(draft -> draft.setApplied(true));
-        draftRepository.saveAll(unappliedDrafts);
+        BulkWrites.saveAll(draftRepository, unappliedDrafts);
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
             metadataService.writeMeta(projectId, meta);
@@ -644,7 +644,7 @@ public class DraftTrackingService {
                         projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
                 recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
                 unappliedDrafts.forEach(draft -> draft.setApplied(true));
-                draftRepository.saveAll(unappliedDrafts);
+                BulkWrites.saveAll(draftRepository, unappliedDrafts);
             }
 
             CompletableFuture.runAsync(() -> {
