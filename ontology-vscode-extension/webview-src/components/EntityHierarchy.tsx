@@ -35,18 +35,6 @@ interface EntityHierarchyProps {
   expandedNodes: string[];
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
-  searchOptions?: {
-    useRegex: boolean;
-    searchAnnotations: boolean;
-    hideDeprecated: boolean;
-    hideBuiltins: boolean;
-  };
-  onSearchOptionsChange?: (next: {
-    useRegex: boolean;
-    searchAnnotations: boolean;
-    hideDeprecated: boolean;
-    hideBuiltins: boolean;
-  }) => void;
   /** Under each search hit, how many levels of descendants to show (0–5). Default handled by parent. */
   searchMatchSubtreeDepth?: number;
   onSearchMatchSubtreeDepthChange?: (depth: number) => void;
@@ -112,8 +100,6 @@ const EntityHierarchy = ({
   expandedNodes,
   searchQuery,
   onSearchQueryChange,
-  searchOptions,
-  onSearchOptionsChange,
   searchMatchSubtreeDepth = 5,
   onSearchMatchSubtreeDepthChange,
   onSelectItem,
@@ -932,59 +918,21 @@ const EntityHierarchy = ({
                   } as React.CSSProperties} />
           </div>
 
-          {onSearchOptionsChange && searchOptions && (
+          {onSearchMatchSubtreeDepthChange && (
             <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-600">
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={searchOptions.useRegex}
-                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, useRegex: e.target.checked })}
-                  className="w-3 h-3"
-                />
-                Regex
+              <label className="flex items-center gap-1" title="Under each match, show only this many descendant levels. Unrelated branches stay hidden.">
+                Depth
+                <select
+                  value={searchMatchSubtreeDepth}
+                  onChange={(e) => onSearchMatchSubtreeDepthChange(Number(e.target.value))}
+                  className="border rounded px-1 py-0.5 text-[10px] bg-white"
+                  style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}
+                >
+                  {[0, 1, 2, 3, 4, 5].map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
               </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={searchOptions.searchAnnotations}
-                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, searchAnnotations: e.target.checked })}
-                  className="w-3 h-3"
-                />
-                Annotations
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={searchOptions.hideDeprecated}
-                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, hideDeprecated: e.target.checked })}
-                  className="w-3 h-3"
-                />
-                Hide deprecated
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={searchOptions.hideBuiltins}
-                  onChange={(e) => onSearchOptionsChange({ ...searchOptions, hideBuiltins: e.target.checked })}
-                  className="w-3 h-3"
-                />
-                Hide built-ins
-              </label>
-              {onSearchMatchSubtreeDepthChange && (
-                <label className="flex items-center gap-1" title="Under each match, show only this many descendant levels. Unrelated branches stay hidden.">
-                  Depth
-                  <select
-                    value={searchMatchSubtreeDepth}
-                    onChange={(e) => onSearchMatchSubtreeDepthChange(Number(e.target.value))}
-                    className="border rounded px-1 py-0.5 text-[10px] bg-white"
-                    style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}
-                  >
-                    {[0, 1, 2, 3, 4, 5].map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
             </div>
           )}
           
@@ -1023,7 +971,9 @@ const EntityHierarchy = ({
           <div className="ontocode-fade-in">{renderHierarchyBody()}</div>
         ) :
           (searchQuery ? (
-            <div className="p-4 text-center text-gray-600">No items found for "{searchQuery}".</div>
+            <div className="p-4 text-center text-gray-600">
+              No items found for "{searchQuery}".
+            </div>
           ) : viewMode === 'inferred' ? (
             <div className="p-4 text-center text-gray-600">
               <p className="mb-2 flex items-center justify-center gap-2">

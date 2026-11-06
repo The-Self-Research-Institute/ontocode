@@ -8,7 +8,6 @@ import self.research.ontology.owlEditor.dto.OntologyDto;
 
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * asserted class hierarchy (structural reasoner for top-level,
@@ -311,7 +310,7 @@ public class HierarchySnapshotBuilder {
      * dangling rdf:first/rdf:rest list left over from a partial delete). {@code OWLClass.isBuiltIn()}
      * only ever returns true for owl:Thing/owl:Nothing, so it doesn't catch either case.
      */
-    private static boolean isBuiltInOrPlaceholder(OWLClass c) {
+    public static boolean isBuiltInOrPlaceholder(OWLClass c) {
         String iri = c.getIRI().toString();
         return iri.startsWith("http://www.w3.org/2001/XMLSchema#")
                 || iri.startsWith("http://www.w3.org/2000/01/rdf-schema#")
@@ -625,5 +624,11 @@ public class HierarchySnapshotBuilder {
                 })
                 .distinct()
                 .collect(Collectors.toList());
+    }
+
+    public Set<String> namedParentIris(OWLOntology ont, OWLClass cls, Imports importsScope) {
+        return structuralNamedParents(ont, cls, importsScope).stream()
+                .map(p -> p.getIRI().toString())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 }

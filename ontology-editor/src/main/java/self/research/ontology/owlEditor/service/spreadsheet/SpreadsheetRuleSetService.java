@@ -36,18 +36,6 @@ public class SpreadsheetRuleSetService {
     }
 
     public SpreadsheetRuleSetEntity create(String projectId, String name, String description, List<RuleSpec> rules, String user) {
-        return create(projectId, name, description, rules, user, null);
-    }
-
-    public boolean isCreatedBy(SpreadsheetRuleSetEntity ruleSet, String userId, String username) {
-        if (ruleSet.getCreatedByUserId() != null && userId != null) {
-            return ruleSet.getCreatedByUserId().equals(userId);
-        }
-        return ruleSet.getCreatedBy() != null && username != null && ruleSet.getCreatedBy().equalsIgnoreCase(username);
-    }
-
-    public SpreadsheetRuleSetEntity create(String projectId, String name, String description, List<RuleSpec> rules,
-                                           String user, String userId) {
         String clean = validate(name, rules);
         if (repository.findByProjectIdAndName(projectId, clean).isPresent()) {
             throw new DuplicateNameException(clean);
@@ -58,7 +46,6 @@ public class SpreadsheetRuleSetService {
         e.setDescription(description);
         e.setRules(List.copyOf(rules));
         e.setCreatedBy(user);
-        e.setCreatedByUserId(userId);
         e.setUpdatedBy(user);
         return repository.save(e);
     }
