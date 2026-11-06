@@ -1,29 +1,23 @@
 {
  "summary": {
-  "generatedAt": "2026-11-06T01:37:02.147Z",
-  "documents": 25,
-  "distinctCollectionsFromDocuments": 25,
+  "generatedAt": "2026-11-06T11:45:20.983Z",
+  "documents": 0,
+  "distinctCollectionsFromDocuments": 0,
   "sharedCollections": [],
-  "repositories": 16,
-  "templateFiles": 4,
+  "repositories": 0,
+  "templateFiles": 0,
   "gridFsFiles": 18,
   "objectIdFiles": 4,
   "rawDriverFiles": 39,
-  "configClasses": 3,
-  "testFilesTouchingMongoTypes": 27,
+  "configClasses": 1,
+  "testFilesTouchingMongoTypes": 21,
   "rawOnlyCollections": [],
   "nonJavaFilesMentioningMongo": 85,
-  "bannedTotalOccurrences": 1460,
+  "bannedTotalOccurrences": 1236,
   "byModule": {
-   "documents": {
-    "ontology-editor": 25
-   },
-   "repositories": {
-    "ontology-editor": 16
-   },
-   "templateFiles": {
-    "ontology-editor": 4
-   },
+   "documents": {},
+   "repositories": {},
+   "templateFiles": {},
    "gridFsFiles": {
     "ontology-data-migrator": 1,
     "ontology-editor": 15,
@@ -31,661 +25,13 @@
    },
    "tests": {
     "ontology-data-migrator": 12,
-    "ontology-editor": 15
+    "ontology-editor": 9
    }
   }
  },
- "documents": [
-  {
-   "class": "AnnotationPropertyDocument",
-   "collection": "ontology_annotation_properties",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/AnnotationPropertyDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "AssistantApplyOperationDocument",
-   "collection": "assistant_apply_operations",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/AssistantApplyOperationDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Instant"
-   ]
-  },
-  {
-   "class": "AssistantAuditEntryDocument",
-   "collection": "assistant_audit",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/AssistantAuditEntryDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Instant"
-   ]
-  },
-  {
-   "class": "AssistantEditGroupDocument",
-   "collection": "assistant_edit_group",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/AssistantEditGroupDocument.java",
-   "idType": "String",
-   "indexed": 1,
-   "compoundIndexes": 0,
-   "ttl": true,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Instant"
-   ]
-  },
-  {
-   "class": "AssistantIdempotencyRecordDocument",
-   "collection": "assistant_idempotency",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/AssistantIdempotencyRecordDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Instant"
-   ]
-  },
-  {
-   "class": "AssistantSessionDocument",
-   "collection": "assistant_sessions",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/AssistantSessionDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Instant"
-   ]
-  },
-  {
-   "class": "AxiomDocument",
-   "collection": "ontology_axioms",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/AxiomDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "ClassDetailDocument",
-   "collection": "class_details",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/ClassDetailDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 1,
-   "ttl": false,
-   "unique": true,
-   "sparse": false,
-   "nestedMaps": 3,
-   "dateTypes": []
-  },
-  {
-   "class": "ClassDocument",
-   "collection": "ontology_classes",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/ClassDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "DatatypeDocument",
-   "collection": "ontology_datatypes",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/DatatypeDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "EntityUsageDocument",
-   "collection": "entity_usage",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/EntityUsageDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 1,
-   "ttl": false,
-   "unique": true,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": []
-  },
-  {
-   "class": "HierarchySnapshotChunkDoc",
-   "collection": "hierarchy_snapshot_chunks",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/HierarchySnapshotChunkDoc.java",
-   "idType": "String",
-   "indexed": 2,
-   "compoundIndexes": 0,
-   "ttl": true,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "HierarchySnapshotDoc",
-   "collection": "hierarchy_snapshots",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/HierarchySnapshotDoc.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": true,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 3,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "IndividualDocument",
-   "collection": "ontology_individuals",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/IndividualDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "OntologyDocument",
-   "collection": "ontologies",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/OntologyDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 3,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "PropertyDocument",
-   "collection": "ontology_properties",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/PropertyDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "SearchIndexDocument",
-   "collection": "ontology_search_index",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/SearchIndexDocument.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 3,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "TopLevelClassCacheDoc",
-   "collection": "top_level_class_cache",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/document/TopLevelClassCacheDoc.java",
-   "idType": "String",
-   "indexed": 1,
-   "compoundIndexes": 0,
-   "ttl": true,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "DatatypeDefinitionEntity",
-   "collection": "datatype_definitions",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/model/DatatypeDefinitionEntity.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "FuzzyRuleEntity",
-   "collection": "fuzzy_rules",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/model/FuzzyRuleEntity.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "IssueReport",
-   "collection": "issue_reports",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/model/IssueReport.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Instant"
-   ]
-  },
-  {
-   "class": "SparqlQueryEntity",
-   "collection": "sparql_queries",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/model/SparqlQueryEntity.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "SpreadsheetImportRecord",
-   "collection": "spreadsheet_imports",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/model/SpreadsheetImportRecord.java",
-   "idType": "String",
-   "indexed": 1,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Instant"
-   ]
-  },
-  {
-   "class": "SpreadsheetRuleSetEntity",
-   "collection": "spreadsheet_rule_sets",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/model/SpreadsheetRuleSetEntity.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 1,
-   "ttl": false,
-   "unique": true,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  },
-  {
-   "class": "SwrlRuleEntity",
-   "collection": "swrl_rules",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/model/SwrlRuleEntity.java",
-   "idType": "String",
-   "indexed": 0,
-   "compoundIndexes": 0,
-   "ttl": false,
-   "unique": false,
-   "sparse": false,
-   "nestedMaps": 0,
-   "dateTypes": [
-    "Date"
-   ]
-  }
- ],
- "repositories": [
-  {
-   "interface": "AssistantApplyOperationRepository",
-   "entity": "AssistantApplyOperationDocument",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/AssistantApplyOperationRepository.java",
-   "methods": 4,
-   "queryAnnotations": 0,
-   "deleteBy": 1,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "AssistantAuditRepository",
-   "entity": "AssistantAuditEntryDocument",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/AssistantAuditRepository.java",
-   "methods": 0,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "AssistantEditGroupRepository",
-   "entity": "AssistantEditGroupDocument",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/AssistantEditGroupRepository.java",
-   "methods": 2,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "AssistantSessionRepository",
-   "entity": "AssistantSessionDocument",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/AssistantSessionRepository.java",
-   "methods": 1,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "ClassDetailRepository",
-   "entity": "ClassDetailDocument",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/ClassDetailRepository.java",
-   "methods": 3,
-   "queryAnnotations": 0,
-   "deleteBy": 2,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "DatatypeDefinitionRepository",
-   "entity": "DatatypeDefinitionEntity",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/DatatypeDefinitionRepository.java",
-   "methods": 4,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "EntityUsageRepository",
-   "entity": "EntityUsageDocument",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/EntityUsageRepository.java",
-   "methods": 3,
-   "queryAnnotations": 0,
-   "deleteBy": 2,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "FuzzyRuleRepository",
-   "entity": "FuzzyRuleEntity",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/FuzzyRuleRepository.java",
-   "methods": 1,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "HierarchySnapshotChunkRepository",
-   "entity": "HierarchySnapshotChunkDoc",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/HierarchySnapshotChunkRepository.java",
-   "methods": 2,
-   "queryAnnotations": 0,
-   "deleteBy": 1,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "HierarchySnapshotRepository",
-   "entity": "HierarchySnapshotDoc",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/HierarchySnapshotRepository.java",
-   "methods": 0,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "IssueReportRepository",
-   "entity": "IssueReport",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/IssueReportRepository.java",
-   "methods": 5,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "SparqlQueryRepository",
-   "entity": "SparqlQueryEntity",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/SparqlQueryRepository.java",
-   "methods": 1,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "SpreadsheetImportRecordRepository",
-   "entity": "SpreadsheetImportRecord",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/SpreadsheetImportRecordRepository.java",
-   "methods": 1,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "SpreadsheetRuleSetRepository",
-   "entity": "SpreadsheetRuleSetEntity",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/SpreadsheetRuleSetRepository.java",
-   "methods": 2,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "SwrlRuleRepository",
-   "entity": "SwrlRuleEntity",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/SwrlRuleRepository.java",
-   "methods": 1,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  },
-  {
-   "interface": "TopLevelClassCacheRepository",
-   "entity": "TopLevelClassCacheDoc",
-   "module": "ontology-editor",
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/repository/TopLevelClassCacheRepository.java",
-   "methods": 0,
-   "queryAnnotations": 0,
-   "deleteBy": 0,
-   "ignoreCase": 0,
-   "nestedPath": 0
-  }
- ],
- "templateFiles": [
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/config/AssistantMongoIndexInitializer.java",
-   "module": "ontology-editor",
-   "ops": {
-    "indexOps": 1,
-    "ensureIndex": 1,
-    "stream": 1
-   },
-   "lines": [
-    "indexOps:72",
-    "ensureIndex:86"
-   ],
-   "stringCollections": [
-    "assistant_audit",
-    "assistant_edit_group",
-    "assistant_idempotency",
-    "assistant_sessions"
-   ],
-   "criteria": 0,
-   "hotAtomic": false
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/AssistantConsistencyCheckService.java",
-   "module": "ontology-editor",
-   "ops": {
-    "findAndModify": 1,
-    "remove": 1,
-    "stream": 10
-   },
-   "lines": [
-    "findAndModify:472"
-   ],
-   "stringCollections": [],
-   "criteria": 3,
-   "hotAtomic": true
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/AssistantSessionService.java",
-   "module": "ontology-editor",
-   "ops": {
-    "findAndModify": 2,
-    "updateFirst": 2,
-    "findOne": 1,
-    "save": 1,
-    "count": 1
-   },
-   "lines": [
-    "findAndModify:257",
-    "findAndModify:273",
-    "updateFirst:290",
-    "updateFirst:297"
-   ],
-   "stringCollections": [],
-   "criteria": 5,
-   "hotAtomic": true
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/MongoAssistantIdempotencyStore.java",
-   "module": "ontology-editor",
-   "ops": {
-    "findAndReplace": 1,
-    "updateFirst": 1,
-    "remove": 1,
-    "insert": 1
-   },
-   "lines": [
-    "findAndReplace:48",
-    "updateFirst:64"
-   ],
-   "stringCollections": [],
-   "criteria": 5,
-   "hotAtomic": true
-  }
- ],
+ "documents": [],
+ "repositories": [],
+ "templateFiles": [],
  "gridFsFiles": [
   {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/MongoBlobSource.java",
@@ -1165,14 +511,6 @@
   {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/MongoSourceReader.java",
    "module": "ontology-data-migrator"
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/config/AssistantMongoIndexInitializer.java",
-   "module": "ontology-editor"
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/config/MongockConfig.java",
-   "module": "ontology-editor"
   }
  ],
  "testFiles": [
@@ -1262,24 +600,6 @@
    ]
   },
   {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/config/AssistantMongoIndexInitializerTest.java",
-   "module": "ontology-editor",
-   "kinds": [
-    "MongoTemplate",
-    "org.bson",
-    "springframework.data.mongodb"
-   ]
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/AssistantSessionControllerTest.java",
-   "module": "ontology-editor",
-   "kinds": [
-    "MongoTemplate",
-    "org.bson",
-    "springframework.data.mongodb"
-   ]
-  },
-  {
    "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/JobRouteOwnershipTest.java",
    "module": "ontology-editor",
    "kinds": []
@@ -1320,45 +640,9 @@
    "kinds": []
   },
   {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/service/AssistantConsistencyCheckServiceTest.java",
-   "module": "ontology-editor",
-   "kinds": [
-    "MongoTemplate",
-    "org.bson",
-    "springframework.data.mongodb"
-   ]
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/service/AssistantSessionConcurrencyTest.java",
-   "module": "ontology-editor",
-   "kinds": [
-    "MongoTemplate",
-    "springframework.data.mongodb"
-   ]
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/service/AssistantSessionServiceTest.java",
-   "module": "ontology-editor",
-   "kinds": [
-    "MongoTemplate",
-    "org.bson",
-    "springframework.data.mongodb"
-   ]
-  },
-  {
    "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/service/GridFSFileServiceTest.java",
    "module": "ontology-editor",
    "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/service/MongoAssistantIdempotencyStoreTest.java",
-   "module": "ontology-editor",
-   "kinds": [
-    "MongoTemplate",
-    "org.bson",
-    "com.mongodb",
-    "springframework.data.mongodb"
-   ]
   }
  ],
  "nonJava": [
@@ -1565,6 +849,26 @@
    ]
   },
   {
+   "file": "docs/postgres-schema-mapping.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "mongock": 2,
+    "GridFs": 5,
+    "gridfs": 5,
+    "ObjectId": 1,
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 28
+   },
+   "total": 43,
+   "sampleLines": [
+    "3: Rules every module follows when moving from MongoDB documents to PostgreSQL tables. The generated list of what still has to move is `docs/po",
+    "10: | Ids | `text` primary keys. New ids come from `Ids.newObjectId()` (24 hex characters, time ordered). Existing ids are copied unchanged. Bus",
+    "12: | Booleans | A flag that Mongo allowed to be missing and that the code treats as false becomes `boolean not null default false`. The migrati"
+   ]
+  },
+  {
    "file": "OntoCodeLauncher.cs",
    "module": "OntoCodeLauncher.cs",
    "test": false,
@@ -1721,26 +1025,6 @@
    ]
   },
   {
-   "file": "docs/postgres-schema-mapping.md",
-   "module": "docs",
-   "test": false,
-   "hits": {
-    "mongock": 1,
-    "GridFs": 5,
-    "gridfs": 5,
-    "ObjectId": 1,
-    "mongod": 1,
-    "MongoDB": 1,
-    "mongo": 19
-   },
-   "total": 33,
-   "sampleLines": [
-    "3: Rules every module follows when moving from MongoDB documents to PostgreSQL tables. The generated list of what still has to move is `docs/po",
-    "10: | Ids | `text` primary keys. New ids come from `Ids.newObjectId()` (24 hex characters, time ordered). Existing ids are copied unchanged. Bus",
-    "12: | Booleans | A flag that Mongo allowed to be missing and that the code treats as false becomes `boolean not null default false`. The migrati"
-   ]
-  },
-  {
    "file": "electron-app/docs/electron-guide.html",
    "module": "electron-app",
    "test": false,
@@ -1810,8 +1094,8 @@
    "total": 28,
    "sampleLines": [
     "22: <mongock.version>5.5.1</mongock.version>",
-    "82: <!-- MongoDB -->",
-    "85: <artifactId>spring-boot-starter-data-mongodb</artifactId>"
+    "87: <!-- MongoDB -->",
+    "90: <artifactId>spring-boot-starter-data-mongodb</artifactId>"
    ]
   },
   {

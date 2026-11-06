@@ -1,15 +1,19 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.SpreadsheetRuleSetEntity;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface SpreadsheetRuleSetRepository extends MongoRepository<SpreadsheetRuleSetEntity, String> {
+public interface SpreadsheetRuleSetRepository {
+
     List<SpreadsheetRuleSetEntity> findByProjectIdOrderByUpdatedAtDesc(String projectId);
 
     Optional<SpreadsheetRuleSetEntity> findByProjectIdAndName(String projectId, String name);
+
+    Optional<SpreadsheetRuleSetEntity> findById(String id);
+
+    SpreadsheetRuleSetEntity save(SpreadsheetRuleSetEntity entity);
+
+    void delete(SpreadsheetRuleSetEntity entity);
 }

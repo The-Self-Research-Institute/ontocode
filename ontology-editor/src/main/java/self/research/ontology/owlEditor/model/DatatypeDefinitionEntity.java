@@ -1,14 +1,10 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.Date;
 
-@Document("datatype_definitions")
 public class DatatypeDefinitionEntity {
 
-    @Id
     private String id;
     private String projectId;
     private String datatypeIri;

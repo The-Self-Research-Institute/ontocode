@@ -8,12 +8,32 @@ import self.research.ontology.common.db.ExpiringTable;
 public class CacheExpiryConfiguration {
 
     @Bean
-    ExpiringTable hierarchySnapshotExpiry() {
+    public ExpiringTable hierarchySnapshotExpiry() {
         return ExpiringTable.of("hierarchy_snapshot");
     }
 
     @Bean
-    ExpiringTable topLevelClassCacheExpiry() {
+    public ExpiringTable topLevelClassCacheExpiry() {
         return ExpiringTable.of("top_level_class_cache");
+    }
+
+    @Bean
+    public ExpiringTable assistantSessionExpiry() {
+        return ExpiringTable.of("assistant_session");
+    }
+
+    @Bean
+    public ExpiringTable assistantEditGroupExpiry() {
+        return ExpiringTable.of("assistant_edit_group");
+    }
+
+    @Bean
+    public ExpiringTable assistantAuditExpiry() {
+        return ExpiringTable.of("assistant_audit");
+    }
+
+    @Bean
+    public ExpiringTable assistantIdempotencyExpiry() {
+        return ExpiringTable.of("assistant_idempotency");
     }
 }

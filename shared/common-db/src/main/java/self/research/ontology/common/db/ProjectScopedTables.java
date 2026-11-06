@@ -36,7 +36,17 @@ public final class ProjectScopedTables {
                 "class_detail",
                 "entity_usage",
                 "hierarchy_snapshot",
-                "top_level_class_cache");
+                "top_level_class_cache",
+                "assistant_session",
+                "assistant_edit_group",
+                "assistant_audit",
+                "assistant_apply_operation",
+                "datatype_definition",
+                "fuzzy_rule",
+                "sparql_query",
+                "spreadsheet_import_record",
+                "spreadsheet_rule_set",
+                "swrl_rule");
     }
 
     private ProjectScopedTables() {

@@ -4,10 +4,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument.AssistantSessionStatus;
@@ -32,9 +28,6 @@ class AssistantSessionServiceTest {
     private ProjectMetadataService metadataService;
 
     @Mock
-    private MongoTemplate mongoTemplate;
-
-    @Mock
     private AssistantAuditService auditService;
 
     private AssistantSessionService service;
@@ -42,7 +35,7 @@ class AssistantSessionServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        service = new AssistantSessionService(sessionRepository, metadataService, mongoTemplate, auditService);
+        service = new AssistantSessionService(sessionRepository, metadataService, auditService);
         ReflectionTestUtils.setField(service, "defaultRetrievalAttempts", 5);
         ReflectionTestUtils.setField(service, "defaultTokenBudget", 8000);
         ReflectionTestUtils.setField(service, "deadlineSeconds", 300L);
@@ -158,7 +151,7 @@ class AssistantSessionServiceTest {
     @Test
     void auditFailureNeverFailsSessionCreation() {
         when(metadataService.getMutationVersion("proj-1")).thenReturn(7L);
-        org.mockito.Mockito.doThrow(new RuntimeException("mongo down")).when(auditService).record(any());
+        org.mockito.Mockito.doThrow(new RuntimeException("database down")).when(auditService).record(any());
 
         AssistantSessionDocument session = service.createSession(
                 "proj-1", "user@example.com", null, "ask", null, "claude", "m");
@@ -221,36 +214,28 @@ class AssistantSessionServiceTest {
 
     @Test
     void tryConsumeRetrievalAttemptReturnsTrueWhenBudgetAvailable() {
-        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
-                any(FindAndModifyOptions.class), eq(AssistantSessionDocument.class)))
-                .thenReturn(baseSession().retrievalAttemptsRemaining(4).build());
+        when(sessionRepository.tryConsumeRetrievalAttempt(eq("session-1"), any())).thenReturn(true);
 
         assertTrue(service.tryConsumeRetrievalAttempt("session-1"));
     }
 
     @Test
     void tryConsumeRetrievalAttemptReturnsFalseWhenBudgetExhausted() {
-        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
-                any(FindAndModifyOptions.class), eq(AssistantSessionDocument.class)))
-                .thenReturn(null);
+        when(sessionRepository.tryConsumeRetrievalAttempt(eq("session-1"), any())).thenReturn(false);
 
         assertFalse(service.tryConsumeRetrievalAttempt("session-1"));
     }
 
     @Test
     void tryConsumeTokenBudgetReturnsTrueWhenBudgetAvailable() {
-        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
-                any(FindAndModifyOptions.class), eq(AssistantSessionDocument.class)))
-                .thenReturn(baseSession().tokenBudgetRemaining(7500).build());
+        when(sessionRepository.tryConsumeTokenBudget(eq("session-1"), org.mockito.ArgumentMatchers.anyInt(), any())).thenReturn(true);
 
         assertTrue(service.tryConsumeTokenBudget("session-1", 500));
     }
 
     @Test
     void tryConsumeTokenBudgetReturnsFalseWhenItWouldGoNegative() {
-        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class),
-                any(FindAndModifyOptions.class), eq(AssistantSessionDocument.class)))
-                .thenReturn(null);
+        when(sessionRepository.tryConsumeTokenBudget(eq("session-1"), org.mockito.ArgumentMatchers.anyInt(), any())).thenReturn(false);
 
         assertFalse(service.tryConsumeTokenBudget("session-1", 50000));
     }
@@ -288,23 +273,18 @@ class AssistantSessionServiceTest {
 
     @Test
     void activeSessionLimitAllowsCreationBelowTheCapAndOnlyCountsLiveSessionsOfThatUser() {
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(19L);
+        when(sessionRepository.countActive(eq("user@example.com"), any())).thenReturn(19L);
 
         assertTrue(service.activeSessionLimitRetryAfter("user@example.com").isEmpty());
 
-        org.mockito.ArgumentCaptor<Query> captor = org.mockito.ArgumentCaptor.forClass(Query.class);
-        org.mockito.Mockito.verify(mongoTemplate).count(captor.capture(), eq(AssistantSessionDocument.class));
-        org.bson.Document filter = captor.getValue().getQueryObject();
-        assertEquals("user@example.com", filter.get("userEmail"));
-        assertEquals(AssistantSessionStatus.ACTIVE, filter.get("status"));
-        assertTrue(((org.bson.Document) filter.get("expiresAt")).containsKey("$gt"));
+        org.mockito.Mockito.verify(sessionRepository).countActive(eq("user@example.com"), any());
     }
 
     @Test
     void activeSessionLimitReportsSecondsUntilTheSoonestSessionExpires() {
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(20L);
-        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class)))
-                .thenReturn(baseSession().expiresAt(Instant.now().plusSeconds(45)).build());
+        when(sessionRepository.countActive(eq("user@example.com"), any())).thenReturn(20L);
+        when(sessionRepository.soonestActiveDeadline(eq("user@example.com"), any()))
+                .thenReturn(Optional.of(Instant.now().plusSeconds(45)));
 
         Optional<Integer> retryAfter = service.activeSessionLimitRetryAfter("user@example.com");
 
@@ -314,8 +294,8 @@ class AssistantSessionServiceTest {
 
     @Test
     void activeSessionLimitFallsBackToTheDeadlineWhenNoExpiryIsKnown() {
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(25L);
-        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(null);
+        when(sessionRepository.countActive(eq("user@example.com"), any())).thenReturn(25L);
+        when(sessionRepository.soonestActiveDeadline(eq("user@example.com"), any())).thenReturn(Optional.empty());
 
         assertEquals(Optional.of(300), service.activeSessionLimitRetryAfter("user@example.com"));
     }
@@ -323,7 +303,7 @@ class AssistantSessionServiceTest {
     @Test
     void createWithinLimitsCreatesWhenBothLimitsAdmit() {
         when(metadataService.getMutationVersion("proj-1")).thenReturn(3L);
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(0L);
+        when(sessionRepository.countActive(eq("user@example.com"), any())).thenReturn(0L);
 
         AssistantSessionService.SessionCreateOutcome outcome = service.createSession(
                 "proj-1", "user@example.com", null, "ask", null, "claude", "m", Optional::empty);
@@ -344,8 +324,7 @@ class AssistantSessionServiceTest {
         assertFalse(outcome.isOk());
         assertEquals("RATE_LIMITED", outcome.getErrorCode());
         assertEquals(12, outcome.retryAfterSeconds());
-        org.mockito.Mockito.verify(mongoTemplate, org.mockito.Mockito.never())
-                .count(any(Query.class), eq(AssistantSessionDocument.class));
+        org.mockito.Mockito.verify(sessionRepository, org.mockito.Mockito.never()).countActive(any(), any());
         org.mockito.Mockito.verify(sessionRepository, org.mockito.Mockito.never()).save(any());
         org.mockito.ArgumentCaptor<AssistantAuditService.AssistantAuditEvent> event =
                 org.mockito.ArgumentCaptor.forClass(AssistantAuditService.AssistantAuditEvent.class);
@@ -357,8 +336,8 @@ class AssistantSessionServiceTest {
 
     @Test
     void createWithinLimitsRejectsAtTheActiveCap() {
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(20L);
-        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(null);
+        when(sessionRepository.countActive(eq("user@example.com"), any())).thenReturn(20L);
+        when(sessionRepository.soonestActiveDeadline(eq("user@example.com"), any())).thenReturn(Optional.empty());
 
         AssistantSessionService.SessionCreateOutcome outcome = service.createSession(
                 "proj-1", "user@example.com", null, "ask", null, null, null, Optional::empty);
@@ -372,12 +351,12 @@ class AssistantSessionServiceTest {
     void concurrentCreatesForOneUserNeverExceedTheActiveCap() throws Exception {
         when(metadataService.getMutationVersion("proj-1")).thenReturn(1L);
         java.util.concurrent.atomic.AtomicLong live = new java.util.concurrent.atomic.AtomicLong();
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenAnswer(inv -> {
+        when(sessionRepository.countActive(eq("user@example.com"), any())).thenAnswer(inv -> {
             long value = live.get();
             Thread.sleep(2);
             return value;
         });
-        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(null);
+        when(sessionRepository.soonestActiveDeadline(eq("user@example.com"), any())).thenReturn(Optional.empty());
         org.mockito.Mockito.doAnswer(inv -> {
             live.incrementAndGet();
             return inv.getArgument(0);
@@ -419,7 +398,6 @@ class AssistantSessionServiceTest {
     }
 
     private void verifyExpiryUpdateWasSent() {
-        org.mockito.Mockito.verify(mongoTemplate).updateFirst(
-                any(Query.class), any(Update.class), eq(AssistantSessionDocument.class));
+        org.mockito.Mockito.verify(sessionRepository).updateStatus(eq("session-1"), eq(AssistantSessionStatus.EXPIRED), any());
     }
 }

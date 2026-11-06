@@ -16,7 +16,12 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import self.research.ontology.common.db.sql.Instants;
+
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
@@ -138,6 +143,15 @@ final class EditorSql {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    static OffsetDateTime toDb(Date date) {
+        return date == null ? null : Instants.toDb(date.toInstant());
+    }
+
+    static Date readDate(ResultSet rs, String column) throws SQLException {
+        Instant instant = Instants.read(rs, column);
+        return instant == null ? null : Date.from(instant);
     }
 
     static Integer readInt(ResultSet rs, String column) throws SQLException {

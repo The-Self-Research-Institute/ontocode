@@ -1,12 +1,17 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.FuzzyRuleEntity;
 
 import java.util.List;
+import java.util.Optional;
 
-@Repository
-public interface FuzzyRuleRepository extends MongoRepository<FuzzyRuleEntity, String> {
+public interface FuzzyRuleRepository {
+
     List<FuzzyRuleEntity> findByProjectId(String projectId);
+
+    Optional<FuzzyRuleEntity> findById(String id);
+
+    FuzzyRuleEntity save(FuzzyRuleEntity entity);
+
+    void deleteById(String id);
 }

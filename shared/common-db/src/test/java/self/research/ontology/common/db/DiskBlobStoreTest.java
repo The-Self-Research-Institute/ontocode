@@ -93,8 +93,8 @@ class DiskBlobStoreTest extends BlobStoreContract {
     void ifSavingTheRecordFailsTheFileIsRemovedAgain() {
         StoredFiles failing = new StoredFiles(jdbc, new ObjectMapper()) {
             @Override
-            public void insert(String id, String bucket, String filename, String contentType, Map<String, Object> metadata,
-                               long length, String sha256, String storage) {
+            public void upsert(String id, String bucket, String filename, String contentType, Map<String, Object> metadata,
+                               long length, String sha256, String storage, Instant uploadDate) {
                 throw new IllegalStateException("database down");
             }
         };

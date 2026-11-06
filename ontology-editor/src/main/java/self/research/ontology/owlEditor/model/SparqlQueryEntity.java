@@ -1,14 +1,10 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.Date;
 
-@Document("sparql_queries")
 public class SparqlQueryEntity {
 
-    @Id
     private String id;
     private String projectId;
     private String name;
