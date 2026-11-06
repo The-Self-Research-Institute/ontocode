@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import self.research.ontology.owlEditor.service.BlobResource;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.common.rules.DisabledRules;
@@ -69,7 +69,7 @@ public class ReasonerController {
     private long INFERRED_INDIVIDUALS_BUDGET_MS;
 
     @Autowired
-    private GridFSFileService gridfs;
+    private BlobFileService blobFiles;
 
     @Autowired
     private ReasonerService reasonerService;
@@ -180,7 +180,7 @@ public class ReasonerController {
             }, new ThreadPoolExecutor.AbortPolicy());
 
     /**
-     * Load ontology from Fuseki/TDB2 (via temp-file stream) or GridFS fallback.
+     * Load ontology from Fuseki/TDB2 (via temp-file stream) or file store fallback.
      * Rejects oversized ontologies before attempting in-memory OWL API parsing.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
@@ -227,7 +227,7 @@ public class ReasonerController {
                     editorReasonerCache.putOntology(projectId, snapshot, loadedVersion);
                     return snapshot;
                 } catch (Exception e) {
-                    log.warn("Failed to snapshot in-memory OWLAPI model for {}, falling back to Fuseki/GridFS: {}",
+                    log.warn("Failed to snapshot in-memory OWLAPI model for {}, falling back to Fuseki/file store: {}",
                             projectId, e.getMessage());
                 }
             }
@@ -291,18 +291,18 @@ public class ReasonerController {
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to load ontology from Fuseki, falling back to GridFS: {}", e.getMessage());
+            log.warn("Failed to load ontology from Fuseki, falling back to file store: {}", e.getMessage());
         } finally {
             if (tempFile != null) {
                 try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
             }
         }
 
-        // Fallback to GridFS
-        Optional<BlobResource> found = gridfs.getFileByProjectId(projectId);
+        // Fallback to file store
+        Optional<BlobResource> found = blobFiles.getFileByProjectId(projectId);
         if (found.isEmpty()) {
             log.warn("File not found with metadata.projectId={}, trying filename", projectId);
-            found = gridfs.getFileByName(projectId + ".owl");
+            found = blobFiles.getFileByName(projectId + ".owl");
         }
 
         if (found.isEmpty()) {

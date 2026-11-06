@@ -36,6 +36,23 @@ public final class Migrations {
                 new PublicGraphVersionMigration(),
                 new ProjectWriteLeaseMigration(),
                 new ProjectRecoveryLockMigration(),
-                new AppMigrationMigration());
+                new AppMigrationMigration(),
+                new DraftChangeMigration(),
+                new ParkedDraftChangeMigration(),
+                new DraftSessionMigration(),
+                new DraftPullRequestMigration(),
+                new DraftPrChangeMigration(),
+                new HistoryChangeMigration(),
+                new OntologyChangeMigration(),
+                new RollbackAuditMigration(),
+                new UndoIntentMigration(),
+                new AssistantAuditMigration(),
+                new AssistantApplyOperationMigration(),
+                new DatatypeDefinitionMigration(),
+                new FuzzyRuleMigration(),
+                new SparqlQueryMigration(),
+                new IssueReportMigration(),
+                new SpreadsheetImportRecordMigration(),
+                new SpreadsheetRuleSetMigration());
     }
 }

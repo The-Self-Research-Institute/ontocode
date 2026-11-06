@@ -256,7 +256,7 @@ public class ReasonerController {
     /**
      * Load ontology from multiple sources in priority order:
      * 1. Editor service (for ontologies being edited)
-     * 2. GridFS (for uploaded ontologies)
+     * 2. File store (for uploaded ontologies)
      * 3. Local filesystem (development fallback)
      *
      * Tries the full {@code projectId} first (e.g. {@code proj-abc--uuid}), then the parent
@@ -290,7 +290,7 @@ public class ReasonerController {
             if (projectId != null && projectId.contains("--")) {
                 triedIds = projectId + " and " + extractBaseProjectId(projectId);
             }
-            log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", triedIds);
+            log.error("Ontology file not found for project: {} (tried: editor service, file store, filesystem)", triedIds);
             throw new OntologyNotFoundException("Ontology file not found for project: " + triedIds +
                 ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.",
                 lastLoadFailure.get());
@@ -299,7 +299,7 @@ public class ReasonerController {
         }
     }
 
-    /** No source (editor service, GridFS, filesystem) yielded an ontology for the project. */
+    /** No source (editor service, file store, filesystem) yielded an ontology for the project. */
     static class OntologyNotFoundException extends RuntimeException {
         OntologyNotFoundException(String message) {
             super(message);
@@ -1530,7 +1530,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     }
 
     /**
-     * Diagnostic endpoint to check GridFS file storage status
+     * Diagnostic endpoint to check file storage status
      * GET /api/reasoner/diagnose/{projectId}
      */
     @GetMapping("/diagnose/{projectId}")
@@ -1626,7 +1626,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             // Check if cached
             diagnosis.put("cachedInMemory", ontologyCache.containsKey(projectId));
             
-            // List recent GridFS files for reference
+            // List recent stored files for reference
             List<Map<String, Object>> recentFiles = new ArrayList<>();
             blobs.recent("fs", 10).forEach(file -> {
                 Map<String, Object> fileInfo = new HashMap<>();
@@ -1643,7 +1643,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             // Provide suggestions
             List<String> suggestions = new ArrayList<>();
             if (!diagnosis.containsKey("foundInGridFS") || !(Boolean) diagnosis.get("foundInGridFS")) {
-                suggestions.add("File not found in GridFS - the upload may have failed or the file was deleted");
+                suggestions.add("File not found in the file store - the upload may have failed or the file was deleted");
                 suggestions.add("Check if the project was copied without copying the ontology file");
                 suggestions.add("Try re-uploading the ontology file or copying from the original project");
                 suggestions.add("Check the stored_file table (bucket 'fs') and the blob folder on disk");

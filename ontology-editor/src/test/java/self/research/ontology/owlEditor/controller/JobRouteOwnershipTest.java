@@ -22,7 +22,7 @@ import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.EditorJobResultRetention;
 import self.research.ontology.owlEditor.service.ExportScopeResolver;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.ImportQueueManager;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.JobAccess;
@@ -228,7 +228,7 @@ class JobRouteOwnershipTest {
 
     private ProjectLoadController loadController(OntologyExportJobService exportJobs) {
         ProjectLoadController controller = new ProjectLoadController(mock(StorageManager.class),
-                mock(ProjectMetadataService.class), mock(ProjectImportService.class), mock(GridFSFileService.class),
+                mock(ProjectMetadataService.class), mock(ProjectImportService.class), mock(BlobFileService.class),
                 mock(ProjectShareService.class), mock(DraftTrackingService.class), mock(DraftCopyService.class),
                 mock(OntologyHistoryService.class), mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class),
                 mock(SparqlDatasetService.class), mock(ProjectRepository.class), mock(OntologyPreparseService.class),

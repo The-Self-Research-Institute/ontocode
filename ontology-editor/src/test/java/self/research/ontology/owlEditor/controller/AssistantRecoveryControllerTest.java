@@ -112,7 +112,7 @@ class AssistantRecoveryControllerTest {
     @Test
     void clearFailureIsAServerError() {
         when(recoveryService.clear("proj-1", "user@example.com"))
-                .thenReturn(new RecoveryOutcome(false, "CLEAR_FAILED", "mongo down"));
+                .thenReturn(new RecoveryOutcome(false, "CLEAR_FAILED", "database down"));
 
         ResponseEntity<?> response = controller.clear("proj-1", withIdentity());
 

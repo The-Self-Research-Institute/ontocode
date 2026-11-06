@@ -36,7 +36,7 @@ public final class DedupPlan {
                 while (cursor.hasNext()) {
                     Document doc = cursor.next();
                     String id = Values.idText(doc.get("_id"));
-                    if (id == null || !migration.accepts(doc) || losers.containsKey(id)) {
+                    if (id == null || !migration.accepts(doc) || migration.skipReason(doc) != null || losers.containsKey(id)) {
                         continue;
                     }
                     String key = rule.key().apply(doc);

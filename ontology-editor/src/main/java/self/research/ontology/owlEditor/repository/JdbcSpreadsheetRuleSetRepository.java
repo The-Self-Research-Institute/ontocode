@@ -13,7 +13,9 @@ import self.research.ontology.owlEditor.service.spreadsheet.rule.RuleSpec;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -39,7 +41,7 @@ public class JdbcSpreadsheetRuleSetRepository implements SpreadsheetRuleSetRepos
     @Override
     public List<SpreadsheetRuleSetEntity> findByProjectIdOrderByUpdatedAtDesc(String projectId) {
         return EditorSql.query(jdbc, "select * from spreadsheet_rule_set where project_id = ? "
-                + "order by updated_at desc, id desc", MAPPER, projectId);
+                + "order by updated_at desc nulls last, id desc", MAPPER, projectId);
     }
 
     @Override
@@ -60,9 +62,26 @@ public class JdbcSpreadsheetRuleSetRepository implements SpreadsheetRuleSetRepos
         }
         List<RuleSpec> rules = e.getRules() == null ? new ArrayList<>() : e.getRules();
         EditorSql.update(jdbc, UPSERT.sql(), e.getId(), e.getProjectId(), e.getName(), e.getDescription(),
-                EditorSql.json(rules), e.getCreatedBy(), e.getCreatedByUserId(), e.getUpdatedBy(),
+                EditorSql.json(ruleMaps(rules)), e.getCreatedBy(), e.getCreatedByUserId(), e.getUpdatedBy(),
                 EditorSql.toDb(e.getCreatedAt()), EditorSql.toDb(e.getUpdatedAt()));
         return e;
+    }
+
+    private static List<Map<String, Object>> ruleMaps(List<RuleSpec> rules) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (RuleSpec r : rules) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("sheetName", r.sheetName());
+            m.put("startColumn", r.startColumn());
+            m.put("endColumn", r.endColumn());
+            m.put("startRow", r.startRow());
+            m.put("endRow", r.endRow());
+            m.put("rule", r.rule());
+            m.put("comment", r.comment());
+            m.put("active", r.active());
+            out.add(m);
+        }
+        return out;
     }
 
     @Override

@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.dto.ImportWorkerRequest;
 import self.research.ontology.owlEditor.model.ImportOptions;
 import self.research.ontology.owlEditor.model.ProjectStatus;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.StorageManager;
@@ -22,16 +22,16 @@ import java.util.Map;
 @CrossOrigin(originPatterns = "*")
 public class ImportWorkerController {
 
-    private final GridFSFileService gridFSFileService;
+    private final BlobFileService blobFileService;
     private final StorageManager storageManager;
     private final ProjectImportService importService;
     private final ProjectMetadataService metadataService;
 
-    public ImportWorkerController(GridFSFileService gridFSFileService,
+    public ImportWorkerController(BlobFileService blobFileService,
                                   StorageManager storageManager,
                                   ProjectImportService importService,
                                   ProjectMetadataService metadataService) {
-        this.gridFSFileService = gridFSFileService;
+        this.blobFileService = blobFileService;
         this.storageManager = storageManager;
         this.importService = importService;
         this.metadataService = metadataService;
@@ -50,9 +50,9 @@ public class ImportWorkerController {
             Files.createDirectories(original.getParent());
 
             if (request.getGridfsFileId() != null && !request.getGridfsFileId().isBlank()) {
-                var resourceOpt = gridFSFileService.getFileById(request.getGridfsFileId());
+                var resourceOpt = blobFileService.getFileById(request.getGridfsFileId());
                 if (resourceOpt.isEmpty()) {
-                    return ResponseEntity.status(404).body(Map.of("success", false, "error", "GridFS file not found"));
+                    return ResponseEntity.status(404).body(Map.of("success", false, "error", "stored file not found"));
                 }
                 try (InputStream in = resourceOpt.get().getInputStream()) {
                     Files.copy(in, original, java.nio.file.StandardCopyOption.REPLACE_EXISTING);

@@ -11,7 +11,12 @@ import static self.research.ontology.migrator.support.Docs.oid;
 
 public final class Fixtures {
 
-    public record Fixture(String migration, String collection, List<Document> docs, Map<String, Integer> rows) {
+    public record Fixture(String migration, String collection, List<Document> docs, Map<String, Integer> rows,
+                          Map<String, List<Document>> extra) {
+
+        public Fixture(String migration, String collection, List<Document> docs, Map<String, Integer> rows) {
+            this(migration, collection, docs, rows, Map.of());
+        }
     }
 
     private Fixtures() {
@@ -137,7 +142,95 @@ public final class Fixtures {
                         Map.of("project_recovery_lock", 1)),
                 new Fixture("app_migrations", "app_migrations", List.of(
                         new Document("_id", "prefix-backfill-v3").append("completedAt", "2026-02-01T00:00:00Z").append("updated", 3).append("failed", 0)),
-                        Map.of("app_migration", 1)));
+                        Map.of("app_migration", 1)),
+                new Fixture("draft_changes", "draft_changes", List.of(
+                        new Document("_id", "dc-1").append("projectId", "proj-1--f1").append("userId", "u1").append("username", "alice")
+                                .append("operationType", "createClass").append("operationData", new Document("iri", "http://x/A").append("p\uFF0Eq", 1))
+                                .append("timestamp", date("2026-02-01T00:00:00Z")).append("sessionId", "s1"),
+                        new Document("_id", "dc-2").append("projectId", "proj-1--f1").append("applied", true)),
+                        Map.of("draft_change", 2)),
+                new Fixture("spreadsheet_import_parked_drafts", "spreadsheet_import_parked_drafts", List.of(
+                        new Document("_id", "pk-1").append("projectId", "proj-1--f1").append("userId", "u1").append("operationType", "addAxiom")
+                                .append("timestamp", date("2026-02-01T00:00:00Z"))),
+                        Map.of("draft_change_parked", 1)),
+                new Fixture("draft_sessions", "draft_sessions", List.of(
+                        new Document("_id", "ds-1").append("projectId", "proj-1--f1").append("userId", "u1").append("baselineMainRevision", 4L)
+                                .append("baselineAt", date("2026-02-01T00:00:00Z")).append("copyStatus", "READY")
+                                .append("prefixes", new Document("", "http://x/").append("ex\uFF0E", "http://e/"))),
+                        Map.of("draft_session", 1)),
+                new Fixture("draft_pull_requests", "draft_pull_requests", List.of(
+                        new Document("_id", "pr-1").append("projectId", "proj-1--f1").append("authorId", "u1").append("title", "T")
+                                .append("status", "OPEN").append("changeCount", 2).append("submittedChangeIds", List.of("dc-1", "dc-2"))
+                                .append("createdAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("draft_pull_request", 1)),
+                new Fixture("draft_pr_changes", "draft_pr_changes", List.of(
+                        new Document("_id", "pc-1").append("prId", "pr-1").append("projectId", "proj-1--f1").append("snapshotKey", "k")
+                                .append("change", new Document("_id", "dc-1").append("userId", "u1").append("operationType", "createClass")
+                                        .append("operationData", new Document("iri", "http://x/A")).append("timestamp", date("2026-02-01T00:00:00Z")))),
+                        Map.of("draft_pr_change", 1),
+                        Map.of("draft_pull_requests", List.of(new Document("_id", "pr-1").append("projectId", "proj-1--f1")))),
+                new Fixture("history_changes", "history_changes", List.of(
+                        new Document("_id", "h-1").append("projectId", "proj-1--f1").append("editId", "e1").append("userId", "u1")
+                                .append("timestamp", date("2026-02-01T00:00:00Z")).append("operationType", "ADD").append("entityIRI", "http://x/A")
+                                .append("comments", new Document("u\uFF0E1", new Document("text", "hi").append("timestamp", date("2026-02-02T00:00:00Z"))))
+                                .append("metadata", new Document("importId", "i1"))
+                                .append("subChanges", List.of(new Document("_id", "sc-1").append("predicate", "p").append("addition", true)))
+                                .append("ai", new Document("provider", "x")),
+                        new Document("_id", "h-2").append("projectId", "proj-1--f1").append("documentBefore", "{\"_id\":{\"$oid\":\"abc\"}}")),
+                        Map.of("history_change", 2)),
+                new Fixture("ontology_changes", "ontology_changes", List.of(
+                        new Document("_id", "oc-1").append("projectId", "proj-1--f1").append("changeType", "CLASS_ADDED")
+                                .append("timestamp", date("2026-02-01T00:00:00Z")).append("entityIRI", "http://x/A")
+                                .append("metadata", new Document("k", "v"))),
+                        Map.of("ontology_change", 1)),
+                new Fixture("rollback_audit", "rollback_audit", List.of(
+                        new Document("_id", "ra-1").append("projectId", "proj-1--f1").append("historyChangeId", "h-1").append("direction", "UNDO")
+                                .append("changeIds", List.of("h-1")).append("revertedAt", date("2026-02-03T00:00:00Z"))
+                                .append("draftRecords", List.of(new Document("_id", "dc-1").append("projectId", "proj-1--f1")
+                                        .append("timestamp", date("2026-02-01T00:00:00Z")))),
+                        new Document("_id", "ra-2").append("projectId", "proj-1--f1")),
+                        Map.of("rollback_audit", 2)),
+                new Fixture("undo_intents", "undo_intents", List.of(
+                        new Document("_id", "ui-1").append("projectId", "proj-1--f1").append("opId", "op-1").append("direction", "UNDO")
+                                .append("changeIds", List.of("h-1")).append("stage", "STARTED").append("status", "RUNNING")
+                                .append("createdAt", date("2026-02-01T00:00:00Z")).append("updatedAt", date("2026-02-01T00:00:00Z")),
+                        new Document("_id", "ui-2").append("projectId", "proj-1--f1").append("direction", "UNDO")),
+                        Map.of("undo_intent", 2)),
+                new Fixture("assistant_audit", "assistant_audit", List.of(
+                        new Document("_id", "aa-1").append("actor", "alice").append("projectId", "proj-1--f1").append("operation", "PROPOSE")
+                                .append("sourceRevision", 3L).append("outcome", "OK")
+                                .append("createdAt", java.util.Date.from(java.time.Instant.now().minus(java.time.Duration.ofDays(1))))),
+                        Map.of("assistant_audit", 1)),
+                new Fixture("assistant_apply_operations", "assistant_apply_operations", List.of(
+                        new Document("_id", "ao-1").append("projectId", "proj-1--f1").append("groupId", "g1").append("status", "PREPARED")
+                                .append("createdAt", date("2026-02-01T00:00:00Z")).append("updatedAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("assistant_apply_operation", 1)),
+                new Fixture("datatype_definitions", "datatype_definitions", List.of(
+                        new Document("_id", "dd-1").append("projectId", "proj-1--f1").append("datatypeIri", "http://x/dt").append("expression", "xsd:int[>0]")
+                                .append("createdAt", date("2026-02-01T00:00:00Z")).append("updatedAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("datatype_definition", 1)),
+                new Fixture("fuzzy_rules", "fuzzy_rules", List.of(
+                        new Document("_id", "fr-1").append("projectId", "proj-1--f1").append("name", "r").append("condition", "a").append("action", "b")
+                                .append("createdAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("fuzzy_rule", 1)),
+                new Fixture("sparql_queries", "sparql_queries", List.of(
+                        new Document("_id", "sq-1").append("projectId", "proj-1--f1").append("name", "q").append("queryText", "select * {?s ?p ?o}")
+                                .append("createdAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("sparql_query", 1)),
+                new Fixture("issue_reports", "issue_reports", List.of(
+                        new Document("_id", "ir-1").append("title", "Bug").append("userEmail", "alice@example.com").append("projectId", "proj-1--f1")
+                                .append("systemInfo", new Document("osName", "Win").append("javaVersion", "21"))
+                                .append("attachmentFileNames", List.of("a.png")).append("status", "CREATED").append("createdAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("issue_report", 1)),
+                new Fixture("spreadsheet_imports", "spreadsheet_imports", List.of(
+                        new Document("_id", "si-1").append("projectId", "proj-1--f1").append("userId", "u1").append("fileName", "a.xlsx").append("draft", true)
+                                .append("addedTriples", List.of("<a> <b> <c> .")).append("axiomCount", 3).append("createdAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("spreadsheet_import_record", 1)),
+                new Fixture("spreadsheet_rule_sets", "spreadsheet_rule_sets", List.of(
+                        new Document("_id", "rs-1").append("projectId", "proj-1--f1").append("name", "set").append("createdBy", "alice")
+                                .append("rules", List.of(new Document("sheetName", "S1").append("startColumn", 1).append("rule", "r").append("active", true)))
+                                .append("createdAt", date("2026-02-01T00:00:00Z")).append("updatedAt", date("2026-02-01T00:00:00Z"))),
+                        Map.of("spreadsheet_rule_set", 1)));
     }
 
     public static Map<String, Integer> expectedRows(List<Fixture> fixtures) {

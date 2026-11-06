@@ -60,7 +60,7 @@ class RuleProjectIsolationTest {
     }
 
     @Test
-    void legacyRowsAreReadOnlyFromMongoAndOnlyThoseNotYetMigrated() throws Exception {
+    void legacyRowsAreReadOnlyFromTheOldStoreAndOnlyThoseNotYetMigrated() throws Exception {
         TriageHarness harness = new TriageHarness();
         Mockito.when(harness.repository.findByProjectIdAndMigratedAtIsNull(TriageHarness.PROJECT))
                 .thenReturn(List.of(rule("old", "Old rule", CHILD)));
@@ -88,7 +88,7 @@ class RuleProjectIsolationTest {
     }
 
     @Test
-    void executionNeverReadsMongo() throws Exception {
+    void executionNeverReadsTheOldStore() throws Exception {
         TriageHarness harness = new TriageHarness(rule("mine", "Age under 18", CHILD));
 
         harness.service.executeRules(TriageHarness.PROJECT);

@@ -756,4 +756,16 @@ class JdbcAuthRepositoriesTest {
             jdbc.execute("drop table auth_scoped_probe");
         }
     }
+
+    @Test
+    void purgingEditorDataAlsoRemovesTheSwrlRulesOfThatProject() {
+        jdbc.update("delete from swrl_rule where project_id in ('purge-p1', 'purge-p2')");
+        jdbc.update("insert into swrl_rule(id, project_id, rule_name) values ('r1', 'purge-p1', 'a'), ('r2', 'purge-p1', 'b'), ('r3', 'purge-p2', 'a')");
+
+        purge.purgeEditorData("purge-p1");
+
+        assertEquals(0, jdbc.queryForObject("select count(*) from swrl_rule where project_id = 'purge-p1'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("select count(*) from swrl_rule where project_id = 'purge-p2'", Integer.class));
+        jdbc.update("delete from swrl_rule where project_id = 'purge-p2'");
+    }
 }

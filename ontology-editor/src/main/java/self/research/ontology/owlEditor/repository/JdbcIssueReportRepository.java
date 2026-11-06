@@ -58,19 +58,19 @@ public class JdbcIssueReportRepository implements IssueReportRepository {
 
     @Override
     public List<IssueReport> findByUserEmailOrderByCreatedAtDesc(String userEmail) {
-        return EditorSql.query(jdbc, "select * from issue_report where user_email = ? order by created_at desc, id desc",
+        return EditorSql.query(jdbc, "select * from issue_report where user_email = ? order by created_at desc nulls last, id desc",
                 MAPPER, userEmail);
     }
 
     @Override
     public List<IssueReport> findByProjectIdOrderByCreatedAtDesc(String projectId) {
-        return EditorSql.query(jdbc, "select * from issue_report where project_id = ? order by created_at desc, id desc",
+        return EditorSql.query(jdbc, "select * from issue_report where project_id = ? order by created_at desc nulls last, id desc",
                 MAPPER, projectId);
     }
 
     @Override
     public List<IssueReport> findByStatusOrderByCreatedAtDesc(IssueReport.IssueStatus status) {
-        return EditorSql.query(jdbc, "select * from issue_report where status = ? order by created_at desc, id desc",
+        return EditorSql.query(jdbc, "select * from issue_report where status = ? order by created_at desc nulls last, id desc",
                 MAPPER, status == null ? null : status.name());
     }
 

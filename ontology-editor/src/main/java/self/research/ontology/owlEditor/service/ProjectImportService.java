@@ -198,7 +198,7 @@ public class ProjectImportService {
                     String projectId = item.getProjectId();
 
                     // Actually stop the stuck task instead of just marking it failed — best
-                    // effort (works for blocked I/O like Fuseki/GridFS calls, which is the
+                    // effort (works for blocked I/O like Fuseki/file store calls, which is the
                     // common real stuck case per isRetryableError()'s connection-error list;
                     // a tight CPU loop with no interruption checks won't stop either way, but
                     // this is strictly better than never even trying).
@@ -657,8 +657,8 @@ public class ProjectImportService {
                         "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
                 try {
                     metadataService.writeImportProgress(projectId, percent, "graphdb-loading", message);
-                } catch (Exception mongoEx) {
-                    log.warn("[Import {}] Progress write to MongoDB failed (non-fatal, Fuseki upload continues): {}", projectId, mongoEx.getMessage());
+                } catch (Exception databaseEx) {
+                    log.warn("[Import {}] Progress write to the database failed (non-fatal, Fuseki upload continues): {}", projectId, databaseEx.getMessage());
                 }
             };
 
@@ -688,8 +688,8 @@ public class ProjectImportService {
                                 "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
                         try {
                             metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
-                        } catch (Exception mongoEx) {
-                            log.warn("[Import {}] Progress write to MongoDB failed (non-fatal): {}", projectId, mongoEx.getMessage());
+                        } catch (Exception databaseEx) {
+                            log.warn("[Import {}] Progress write to the database failed (non-fatal): {}", projectId, databaseEx.getMessage());
                         }
                     });
                 } catch (Exception serverEx) {
@@ -712,8 +712,8 @@ public class ProjectImportService {
                                 "PROCESSING", message, filename, Map.of("progress", percent, "stage", "graphdb-loading", "message", message));
                         try {
                             metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
-                        } catch (Exception mongoEx) {
-                            log.warn("[Import {}] Progress write to MongoDB failed (non-fatal): {}", projectId, mongoEx.getMessage());
+                        } catch (Exception databaseEx) {
+                            log.warn("[Import {}] Progress write to the database failed (non-fatal): {}", projectId, databaseEx.getMessage());
                         }
                     });
                 } catch (Exception directEx) {
@@ -783,8 +783,8 @@ public class ProjectImportService {
                             // Persist progress message for polling clients
                             try {
                                 metadataService.writeStatus(projectId, ProjectStatus.processing(filename, message));
-                            } catch (Exception mongoEx) {
-                                log.warn("[Import {}] Progress write to MongoDB failed (non-fatal, chunked upload continues): {}", projectId, mongoEx.getMessage());
+                            } catch (Exception databaseEx) {
+                                log.warn("[Import {}] Progress write to the database failed (non-fatal, chunked upload continues): {}", projectId, databaseEx.getMessage());
                             }
                         }
                     }
@@ -888,7 +888,7 @@ public class ProjectImportService {
             sendImportNotification(projectId, ImportStatusMessage.ImportStatusType.IMPORT_COMPLETED,
                     "COMPLETED", "Loading class hierarchy…", filename, completionMeta);
             
-            // Evict stale Caffeine + Mongo top-level/children caches so the next
+            // Evict stale Caffeine + database top-level/children caches so the next
             // hierarchy request recomputes from fresh Fuseki data (not a cached wrong tree).
             try {
                 if (topLevelClassCacheService != null) topLevelClassCacheService.evict(projectId);
@@ -898,7 +898,7 @@ public class ProjectImportService {
                 if (cacheEvictionService != null) {
                     cacheEvictionService.evictForProject(projectId);
                 }
-                log.info("[Import {}] Evicted hierarchy caches (topLevelClasses, classChildren, Mongo)", projectId);
+                log.info("[Import {}] Evicted hierarchy caches (topLevelClasses, classChildren, database)", projectId);
             } catch (Exception cacheEx) {
                 log.warn("[Import {}] Cache eviction failed (non-fatal): {}", projectId, cacheEx.getMessage());
             }
@@ -931,7 +931,7 @@ public class ProjectImportService {
             // Annotation pre-warm: starts immediately, fast (~60s for Mondo).
             // Entity usage index: chained to start AFTER annotation pre-warm finishes.
             // This prevents both from hammering Fuseki at the same time right after import,
-            // ensuring annotations are in MongoDB before the heavier usage-index queries begin.
+            // ensuring annotations are in the database before the heavier usage-index queries begin.
             if (classDetailCacheService != null) {
                 try {
                     classDetailCacheService.dropAll(projectId);

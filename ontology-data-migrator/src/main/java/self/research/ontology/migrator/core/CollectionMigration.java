@@ -17,6 +17,13 @@ public interface CollectionMigration {
         return true;
     }
 
+    default void prepare(SourceReader source) {
+    }
+
+    default Skip skipReason(Document document) {
+        return null;
+    }
+
     default List<UniqueRule> uniqueRules() {
         return List.of();
     }

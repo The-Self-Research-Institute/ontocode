@@ -10,7 +10,7 @@ import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.OntologyExportJobService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
@@ -36,16 +36,16 @@ import static org.mockito.Mockito.when;
 class ProjectLoadControllerFileRefTest {
 
     private FileMetadataRepository fileMetadata;
-    private GridFSFileService gridFs;
+    private BlobFileService blobFiles;
     private ProjectLoadController controller;
 
     @BeforeEach
     void setUp() {
         fileMetadata = mock(FileMetadataRepository.class);
-        gridFs = mock(GridFSFileService.class);
-        when(gridFs.getFileById(anyString())).thenReturn(Optional.empty());
+        blobFiles = mock(BlobFileService.class);
+        when(blobFiles.getFileById(anyString())).thenReturn(Optional.empty());
         controller = new ProjectLoadController(mock(StorageManager.class), mock(ProjectMetadataService.class),
-                mock(ProjectImportService.class), gridFs, mock(ProjectShareService.class),
+                mock(ProjectImportService.class), blobFiles, mock(ProjectShareService.class),
                 mock(DraftTrackingService.class), mock(DraftCopyService.class), mock(OntologyHistoryService.class),
                 mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class), mock(SparqlDatasetService.class),
                 mock(ProjectRepository.class), mock(OntologyPreparseService.class), mock(ImportWorkerDispatcher.class),
@@ -71,7 +71,7 @@ class ProjectLoadControllerFileRefTest {
 
         assertEquals(404, response.getStatusCode().value());
         assertEquals("File not found: f1", response.getBody().get("error"));
-        verify(gridFs, never()).getFileById(anyString());
+        verify(blobFiles, never()).getFileById(anyString());
     }
 
     @Test
@@ -81,7 +81,7 @@ class ProjectLoadControllerFileRefTest {
         ResponseEntity<Map<String, Object>> response = upload("proj-mine--f1", "proj-victim");
 
         assertEquals("File not found: f1", response.getBody().get("error"));
-        verify(gridFs, never()).getFileById(anyString());
+        verify(blobFiles, never()).getFileById(anyString());
     }
 
     @Test
@@ -91,6 +91,6 @@ class ProjectLoadControllerFileRefTest {
         ResponseEntity<Map<String, Object>> response = upload("proj-mine--f1", "proj-mine");
 
         assertEquals("File content not found in storage", response.getBody().get("error"));
-        verify(gridFs).getFileById("507f1f77bcf86cd799439011");
+        verify(blobFiles).getFileById("507f1f77bcf86cd799439011");
     }
 }

@@ -397,7 +397,7 @@ class AssistantEditProposalValidationTest extends AssistantEditProposalTestBase 
     @Test
     void auditFailureDoesNotBreakThePropose() throws Exception {
         mockLiveContent("turtle", 1, 1, ":OldClass a owl:Class .");
-        org.mockito.Mockito.doThrow(new RuntimeException("mongo down")).when(auditService).record(any());
+        org.mockito.Mockito.doThrow(new RuntimeException("database down")).when(auditService).record(any());
 
         ProposeEditResult result = proposalService.propose("s1", "u@x.com", List.of(validGroup()));
 

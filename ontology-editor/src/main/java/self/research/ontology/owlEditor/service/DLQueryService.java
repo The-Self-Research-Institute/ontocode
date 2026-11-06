@@ -40,7 +40,7 @@ public class DLQueryService {
         this.taskRunner = taskRunner;
     }
 
-    private final GridFSFileService gridfs;
+    private final BlobFileService blobFiles;
     private final SparqlDatasetService datasetService;
     private final OWLReasonerFactory reasonerFactory;
     private final long maxReasonerTriples;
@@ -49,11 +49,11 @@ public class DLQueryService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private HeavyWorkAdmission heavyWork = HeavyWorkAdmission.disabled();
 
-    public DLQueryService(GridFSFileService gridfs,
+    public DLQueryService(BlobFileService blobFiles,
                           SparqlDatasetService datasetService,
                           @Value("${ontocode.reasoner.max-triples:5000000}") long maxReasonerTriples,
                           ProjectImportService importService) {
-        this.gridfs = gridfs;
+        this.blobFiles = blobFiles;
         this.datasetService = datasetService;
         this.maxReasonerTriples = maxReasonerTriples;
         this.importService = importService;
@@ -250,7 +250,7 @@ public class DLQueryService {
                 }
             }
         } catch (Exception e) {
-            log.warn("Fuseki load failed for DL Query project {}, trying GridFS: {}", projectId, e.getMessage());
+            log.warn("Fuseki load failed for DL Query project {}, trying file store: {}", projectId, e.getMessage());
         } finally {
             if (tempFile != null) {
                 try {
@@ -260,8 +260,8 @@ public class DLQueryService {
             }
         }
 
-        BlobResource resource = gridfs.getFileByProjectId(projectId)
-                .or(() -> gridfs.getFileByName(projectId + ".owl"))
+        BlobResource resource = blobFiles.getFileByProjectId(projectId)
+                .or(() -> blobFiles.getFileByName(projectId + ".owl"))
                 .orElseThrow(() -> new RuntimeException("Ontology file not found for project: " + projectId));
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         try (InputStream inputStream = resource.getInputStream()) {

@@ -100,7 +100,7 @@ public class OntologyMetadataService {
 
     /**
      * Get all metadata for an ontology
-     * Uses cached metadata from MongoDB if available to avoid expensive GraphDB queries
+     * Uses cached metadata from the database if available to avoid expensive GraphDB queries
      */
     public Map<String, Object> getMetadata(String projectId) {
         Map<String, Object> metadata = new HashMap<>();
@@ -130,7 +130,7 @@ public class OntologyMetadataService {
             log.info("⚡ Using cached metadata for project {} (fast path, skipping GraphDB queries)", projectId);
             metadata.putAll(cached);
 
-            // Always include fresh filename and status from MongoDB
+            // Always include fresh filename and status from the database
             projectMetadataService.readStatus(projectId).ifPresent(status -> {
                 metadata.put("filename", status.filename());
                 metadata.put("projectStatus", status.status());
@@ -211,7 +211,7 @@ public class OntologyMetadataService {
                     metadata.put("cacheComplete", true);
                     metadata.put("cachedAt", java.time.Instant.now().toString());
                     projectMetadataService.writeMeta(projectId, new HashMap<>(metadata));
-                    log.info("💾 Saved metadata to MongoDB cache for project {}", projectId);
+                    log.info("💾 Saved metadata to the database cache for project {}", projectId);
                 }
             } catch (Exception e) {
                 log.warn("Failed to cache metadata for project {}: {}", projectId, e.getMessage());
@@ -1058,7 +1058,7 @@ public class OntologyMetadataService {
 
         mutationService.applyRawUpdateWithHistory(projectId, update.toString(), draft, userId, username);
 
-        // The IRI cache and shared Mongo metadata reflect the PUBLIC graph only — a draft
+        // The IRI cache and shared database metadata reflect the PUBLIC graph only — a draft
         // IRI change must not leak into what other users (or this user's public view) see.
         if (!draft) {
             ontologyIriCache.put(projectId, newOntologyIri);
@@ -1139,7 +1139,7 @@ public class OntologyMetadataService {
 
         Map<String, String> prefixMap = new HashMap<>();
 
-        // 1. Try to get from MongoDB metadata
+        // 1. Try to get from the database metadata
         boolean hasCachedPrefixes = false;
         Optional<Map<String, Object>> meta = projectMetadataService.readMeta(projectId);
         if (meta.isPresent() && meta.get().containsKey("prefixes")) {
@@ -1167,12 +1167,12 @@ public class OntologyMetadataService {
             }
         }
 
-        // 2. Only query GraphDB if MongoDB has no cached prefixes.
-        //    All prefix mutations (add/update/delete) already update MongoDB,
+        // 2. Only query GraphDB if the database has no cached prefixes.
+        //    All prefix mutations (add/update/delete) already update database,
         //    so cached prefixes are always in sync. Skipping the expensive
         //    SPARQL namespace-usage query avoids running it twice during import.
         if (!hasCachedPrefixes) {
-            log.debug("No cached prefixes in MongoDB, querying GraphDB for project {}", projectId);
+            log.debug("No cached prefixes in the database, querying GraphDB for project {}", projectId);
             // Same reasoning as getMetadata(): only sync on the actual SPARQL fallback.
             if (importService != null) {
                 importService.syncProjectToFuseki(projectId);
@@ -1180,7 +1180,7 @@ public class OntologyMetadataService {
             datasetService.getPrefixes(projectId)
                     .forEach((p, ns) -> prefixMap.put(stripTrailingColon(p), ns));
         } else {
-            log.debug("Using cached prefixes from MongoDB for project {} ({} entries)", projectId, prefixMap.size());
+            log.debug("Using cached prefixes from the database for project {} ({} entries)", projectId, prefixMap.size());
         }
 
         if (hasDraft) {
@@ -1239,7 +1239,7 @@ public class OntologyMetadataService {
             }
             return;
         }
-        // 1. Update in MongoDB
+        // 1. Update in the database
         Optional<Map<String, Object>> metaOpt = projectMetadataService.readMeta(projectId);
         Map<String, Object> meta = metaOpt.orElse(new HashMap<>());
         
@@ -1264,9 +1264,9 @@ public class OntologyMetadataService {
             }
         }
 
-        // If MongoDB prefixes are empty, try to pull from GraphDB first to avoid wiping them
+        // If the database prefixes are empty, try to pull from GraphDB first to avoid wiping them
         if (prefixes.isEmpty()) {
-            log.info("MongoDB prefixes empty for project {}, pulling from GraphDB before update", projectId);
+            log.info("database prefixes empty for project {}, pulling from GraphDB before update", projectId);
             datasetService.getPrefixes(projectId).forEach((p, ns) -> prefixes.put(stripTrailingColon(p), ns));
         }
         
@@ -1358,7 +1358,7 @@ public class OntologyMetadataService {
             }
             return;
         }
-        // 1. Update in MongoDB
+        // 1. Update in the database
         Optional<Map<String, Object>> metaOpt = projectMetadataService.readMeta(projectId);
         if (metaOpt.isPresent()) {
             Map<String, Object> meta = metaOpt.get();

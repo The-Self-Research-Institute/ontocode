@@ -38,17 +38,17 @@ public class PrefixBackfillStartupJob {
     private final StorageManager storageManager;
     private final AppMigrationRepository migrations;
     private final FileMetadataRepository fileMetadata;
-    private final GridFSFileService gridFSFileService;
+    private final BlobFileService blobFileService;
 
     public PrefixBackfillStartupJob(ProjectRepository projectRepository, ProjectMetadataService metadataService,
                                     StorageManager storageManager, AppMigrationRepository migrations,
-                                    FileMetadataRepository fileMetadata, GridFSFileService gridFSFileService) {
+                                    FileMetadataRepository fileMetadata, BlobFileService blobFileService) {
         this.projectRepository = projectRepository;
         this.metadataService = metadataService;
         this.storageManager = storageManager;
         this.migrations = migrations;
         this.fileMetadata = fileMetadata;
-        this.gridFSFileService = gridFSFileService;
+        this.blobFileService = blobFileService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -177,9 +177,9 @@ public class PrefixBackfillStartupJob {
     }
 
     private HeaderScan scanOriginalUpload(String projectId) throws Exception {
-        HeaderScan fromGridFs = scanGridFs(projectId);
-        if (fromGridFs != null && !fromGridFs.prefixes.isEmpty()) {
-            return fromGridFs;
+        HeaderScan fromStoredFile = scanStoredFile(projectId);
+        if (fromStoredFile != null && !fromStoredFile.prefixes.isEmpty()) {
+            return fromStoredFile;
         }
         Path dir = storageManager.projectDir(projectId);
         Optional<Path> file = UPLOADED_FILES.stream().map(dir::resolve).filter(Files::exists).findFirst();
@@ -199,7 +199,7 @@ public class PrefixBackfillStartupJob {
         return fileMetadata.findByFileId(projectId.substring(sep + 2)).map(meta -> meta.deleted()).orElse(false);
     }
 
-    private HeaderScan scanGridFs(String projectId) throws Exception {
+    private HeaderScan scanStoredFile(String projectId) throws Exception {
         int sep = projectId.indexOf("--");
         if (sep < 0) {
             return null;
@@ -208,7 +208,7 @@ public class PrefixBackfillStartupJob {
         if (fileMeta == null || fileMeta.blobId() == null) {
             return null;
         }
-        Optional<BlobResource> resource = gridFSFileService.getFileById(fileMeta.blobId());
+        Optional<BlobResource> resource = blobFileService.getFileById(fileMeta.blobId());
         if (resource.isEmpty()) {
             return null;
         }

@@ -14,7 +14,7 @@ import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.ImportQueueFullException;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.OntologyExportJobService;
@@ -52,24 +52,24 @@ class ProjectLoadControllerUploadBoundsTest {
     Path projectDir;
 
     private StorageManager storageManager;
-    private GridFSFileService gridFs;
+    private BlobFileService blobFiles;
     private ImportWorkerDispatcher dispatcher;
     private ProjectLoadController controller;
 
     @BeforeEach
     void setUp() throws Exception {
         storageManager = mock(StorageManager.class);
-        gridFs = mock(GridFSFileService.class);
+        blobFiles = mock(BlobFileService.class);
         dispatcher = mock(ImportWorkerDispatcher.class);
         when(storageManager.prepareProjectDir(any())).thenReturn(projectDir);
-        when(gridFs.storeFile(any(), any(), any(), any())).thenAnswer(inv -> {
+        when(blobFiles.storeFile(any(), any(), any(), any())).thenAnswer(inv -> {
             try (InputStream in = inv.getArgument(3)) {
                 in.transferTo(java.io.OutputStream.nullOutputStream());
             }
-            return "gridfs-1";
+            return "blobFiles-1";
         });
         controller = new ProjectLoadController(storageManager, mock(ProjectMetadataService.class),
-                mock(ProjectImportService.class), gridFs, mock(ProjectShareService.class),
+                mock(ProjectImportService.class), blobFiles, mock(ProjectShareService.class),
                 mock(DraftTrackingService.class), mock(DraftCopyService.class), mock(OntologyHistoryService.class),
                 mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class), mock(SparqlDatasetService.class),
                 mock(ProjectRepository.class), mock(OntologyPreparseService.class), dispatcher,

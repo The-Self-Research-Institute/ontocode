@@ -34,7 +34,7 @@ public class JdbcDatatypeDefinitionRepository implements DatatypeDefinitionRepos
     public List<DatatypeDefinitionEntity> findByProjectIdAndDatatypeIriAndDraftNotOrderByCreatedAtDesc(
             String projectId, String datatypeIri, boolean draft) {
         return EditorSql.query(jdbc, "select * from datatype_definition where project_id = ? and datatype_iri = ? "
-                + "and draft <> ? order by created_at desc, id desc", MAPPER, projectId, datatypeIri, draft);
+                + "and draft <> ? order by created_at desc nulls last, id desc", MAPPER, projectId, datatypeIri, draft);
     }
 
     @Override

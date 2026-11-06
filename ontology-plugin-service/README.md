@@ -5,7 +5,7 @@ A Spring Boot 3.4 microservice for managing OntoCode plugins. Provides a remote 
 ## Architecture
 
 **Phase 1: Minimal Cost (Current)**
-- **Storage**: MongoDB GridFS (zero cost, uses existing MongoDB)
+- **Storage**: PostgreSQL and the file store
 - **Authentication**: JWT validation (reuses ontology-auth)
 - **Deployment**: Docker container on existing infrastructure
 
@@ -19,8 +19,8 @@ All storage operations use abstraction layer (`PluginStorageService`) for easy m
 ## Technology Stack
 
 - **Java 21** with Spring Boot 3.4
-- **MongoDB** for plugin metadata
-- **GridFS** for VSIX file storage
+- **PostgreSQL** for plugin metadata
+- **File store** for VSIX file storage
 - **JWT** for authentication
 - **Docker** for deployment
 
@@ -46,7 +46,7 @@ POST /api/plugins                 - Publish new plugin/version
 
 ### Prerequisites
 - Java 21
-- MongoDB running on localhost:27017
+- PostgreSQL running on localhost:5432
 - Maven
 
 ### Development Mode
@@ -70,10 +70,8 @@ docker-compose up plugin-service
 Edit `src/main/resources/application.properties`:
 
 ```properties
-# MongoDB
-spring.data.mongodb.host=localhost
-spring.data.mongodb.port=27017
-spring.data.mongodb.database=ontology
+# PostgreSQL (set the password through the environment, there is no default)
+spring.datasource.url=jdbc:postgresql://localhost:5432/ontocode
 
 # JWT Secret (must match ontology-auth)
 jwt.secret=your-secret-key-min-256-bits
@@ -82,7 +80,7 @@ jwt.secret=your-secret-key-min-256-bits
 spring.servlet.multipart.max-file-size=50MB
 ```
 
-## MongoDB Collections
+## Database Tables
 
 ### plugins
 Main plugin metadata (name, description, latest version, downloads, etc.)

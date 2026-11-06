@@ -118,7 +118,7 @@ class JdbcPluginRepositoriesTest {
     }
 
     @Test
-    void browsingPagesAndSortsLikeMongoWithNullsFirstAscendingAndLastDescending() {
+    void browsingPagesAndSortsWithNullsFirstAscendingAndLastDescending() {
         plugin("a", "Alpha", 5);
         plugin("b", "Bravo", 50);
         plugins.save(Plugin.builder().pluginId("n").name("NoDownloads").build());

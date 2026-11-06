@@ -101,7 +101,7 @@ public class ProjectMetadataService {
     /**
      * FIX: Batch update project metadata in a single database operation
      * Improves performance by avoiding 3 separate DB writes
-     * Creates MongoDB project document for both cloud and self-hosted deployments
+     * Creates the project document for both cloud and self-hosted deployments
      */
     public void updateProjectMetadata(String projectId, ProjectStatus status, String gridfsFileId, String ownerEmail, String ownerId, String workspaceId, String parentProjectId) {
         log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, workspace: {}, parentProject: {}, status: {}", 

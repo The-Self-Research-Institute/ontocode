@@ -80,7 +80,7 @@ class AssistantApplyOperationServiceTest {
 
     @Test
     void prepareDeletesTheSnapshotWhenTheRecordCannotBeSaved() throws Exception {
-        when(repository.save(any())).thenThrow(new IllegalStateException("mongo down"));
+        when(repository.save(any())).thenThrow(new IllegalStateException("database down"));
 
         assertThrows(IllegalStateException.class, () -> service.prepare(group(), "u@x.com"));
 

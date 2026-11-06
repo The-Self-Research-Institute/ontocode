@@ -14,7 +14,7 @@ import java.util.Optional;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class GridFSFileService {
+public class BlobFileService {
 
     public static final String BUCKET = "fs";
 
@@ -116,7 +116,7 @@ public class GridFSFileService {
 
     private List<StoredFile> ontologyFiles(String projectId) {
         return blobStore.find(BUCKET, null, Map.of("projectId", projectId)).stream()
-                .filter(GridFSFileService::isOntologyFile).toList();
+                .filter(BlobFileService::isOntologyFile).toList();
     }
 
     private static boolean isOntologyFile(StoredFile file) {

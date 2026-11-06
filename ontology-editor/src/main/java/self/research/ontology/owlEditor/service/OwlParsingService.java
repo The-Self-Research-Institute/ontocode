@@ -33,7 +33,7 @@ public class OwlParsingService {
     // private Neo4jSyncService neo4jSyncService; // TODO: Implement Neo4j sync service
     
     @Autowired
-    private GridFSFileService files;
+    private BlobFileService files;
     
     @Autowired
     private SparqlProperties props;
@@ -56,7 +56,7 @@ public class OwlParsingService {
     }
 
     /**
-     * Parse ontology file from GridFS and index to triple store
+     * Parse ontology file from file store and index to triple store
      */
     @Async("owlParsingExecutor") //
     public CompletableFuture<Void> parseAndIndex(String projectId, String fileId) {
@@ -64,7 +64,7 @@ public class OwlParsingService {
         updateStatus(projectId, "PROCESSING", "Parsing ontology...");
         
         try {
-            // Retrieve file from GridFS
+            // Retrieve file from file store
             BlobResource resource = files.getFileById(fileId)
                     .orElseThrow(() -> new RuntimeException("File not found in the file store: " + fileId));
             
@@ -77,7 +77,7 @@ public class OwlParsingService {
                 log.info("Ontology IRI: {}", ontology.getOntologyID().getOntologyIRI().orElse(null));
                 log.info("Axiom count: {}", ontology.getAxiomCount());
                 
-                // Extract metadata for MongoDB
+                // Extract metadata for database
                 Map<String, Object> metadata = extractMetadata(projectId, ontology); //
                 saveMetadata(projectId, metadata); 
 

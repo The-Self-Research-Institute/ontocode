@@ -47,7 +47,7 @@ public final class Verification {
     }
 
     private static boolean relevant(CollectionMigration migration, DedupPlan plan, Document doc) {
-        return migration.accepts(doc) && plan.loserFor(doc) == null;
+        return migration.accepts(doc) && migration.skipReason(doc) == null && plan.loserFor(doc) == null;
     }
 
     private void checkKeysExist(CollectionMigration migration, Document doc, MigrationReport.VerifyStats stats) {

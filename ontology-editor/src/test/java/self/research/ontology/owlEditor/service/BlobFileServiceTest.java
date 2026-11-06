@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class GridFSFileServiceTest {
+class BlobFileServiceTest {
 
     private final JdbcTemplate jdbc = TestDatabase.jdbc();
 
@@ -29,13 +29,13 @@ class GridFSFileServiceTest {
     Path root;
 
     private BlobStore store;
-    private GridFSFileService service;
+    private BlobFileService service;
 
     @BeforeEach
     void setUp() {
         jdbc.update("delete from stored_file");
         store = new DiskBlobStore(new StoredFiles(jdbc, new ObjectMapper()), root, 0);
-        service = new GridFSFileService(store);
+        service = new BlobFileService(store);
     }
 
     private static InputStream stream(String text) {

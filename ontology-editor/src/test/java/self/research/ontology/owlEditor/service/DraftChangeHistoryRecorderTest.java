@@ -113,7 +113,7 @@ class DraftChangeHistoryRecorderTest {
 
     @Test
     void aChangeTrackingFailureNeverFailsThePublishAndTheBundledHistoryStillGetsRecorded() {
-        doThrow(new RuntimeException("mongo down")).when(changeTracking).recordChange(any(OntologyChange.class));
+        doThrow(new RuntimeException("database down")).when(changeTracking).recordChange(any(OntologyChange.class));
 
         int failures = assertDoesNotThrow(() -> recorder.record("p1",
                 List.of(draft("d1", "createClass", Map.of("iri", PIZZA, "label", "Pizza")))));
@@ -146,7 +146,7 @@ class DraftChangeHistoryRecorderTest {
 
     @Test
     void markPublishedNeverFailsAPublishThatAlreadyWentThrough() {
-        doThrow(new RuntimeException("mongo down")).when(history).markDraftHistoryPublished(anyString(), anyString());
+        doThrow(new RuntimeException("database down")).when(history).markDraftHistoryPublished(anyString(), anyString());
 
         assertDoesNotThrow(() -> recorder.markPublished("p1", "u1"));
     }

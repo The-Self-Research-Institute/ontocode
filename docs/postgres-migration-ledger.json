@@ -1,31 +1,30 @@
 {
  "summary": {
-  "generatedAt": "2026-11-06T11:45:20.983Z",
+  "generatedAt": "2026-11-06T12:39:57.436Z",
   "documents": 0,
   "distinctCollectionsFromDocuments": 0,
   "sharedCollections": [],
   "repositories": 0,
   "templateFiles": 0,
-  "gridFsFiles": 18,
+  "gridFsFiles": 3,
   "objectIdFiles": 4,
-  "rawDriverFiles": 39,
+  "rawDriverFiles": 58,
   "configClasses": 1,
-  "testFilesTouchingMongoTypes": 21,
+  "testFilesTouchingMongoTypes": 13,
   "rawOnlyCollections": [],
-  "nonJavaFilesMentioningMongo": 85,
-  "bannedTotalOccurrences": 1236,
+  "nonJavaFilesMentioningMongo": 78,
+  "bannedTotalOccurrences": 863,
   "byModule": {
    "documents": {},
    "repositories": {},
    "templateFiles": {},
    "gridFsFiles": {
     "ontology-data-migrator": 1,
-    "ontology-editor": 15,
-    "ontology-plugin-service": 2
+    "ontology-editor": 1,
+    "ontology-plugin-service": 1
    },
    "tests": {
-    "ontology-data-migrator": 12,
-    "ontology-editor": 9
+    "ontology-data-migrator": 13
    }
   }
  },
@@ -43,120 +42,12 @@
    "metadataKeys": []
   },
   {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/controller/GraphViewController.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/controller/ImportWorkerController.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/controller/ProjectController.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
    "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/controller/ProjectLoadController.java",
    "module": "ontology-editor",
    "ops": {
     "find": 3
    },
    "buffers": true,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/controller/ReasonerController.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": [
-    "projectId"
-   ]
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/controller/VisualizationController.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": true,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/DesktopOntologyLoader.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/DLQueryService.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/GridFSFileService.java",
-   "module": "ontology-editor",
-   "ops": {
-    "store": 1,
-    "find": 1,
-    "delete": 2
-   },
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/MergeCheckpointRollbackActions.java",
-   "module": "ontology-editor",
-   "ops": {
-    "store": 1
-   },
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/OntologyMergeService.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": true,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/OwlParsingService.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": true,
-   "metadataKeys": [
-    "put"
-   ]
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/PrefixBackfillStartupJob.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/ProjectImportService.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
-  },
-  {
-   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/service/StoredFileRollbackActions.java",
-   "module": "ontology-editor",
-   "ops": {},
-   "buffers": false,
    "metadataKeys": []
   },
   {
@@ -167,13 +58,6 @@
    "metadataKeys": [
     "projectId"
    ]
-  },
-  {
-   "file": "ontology-plugin-service/src/main/java/self/research/ontology/plugins/model/PluginVersion.java",
-   "module": "ontology-plugin-service",
-   "ops": {},
-   "buffers": false,
-   "metadataKeys": []
   }
  ],
  "objectIdFiles": [
@@ -215,6 +99,20 @@
    ]
   },
   {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/AssistantApplyOperationMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/AssistantAuditMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/AuditEventMigration.java",
    "module": "ontology-data-migrator",
    "imports": [
@@ -222,7 +120,56 @@
    ]
   },
   {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DatatypeDefinitionMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DesktopDownloadEventMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftChangeRows.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftPrChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftPullRequestMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftSessionMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/EditorSkips.java",
    "module": "ontology-data-migrator",
    "imports": [
     "org.bson.Document"
@@ -243,6 +190,20 @@
    ]
   },
   {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/FuzzyRuleMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/HistoryChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/InvitationMigration.java",
    "module": "ontology-data-migrator",
    "imports": [
@@ -250,7 +211,28 @@
    ]
   },
   {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/IssueReportMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/OntologyChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/OntologyFileMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ParkedDraftChangeMigration.java",
    "module": "ontology-data-migrator",
    "imports": [
     "org.bson.Document"
@@ -348,6 +330,34 @@
    ]
   },
   {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/RollbackAuditMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SparqlQueryMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SpreadsheetImportRecordMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SpreadsheetRuleSetMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/StripeEventMigration.java",
    "module": "ontology-data-migrator",
    "imports": [
@@ -370,6 +380,13 @@
   },
   {
    "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SystemSettingsMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/UndoIntentMigration.java",
    "module": "ontology-data-migrator",
    "imports": [
     "org.bson.Document"
@@ -529,6 +546,13 @@
    ]
   },
   {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/EditorRulesTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
    "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/EndToEndTest.java",
    "module": "ontology-data-migrator",
    "kinds": [
@@ -598,51 +622,6 @@
    "kinds": [
     "org.bson"
    ]
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/JobRouteOwnershipTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/ProjectControllerAuthTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/ProjectLoadControllerCodeViewCacheDraftTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/ProjectLoadControllerCodeViewSaveCharacterizationTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/ProjectLoadControllerDeleteAuthTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/ProjectLoadControllerFileRefTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/ProjectLoadControllerQuickUnsatTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/controller/ProjectLoadControllerUploadBoundsTest.java",
-   "module": "ontology-editor",
-   "kinds": []
-  },
-  {
-   "file": "ontology-editor/src/test/java/self/research/ontology/owlEditor/service/GridFSFileServiceTest.java",
-   "module": "ontology-editor",
-   "kinds": []
   }
  ],
  "nonJava": [
@@ -849,6 +828,26 @@
    ]
   },
   {
+   "file": "docs/postgres-data-migration.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "GridFs": 9,
+    "gridfs": 9,
+    "ObjectId": 2,
+    "MONGO_": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 18
+   },
+   "total": 43,
+   "sampleLines": [
+    "1: # MongoDB to PostgreSQL data migration",
+    "3: The module `ontology-data-migrator` copies the data of an existing OntoCode installation from MongoDB (and GridFS) into PostgreSQL and the b",
+    "7: - Reads every supported Mongo collection in batches (default 1000 documents, ordered by `_id`) and writes each batch to PostgreSQL in one tr"
+   ]
+  },
+  {
    "file": "docs/postgres-schema-mapping.md",
    "module": "docs",
    "test": false,
@@ -885,26 +884,6 @@
     "14: static string MONGO_INITDB_ROOT_USERNAME = \"admin\";",
     "15: static string MONGO_INITDB_ROOT_PASSWORD = \"changeme123\";",
     "16: static string MONGO_INITDB_DATABASE = \"ontocode\";"
-   ]
-  },
-  {
-   "file": "docs/postgres-data-migration.md",
-   "module": "docs",
-   "test": false,
-   "hits": {
-    "GridFs": 8,
-    "gridfs": 8,
-    "ObjectId": 2,
-    "MONGO_": 1,
-    "mongod": 2,
-    "MongoDB": 2,
-    "mongo": 16
-   },
-   "total": 39,
-   "sampleLines": [
-    "1: # MongoDB to PostgreSQL data migration",
-    "3: The module `ontology-data-migrator` copies the data of an existing OntoCode installation from MongoDB (and GridFS) into PostgreSQL and the b",
-    "7: - Reads every supported Mongo collection in batches (default 1000 documents, ordered by `_id`) and writes each batch to PostgreSQL in one tr"
    ]
   },
   {
@@ -984,47 +963,6 @@
    ]
   },
   {
-   "file": "ontology-editor/src/main/resources/application.properties",
-   "module": "ontology-editor",
-   "test": false,
-   "hits": {
-    "27017": 1,
-    "mongock": 7,
-    "mongodb://": 1,
-    "spring.data.mongodb": 2,
-    "MONGODB_": 1,
-    "mongod": 5,
-    "MongoDB": 5,
-    "mongo": 14
-   },
-   "total": 36,
-   "sampleLines": [
-    "39: # When false (web default), import/open uses Fuseki + Mongo hierarchy snapshots only — low heap.",
-    "61: # MongoDB Configuration",
-    "62: spring.data.mongodb.uri=${MONGODB_URI:mongodb://localhost:27017/ontocode}"
-   ]
-  },
-  {
-   "file": "ontology-plugin-service/README.md",
-   "module": "ontology-plugin-service",
-   "test": false,
-   "hits": {
-    "27017": 2,
-    "GridFs": 2,
-    "gridfs": 2,
-    "spring.data.mongodb": 3,
-    "mongod": 9,
-    "MongoDB": 9,
-    "mongo": 9
-   },
-   "total": 36,
-   "sampleLines": [
-    "8: - **Storage**: MongoDB GridFS (zero cost, uses existing MongoDB)",
-    "22: - **MongoDB** for plugin metadata",
-    "23: - **GridFS** for VSIX file storage"
-   ]
-  },
-  {
    "file": "electron-app/docs/electron-guide.html",
    "module": "electron-app",
    "test": false,
@@ -1079,26 +1017,6 @@
    ]
   },
   {
-   "file": "ontology-editor/pom.xml",
-   "module": "ontology-editor",
-   "test": false,
-   "hits": {
-    "io.mongock": 2,
-    "mongock": 7,
-    "spring-boot-starter-data-mongodb": 1,
-    "mongodb-springdata": 1,
-    "mongod": 3,
-    "MongoDB": 3,
-    "mongo": 11
-   },
-   "total": 28,
-   "sampleLines": [
-    "22: <mongock.version>5.5.1</mongock.version>",
-    "87: <!-- MongoDB -->",
-    "90: <artifactId>spring-boot-starter-data-mongodb</artifactId>"
-   ]
-  },
-  {
    "file": "scripts/windows/fix-mongo-auth.bat",
    "module": "scripts",
    "test": false,
@@ -1114,27 +1032,6 @@
     "3: echo   Fixing MongoDB Authentication Issue",
     "8: echo   2. Remove MongoDB data volume (reset database)",
     "11: echo WARNING: This will DELETE all data in MongoDB!"
-   ]
-  },
-  {
-   "file": "ontology-editor/src/main/resources/application-dev.properties",
-   "module": "ontology-editor",
-   "test": false,
-   "hits": {
-    "27017": 1,
-    "27018": 2,
-    "mongodb://": 1,
-    "spring.data.mongodb": 2,
-    "MONGODB_": 1,
-    "mongod": 6,
-    "MongoDB": 5,
-    "mongo": 8
-   },
-   "total": 26,
-   "sampleLines": [
-    "3: # Hybrid: docker compose up mongo fuseki, then mvn spring-boot:run (see scripts/start-hybrid.ps1)",
-    "8: # Docker Mongo — container binds to 127.0.0.1:27018 (port 27017 reserved for any local mongod).",
-    "9: spring.data.mongodb.uri=${MONGODB_URI:mongodb://admin:changeme123@127.0.0.1:27018/ontocode?authSource=admin}"
    ]
   },
   {
@@ -1204,25 +1101,6 @@
     "3: OntoCode keeps its records in PostgreSQL and its uploaded files (ontology uploads, project files, plugin bundles, desktop installers) on dis",
     "50: PostgreSQL settings per size override (these replace the old MongoDB cache sizes):",
     "63: 1. Announce the maintenance window and stop every service that writes (gateway, auth, editor, swrl, reasoner-worker, plugin-service, plugin-"
-   ]
-  },
-  {
-   "file": "ontology-editor/src/main/resources/application-docker.properties",
-   "module": "ontology-editor",
-   "test": false,
-   "hits": {
-    "27017": 1,
-    "mongodb://": 1,
-    "spring.data.mongodb": 2,
-    "MONGODB_": 1,
-    "mongod": 4,
-    "MongoDB": 4,
-    "mongo": 5
-   },
-   "total": 18,
-   "sampleLines": [
-    "7: spring.data.mongodb.uri=${MONGODB_URI:mongodb://admin:changeme123@mongo:27017/ontocode?authSource=admin}",
-    "8: spring.data.mongodb.auto-index-creation=false"
    ]
   },
   {
@@ -1656,22 +1534,6 @@
    ]
   },
   {
-   "file": "ontology-editor/src/main/resources/logback-spring.xml",
-   "module": "ontology-editor",
-   "test": false,
-   "hits": {
-    "org.springframework.data.mongodb": 1,
-    "mongod": 2,
-    "MongoDB": 2,
-    "mongo": 2
-   },
-   "total": 7,
-   "sampleLines": [
-    "139: <!-- MongoDB -->",
-    "140: <logger name=\"org.springframework.data.mongodb\" level=\"WARN\" additivity=\"false\">"
-   ]
-  },
-  {
    "file": "docs/ops-memory-settings.html",
    "module": "docs",
    "test": false,
@@ -1918,19 +1780,6 @@
    "total": 2,
    "sampleLines": [
     "104: - Indexes: dev and docker run with `auto-index-creation=false`, so `@Indexed` alone would not create them there. Added to `UndoMongoIndexIni"
-   ]
-  },
-  {
-   "file": "ontology-gateway/src/main/resources/application-local.properties",
-   "module": "ontology-gateway",
-   "test": false,
-   "hits": {
-    "GridFs": 1,
-    "gridfs": 1
-   },
-   "total": 2,
-   "sampleLines": [
-    "140: # Route 21: Desktop installer downloads (served from GridFS via auth service)"
    ]
   },
   {

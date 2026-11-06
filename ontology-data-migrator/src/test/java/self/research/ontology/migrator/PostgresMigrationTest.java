@@ -56,10 +56,11 @@ class PostgresMigrationTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("fixtures")
     void writesMappedRowsAndARerunChangesNothing(Fixtures.Fixture fixture) {
-        assertTrue(Fixtures.all().contains(fixture));
         JdbcTemplate jdbc = TestDb.clean();
         CollectionMigration m = migration(fixture.migration());
         InMemorySource source = new InMemorySource().with(fixture.collection(), fixture.docs());
+        fixture.extra().forEach(source::with);
+        m.prepare(source);
         JdbcTarget target = new JdbcTarget(TestDb.dataSource());
 
         MigrationReport.CollectionStats first = new MigrationRunner(source, target, 100, false, false)

@@ -278,7 +278,7 @@ public class OntologyQueryController {
                 "closure".equalsIgnoreCase(scope)
                         ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
                         : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
-        // The MongoDB hierarchy snapshot only ever reflects the main graph — skip it for a
+        // The database hierarchy snapshot only ever reflects the main graph — skip it for a
         // drafter or they'd see the public hierarchy instead of their own uncommitted edits.
         // Same pattern as classDetails() below.
         String ctxUserId = SparqlQueryContext.getUserId();
@@ -436,7 +436,7 @@ public class OntologyQueryController {
                 && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
             return ResponseEntity.ok(desktopHierarchyService.children(projectId, parentIri, limit, offset, importsScope));
         }
-        // The MongoDB hierarchy snapshot only ever reflects the main graph — skip it for a
+        // The database hierarchy snapshot only ever reflects the main graph — skip it for a
         // drafter, same as topLevel() above, or they'd never see their own draft-only children.
         String childrenCtxUserId = SparqlQueryContext.getUserId();
         boolean childrenHasDraft = childrenCtxUserId != null && datasetService != null
@@ -693,7 +693,7 @@ public class OntologyQueryController {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classUsage(projectId, classIri)));
         }
-        // 2. Cloud fast path: pre-computed MongoDB index — skip when draft is active (index is main-graph-only)
+        // 2. Cloud fast path: pre-computed database index — skip when draft is active (index is main-graph-only)
         if (!usageHasDraft && entityUsageIndexService != null) {
             var cached = entityUsageIndexService.getUsage(projectId, classIri);
             if (cached.isPresent()) {
@@ -760,8 +760,8 @@ public class OntologyQueryController {
     public ResponseEntity<?> classDetails(@PathVariable String projectId,
                                          @RequestParam String classIri,
                                          jakarta.servlet.http.HttpServletRequest httpRequest) {
-        // Skip OWLAPI and MongoDB cache only when the user has an active draft overlay:
-        // OWLAPI only knows the main graph; MongoDB cache is also main-graph-only.
+        // Skip OWLAPI and stored cache only when the user has an active draft overlay:
+        // OWLAPI only knows the main graph; stored cache is also main-graph-only.
         // SPARQL path uses buildFromClause which adds FROM <draftGraph> automatically
         // when SparqlQueryContext.getUserId() is set (done by SparqlQueryContextInterceptor).
         // A bare userId with NO draft overlay reads the main graph either way, and every
@@ -781,7 +781,7 @@ public class OntologyQueryController {
                 return ResponseEntity.ok(Map.of("success", true, "data", details));
             }
         }
-        // 2. MongoDB persistent cache — survives restarts, shared across pods
+        // 2. database persistent cache — survives restarts, shared across pods
         if (!hasDraft && classDetailCacheService != null) {
             var cached = classDetailCacheService.getDetails(projectId, classIri);
             if (cached.isPresent()) {
@@ -794,7 +794,7 @@ public class OntologyQueryController {
                 if (ctx != null) return ResponseEntity.status(499).build();
             }
         } catch (Exception ignored) {}
-        // 3. SPARQL fallback — store result in MongoDB for next request
+        // 3. SPARQL fallback — store result in the database for next request
         Map<String, Object> details = queryService.classDetails(projectId, classIri);
         if (!hasDraft && classDetailCacheService != null && !details.isEmpty()) {
             classDetailCacheService.putDetails(projectId, classIri, details);
@@ -819,14 +819,14 @@ public class OntologyQueryController {
             return ResponseEntity.ok(Map.of("success", true, "data",
                     desktopHierarchyService.classAnnotations(projectId, classIri)));
         }
-        // 2. MongoDB — annotations extracted from stored classDetails document
+        // 2. database — annotations extracted from stored classDetails document
         if (!annHasDraft && classDetailCacheService != null) {
             var cached = classDetailCacheService.getAnnotations(projectId, classIri);
             if (cached.isPresent()) {
                 return ResponseEntity.ok(Map.of("success", true, "data", cached.get()));
             }
         }
-        // 3. SPARQL fallback — store as partial doc so subsequent annotation requests hit MongoDB
+        // 3. SPARQL fallback — store as partial doc so subsequent annotation requests hit database
         Map<String, Object> annotations = queryService.classAnnotations(projectId, classIri);
         if (!annHasDraft && classDetailCacheService != null && !annotations.isEmpty()) {
             classDetailCacheService.putAnnotationsIfAbsent(projectId, classIri, annotations);

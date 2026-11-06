@@ -32,7 +32,7 @@ public class JdbcSwrlRuleRepository implements SwrlRuleRepository {
 
     @Override
     public List<SwrlRuleEntity> findByProjectIdOrderByCreatedAtDesc(String projectId) {
-        return EditorSql.query(jdbc, "select * from swrl_rule where project_id = ? order by created_at desc, id desc",
+        return EditorSql.query(jdbc, "select * from swrl_rule where project_id = ? order by created_at desc nulls last, id desc",
                 MAPPER, projectId);
     }
 

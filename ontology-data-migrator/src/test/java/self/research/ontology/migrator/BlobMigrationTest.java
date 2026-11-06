@@ -167,6 +167,21 @@ class BlobMigrationTest {
     }
 
     @Test
+    void draftBaselinesAreCopiedUnchangedWithTheirNameAndMetadata() throws Exception {
+        byte[] rdf = "<rdf:RDF/>".getBytes(StandardCharsets.UTF_8);
+        BlobFile baseline = new BlobFile("fs", ID_A, ID_A, "draft-baseline/proj-1/user-9", rdf.length, "application/rdf+xml",
+                Instant.parse("2026-02-01T00:00:00Z"), Map.of("type", "draft-baseline", "projectId", "proj-1", "userId", "user-9"));
+        MemoryBlobSource source = new MemoryBlobSource().add(baseline, rdf);
+        assertEquals(1, new BlobCopier(source, sink, false).copy("fs").copied);
+        StoredFile stored = store.info(ID_A).orElseThrow();
+        assertEquals("draft-baseline/proj-1/user-9", stored.filename());
+        assertEquals("draft-baseline", stored.metadata().get("type"));
+        assertEquals("user-9", stored.metadata().get("userId"));
+        assertEquals(sha256(rdf), stored.sha256());
+        assertEquals(1, store.find("fs", "draft-baseline/proj-1/user-9", Map.of("type", "draft-baseline")).size());
+    }
+
+    @Test
     void bucketsThatDoNotExistAreSimplyEmpty() {
         MigrationReport.BlobStats stats = new BlobCopier(new MemoryBlobSource(), sink, false).copy("desktop-installers");
         assertEquals(0, stats.files);

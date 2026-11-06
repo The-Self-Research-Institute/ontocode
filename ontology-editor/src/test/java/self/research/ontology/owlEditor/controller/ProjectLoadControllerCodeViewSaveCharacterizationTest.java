@@ -17,7 +17,7 @@ import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.OntologyExportJobService;
@@ -69,7 +69,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
     @Mock
     private ProjectImportService importService;
     @Mock
-    private GridFSFileService gridFSFileService;
+    private BlobFileService blobFileService;
     @Mock
     private ProjectShareService shareService;
     @Mock
@@ -126,7 +126,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
                 storageManager,
                 metadataService,
                 importService,
-                gridFSFileService,
+                blobFileService,
                 shareService,
                 draftTrackingService,
                 draftCopyService,

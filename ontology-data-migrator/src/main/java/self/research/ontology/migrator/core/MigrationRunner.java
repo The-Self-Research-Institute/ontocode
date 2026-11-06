@@ -84,6 +84,12 @@ public final class MigrationRunner {
                 skipped++;
                 continue;
             }
+            Skip skip = migration.skipReason(doc);
+            if (skip != null) {
+                stats.recordDropped(new MigrationReport.Dropped(id, skip.rule(), skip.reason()));
+                skipped++;
+                continue;
+            }
             MigrationReport.Dropped loser = plan.loserFor(doc);
             if (loser != null) {
                 stats.recordDropped(loser);

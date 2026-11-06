@@ -12,7 +12,10 @@ public final class TestDb {
             + "plan_feature_config, desktop_download_event, audit_event, plugin, plugin_version, plugin_rating, "
             + "plugin_user_install, swrl_rule, reasoning_job, reasoning_snapshot, ontology_file, project_share, "
             + "user_project_preference, project_public_graph_version, project_write_lease, project_recovery_lock, "
-            + "app_migration, stored_file, file_chunk, migration_checkpoint";
+            + "app_migration, draft_change, draft_change_parked, draft_session, draft_pull_request, draft_pr_change, "
+            + "history_change, ontology_change, rollback_audit, undo_intent, assistant_audit, assistant_apply_operation, "
+            + "datatype_definition, fuzzy_rule, sparql_query, issue_report, spreadsheet_import_record, spreadsheet_rule_set, "
+            + "stored_file, file_chunk, migration_checkpoint";
 
     private TestDb() {
     }

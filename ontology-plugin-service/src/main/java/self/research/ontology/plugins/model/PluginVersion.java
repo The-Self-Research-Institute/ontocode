@@ -20,7 +20,7 @@ public class PluginVersion {
     private String version;  // Semantic version e.g., "1.2.3"
     private String changelog;  // Release notes
 
-    private String vsixFileId;  // GridFS file ID
+    private String vsixFileId;  // file store ID
     private Long fileSize;  // File size in bytes
 
     private Map<String, String> dependencies;  // Plugin dependencies

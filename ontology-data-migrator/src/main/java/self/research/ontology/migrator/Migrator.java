@@ -54,6 +54,7 @@ public final class Migrator {
         BlobCopier copier = new BlobCopier(blobSource, blobSink, options.dryRun);
         Map<String, DedupPlan> plans = new HashMap<>();
         boolean blobsSelected = options.selected("blobs");
+        selectedMigrations().forEach(m -> m.prepare(source));
         if (!options.verifyOnly) {
             if (blobsSelected) {
                 for (String bucket : options.buckets) {
