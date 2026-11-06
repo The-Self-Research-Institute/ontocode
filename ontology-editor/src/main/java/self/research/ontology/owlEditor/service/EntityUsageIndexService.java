@@ -77,7 +77,7 @@ public class EntityUsageIndexService {
             for (Map.Entry<String, List<Map<String, String>>> entry : byEntity.entrySet()) {
                 docs.add(new EntityUsageDocument(projectId, entry.getKey(), revision, entry.getValue()));
             }
-            repo.saveAll(docs);
+            BulkWrites.saveAll(repo, docs);
 
             log.info("[UsageIndex] Built {} entity usage entries for project {} in {}ms",
                     docs.size(), projectId, System.currentTimeMillis() - start);

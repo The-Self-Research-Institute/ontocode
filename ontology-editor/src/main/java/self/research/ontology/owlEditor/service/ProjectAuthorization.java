@@ -72,4 +72,8 @@ public class ProjectAuthorization {
                 ? Optional.empty()
                 : Optional.of(AccessDenial.forbidden("Only the project owner can do this"));
     }
+
+    public boolean isShared(String projectId) {
+        return !desktopMode && accessService.isShared(projectId);
+    }
 }

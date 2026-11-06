@@ -342,7 +342,8 @@ public class DraftController {
         return ResponseEntity.ok(Map.of(
                 "projectId", projectId,
                 "requireDraftForMembers", requireDraft,
-                "isOwner", isOwner
+                "isOwner", isOwner,
+                "shared", authorization.isShared(projectId)
         ));
     }
 
@@ -758,7 +759,7 @@ public class DraftController {
             return;
         }
         prChanges.deleteByPrIdAndSnapshotKey(prId, snapshotKey);
-        prChanges.saveAll(changes.stream()
+        self.research.ontology.owlEditor.service.BulkWrites.saveAll(prChanges, changes.stream()
                 .map(change -> new self.research.ontology.owlEditor.model.DraftPrChange(projectId, prId, snapshotKey, change)).toList());
     }
 

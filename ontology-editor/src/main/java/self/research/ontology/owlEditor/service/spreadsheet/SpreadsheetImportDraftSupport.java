@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service.spreadsheet;
 
+import self.research.ontology.owlEditor.service.BulkWrites;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -57,7 +58,7 @@ public class SpreadsheetImportDraftSupport {
         Query pending = pendingQuery(projectId, userId, sessionId);
         List<DraftChange> changes = mongo.find(pending, DraftChange.class);
         if (!changes.isEmpty()) {
-            mongo.insert(changes, PARKED_COLLECTION);
+            BulkWrites.insert(mongo, changes, PARKED_COLLECTION);
             mongo.remove(pending, DraftChange.class);
         }
         log.info("[SpreadsheetImport] Parked {} pending draft changes of undone import session {}", changes.size(), sessionId);
@@ -76,7 +77,7 @@ public class SpreadsheetImportDraftSupport {
         Query parked = pendingQuery(projectId, userId, sessionId);
         List<DraftChange> changes = mongo.find(parked, DraftChange.class, PARKED_COLLECTION);
         if (!changes.isEmpty()) {
-            mongo.insert(changes, DraftChange.class);
+            BulkWrites.insert(mongo, changes, DraftChange.class);
             mongo.remove(parked, DraftChange.class, PARKED_COLLECTION);
         }
         log.info("[SpreadsheetImport] Restored {} draft changes of redone import session {}", changes.size(), sessionId);

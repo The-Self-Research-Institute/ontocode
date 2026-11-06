@@ -24,9 +24,11 @@ import org.semanticweb.owlapi.model.SWRLSameIndividualAtom;
 import org.semanticweb.owlapi.model.SWRLVariable;
 import org.semanticweb.owlapi.model.SWRLBuiltInAtom;
 import org.semanticweb.owlapi.model.SWRLRule;
+import org.swrlapi.core.SWRLAPIOWLOntology;
 import org.swrlapi.core.SWRLAPIRule;
 import org.swrlapi.core.SWRLRuleEngine;
 import org.swrlapi.core.SWRLRuleRenderer;
+import org.swrlapi.factory.SWRLAPIInternalFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -272,6 +274,17 @@ public final class OntologyRules {
         SWRLRuleRenderer renderer = engine.createSWRLRuleRenderer();
         Map<String, String> byName = new HashMap<>();
         for (SWRLAPIRule rule : engine.getSWRLRules()) {
+            byName.put(rule.getRuleName(), renderer.renderSWRLRule(rule));
+        }
+        for (Entry entry : entries) {
+            entry.ruleText = byName.get(entry.engineName());
+        }
+    }
+
+    public static void fillTexts(SWRLAPIOWLOntology swrlOntology, OWLOntology ontology, List<Entry> entries) {
+        SWRLRuleRenderer renderer = SWRLAPIInternalFactory.createSWRLRuleRenderer(ontology, swrlOntology.getIRIResolver());
+        Map<String, String> byName = new HashMap<>();
+        for (SWRLAPIRule rule : swrlOntology.getSWRLRules()) {
             byName.put(rule.getRuleName(), renderer.renderSWRLRule(rule));
         }
         for (Entry entry : entries) {

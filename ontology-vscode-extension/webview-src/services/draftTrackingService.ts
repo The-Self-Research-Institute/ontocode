@@ -115,12 +115,14 @@ export const draftTrackingService = {
   async getDraftSettings(projectId: string, userId: string): Promise<{
     requireDraftForMembers: boolean;
     isOwner: boolean;
+    shared: boolean;
   }> {
     const response = await apiClient.get(`/api/ontology/${projectId}/draft/settings`, { userId });
     const data = response.data || response;
     return {
       requireDraftForMembers: Boolean(data.requireDraftForMembers),
       isOwner: Boolean(data.isOwner),
+      shared: Boolean(data.shared),
     };
   },
 

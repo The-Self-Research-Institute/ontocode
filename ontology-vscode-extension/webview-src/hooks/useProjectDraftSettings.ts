@@ -9,6 +9,7 @@ export interface ProjectDraftSettings {
 export function useProjectDraftSettings(projectId: string | null | undefined) {
   const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
   const [isProjectOwner, setIsProjectOwner] = useState(false);
+  const [isProjectShared, setIsProjectShared] = useState(false);
   const projectIdRef = useRef(projectId);
   const requestTokenRef = useRef(0);
   projectIdRef.current = projectId;
@@ -17,6 +18,7 @@ export function useProjectDraftSettings(projectId: string | null | undefined) {
     requestTokenRef.current += 1;
     setRequireDraftForMembers(false);
     setIsProjectOwner(false);
+    setIsProjectShared(false);
   }, []);
 
   useEffect(() => {
@@ -29,6 +31,7 @@ export function useProjectDraftSettings(projectId: string | null | undefined) {
       const token = requestTokenRef.current;
       setRequireDraftForMembers(false);
       setIsProjectOwner(false);
+      setIsProjectShared(false);
       const isCurrent = () =>
         requestTokenRef.current === token && projectIdRef.current === targetProjectId;
       try {
@@ -36,11 +39,13 @@ export function useProjectDraftSettings(projectId: string | null | undefined) {
         if (!isCurrent()) return null;
         setRequireDraftForMembers(settings.requireDraftForMembers);
         setIsProjectOwner(settings.isOwner === true);
+        setIsProjectShared(settings.shared === true);
         return settings;
       } catch {
         if (isCurrent()) {
           setRequireDraftForMembers(false);
           setIsProjectOwner(false);
+          setIsProjectShared(false);
         }
         return null;
       }
@@ -51,6 +56,7 @@ export function useProjectDraftSettings(projectId: string | null | undefined) {
   return {
     requireDraftForMembers,
     isProjectOwner,
+    isProjectShared,
     setRequireDraftForMembers,
     loadDraftSettings: load,
     resetDraftSettings: reset,

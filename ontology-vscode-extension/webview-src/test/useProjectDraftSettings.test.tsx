@@ -26,8 +26,21 @@ beforeEach(() => {
 });
 
 describe("useProjectDraftSettings", () => {
+  it("reports a shared project from the same response as the owner flag", async () => {
+    getSettings.mockResolvedValue({ requireDraftForMembers: false, isOwner: true, shared: true });
+    const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
+    expect(h.result.current.isProjectShared).toBe(false);
+    await act(async () => {
+      await h.result.current.loadDraftSettings("A", "u1");
+    });
+    expect(h.result.current.isProjectShared).toBe(true);
+    h.rerender({ id: "B" });
+    expect(h.result.current.isProjectShared).toBe(false);
+    h.unmount();
+  });
+
   it("sets the owner flag from the server for the current project", async () => {
-    getSettings.mockResolvedValue({ requireDraftForMembers: true, isOwner: true });
+    getSettings.mockResolvedValue({ requireDraftForMembers: true, isOwner: true, shared: false });
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     await act(async () => {
       await h.result.current.loadDraftSettings("A", "u1");
@@ -38,7 +51,7 @@ describe("useProjectDraftSettings", () => {
   });
 
   it("clears the flags when switching to a project where the request fails", async () => {
-    getSettings.mockResolvedValueOnce({ requireDraftForMembers: true, isOwner: true });
+    getSettings.mockResolvedValueOnce({ requireDraftForMembers: true, isOwner: true, shared: false });
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     await act(async () => {
       await h.result.current.loadDraftSettings("A", "u1");
@@ -56,13 +69,13 @@ describe("useProjectDraftSettings", () => {
   });
 
   it("clears the flags when the new project returns isOwner false", async () => {
-    getSettings.mockResolvedValueOnce({ requireDraftForMembers: false, isOwner: true });
+    getSettings.mockResolvedValueOnce({ requireDraftForMembers: false, isOwner: true, shared: false });
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     await act(async () => {
       await h.result.current.loadDraftSettings("A", "u1");
     });
     h.rerender({ id: "B" });
-    getSettings.mockResolvedValueOnce({ requireDraftForMembers: true, isOwner: false });
+    getSettings.mockResolvedValueOnce({ requireDraftForMembers: true, isOwner: false, shared: false });
     await act(async () => {
       await h.result.current.loadDraftSettings("B", "u1");
     });
@@ -80,12 +93,12 @@ describe("useProjectDraftSettings", () => {
       pending = h.result.current.loadDraftSettings("A", "u1");
     });
     h.rerender({ id: "B" });
-    getSettings.mockResolvedValueOnce({ requireDraftForMembers: false, isOwner: false });
+    getSettings.mockResolvedValueOnce({ requireDraftForMembers: false, isOwner: false, shared: false });
     await act(async () => {
       await h.result.current.loadDraftSettings("B", "u1");
     });
     await act(async () => {
-      late.resolve({ requireDraftForMembers: true, isOwner: true });
+      late.resolve({ requireDraftForMembers: true, isOwner: true, shared: false });
       await pending;
     });
     await flush();
@@ -105,7 +118,7 @@ describe("useProjectDraftSettings", () => {
     });
     h.rerender({ id: "B" });
     await act(async () => {
-      late.resolve({ requireDraftForMembers: true, isOwner: true });
+      late.resolve({ requireDraftForMembers: true, isOwner: true, shared: false });
       await pending;
     });
     expect(h.result.current.isProjectOwner).toBe(false);
@@ -135,7 +148,7 @@ describe("useProjectDraftSettings", () => {
     });
     act(() => h.result.current.resetDraftSettings());
     await act(async () => {
-      pendingReq.resolve({ requireDraftForMembers: true, isOwner: true });
+      pendingReq.resolve({ requireDraftForMembers: true, isOwner: true, shared: false });
       await pending;
     });
     expect(h.result.current.isProjectOwner).toBe(false);

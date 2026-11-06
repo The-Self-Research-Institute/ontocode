@@ -466,7 +466,7 @@ app.whenReady().then(async () => {
                 sendSplashLog('warn', 'This system has no secure key storage, so the generated login secrets are kept in a file only you can read');
             }
             await svcMgr.startAll();
-            await proxy.start(svcMgr.DESKTOP_PORT, svcMgr.SWRL_PORT);
+            await proxy.start(svcMgr.DESKTOP_PORT, svcMgr.SWRL_PORT, svcMgr.PROXY_PORT);
             sendSplashLog('ok', `Routing proxy ready on port ${proxy.PROXY_PORT}`);
         } catch (err) {
             if (startupCancelled) {

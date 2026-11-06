@@ -83,12 +83,14 @@ const DEFAULT_PORTS = {
     desktop: 18083,
     swrl:    18084,
     proxy:   18085,
+    proxy:   18085,
 };
 
 let MONGO_PORT   = DEFAULT_PORTS.mongo;
 let FUSEKI_PORT  = DEFAULT_PORTS.fuseki;
 let DESKTOP_PORT = DEFAULT_PORTS.desktop;
 let SWRL_PORT    = DEFAULT_PORTS.swrl;
+let PROXY_PORT   = DEFAULT_PORTS.proxy;
 
 let mongoProcess   = null;
 
@@ -144,7 +146,8 @@ async function resolveAllPorts() {
     FUSEKI_PORT  = await findFreePort(DEFAULT_PORTS.fuseki,  'Fuseki');
     DESKTOP_PORT = await findFreePort(DEFAULT_PORTS.desktop, 'Desktop');
     SWRL_PORT    = await findFreePort(DEFAULT_PORTS.swrl,    'SWRL');
-    log('info', `Ports → MongoDB:${MONGO_PORT}  Fuseki:${FUSEKI_PORT}  Desktop:${DESKTOP_PORT}  SWRL:${SWRL_PORT}`);
+    PROXY_PORT   = await findFreePort(DEFAULT_PORTS.proxy,   'Routing proxy');
+    log('info', `Ports → MongoDB:${MONGO_PORT}  Fuseki:${FUSEKI_PORT}  Desktop:${DESKTOP_PORT}  SWRL:${SWRL_PORT}  Proxy:${PROXY_PORT}`);
 }
 
 const DESKTOP_LAUNCH_KEY = crypto.randomBytes(32).toString('hex');
@@ -169,6 +172,7 @@ module.exports = {
     get FUSEKI_PORT()  { return FUSEKI_PORT; },
     get DESKTOP_PORT() { return DESKTOP_PORT; },
     get SWRL_PORT()    { return SWRL_PORT; },
+    get PROXY_PORT()   { return PROXY_PORT; },
     get EDITOR_PORT()  { return DESKTOP_PORT; },
     get AUTH_PORT()    { return DESKTOP_PORT; },
 
@@ -980,6 +984,7 @@ async function startDesktop() {
         `--auth.service.url=http://127.0.0.1:${DESKTOP_PORT}`,
 
         `--ontology.editor.url=http://127.0.0.1:${DESKTOP_PORT}`,
+        `--ontocode.swrl.service.url=http://127.0.0.1:${PROXY_PORT}`,
 
         `--app.base-url=http://127.0.0.1:${DESKTOP_PORT}`,
 
