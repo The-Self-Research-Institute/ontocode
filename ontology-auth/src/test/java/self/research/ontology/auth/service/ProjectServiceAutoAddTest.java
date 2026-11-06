@@ -2,8 +2,8 @@ package self.research.ontology.auth.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import self.research.ontology.auth.repository.ProjectDataPurgeRepository;
+import self.research.ontology.common.db.BlobStore;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.FileMetadataRepository;
@@ -33,8 +33,8 @@ class ProjectServiceAutoAddTest {
     void setUp() {
         projects = mock(ProjectRepository.class);
         service = new ProjectService(projects, mock(WorkspaceRepository.class), mock(UserRepository.class),
-                mock(SystemSettingsService.class), mock(FileMetadataRepository.class), mock(MongoTemplate.class),
-                mock(GridFsTemplate.class));
+                mock(SystemSettingsService.class), mock(FileMetadataRepository.class), mock(ProjectDataPurgeRepository.class),
+                mock(BlobStore.class));
         workspace = new Workspace();
         workspace.setWorkspaceId("w1");
         workspace.setOwnerId("u-owner");

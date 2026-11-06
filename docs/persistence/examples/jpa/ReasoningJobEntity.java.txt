@@ -1,0 +1,56 @@
+package self.research.ontology.reasoner.repository.jpa;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+import java.time.Instant;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@Entity
+@Table(name = "reasoning_job")
+public class ReasoningJobEntity {
+
+    @Id
+    @Column(name = "job_id")
+    private String jobId;
+
+    @Column(name = "job_type")
+    private String jobType;
+
+    @Column(name = "project_id")
+    private String projectId;
+
+    @Column(name = "status", nullable = false)
+    private String status;
+
+    @Column(name = "queued_at")
+    private Instant queuedAt;
+
+    @Column(name = "started_at")
+    private Instant startedAt;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    @Column(name = "execution_time_ms", nullable = false)
+    private long executionTimeMs;
+
+    @Column(name = "error")
+    private String error;
+
+    @Column(name = "result_json")
+    private String resultJson;
+
+    @Column(name = "result_too_large", nullable = false)
+    private boolean resultTooLarge;
+}

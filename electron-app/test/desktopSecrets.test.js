@@ -115,3 +115,26 @@ test('no fixed secret or password is left in the desktop launcher or properties'
     assert.ok(!/^jwt\.secret=/m.test(properties));
     assert.ok(!/^app\.admin\.password=/m.test(properties));
 });
+
+test('the database password is generated with the other secrets and stays the same on later launches', () => {
+    const store = memoryStore();
+    const safeStorage = fakeSafeStorage();
+    const first = loadDesktopSecrets({ store, safeStorage, platform: 'win32', env: {} });
+    assert.ok(first.dbPassword.length >= 24);
+    assert.match(first.dbPassword, /^[A-Za-z0-9_-]+$/);
+    const second = loadDesktopSecrets({ store, safeStorage, platform: 'win32', env: {} });
+    assert.equal(second.dbPassword, first.dbPassword);
+});
+
+test('an install that already has secrets but no database password gets one without losing the others', () => {
+    const store = memoryStore();
+    const safeStorage = fakeSafeStorage();
+    const old = { jwtSecret: 'a'.repeat(44), adminPassword: 'b'.repeat(24) };
+    store.set('desktopSecretsSealed', safeStorage.encryptString(JSON.stringify(old)).toString('base64'));
+    const result = loadDesktopSecrets({ store, safeStorage, platform: 'win32', env: {} });
+    assert.equal(result.jwtSecret, old.jwtSecret);
+    assert.equal(result.adminPassword, old.adminPassword);
+    assert.ok(result.dbPassword.length >= 24);
+    const again = loadDesktopSecrets({ store, safeStorage, platform: 'win32', env: {} });
+    assert.equal(again.dbPassword, result.dbPassword);
+});

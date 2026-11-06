@@ -1,20 +1,17 @@
 package self.research.ontology.auth.service;
 
-import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import self.research.ontology.auth.model.FileMetadata;
 import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.FileMetadataRepository;
+import self.research.ontology.auth.repository.ProjectDataPurgeRepository;
 import self.research.ontology.auth.repository.ProjectRepository;
+import self.research.ontology.common.db.BlobStore;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.model.User;
@@ -32,20 +29,13 @@ public class ProjectService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
 
-    /** Mirrors PROJECT_SCOPED_COLLECTIONS in scripts/delete-user-complete.js */
-    private static final List<String> PROJECT_SCOPED_COLLECTIONS = List.of(
-        "ontology_annotation_properties", "ontology_axioms", "ontology_classes", "ontology_datatypes",
-        "ontology_individuals", "ontology_properties", "ontology_search_index", "ontologies",
-        "sparql_queries", "swrl_rules", "datatype_definitions"
-    );
-
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
     private final UserRepository userRepository;
     private final SystemSettingsService systemSettingsService;
     private final FileMetadataRepository fileMetadataRepository;
-    private final MongoTemplate mongoTemplate;
-    private final GridFsTemplate gridFsTemplate;
+    private final ProjectDataPurgeRepository projectDataPurge;
+    private final BlobStore blobStore;
     private final RestTemplate restTemplate = new RestTemplate();
 
     @Value("${ONTOLOGY_EDITOR_URL:http://localhost:8083}")
@@ -53,15 +43,15 @@ public class ProjectService {
 
     public ProjectService(ProjectRepository projectRepository, WorkspaceRepository workspaceRepository,
                            UserRepository userRepository, SystemSettingsService systemSettingsService,
-                           FileMetadataRepository fileMetadataRepository, MongoTemplate mongoTemplate,
-                           GridFsTemplate gridFsTemplate) {
+                           FileMetadataRepository fileMetadataRepository,
+                           ProjectDataPurgeRepository projectDataPurge, BlobStore blobStore) {
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.systemSettingsService = systemSettingsService;
         this.fileMetadataRepository = fileMetadataRepository;
-        this.mongoTemplate = mongoTemplate;
-        this.gridFsTemplate = gridFsTemplate;
+        this.projectDataPurge = projectDataPurge;
+        this.blobStore = blobStore;
     }
 
     public void hardDeleteProjectCompletely(String projectId, String userId) {
@@ -89,25 +79,20 @@ public class ProjectService {
         clearFusekiGraphsForProject(project);
 
         List<FileMetadata> files = fileMetadataRepository.findByProjectId(projectId);
-        List<ObjectId> gridFsIds = files.stream()
-                .map(FileMetadata::getGridfsId)
-                .filter(id -> id != null && ObjectId.isValid(id))
-                .map(ObjectId::new)
-                .collect(Collectors.toList());
-        if (!gridFsIds.isEmpty()) {
-            gridFsTemplate.delete(Query.query(Criteria.where("_id").in(gridFsIds)));
-        }
+        files.stream()
+                .map(FileMetadata::getBlobId)
+                .filter(id -> id != null && !id.isBlank())
+                .forEach(id -> {
+                    try {
+                        blobStore.delete(id);
+                    } catch (Exception e) {
+                        log.warn("Could not delete stored file {} while purging project {}: {}", id, projectId,
+                                e.getMessage());
+                    }
+                });
         fileMetadataRepository.deleteAll(files);
 
-        for (String collection : PROJECT_SCOPED_COLLECTIONS) {
-            mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), collection);
-        }
-        mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), "draft_pull_requests");
-        mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), "project_shares");
-        mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), "issue_reports");
-        for (String collection : List.of("ontology_changes", "history_changes", "draft_changes", "draft_sessions")) {
-            mongoTemplate.remove(Query.query(Criteria.where("projectId").is(projectId)), collection);
-        }
+        projectDataPurge.purgeEditorData(projectId);
 
         projectRepository.delete(project);
     }
@@ -379,9 +364,9 @@ public class ProjectService {
             project = projects.get(0);
         } else {
             // Desktop-created projects are written by ontology-editor's ProjectMetadataService
-            // keyed only by Mongo _id (via upsert-by-_id), never populating the separate
+            // keyed only by the row id, never populating the separate
             // `projectId`/`workspaceId` fields this repository query filters on — so the query
-            // above never finds them. Fall back to a direct _id lookup and self-heal the missing
+            // above never finds them. Fall back to a direct id lookup and self-heal the missing
             // fields so subsequent lookups succeed via the normal path without this fallback.
             Optional<Project> byId = projectRepository.findById(projectId);
             if (byId.isEmpty() || Boolean.TRUE.equals(byId.get().getIsDeleted())) {

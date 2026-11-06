@@ -1,19 +1,16 @@
 package self.research.ontology.auth.service;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
 import jakarta.servlet.http.HttpServletRequest;
-import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.DesktopDownloadEvent;
 import self.research.ontology.auth.repository.DesktopDownloadEventRepository;
+import self.research.ontology.common.db.BlobStore;
+import self.research.ontology.common.db.StoredFile;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -41,29 +38,55 @@ public class DesktopDownloadService {
     private String updateBaseUrl;
 
     @Autowired
-    private GridFsTemplate gridFsTemplate;
+    private BlobStore blobStore;
 
     @Autowired
     private DesktopDownloadEventRepository eventRepository;
 
-    public GridFSFile findInstaller(String platform) {
-        return gridFsTemplate.findOne(
-            new Query(Criteria.where("metadata.platform").is(platform)
-                              .and("metadata.bucket").is(BUCKET))
-        );
+    public StoredFile findInstaller(String platform) {
+        return blobStore.findLatest(BUCKET, null, Map.of("platform", platform)).orElse(null);
+    }
+
+    public java.util.List<StoredFile> listInstallers() {
+        return blobStore.recent(BUCKET, 500);
+    }
+
+    public java.io.InputStream openInstaller(StoredFile file) {
+        return blobStore.open(file.id());
+    }
+
+    public StoredFile replaceInstaller(String platform, String filename, String contentType,
+                                       Map<String, Object> metadata, java.io.InputStream content) {
+        java.util.List<StoredFile> previous = blobStore.find(BUCKET, null, Map.of("platform", platform));
+        StoredFile stored = blobStore.store(BUCKET, filename, contentType, metadata, content);
+        for (StoredFile old : previous) {
+            if (!old.id().equals(stored.id())) {
+                try {
+                    blobStore.delete(old.id());
+                } catch (Exception e) {
+                    log.warn("[DesktopDownload] Could not remove the previous installer {} for {}: {}", old.id(),
+                            platform, e.getMessage());
+                }
+            }
+        }
+        return stored;
+    }
+
+    public void deleteInstallers(String platform) {
+        blobStore.deleteWhere(BUCKET, null, Map.of("platform", platform));
     }
 
     public Map<String, Object> buildPublicInfo() {
         Map<String, Object> latest = new LinkedHashMap<>();
         java.util.List<String> availablePlatforms = new java.util.ArrayList<>();
         for (String platform : KNOWN_PLATFORMS) {
-            GridFSFile file = findInstaller(platform);
+            StoredFile file = findInstaller(platform);
             if (file == null) continue;
-            Document meta = file.getMetadata();
+            Map<String, Object> meta = file.metadata();
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("version", metaString(meta, "version", "1.0.0"));
-            entry.put("filename", file.getFilename());
-            entry.put("size", file.getLength());
+            entry.put("filename", file.filename());
+            entry.put("size", file.length());
             entry.put("releaseNotes", metaString(meta, "releaseNotes", ""));
             entry.put("publishedAt", metaString(meta, "publishedAt", ""));
             entry.put("downloadUrl", "/api/downloads/" + platform);
@@ -90,14 +113,14 @@ public class DesktopDownloadService {
         if (!"win".equalsIgnoreCase(channel) && !"windows".equalsIgnoreCase(channel)) {
             return null;
         }
-        GridFSFile file = findInstaller(WINDOWS_PLATFORM);
+        StoredFile file = findInstaller(WINDOWS_PLATFORM);
         if (file == null) return null;
 
-        Document meta = file.getMetadata();
+        Map<String, Object> meta = file.metadata();
         String version = metaString(meta, "version", "1.0.0");
         String sha512 = metaString(meta, "sha512", "");
-        String filename = file.getFilename();
-        long size = file.getLength();
+        String filename = file.filename();
+        long size = file.length();
         String releaseDate = metaString(meta, "publishedAt", Instant.now().toString());
         if (!releaseDate.endsWith("Z") && !releaseDate.contains("+")) {
             releaseDate = Instant.parse(releaseDate).atOffset(ZoneOffset.UTC)
@@ -125,7 +148,7 @@ public class DesktopDownloadService {
 
     @Async
     public void recordEvent(String platform, String eventType, HttpServletRequest request,
-                            GridFSFile file, String clientOsHint) {
+                            StoredFile file, String clientOsHint) {
         try {
             DesktopDownloadEvent event = new DesktopDownloadEvent();
             event.setPlatform(platform);
@@ -135,8 +158,8 @@ public class DesktopDownloadService {
             event.setUserAgent(truncate(request.getHeader("User-Agent"), 512));
             event.setReferer(truncate(request.getHeader("Referer"), 512));
             if (file != null) {
-                event.setFilename(file.getFilename());
-                Document meta = file.getMetadata();
+                event.setFilename(file.filename());
+                Map<String, Object> meta = file.metadata();
                 if (meta != null) {
                     event.setVersion(metaString(meta, "version", null));
                 }
@@ -200,7 +223,7 @@ public class DesktopDownloadService {
         return "unknown";
     }
 
-    private static String metaString(Document meta, String key, String fallback) {
+    private static String metaString(Map<String, Object> meta, String key, String fallback) {
         if (meta == null) return fallback;
         Object val = meta.get(key);
         return val != null ? String.valueOf(val) : fallback;

@@ -29,24 +29,19 @@ spec:
         - containerPort: 8087
           name: http
         env:
-        - name: SPRING_DATA_MONGODB_HOST
-          value: mongodb-service
-        - name: SPRING_DATA_MONGODB_PORT
-          value: "27017"
-        - name: SPRING_DATA_MONGODB_DATABASE
-          value: ontology
-        - name: SPRING_DATA_MONGODB_AUTHENTICATION_DATABASE
-          value: admin
-        - name: SPRING_DATA_MONGODB_USERNAME
+        - name: ONTOCODE_DB_URL
+          value: "jdbc:postgresql://postgres:5432/ontocode?socketTimeout=10&connectTimeout=3"
+        - name: ONTOCODE_DB_USER
+          value: ontocode
+        - name: ONTOCODE_DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mongodb-credentials
-              key: username
-        - name: SPRING_DATA_MONGODB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: mongodb-credentials
+              name: postgres-credentials
               key: password
+        - name: ONTOCODE_BLOBS_DIR
+          value: /data/blobs
+        - name: ONTOCODE_DB_POOL_MAX
+          value: "5"
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
@@ -82,10 +77,17 @@ spec:
         volumeMounts:
         - name: plugin-storage
           mountPath: /app/storage
+        - name: ontocode-blobs
+          mountPath: /data/blobs
+      securityContext:
+        fsGroup: 1000
       volumes:
       - name: plugin-storage
         persistentVolumeClaim:
           claimName: plugin-storage-pvc
+      - name: ontocode-blobs
+        persistentVolumeClaim:
+          claimName: ontocode-blobs-pvc
 ---
 apiVersion: v1
 kind: Service

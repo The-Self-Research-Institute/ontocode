@@ -1,22 +1,16 @@
 package self.research.ontology.auth.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 import jakarta.validation.constraints.NotBlank;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
-@Document(collection = "workspaces")
 public class Workspace {
 
-    @Id
     private String id;
 
     @NotBlank(message = "Workspace ID is required")
-    @Indexed(unique = true)
     private String workspaceId;
 
     @NotBlank(message = "Owner ID is required")

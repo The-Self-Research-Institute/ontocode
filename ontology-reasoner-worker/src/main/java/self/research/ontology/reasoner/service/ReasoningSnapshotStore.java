@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionOperations;
 import self.research.ontology.reasoner.model.ReasoningSnapshotRecord;
 import self.research.ontology.reasoner.repository.ReasoningSnapshotRecordRepository;
 
@@ -35,18 +36,27 @@ public class ReasoningSnapshotStore {
     private final long retentionHours;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ThreadPoolExecutor writer;
+    private final TransactionOperations transactions;
     private volatile long unavailableUntil;
     private volatile boolean outageLogged;
 
     @Autowired
     public ReasoningSnapshotStore(ObjectProvider<ReasoningSnapshotRecordRepository> repository,
+                                  ObjectProvider<TransactionOperations> transactions,
                                   @Value("${ontocode.reasoning.job-record-max-result-bytes:1000000}") int maxResultBytes,
                                   @Value("${ontocode.reasoning.job-record-retention-hours:72}") long retentionHours) {
-        this(repository.getIfAvailable(), maxResultBytes, retentionHours);
+        this(repository.getIfAvailable(), transactions.getIfAvailable(TransactionOperations::withoutTransaction),
+                maxResultBytes, retentionHours);
     }
 
     ReasoningSnapshotStore(ReasoningSnapshotRecordRepository repository, int maxResultBytes, long retentionHours) {
+        this(repository, TransactionOperations.withoutTransaction(), maxResultBytes, retentionHours);
+    }
+
+    ReasoningSnapshotStore(ReasoningSnapshotRecordRepository repository, TransactionOperations transactions,
+                           int maxResultBytes, long retentionHours) {
         this.repository = repository;
+        this.transactions = transactions;
         this.maxResultBytes = maxResultBytes;
         this.retentionHours = retentionHours;
         this.writer = repository == null ? null : new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
@@ -168,8 +178,11 @@ public class ReasoningSnapshotStore {
             return;
         }
         try {
-            repository.save(record.get());
-            repository.deleteByProjectIdAndRevisionLessThan(projectId, revision);
+            ReasoningSnapshotRecord toSave = record.get();
+            transactions.executeWithoutResult(status -> {
+                repository.save(toSave);
+                repository.deleteByProjectIdAndRevisionLessThan(projectId, revision);
+            });
             markAvailable();
         } catch (Exception e) {
             markUnavailable("save the " + reasoner + " snapshot of project " + projectId, e);
@@ -212,7 +225,7 @@ public class ReasoningSnapshotStore {
         unavailableUntil = System.currentTimeMillis() + OUTAGE_BACKOFF_MS;
         if (!outageLogged) {
             outageLogged = true;
-            log.warn("[SnapshotStore] Could not {} in MongoDB — keeping snapshots in memory only for now: {}",
+            log.warn("[SnapshotStore] Could not {} in the database — keeping snapshots in memory only for now: {}",
                     action, e.getMessage());
         }
     }

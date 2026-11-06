@@ -2,7 +2,6 @@ package self.research.ontology.owlEditor.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
@@ -26,7 +25,7 @@ class HistorySyncProjectBindingTest {
     @BeforeEach
     void setUp() {
         repository = mock(HistoryChangeRepository.class);
-        sync = new HistorySyncService(repository, mock(MongoTemplate.class), mock(OntologyHistoryService.class));
+        sync = new HistorySyncService(repository, mock(OntologyHistoryService.class));
         change = new HistoryChange();
         change.setId("c1");
         change.setProjectId("proj-victim");

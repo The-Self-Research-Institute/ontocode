@@ -42,8 +42,19 @@ public class PlanFeatureConfigService {
         this.repo = repo;
     }
 
+    private final java.util.concurrent.atomic.AtomicBoolean seeded = new java.util.concurrent.atomic.AtomicBoolean();
+
     @PostConstruct
     public void seedDefaults() {
+        try {
+            seedDefaultsNow();
+            seeded.set(true);
+        } catch (org.springframework.dao.DataAccessException e) {
+            log.warn("Plan configuration was not seeded because the database is not reachable: {}", e.getMessage());
+        }
+    }
+
+    private void seedDefaultsNow() {
         upsertConfig("FREE", 0, 0, defaultFreeMaxMembers,
             List.of(
                 "Up to 3 workspaces",
@@ -104,6 +115,9 @@ public class PlanFeatureConfigService {
     }
 
     public Map<String, PlanFeatureConfig> getAllByPlanId() {
+        if (!seeded.get()) {
+            seedDefaults();
+        }
         return repo.findAll().stream()
             .collect(Collectors.toMap(PlanFeatureConfig::getPlanId, c -> c));
     }

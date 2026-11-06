@@ -1,27 +1,16 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
-import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Audit trail entry for a rollback action — either a whole-entry (primary)
- * rollback or a granular rollback of a single sub-change.
- */
-@Document(collection = "rollback_audit")
 public class RollbackAudit {
 
-    @Id
     private String id;
 
-    @Indexed
     private String projectId;
 
-    @Indexed
     private String historyChangeId;
 
     // Null when this audit entry is for the primary/whole-entry rollback.
@@ -42,12 +31,15 @@ public class RollbackAudit {
     // Only populated on a primary-rollback audit doc: ids of sub-changes cascaded through.
     private List<String> cascadedSubChangeIds = new ArrayList<>();
 
-    @Indexed
     private String changeSetId;
     private String direction = "UNDO";
     private List<String> changeIds = new ArrayList<>();
     private int skippedCount;
     private List<DraftChange> draftRecords = new ArrayList<>();
+    private String format = "json";
+
+    public String getFormat() { return format; }
+    public void setFormat(String format) { this.format = format == null ? "json" : format; }
 
     public List<DraftChange> getDraftRecords() { return draftRecords; }
     public void setDraftRecords(List<DraftChange> draftRecords) { this.draftRecords = draftRecords != null ? draftRecords : new ArrayList<>(); }

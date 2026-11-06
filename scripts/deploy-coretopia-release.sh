@@ -183,6 +183,15 @@ echo "[progress] deploying commit ${DEPLOY_START_SHA:-unknown} on branch ${DEPLO
 echo "[progress] logs: $LOG_DIR"
 declare -A BRANCH_PID
 
+require_remote_postgres_password() {
+  local m="$1"
+  shift
+  if ! ssh "$@" "${HOST[$m]}" "cd '${DIR[$m]}' && grep -Eq '^POSTGRES_PASSWORD=.+' .env"; then
+    echo "ERROR: POSTGRES_PASSWORD is not set in ${DIR[$m]}/.env on ${HOST[$m]}. Add it (openssl rand -base64 24) before deploying." >&2
+    return 1
+  fi
+}
+
 branch_web() {
   local m="$1"
   echo "[progress][$m-web] $(date '+%H:%M:%S') START image build+push"
@@ -201,6 +210,7 @@ branch_web() {
     ssh_opts+=(-i "${SSHKEY[$m]}")
   fi
   echo "[progress][$m-web] SSH → ${HOST[$m]} (${DIR[$m]})"
+  require_remote_postgres_password "$m" "${ssh_opts[@]}" || return 1
   ssh "${ssh_opts[@]}" "${HOST[$m]}" "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}up -d --pull always && docker compose ${CFLAGS[$m]}ps" || return 1
   echo "[progress][$m-web] $(date '+%H:%M:%S') DONE deploy"
 }
@@ -280,6 +290,7 @@ branch_web_remote_build() {
   fi
 
   echo "[progress][$m-web] $(date '+%H:%M:%S') rsync OK — building + starting on remote: ${compose_services[*]}"
+  require_remote_postgres_password "$m" "${ssh_opts[@]}" || return 1
   ssh "${ssh_opts[@]}" "${HOST[$m]}" \
     "cd '${DIR[$m]}' && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml build ${compose_services[*]} && DOCKER_REGISTRY=${REG[$m]} VERSION=${VER[$m]} docker compose ${CFLAGS[$m]}-f docker-compose.remote-build.yml up -d ${compose_services[*]} && docker compose ${CFLAGS[$m]}ps" || return 1
   echo "[progress][$m-web] $(date '+%H:%M:%S') DONE remote build+deploy"

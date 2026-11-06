@@ -1,21 +1,23 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.document.UndoIntentDocument;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface UndoIntentRepository extends MongoRepository<UndoIntentDocument, String> {
+public interface UndoIntentRepository {
+
+    UndoIntentDocument save(UndoIntentDocument intent);
+
+    Optional<UndoIntentDocument> findById(String id);
 
     void deleteByProjectId(String projectId);
 
-    List<UndoIntentDocument> findByProjectIdAndStatusIn(String projectId, java.util.Collection<UndoIntentDocument.Status> statuses);
+    List<UndoIntentDocument> findByProjectIdAndStatusIn(String projectId, Collection<UndoIntentDocument.Status> statuses);
 
-    List<UndoIntentDocument> findByStatusIn(java.util.Collection<UndoIntentDocument.Status> statuses);
+    List<UndoIntentDocument> findByStatusIn(Collection<UndoIntentDocument.Status> statuses);
 
     Optional<UndoIntentDocument> findByProjectIdAndOpId(String projectId, String opId);
 

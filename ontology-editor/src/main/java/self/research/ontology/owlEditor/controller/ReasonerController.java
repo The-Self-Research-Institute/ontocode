@@ -1,7 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
 import self.research.ontology.owlEditor.service.Limit;
-import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.Node;
@@ -11,10 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import self.research.ontology.owlEditor.service.BlobResource;
+import self.research.ontology.owlEditor.service.GridFSFileService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.common.rules.DisabledRules;
@@ -72,7 +69,7 @@ public class ReasonerController {
     private long INFERRED_INDIVIDUALS_BUDGET_MS;
 
     @Autowired
-    private GridFsTemplate gridfs;
+    private GridFSFileService gridfs;
 
     @Autowired
     private ReasonerService reasonerService;
@@ -302,20 +299,19 @@ public class ReasonerController {
         }
 
         // Fallback to GridFS
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-        
-        if (file == null) {
+        Optional<BlobResource> found = gridfs.getFileByProjectId(projectId);
+        if (found.isEmpty()) {
             log.warn("File not found with metadata.projectId={}, trying filename", projectId);
-            file = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
+            found = gridfs.getFileByName(projectId + ".owl");
         }
-        
-        if (file == null) {
+
+        if (found.isEmpty()) {
             log.error("Ontology file not found for project: {}", projectId);
             throw new RuntimeException("Ontology file not found for project: " + projectId);
         }
 
-        log.info("Found ontology file: {}", file.getFilename());
-        GridFsResource resource = gridfs.getResource(file);
+        BlobResource resource = found.get();
+        log.info("Found ontology file: {}", resource.getFilename());
         
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
@@ -329,7 +325,7 @@ public class ReasonerController {
             editorReasonerCache.putOntology(projectId, ontology, loadedVersion);
             return ontology;
         } catch (Exception e) {
-            log.error("Error loading ontology from GridFS", e);
+            log.error("Error loading ontology from the file store", e);
             throw e;
         }
     }

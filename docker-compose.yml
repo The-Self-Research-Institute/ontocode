@@ -3,20 +3,20 @@
 # This file is for quick local development and testing
 
 services:
-  # MongoDB Database
-  mongo:
-    image: mongo:6
-    container_name: ontocode-mongo
+  # PostgreSQL Database
+  postgres:
+    image: postgres:17
+    container_name: ontocode-postgres
     restart: unless-stopped
     ports:
-      - "127.0.0.1:27017:27017"
+      - "127.0.0.1:5432:5432"
     volumes:
-      - mongo-data:/data/db
+      - pgdata:/var/lib/postgresql/data
     environment:
-      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-ontocode}
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme123}
-    command: ["mongod", "--wiredTigerCacheSizeGB", "0.3", "--auth"]
+      POSTGRES_DB: ontocode
+      POSTGRES_USER: ontocode
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    command: ["postgres", "-c", "shared_buffers=192MB", "-c", "max_connections=80", "-c", "effective_cache_size=512MB"]
     networks:
       - ontology-net
     deploy:
@@ -24,11 +24,11 @@ services:
         limits:
           memory: 768m
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh "mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@localhost:27017/admin" --quiet
+      test: ["CMD-SHELL", "pg_isready -U ontocode -d ontocode"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 40s
+      start_period: 30s
 
   # Fuseki (Apache Jena Fuseki + TDB2 triple store)
   # Admin UI: http://localhost:3030 (user: admin, password: admin)
@@ -74,7 +74,11 @@ services:
     environment:
       ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
       ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
-      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      ONTOCODE_DB_URL: jdbc:postgresql://postgres:5432/ontocode?socketTimeout=10&connectTimeout=3
+      ONTOCODE_DB_USER: ontocode
+      ONTOCODE_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      ONTOCODE_DB_POOL_MAX: 10
+      ONTOCODE_BLOBS_DIR: /data/blobs
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       BASE_URL: ${BASE_URL:-http://localhost:3000}
       BILLING_REMINDER_ENABLED: ${BILLING_REMINDER_ENABLED:-true}
@@ -115,9 +119,10 @@ services:
       LOG_DIR: /app/logs
       JAVA_TOOL_OPTIONS: -Xms256m -Xmx512m -XX:+UseG1GC
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
     volumes:
+      - blobs:/data/blobs
       - /var/log/ontocode/auth:/app/logs
     networks:
       - ontology-net
@@ -171,7 +176,11 @@ services:
     environment:
       ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
       ONTOLOGY_SWRL_SERVICE_URL: http://swrl-service:8084
-      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      ONTOCODE_DB_URL: jdbc:postgresql://postgres:5432/ontocode?socketTimeout=10&connectTimeout=3
+      ONTOCODE_DB_USER: ontocode
+      ONTOCODE_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      ONTOCODE_DB_POOL_MAX: 30
+      ONTOCODE_BLOBS_DIR: /data/blobs
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
       FUSEKI_GSP_ENDPOINT: http://fuseki:3030/ontocode/data
@@ -202,11 +211,12 @@ services:
       # Import concurrency: 1 on t3.large, 2 on t3.xlarge, 3 on t3.2xlarge
       ONTOCODE_IMPORT_MAX_CONCURRENT: ${ONTOCODE_IMPORT_MAX_CONCURRENT:-1}
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
       fuseki:
         condition: service_healthy
     volumes:
+      - blobs:/data/blobs
       - /var/log/ontocode/editor:/app/logs
     networks:
       - ontology-net
@@ -231,7 +241,10 @@ services:
       - "127.0.0.1:8084:8084"
     environment:
       ONTOCODE_INTERNAL_TOKEN: ${ONTOCODE_INTERNAL_TOKEN:-ontocode-internal}
-      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
+      ONTOCODE_DB_URL: jdbc:postgresql://postgres:5432/ontocode?socketTimeout=10&connectTimeout=3
+      ONTOCODE_DB_USER: ontocode
+      ONTOCODE_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      ONTOCODE_DB_POOL_MAX: 5
       FUSEKI_QUERY_ENDPOINT: http://fuseki:3030/ontocode/query
       FUSEKI_UPDATE_ENDPOINT: http://fuseki:3030/ontocode/update
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
@@ -246,7 +259,7 @@ services:
     volumes:
       - /var/log/ontocode/swrl:/app/logs
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
       fuseki:
         condition: service_healthy
@@ -262,19 +275,25 @@ services:
     image: ${DOCKER_REGISTRY:-ontocode}/ontocode-plugin:${VERSION:-latest}
     container_name: ontocode-plugin
     restart: unless-stopped
+    user: root
     ports:
       - "8087:8087"
     environment:
       ONTOCODE_SECURITY_STRICT: ${ONTOCODE_SECURITY_STRICT:-false}
-      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      SPRING_DATA_MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      ONTOCODE_DB_URL: jdbc:postgresql://postgres:5432/ontocode?socketTimeout=10&connectTimeout=3
+      ONTOCODE_DB_USER: ontocode
+      ONTOCODE_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      ONTOCODE_DB_POOL_MAX: 5
+      ONTOCODE_BLOBS_DIR: /data/blobs
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ONTOLOGY_EDITOR_URL: http://owl-editor:8083
       SPRING_PROFILES_ACTIVE: dev
       LOGGING_LEVEL_ROOT: ${LOGGING_LEVEL_ROOT:-INFO}
       JAVA_OPTS: -Xms128m -Xmx256m -XX:+UseG1GC
+    volumes:
+      - blobs:/data/blobs
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
       owl-editor:
         condition: service_healthy
@@ -290,10 +309,14 @@ services:
     image: ${DOCKER_REGISTRY:-ontocode}/ontocode-plugin-init:${VERSION:-latest}
     container_name: ontocode-plugin-init
     environment:
-      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASSWORD:-changeme123}@mongo:27017/${MONGODB_DATABASE:-ontocode}?authSource=admin
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-ontocode}
+      ONTOCODE_DB_URL: jdbc:postgresql://postgres:5432/ontocode?socketTimeout=10&connectTimeout=3
+      ONTOCODE_DB_USER: ontocode
+      ONTOCODE_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      ONTOCODE_BLOBS_DIR: /data/blobs
+    volumes:
+      - blobs:/data/blobs
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
       plugin-service:
         condition: service_started
@@ -357,7 +380,8 @@ services:
           memory: 256m
 
 volumes:
-  mongo-data:
+  pgdata:
+  blobs:
   fuseki-data:
 
 networks:

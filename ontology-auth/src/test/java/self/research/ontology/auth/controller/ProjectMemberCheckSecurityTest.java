@@ -3,8 +3,8 @@ package self.research.ontology.auth.controller;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import self.research.ontology.auth.repository.OntologyFileNameRepository;
+import self.research.ontology.common.db.BlobStore;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -38,8 +38,8 @@ class ProjectMemberCheckSecurityTest {
         ProjectService projects = mock(ProjectService.class);
         controller = new ProjectController(projects, users, mock(FileMetadataRepository.class), mock(JwtUtil.class),
                 mock(WorkspaceService.class), mock(self.research.ontology.auth.repository.ProjectRepository.class),
-                mock(GridFsTemplate.class), mock(EmailService.class), mock(SystemSettingsService.class),
-                mock(MongoTemplate.class));
+                mock(BlobStore.class), mock(EmailService.class), mock(SystemSettingsService.class),
+                mock(OntologyFileNameRepository.class));
 
         Project project = new Project();
         project.addMember("u-member", "member", "member@x.org", "MEMBER");

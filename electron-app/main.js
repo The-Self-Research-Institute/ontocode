@@ -4,7 +4,7 @@
  * Start-up sequence:
  *   1. Show splash window immediately (fast — no services needed).
  *   2. Check Java 17+ is available; abort with dialog if not.
- *   3. Start MongoDB → Fuseki → OWL Editor (sequential, each health-checked).
+ *   3. Start PostgreSQL → Fuseki → OWL Editor (sequential, each health-checked).
  *   4. Close splash, open main window pointing at the local OWL Editor.
  *
  * Shutdown:
@@ -76,7 +76,7 @@ const DEV_API_URL = process.env.ELECTRON_DEV_API_URL || 'http://localhost:8083';
 const VITE_URL    = process.env.ELECTRON_VITE_URL    || 'http://localhost:5173';
 
 // ── Single instance (VS Code–style: second launch focuses existing window) ───
-// Without this, a second OntoCode process tries to bind Mongo/Fuseki/desktop ports
+// Without this, a second OntoCode process tries to bind PostgreSQL/Fuseki/desktop ports
 // and fails with "Startup failed" / address already in use.
 const ONTOLOGY_EXTENSIONS = new Set(['owl', 'rdf', 'ttl', 'n3', 'nt', 'jsonld', 'ofn']);
 let pendingOpenFile = null;
@@ -505,7 +505,7 @@ app.whenReady().then(async () => {
 let isQuitting = false;
 let isInstallingUpdate = false;
 
-/** Stop bundled JVM/Mongo before NSIS runs — otherwise quitAndInstall can restart without applying. */
+/** Stop bundled JVM/PostgreSQL before NSIS runs — otherwise quitAndInstall can restart without applying. */
 async function installAppUpdate() {
     if (isInstallingUpdate) return { ok: false, error: 'Update already in progress' };
     isInstallingUpdate = true;
@@ -827,7 +827,7 @@ function setupMenu(win) {
                         dialog.showMessageBox(win, {
                             title: 'Service Status',
                             message: [
-                                `MongoDB:  ${s.mongo   ? '✓ Running' : '✗ Stopped'}`,
+                                `Database: ${s.postgres ? '✓ Running' : '✗ Stopped'}`,
                                 `Fuseki:   ${s.fuseki  ? '✓ Running' : '✗ Stopped'}`,
                                 `Desktop:  ${s.desktop ? '✓ Running' : '✗ Stopped'}  (auth + editor + plugin)`,
                                 `SWRL:     ${s.swrl    ? '✓ Running' : '✗ Stopped'}  (optional)`,

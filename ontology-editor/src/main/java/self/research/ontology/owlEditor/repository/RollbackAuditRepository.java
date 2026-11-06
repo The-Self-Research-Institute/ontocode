@@ -1,16 +1,19 @@
 package self.research.ontology.owlEditor.repository;
 
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.RollbackAudit;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface RollbackAuditRepository extends MongoRepository<RollbackAudit, String> {
+public interface RollbackAuditRepository {
+
+    RollbackAudit save(RollbackAudit audit);
+
+    Optional<RollbackAudit> findById(String id);
+
+    void deleteById(String id);
 
     void deleteByProjectId(String projectId);
 

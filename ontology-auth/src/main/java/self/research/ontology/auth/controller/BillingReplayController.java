@@ -2,17 +2,19 @@ package self.research.ontology.auth.controller;
 
 import com.stripe.exception.StripeException;
 import com.stripe.model.Invoice;
-import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import self.research.ontology.auth.model.EmailLog;
+import self.research.ontology.auth.model.StripeEvent;
+import self.research.ontology.auth.model.StripeUnmatchedInvoice;
+import self.research.ontology.auth.repository.EmailLogRepository;
+import self.research.ontology.auth.repository.StripeEventRepository;
+import self.research.ontology.auth.repository.StripeUnmatchedInvoiceRepository;
 import self.research.ontology.auth.service.StripeService;
 
 import java.time.LocalDateTime;
@@ -20,6 +22,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/admin/billing")
@@ -34,7 +37,13 @@ public class BillingReplayController {
     private StripeService stripeService;
 
     @Autowired
-    private MongoTemplate mongoTemplate;
+    private EmailLogRepository emailLogs;
+
+    @Autowired
+    private StripeEventRepository stripeEvents;
+
+    @Autowired
+    private StripeUnmatchedInvoiceRepository unmatchedInvoices;
 
     @PostMapping("/replay-invoice/{invoiceId}")
     public ResponseEntity<Map<String, Object>> replayInvoice(@PathVariable String invoiceId) {
@@ -55,12 +64,10 @@ public class BillingReplayController {
             stripeService.handleInvoicePaymentSucceeded(invoice);
             result.put("status", "replayed");
 
-            Document logDoc = mongoTemplate.findOne(
-                    new Query(Criteria.where("key").is("payment-succeeded:" + invoiceId)),
-                    Document.class, "email_logs");
-            if (logDoc != null) {
-                result.put("emailLogStatus", logDoc.getString("status"));
-                result.put("emailLogSentAt", String.valueOf(logDoc.get("sentAt")));
+            Optional<EmailLog> logRow = emailLogs.findByKey("payment-succeeded:" + invoiceId);
+            if (logRow.isPresent()) {
+                result.put("emailLogStatus", logRow.get().status());
+                result.put("emailLogSentAt", String.valueOf(logRow.get().sentAt()));
             }
             return ResponseEntity.ok(result);
         } catch (Exception e) {
@@ -79,10 +86,7 @@ public class BillingReplayController {
         int boundedHours = Math.max(1, Math.min(sinceHours, 720));
         LocalDateTime cutoff = LocalDateTime.now().minusHours(boundedHours);
 
-        Query candidates = new Query(Criteria.where("eventType").is("invoice.payment_succeeded")
-                .and("status").is("processed")
-                .and("receivedAt").gte(cutoff));
-        List<Document> events = mongoTemplate.find(candidates, Document.class, "stripe_events");
+        List<StripeEvent> events = stripeEvents.findByEventTypeAndStatusSince("invoice.payment_succeeded", "processed", cutoff);
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("sinceHours", boundedHours);
@@ -93,8 +97,8 @@ public class BillingReplayController {
         List<Map<String, Object>> skipped = new ArrayList<>();
         List<Map<String, Object>> errored = new ArrayList<>();
 
-        for (Document event : events) {
-            String eventId = event.getString("stripeEventId");
+        for (StripeEvent event : events) {
+            String eventId = event.getStripeEventId();
 
             String invoiceId;
             try {
@@ -113,11 +117,7 @@ public class BillingReplayController {
                 continue;
             }
 
-            Document existing = mongoTemplate.findOne(
-                    new Query(Criteria.where("key").is("payment-succeeded:" + invoiceId)
-                            .and("status").is("sent")),
-                    Document.class, "email_logs");
-            if (existing != null) {
+            if (emailLogs.existsWithStatus("payment-succeeded:" + invoiceId, "sent")) {
                 skipped.add(Map.of("eventId", eventId, "invoiceId", invoiceId, "reason", "email_already_sent"));
                 continue;
             }
@@ -130,13 +130,11 @@ public class BillingReplayController {
             try {
                 Invoice invoice = Invoice.retrieve(invoiceId);
                 stripeService.handleInvoicePaymentSucceeded(invoice);
-                Document after = mongoTemplate.findOne(
-                        new Query(Criteria.where("key").is("payment-succeeded:" + invoiceId)),
-                        Document.class, "email_logs");
+                Optional<EmailLog> after = emailLogs.findByKey("payment-succeeded:" + invoiceId);
                 replayed.add(Map.of(
                         "eventId", eventId,
                         "invoiceId", invoiceId,
-                        "emailLogStatus", after != null ? after.getString("status") : "no_log_row"));
+                        "emailLogStatus", after.isPresent() && after.get().status() != null ? after.get().status() : "no_log_row"));
             } catch (Exception ex) {
                 errored.add(Map.of("eventId", eventId, "invoiceId", invoiceId, "reason", "handler_threw", "error", ex.getMessage()));
             }
@@ -153,10 +151,7 @@ public class BillingReplayController {
     @GetMapping("/unmatched-invoices")
     public ResponseEntity<Map<String, Object>> listUnmatchedInvoices(
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
-        List<Document> rows = mongoTemplate.find(
-                new Query().limit(Math.max(1, Math.min(limit, 500))),
-                Document.class,
-                "stripe_unmatched_invoices");
+        List<StripeUnmatchedInvoice> rows = unmatchedInvoices.findRecent(Math.max(1, Math.min(limit, 500)));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("count", rows.size());
         body.put("invoices", rows);

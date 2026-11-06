@@ -45,7 +45,7 @@ function main() {
     }
 
     console.log(`Syncing backend → ${target}`);
-    for (const sub of ['jars', 'jre', 'mongodb', 'plugin-bundles', 'fuseki']) {
+    for (const sub of ['jars', 'jre', 'postgres', 'plugin-bundles', 'fuseki']) {
         const srcSub = path.join(SRC, sub);
         if (!fs.existsSync(srcSub)) continue;
         copyDir(srcSub, path.join(target, sub));

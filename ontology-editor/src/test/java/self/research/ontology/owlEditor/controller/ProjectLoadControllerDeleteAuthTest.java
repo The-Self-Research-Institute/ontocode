@@ -2,7 +2,7 @@ package self.research.ontology.owlEditor.controller;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -56,7 +56,7 @@ class ProjectLoadControllerDeleteAuthTest {
                 mock(DraftTrackingService.class), mock(DraftCopyService.class), mock(OntologyHistoryService.class),
                 mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class), datasetService,
                 mock(ProjectRepository.class), mock(OntologyPreparseService.class), mock(ImportWorkerDispatcher.class),
-                mock(MongoTemplate.class), mock(OntologyExportJobService.class), mock(CodeViewReimportPipeline.class),
+                mock(FileMetadataRepository.class), mock(OntologyExportJobService.class), mock(CodeViewReimportPipeline.class),
                 new ProjectWriteLockRegistry(), new ProjectAuthorization(access, false));
     }
 

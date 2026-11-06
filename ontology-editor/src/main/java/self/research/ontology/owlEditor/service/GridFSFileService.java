@@ -1,170 +1,126 @@
 package self.research.ontology.owlEditor.service;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.bson.types.ObjectId;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.db.BlobStore;
+import self.research.ontology.common.db.StoredFile;
 
-import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
-/**
- * Service for managing ontology files in MongoDB GridFS
- * Maps projectId to GridFS file storage
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class GridFSFileService {
-    
-    private final GridFsTemplate gridFsTemplate;
-    
-    /**
-     * Store file in GridFS and return the file ID
-     * 
-     * @param projectId The project identifier
-     * @param filename Original filename
-     * @param contentType File content type
-     * @param inputStream File content
-     * @return GridFS ObjectId as String
-     */
+
+    public static final String BUCKET = "fs";
+
+    public static final String ONTOLOGY_FILE_TYPE = "ontology-file";
+
+    private final BlobStore blobStore;
+
     public String storeFile(String projectId, String filename, String contentType, InputStream inputStream) {
         try {
-            // Store file with metadata
-            ObjectId fileId = gridFsTemplate.store(
-                inputStream, 
-                filename,
-                contentType,
-                new org.bson.Document()
-                    .append("projectId", projectId)
-                    .append("originalFilename", filename)
-                    .append("uploadDate", new java.util.Date())
-            );
-            
-            log.info("Stored file in GridFS for project {}: fileId={}, filename={}", 
-                     projectId, fileId.toString(), filename);
-            
-            return fileId.toString();
+            StoredFile stored = blobStore.store(BUCKET, filename, contentType,
+                    Map.of("projectId", projectId, "originalFilename", filename, "type", ONTOLOGY_FILE_TYPE), inputStream);
+            log.info("Stored file for project {}: fileId={}, filename={}", projectId, stored.id(), filename);
+            return stored.id();
         } catch (Exception e) {
-            log.error("Failed to store file in GridFS for project {}", projectId, e);
-            throw new RuntimeException("Failed to store file in GridFS: " + e.getMessage(), e);
+            log.error("Failed to store file for project {}", projectId, e);
+            throw new RuntimeException("Failed to store file: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * Get file from GridFS by projectId
-     * 
-     * @param projectId The project identifier
-     * @return GridFsResource containing the file
-     */
-    public Optional<GridFsResource> getFileByProjectId(String projectId) {
+
+    public Optional<BlobResource> getFileByProjectId(String projectId) {
         try {
-            Query query = new Query(Criteria.where("metadata.projectId").is(projectId));
-            GridFSFile gridFSFile = gridFsTemplate.findOne(query);
-            
-            if (gridFSFile == null) {
-                log.warn("No file found in GridFS for project {}", projectId);
+            Optional<StoredFile> file = latestOntologyFile(projectId);
+            if (file.isEmpty()) {
+                log.warn("No stored file found for project {}", projectId);
                 return Optional.empty();
             }
-            
-            GridFsResource resource = gridFsTemplate.getResource(gridFSFile);
-            log.info("Retrieved file from GridFS for project {}: fileId={}", 
-                     projectId, gridFSFile.getObjectId().toString());
-            
-            return Optional.of(resource);
+            log.info("Retrieved stored file for project {}: fileId={}", projectId, file.get().id());
+            return Optional.of(new BlobResource(blobStore, file.get()));
         } catch (Exception e) {
-            log.error("Failed to retrieve file from GridFS for project {}", projectId, e);
+            log.error("Failed to retrieve stored file for project {}", projectId, e);
             return Optional.empty();
         }
     }
-    
-    /**
-     * Get file from GridFS by ObjectId
-     * 
-     * @param fileId GridFS ObjectId
-     * @return GridFsResource containing the file
-     */
-    public Optional<GridFsResource> getFileById(String fileId) {
+
+    public Optional<BlobResource> getFileById(String fileId) {
+        if (fileId == null || fileId.isBlank()) {
+            return Optional.empty();
+        }
         try {
-            GridFSFile gridFSFile = gridFsTemplate.findOne(
-                new Query(Criteria.where("_id").is(new ObjectId(fileId)))
-            );
-            
-            if (gridFSFile == null) {
-                log.warn("No file found in GridFS with id {}", fileId);
+            Optional<StoredFile> file = blobStore.info(fileId);
+            if (file.isEmpty()) {
+                log.warn("No stored file found with id {}", fileId);
                 return Optional.empty();
             }
-            
-            return Optional.of(gridFsTemplate.getResource(gridFSFile));
+            return Optional.of(new BlobResource(blobStore, file.get()));
         } catch (Exception e) {
-            log.error("Failed to retrieve file from GridFS with id {}", fileId, e);
+            log.error("Failed to retrieve stored file with id {}", fileId, e);
             return Optional.empty();
         }
     }
-    
-    /**
-     * Get file metadata from GridFS by projectId
-     * 
-     * @param projectId The project identifier
-     * @return GridFSFile metadata
-     */
-    public Optional<GridFSFile> getFileMetadataByProjectId(String projectId) {
+
+    public Optional<BlobResource> getFileByName(String filename) {
         try {
-            Query query = new Query(Criteria.where("metadata.projectId").is(projectId));
-            GridFSFile gridFSFile = gridFsTemplate.findOne(query);
-            return Optional.ofNullable(gridFSFile);
+            return blobStore.findLatest(BUCKET, filename, null).map(file -> new BlobResource(blobStore, file));
         } catch (Exception e) {
-            log.error("Failed to retrieve file metadata from GridFS for project {}", projectId, e);
+            log.error("Failed to retrieve stored file named {}", filename, e);
             return Optional.empty();
         }
     }
-    
-    /**
-     * Delete file from GridFS by projectId
-     * 
-     * @param projectId The project identifier
-     */
+
+    public Optional<StoredFile> getFileMetadataByProjectId(String projectId) {
+        try {
+            return latestOntologyFile(projectId);
+        } catch (Exception e) {
+            log.error("Failed to retrieve file metadata for project {}", projectId, e);
+            return Optional.empty();
+        }
+    }
+
     public void deleteFileByProjectId(String projectId) {
         try {
-            Query query = new Query(Criteria.where("metadata.projectId").is(projectId));
-            gridFsTemplate.delete(query);
-            log.info("Deleted file from GridFS for project {}", projectId);
+            for (StoredFile file : ontologyFiles(projectId)) {
+                blobStore.delete(file.id());
+            }
+            log.info("Deleted stored files for project {}", projectId);
         } catch (Exception e) {
-            log.error("Failed to delete file from GridFS for project {}", projectId, e);
-            throw new RuntimeException("Failed to delete file from GridFS: " + e.getMessage(), e);
+            log.error("Failed to delete stored files for project {}", projectId, e);
+            throw new RuntimeException("Failed to delete stored file: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * Delete file from GridFS by ObjectId
-     * 
-     * @param fileId GridFS ObjectId
-     */
+
     public void deleteFileById(String fileId) {
         try {
-            Query query = new Query(Criteria.where("_id").is(new ObjectId(fileId)));
-            gridFsTemplate.delete(query);
-            log.info("Deleted file from GridFS with id {}", fileId);
+            blobStore.delete(fileId);
+            log.info("Deleted stored file with id {}", fileId);
         } catch (Exception e) {
-            log.error("Failed to delete file from GridFS with id {}", fileId, e);
-            throw new RuntimeException("Failed to delete file from GridFS: " + e.getMessage(), e);
+            log.error("Failed to delete stored file with id {}", fileId, e);
+            throw new RuntimeException("Failed to delete stored file: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * Check if file exists for projectId
-     * 
-     * @param projectId The project identifier
-     * @return true if file exists
-     */
+
     public boolean fileExistsForProject(String projectId) {
-        Query query = new Query(Criteria.where("metadata.projectId").is(projectId));
-        return gridFsTemplate.findOne(query) != null;
+        return latestOntologyFile(projectId).isPresent();
+    }
+
+    private Optional<StoredFile> latestOntologyFile(String projectId) {
+        return ontologyFiles(projectId).stream().findFirst();
+    }
+
+    private List<StoredFile> ontologyFiles(String projectId) {
+        return blobStore.find(BUCKET, null, Map.of("projectId", projectId)).stream()
+                .filter(GridFSFileService::isOntologyFile).toList();
+    }
+
+    private static boolean isOntologyFile(StoredFile file) {
+        Object type = file.metadata() == null ? null : file.metadata().get("type");
+        return type == null || ONTOLOGY_FILE_TYPE.equals(type);
     }
 }

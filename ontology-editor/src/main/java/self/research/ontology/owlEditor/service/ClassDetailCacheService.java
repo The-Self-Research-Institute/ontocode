@@ -50,9 +50,7 @@ public class ClassDetailCacheService {
 
     public void putAnnotationsIfAbsent(String projectId, String classIri, Map<String, Object> annotationData) {
         try {
-            if (repo.findByProjectIdAndClassIri(projectId, classIri).isEmpty()) {
-                repo.save(new ClassDetailDocument(projectId, classIri, annotationData, true));
-            }
+            repo.saveIfAbsent(new ClassDetailDocument(projectId, classIri, annotationData, true));
         } catch (Exception e) {
             log.warn("[ClassDetailCache] putAnnotations failed for {}/{}: {}", projectId, classIri, e.getMessage());
         }
@@ -156,18 +154,7 @@ public class ClassDetailCacheService {
                 docs.add(new ClassDetailDocument(projectId, cls, partialDetails, true));
             }
 
-            int stored = 0;
-            for (ClassDetailDocument doc : docs) {
-                try {
-                    boolean exists = repo.findByProjectIdAndClassIri(projectId, doc.getClassIri()).isPresent();
-                    if (!exists) {
-                        repo.save(doc);
-                        stored++;
-                    }
-                } catch (Exception e) {
-                    log.debug("[ClassDetailCache] Skip {} — already exists", doc.getClassIri());
-                }
-            }
+            int stored = repo.saveAllIfAbsent(docs);
 
             log.info("[ClassDetailCache] Pre-warmed {} annotation docs for project {} in {}ms",
                     stored, projectId, System.currentTimeMillis() - start);

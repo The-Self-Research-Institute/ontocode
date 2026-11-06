@@ -1,7 +1,5 @@
 package self.research.ontology.owlEditor.service;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
-import org.bson.types.ObjectId;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.PrefixDocumentFormat;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
@@ -9,21 +7,16 @@ import org.semanticweb.owlapi.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import self.research.ontology.owlEditor.config.SparqlProperties;
+import self.research.ontology.owlEditor.repository.ProjectRepository;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.util.Date;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -34,13 +27,13 @@ public class OwlParsingService {
     private static final Logger log = LoggerFactory.getLogger(OwlParsingService.class);
     
     @Autowired
-    private MongoTemplate mongo;
+    private ProjectRepository projects;
 
     // @Autowired
     // private Neo4jSyncService neo4jSyncService; // TODO: Implement Neo4j sync service
     
     @Autowired
-    private GridFsTemplate gridfs;
+    private GridFSFileService files;
     
     @Autowired
     private SparqlProperties props;
@@ -66,18 +59,14 @@ public class OwlParsingService {
      * Parse ontology file from GridFS and index to triple store
      */
     @Async("owlParsingExecutor") //
-    public CompletableFuture<Void> parseAndIndex(String projectId, ObjectId fileId) {
+    public CompletableFuture<Void> parseAndIndex(String projectId, String fileId) {
         log.info("Starting async parsing for project: {}, fileId: {}", projectId, fileId);
         updateStatus(projectId, "PROCESSING", "Parsing ontology...");
         
         try {
             // Retrieve file from GridFS
-            GridFSFile gf = gridfs.findOne(new Query(Criteria.where("_id").is(fileId))); //
-            if (gf == null) {
-                throw new RuntimeException("File not found in GridFS: " + fileId);
-            }
-            
-            GridFsResource resource = gridfs.getResource(gf);
+            BlobResource resource = files.getFileById(fileId)
+                    .orElseThrow(() -> new RuntimeException("File not found in the file store: " + fileId));
             
             try (InputStream inputStream = resource.getInputStream()) {
                 // Parse with OWL API
@@ -90,7 +79,7 @@ public class OwlParsingService {
                 
                 // Extract metadata for MongoDB
                 Map<String, Object> metadata = extractMetadata(projectId, ontology); //
-                saveMetadataToMongo(projectId, metadata); 
+                saveMetadata(projectId, metadata); 
 
                 // Sync to Neo4j - TODO: Implement Neo4j sync service
                 // neo4jSyncService.syncOntologyToNeo4j(projectId, ontology);
@@ -195,14 +184,9 @@ public class OwlParsingService {
         return metadata;
     }
     
-    private void saveMetadataToMongo(String projectId, Map<String, Object> metadata) {
-        Query query = new Query(Criteria.where("_id").is(projectId));
-        Update update = new Update()
-                .set("metadata", metadata)
-                .set("updatedAt", new Date());
-        
-        mongo.upsert(query, update, "projects"); //
-        log.info("Saved metadata to MongoDB for project: {}", projectId);
+    private void saveMetadata(String projectId, Map<String, Object> metadata) {
+        projects.upsertMetadata(projectId, metadata, null, Instant.now());
+        log.info("Saved metadata for project: {}", projectId);
     }
     
     private void writeToTripleStore(String projectId, OWLOntology ontology) throws Exception {
@@ -259,13 +243,7 @@ public class OwlParsingService {
     }
     
     private void updateStatus(String projectId, String status, String message) {
-        Query query = new Query(Criteria.where("_id").is(projectId));
-        Update update = new Update()
-                .set("status", status)
-                .set("statusMessage", message)
-                .set("updatedAt", new Date());
-        
-        mongo.updateFirst(query, update, "projects"); //
+        projects.updateStatus(projectId, status, message, Instant.now());
         log.info("Updated project status: {} - {}", projectId, status);
     }
 }

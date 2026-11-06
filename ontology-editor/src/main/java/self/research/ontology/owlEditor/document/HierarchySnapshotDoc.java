@@ -1,19 +1,15 @@
 package self.research.ontology.owlEditor.document;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
 import self.research.ontology.owlEditor.dto.OntologyDto;
 
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
-@Document(collection = "hierarchy_snapshots")
 public class HierarchySnapshotDoc {
 
     public enum Status { PENDING, BUILDING, READY, FAILED, STALE }
 
-    @Id
     private String projectId;
 
     private Status status = Status.PENDING;
@@ -30,10 +26,6 @@ public class HierarchySnapshotDoc {
 
     private Map<String, Object> meta = Map.of();
 
-    private String chunkSetId;
-    private int chunkCount;
-
-    @org.springframework.data.mongodb.core.index.Indexed(expireAfterSeconds = 0)
     private Date expiresAt;
 
     public HierarchySnapshotDoc() {}
@@ -78,10 +70,6 @@ public class HierarchySnapshotDoc {
     }
     public Map<String, Object> getMeta() { return meta; }
     public void setMeta(Map<String, Object> meta) { this.meta = meta != null ? meta : Map.of(); }
-    public String getChunkSetId() { return chunkSetId; }
-    public void setChunkSetId(String chunkSetId) { this.chunkSetId = chunkSetId; }
-    public int getChunkCount() { return chunkCount; }
-    public void setChunkCount(int chunkCount) { this.chunkCount = chunkCount; }
     public Date getExpiresAt() { return expiresAt; }
     public void setExpiresAt(Date expiresAt) { this.expiresAt = expiresAt; }
 }

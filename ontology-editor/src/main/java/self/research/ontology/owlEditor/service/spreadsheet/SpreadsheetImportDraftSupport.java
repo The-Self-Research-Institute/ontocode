@@ -1,16 +1,11 @@
 package self.research.ontology.owlEditor.service.spreadsheet;
 
-import self.research.ontology.owlEditor.service.BulkWrites;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Component;
-import self.research.ontology.owlEditor.model.DraftChange;
-import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.SpreadsheetImportRecord;
+import self.research.ontology.owlEditor.repository.DraftChangeRepository;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import self.research.ontology.owlEditor.repository.SpreadsheetImportRecordRepository;
 
 import java.util.List;
@@ -23,11 +18,14 @@ public class SpreadsheetImportDraftSupport {
     public static final String SESSION_PREFIX = "spreadsheet-import-";
 
     private final SpreadsheetImportRecordRepository records;
-    private final MongoTemplate mongo;
+    private final HistoryChangeRepository history;
+    private final DraftChangeRepository drafts;
 
-    public SpreadsheetImportDraftSupport(SpreadsheetImportRecordRepository records, MongoTemplate mongo) {
+    public SpreadsheetImportDraftSupport(SpreadsheetImportRecordRepository records, HistoryChangeRepository history,
+                                         DraftChangeRepository drafts) {
         this.records = records;
-        this.mongo = mongo;
+        this.history = history;
+        this.drafts = drafts;
     }
 
     public static boolean isImportSession(String sessionId) {
@@ -35,19 +33,14 @@ public class SpreadsheetImportDraftSupport {
     }
 
     public void promoteDraftImports(String projectId, String userId) {
-        List<SpreadsheetImportRecord> drafts = records.findByProjectIdAndUserIdAndDraftTrue(projectId, userId);
-        for (SpreadsheetImportRecord record : drafts) {
+        List<SpreadsheetImportRecord> imports = records.findByProjectIdAndUserIdAndDraftTrue(projectId, userId);
+        for (SpreadsheetImportRecord record : imports) {
             record.setDraft(false);
             records.save(record);
-            mongo.updateMulti(
-                Query.query(Criteria.where("projectId").is(projectId)
-                    .and("entityIRI").is(SpreadsheetImportService.ENTITY_IRI_PREFIX + record.getId())
-                    .and("draft").is(true)),
-                new Update().set("draft", false),
-                HistoryChange.class);
+            history.markDraftEntriesShared(projectId, SpreadsheetImportService.ENTITY_IRI_PREFIX + record.getId());
         }
-        if (!drafts.isEmpty()) {
-            log.info("[SpreadsheetImport] Published {} draft import(s) for user {} in project {}", drafts.size(), userId, projectId);
+        if (!imports.isEmpty()) {
+            log.info("[SpreadsheetImport] Published {} draft import(s) for user {} in project {}", imports.size(), userId, projectId);
         }
     }
 
@@ -55,18 +48,13 @@ public class SpreadsheetImportDraftSupport {
         if (!isImportSession(sessionId)) {
             return;
         }
-        Query pending = pendingQuery(projectId, userId, sessionId);
-        List<DraftChange> changes = mongo.find(pending, DraftChange.class);
-        if (!changes.isEmpty()) {
-            BulkWrites.insert(mongo, changes, PARKED_COLLECTION);
-            mongo.remove(pending, DraftChange.class);
-        }
-        log.info("[SpreadsheetImport] Parked {} pending draft changes of undone import session {}", changes.size(), sessionId);
+        int parked = drafts.parkPending(projectId, userId, sessionId);
+        log.info("[SpreadsheetImport] Parked {} pending draft changes of undone import session {}", parked, sessionId);
     }
 
     public void removeDraftChanges(String projectId, String userId, String sessionId) {
         if (isImportSession(sessionId)) {
-            mongo.remove(pendingQuery(projectId, userId, sessionId), DraftChange.class);
+            drafts.deletePending(projectId, userId, sessionId);
         }
     }
 
@@ -74,21 +62,7 @@ public class SpreadsheetImportDraftSupport {
         if (!isImportSession(sessionId)) {
             return;
         }
-        Query parked = pendingQuery(projectId, userId, sessionId);
-        List<DraftChange> changes = mongo.find(parked, DraftChange.class, PARKED_COLLECTION);
-        if (!changes.isEmpty()) {
-            BulkWrites.insert(mongo, changes, DraftChange.class);
-            mongo.remove(parked, DraftChange.class, PARKED_COLLECTION);
-        }
-        log.info("[SpreadsheetImport] Restored {} draft changes of redone import session {}", changes.size(), sessionId);
-    }
-
-    static final String PARKED_COLLECTION = "spreadsheet_import_parked_drafts";
-
-    private static Query pendingQuery(String projectId, String userId, String sessionId) {
-        return Query.query(Criteria.where("projectId").is(projectId)
-            .and("userId").is(userId)
-            .and("sessionId").is(sessionId)
-            .and("applied").is(false));
+        int restored = drafts.restoreParked(projectId, userId, sessionId);
+        log.info("[SpreadsheetImport] Restored {} draft changes of redone import session {}", restored, sessionId);
     }
 }

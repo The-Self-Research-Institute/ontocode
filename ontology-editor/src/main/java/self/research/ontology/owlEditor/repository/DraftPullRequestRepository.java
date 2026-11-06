@@ -1,15 +1,20 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.DraftPullRequest;
 import self.research.ontology.owlEditor.model.DraftPullRequest.Status;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface DraftPullRequestRepository extends MongoRepository<DraftPullRequest, String> {
+public interface DraftPullRequestRepository {
+
+    DraftPullRequest save(DraftPullRequest request);
+
+    Optional<DraftPullRequest> findById(String id);
+
+    List<DraftPullRequest> findAll();
+
+    void deleteById(String id);
 
     List<DraftPullRequest> findByProjectIdOrderByCreatedAtDesc(String projectId);
 

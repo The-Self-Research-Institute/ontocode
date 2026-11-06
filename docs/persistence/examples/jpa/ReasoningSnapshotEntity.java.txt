@@ -1,0 +1,47 @@
+package self.research.ontology.reasoner.repository.jpa;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+import java.time.Instant;
+
+@Getter
+@Setter
+@NoArgsConstructor
+@Entity
+@Table(name = "reasoning_snapshot")
+public class ReasoningSnapshotEntity {
+
+    @Id
+    @Column(name = "id")
+    private String id;
+
+    @Column(name = "project_id", nullable = false)
+    private String projectId;
+
+    @Column(name = "revision", nullable = false)
+    private long revision;
+
+    @Column(name = "triple_count", nullable = false)
+    private long tripleCount;
+
+    @Column(name = "reasoner")
+    private String reasoner;
+
+    @Column(name = "rules_fingerprint")
+    private String rulesFingerprint;
+
+    @Column(name = "result_json")
+    private String resultJson;
+
+    @Column(name = "created_at")
+    private Instant createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+}

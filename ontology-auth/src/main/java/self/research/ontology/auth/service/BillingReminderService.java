@@ -1,21 +1,14 @@
 package self.research.ontology.auth.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.bson.Document;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.index.Index;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import self.research.ontology.auth.model.EmailLog;
 import self.research.ontology.auth.model.User;
+import self.research.ontology.auth.repository.EmailLogRepository;
 import self.research.ontology.auth.repository.UserRepository;
 
-import jakarta.annotation.PostConstruct;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -33,7 +26,7 @@ public class BillingReminderService {
 
     private final UserRepository userRepository;
     private final EmailService emailService;
-    private final MongoTemplate mongoTemplate;
+    private final EmailLogRepository emailLogs;
     private final PlanFeatureConfigService planFeatureConfigService;
 
     @Value("${app.base-url}")
@@ -46,34 +39,11 @@ public class BillingReminderService {
     private String reminderDaysBeforeList;
 
     public BillingReminderService(UserRepository userRepository, EmailService emailService,
-                                   MongoTemplate mongoTemplate, PlanFeatureConfigService planFeatureConfigService) {
+                                   EmailLogRepository emailLogs, PlanFeatureConfigService planFeatureConfigService) {
         this.userRepository = userRepository;
         this.emailService = emailService;
-        this.mongoTemplate = mongoTemplate;
+        this.emailLogs = emailLogs;
         this.planFeatureConfigService = planFeatureConfigService;
-    }
-
-    @PostConstruct
-    public void ensureEmailLogIndexes() {
-
-        boolean keyIndexIsUnique = mongoTemplate.indexOps("email_logs").getIndexInfo().stream()
-                .filter(info -> info.getIndexFields().stream().anyMatch(f -> "key".equals(f.getKey())))
-                .findFirst()
-                .map(info -> info.isUnique())
-                .orElse(false);
-
-        if (!keyIndexIsUnique) {
-            log.warn("[BillingReminder] email_logs.key index is missing or non-unique — rebuilding as unique. "
-                    + "This is the dedup invariant; without it duplicate reminders will fire.");
-            try {
-                mongoTemplate.indexOps("email_logs").dropIndex("key_1");
-            } catch (Exception ignored) {
-
-            }
-            mongoTemplate.indexOps("email_logs")
-                    .ensureIndex(new Index().on("key", Sort.Direction.ASC).unique());
-            log.info("[BillingReminder] email_logs.key unique index created.");
-        }
     }
 
     @Scheduled(cron = "${billing.reminder.cron:0 0 9 * * *}")
@@ -111,9 +81,7 @@ public class BillingReminderService {
                 if (reminderKind == null) continue;
                 String reminderKey = dailyReminderKey(user, now.toLocalDate());
 
-                Query priorQuery = new Query(Criteria.where("key").is(reminderKey)
-                        .and("status").in("sent", "sending"));
-                if (mongoTemplate.exists(priorQuery, "email_logs")) {
+                if (emailLogs.existsWithStatus(reminderKey, "sent", "sending")) {
                     log.info("[BillingReminder] Already sent or sending today: key={} email={} — skipping",
                             reminderKey, user.getEmail());
                     continue;
@@ -202,38 +170,24 @@ public class BillingReminderService {
         if (user == null || user.getId() == null || user.getEmail() == null) {
             return false;
         }
-        Document doc = new Document("key", reminderKey)
-                .append("type", "billing_reminder")
-                .append("status", "sending")
-                .append("kind", reminderKind)
-                .append("daysBefore", daysBefore)
-                .append("periodEnd", periodEnd)
-                .append("email", user.getEmail())
-                .append("userId", user.getId())
-                .append("username", user.getUsername())
-                .append("createdAt", LocalDateTime.now());
-        try {
-            mongoTemplate.insert(doc, "email_logs");
-            return true;
-        } catch (DuplicateKeyException e) {
-            return false;
-        }
+        return emailLogs.reserve(EmailLog.builder()
+                .key(reminderKey)
+                .type("billing_reminder")
+                .kind(reminderKind)
+                .daysBefore(daysBefore)
+                .periodEnd(periodEnd)
+                .email(user.getEmail())
+                .userId(user.getId())
+                .username(user.getUsername())
+                .createdAt(LocalDateTime.now())
+                .build());
     }
 
     private void markReminderSent(String reminderKey) {
-        Query query = new Query(Criteria.where("key").is(reminderKey));
-        Update update = new Update()
-                .set("status", "sent")
-                .set("sentAt", LocalDateTime.now());
-        mongoTemplate.updateFirst(query, update, "email_logs");
+        emailLogs.markSent(reminderKey, LocalDateTime.now());
     }
 
     private void markReminderFailed(String reminderKey, String errorMessage) {
-        Query query = new Query(Criteria.where("key").is(reminderKey));
-        Update update = new Update()
-                .set("status", "failed")
-                .set("failedAt", LocalDateTime.now())
-                .set("errorMessage", errorMessage);
-        mongoTemplate.updateFirst(query, update, "email_logs");
+        emailLogs.markFailed(reminderKey, errorMessage, LocalDateTime.now());
     }
 }

@@ -1,20 +1,22 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.data.mongodb.repository.Query;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.domain.Pageable;
 import self.research.ontology.owlEditor.model.OntologyChange;
 import self.research.ontology.owlEditor.model.OntologyChange.ChangeType;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
-@Repository
-public interface OntologyChangeRepository extends MongoRepository<OntologyChange, String> {
+public interface OntologyChangeRepository {
+
+    OntologyChange save(OntologyChange change);
+
+    Optional<OntologyChange> findById(String id);
 
     List<OntologyChange> findByProjectIdOrderByTimestampDesc(String projectId);
 
-    List<OntologyChange> findByProjectIdOrderByTimestampDesc(String projectId, org.springframework.data.domain.Pageable pageable);
+    List<OntologyChange> findByProjectIdOrderByTimestampDesc(String projectId, Pageable pageable);
 
     List<OntologyChange> findByUserIdOrderByTimestampDesc(String userId);
 
@@ -30,8 +32,7 @@ public interface OntologyChangeRepository extends MongoRepository<OntologyChange
 
     List<OntologyChange> findBySessionIdOrderByTimestampDesc(String sessionId);
 
-    @Query("{ 'projectId': ?0, 'reverted': false }")
-    List<OntologyChange> findRecentChanges(String projectId, org.springframework.data.domain.Pageable pageable);
+    List<OntologyChange> findRecentChanges(String projectId, Pageable pageable);
 
     List<OntologyChange> findByProjectIdAndChangeCategoryOrderByTimestampDesc(String projectId, String category);
 

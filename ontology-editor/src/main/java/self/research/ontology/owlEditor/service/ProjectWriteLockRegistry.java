@@ -7,8 +7,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.repository.ProjectWriteLeaseRepository;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -27,7 +27,8 @@ public class ProjectWriteLockRegistry {
     static final String HOLD_TIMER = "assistant.lock.hold";
     static final String MODE_TAG = "mode";
     public static final String LOCAL_MODE = "local";
-    public static final String MONGO_MODE = "mongo";
+    public static final String DATABASE_MODE = "database";
+    private static final String LEGACY_DATABASE_MODE = "mongo";
 
     private final ConcurrentHashMap<String, ReentrantReadWriteLock> locks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ReentrantLock> leaseGates = new ConcurrentHashMap<>();
@@ -59,39 +60,39 @@ public class ProjectWriteLockRegistry {
             @Value("${ontocode.assistant.lock.lease-ttl-ms:30000}") long leaseTtlMs,
             @Value("${ontocode.assistant.lock.lease-renew-interval-ms:10000}") long leaseRenewIntervalMs,
             @Value("${ontocode.assistant.lock.lease-acquire-timeout-ms:120000}") long leaseAcquireTimeoutMs,
-            ObjectProvider<MongoTemplate> mongoTemplate,
+            ObjectProvider<ProjectWriteLeaseRepository> leaseRepository,
             ObjectProvider<MeterRegistry> meterRegistry) {
         this(createLeaseManager(mode, leaseTtlMs, leaseRenewIntervalMs, leaseAcquireTimeoutMs,
-                mongoTemplate, meterRegistry.getIfAvailable()), meterRegistry.getIfAvailable());
+                leaseRepository, meterRegistry.getIfAvailable()), meterRegistry.getIfAvailable());
     }
 
     static ProjectWriteLeaseManager createLeaseManager(String mode, long leaseTtlMs, long leaseRenewIntervalMs,
                                                        long leaseAcquireTimeoutMs,
-                                                       ObjectProvider<MongoTemplate> mongoTemplate,
+                                                       ObjectProvider<ProjectWriteLeaseRepository> leaseRepository,
                                                        MeterRegistry meterRegistry) {
         String normalized = mode == null ? LOCAL_MODE : mode.trim().toLowerCase(Locale.ROOT);
         if (normalized.isEmpty() || LOCAL_MODE.equals(normalized)) {
             return null;
         }
-        if (!MONGO_MODE.equals(normalized)) {
+        if (!DATABASE_MODE.equals(normalized) && !LEGACY_DATABASE_MODE.equals(normalized)) {
             throw new IllegalStateException("Unknown ontocode.assistant.lock.mode '" + mode
-                    + "'; expected " + LOCAL_MODE + " or " + MONGO_MODE);
+                    + "'; expected " + LOCAL_MODE + " or " + DATABASE_MODE);
         }
-        MongoTemplate template = mongoTemplate.getIfAvailable();
-        if (template == null) {
-            throw new IllegalStateException("ontocode.assistant.lock.mode=mongo needs a MongoTemplate bean");
+        ProjectWriteLeaseRepository repository = leaseRepository.getIfAvailable();
+        if (repository == null) {
+            throw new IllegalStateException("ontocode.assistant.lock.mode=database needs a lease repository bean");
         }
         ProjectWriteLeaseManager.Settings settings = ProjectWriteLeaseManager.Settings.of(
                 Duration.ofMillis(leaseTtlMs),
                 Duration.ofMillis(leaseRenewIntervalMs),
                 Duration.ofMillis(leaseAcquireTimeoutMs));
-        log.info("[WriteLock] Using Mongo write leases (ttl {} ms, renew every {} ms, wait up to {} ms)",
+        log.info("[WriteLock] Using database write leases (ttl {} ms, renew every {} ms, wait up to {} ms)",
                 leaseTtlMs, leaseRenewIntervalMs, leaseAcquireTimeoutMs);
-        return new ProjectWriteLeaseManager(template, Clock.systemUTC(), settings, meterRegistry);
+        return new ProjectWriteLeaseManager(repository, Clock.systemUTC(), settings, meterRegistry);
     }
 
     public String getMode() {
-        return leaseManager == null ? LOCAL_MODE : MONGO_MODE;
+        return leaseManager == null ? LOCAL_MODE : DATABASE_MODE;
     }
 
     public <T> T runExclusive(String projectId, Callable<T> work) throws Exception {

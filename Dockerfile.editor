@@ -21,7 +21,7 @@ COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
 RUN --mount=type=cache,target=/root/.m2 \
     sh -c 'for attempt in 1 2 3; do \
         mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-            clean install -pl shared/common-models,shared/common-utils,ontology-editor -DskipTests -B -ntp && exit 0; \
+            clean install -pl shared/common-models,shared/common-utils,shared/common-db,ontology-editor -DskipTests -B -ntp && exit 0; \
         echo "Editor module build failed, retrying ($$attempt/3)..."; \
     done; \
     exit 1'

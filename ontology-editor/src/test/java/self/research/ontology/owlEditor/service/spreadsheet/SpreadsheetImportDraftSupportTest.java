@@ -1,23 +1,22 @@
 package self.research.ontology.owlEditor.service.spreadsheet;
 
-import com.mongodb.client.result.DeleteResult;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.jdbc.core.JdbcTemplate;
+import self.research.ontology.owlEditor.TestDatabase;
 import self.research.ontology.owlEditor.model.DraftChange;
-import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.SpreadsheetImportRecord;
+import self.research.ontology.owlEditor.repository.DraftChangeRepository;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
+import self.research.ontology.owlEditor.repository.JdbcDraftChangeRepository;
 import self.research.ontology.owlEditor.repository.SpreadsheetImportRecordRepository;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -25,9 +24,28 @@ import static org.mockito.Mockito.when;
 
 class SpreadsheetImportDraftSupportTest {
 
+    private final JdbcTemplate jdbc = TestDatabase.jdbc();
     private final SpreadsheetImportRecordRepository records = mock(SpreadsheetImportRecordRepository.class);
-    private final MongoTemplate mongo = mock(MongoTemplate.class);
-    private final SpreadsheetImportDraftSupport support = new SpreadsheetImportDraftSupport(records, mongo);
+    private final HistoryChangeRepository history = mock(HistoryChangeRepository.class);
+    private final DraftChangeRepository drafts = new JdbcDraftChangeRepository(jdbc, TestDatabase.transactions());
+    private final SpreadsheetImportDraftSupport support = new SpreadsheetImportDraftSupport(records, history, drafts);
+
+    @BeforeEach
+    void clean() {
+        jdbc.update("delete from draft_change");
+        jdbc.update("delete from draft_change_parked");
+    }
+
+    private DraftChange draft(String project, String user, String session, boolean applied) {
+        DraftChange change = new DraftChange(project, user, user, "createClass", Map.of("iri", "http://x#A"));
+        change.setSessionId(session);
+        change.setApplied(applied);
+        return drafts.save(change);
+    }
+
+    private int count(String table) {
+        return jdbc.queryForObject("select count(*) from " + table, Integer.class);
+    }
 
     @Test
     void recognisesImportSessions() {
@@ -49,55 +67,72 @@ class SpreadsheetImportDraftSupportTest {
 
         assertFalse(record.isDraft());
         verify(records).save(record);
-        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
-        ArgumentCaptor<Update> update = ArgumentCaptor.forClass(Update.class);
-        verify(mongo).updateMulti(query.capture(), update.capture(), eq(HistoryChange.class));
-        assertEquals(SpreadsheetImportService.ENTITY_IRI_PREFIX + "imp-1", query.getValue().getQueryObject().get("entityIRI"));
-        assertEquals(Boolean.TRUE, query.getValue().getQueryObject().get("draft"));
-        assertTrue(update.getValue().getUpdateObject().toJson().contains("\"draft\": false"));
+        verify(history).markDraftEntriesShared("p1", SpreadsheetImportService.ENTITY_IRI_PREFIX + "imp-1");
     }
 
     @Test
     void nothingToPublishDoesNothing() {
         when(records.findByProjectIdAndUserIdAndDraftTrue("p1", "kay")).thenReturn(List.of());
         support.promoteDraftImports("p1", "kay");
-        verify(mongo, never()).updateMulti(any(Query.class), any(Update.class), eq(HistoryChange.class));
+        verify(history, never()).markDraftEntriesShared(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
     void undoInDraftParksOnlyThatImportsPendingDraftChanges() {
-        List<DraftChange> pending = List.of(new DraftChange(), new DraftChange());
-        when(mongo.find(any(Query.class), eq(DraftChange.class))).thenReturn(pending);
-        when(mongo.remove(any(Query.class), eq(DraftChange.class))).thenReturn(DeleteResult.acknowledged(2));
+        draft("p1", "kay", "spreadsheet-import-abc", false);
+        draft("p1", "kay", "spreadsheet-import-abc", false);
+        draft("p1", "kay", "spreadsheet-import-abc", true);
+        draft("p1", "kay", "spreadsheet-import-other", false);
+        draft("p1", "kay", "session_1", false);
+        draft("p1", "lee", "spreadsheet-import-abc", false);
+        draft("p2", "kay", "spreadsheet-import-abc", false);
 
         support.discardDraftChanges("p1", "kay", "spreadsheet-import-abc");
 
-        verify(mongo).insert(pending, SpreadsheetImportDraftSupport.PARKED_COLLECTION);
-        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
-        verify(mongo).remove(query.capture(), eq(DraftChange.class));
-        var q = query.getValue().getQueryObject();
-        assertEquals("p1", q.get("projectId"));
-        assertEquals("kay", q.get("userId"));
-        assertEquals("spreadsheet-import-abc", q.get("sessionId"));
-        assertEquals(Boolean.FALSE, q.get("applied"));
+        assertEquals(2, count("draft_change_parked"));
+        assertEquals(5, count("draft_change"));
+        assertEquals(1, jdbc.queryForObject("select count(*) from draft_change where session_id = 'spreadsheet-import-abc' "
+                + "and applied = true", Integer.class));
     }
 
     @Test
-    void redoInDraftPutsTheParkedDraftChangesBack() {
-        List<DraftChange> parked = List.of(new DraftChange(), new DraftChange());
-        when(mongo.find(any(Query.class), eq(DraftChange.class), eq(SpreadsheetImportDraftSupport.PARKED_COLLECTION)))
-            .thenReturn(parked);
+    void redoInDraftPutsTheParkedDraftChangesBackWithTheirIds() {
+        DraftChange a = draft("p1", "kay", "spreadsheet-import-abc", false);
+        DraftChange b = draft("p1", "kay", "spreadsheet-import-abc", false);
+        support.discardDraftChanges("p1", "kay", "spreadsheet-import-abc");
+        assertEquals(0, drafts.findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc("p1", "kay").size());
 
         support.restoreDraftChanges("p1", "kay", "spreadsheet-import-abc");
 
-        verify(mongo).insert(parked, DraftChange.class);
-        verify(mongo).remove(any(Query.class), eq(DraftChange.class), eq(SpreadsheetImportDraftSupport.PARKED_COLLECTION));
+        assertEquals(0, count("draft_change_parked"));
+        List<DraftChange> back = drafts.findByProjectIdAndUserIdAndAppliedFalseOrderByTimestampAsc("p1", "kay");
+        assertEquals(2, back.size());
+        assertTrue(back.stream().anyMatch(d -> d.getId().equals(a.getId())));
+        assertTrue(back.stream().anyMatch(d -> d.getId().equals(b.getId())));
+        assertEquals(Map.of("iri", "http://x#A"), back.get(0).getOperationData());
     }
 
     @Test
-    void neverRemovesDraftChangesFromOtherSessions() {
+    void removingDropsOnlyThePendingChangesOfThatImportSession() {
+        draft("p1", "kay", "spreadsheet-import-abc", false);
+        draft("p1", "kay", "spreadsheet-import-abc", true);
+        draft("p1", "kay", "session_1", false);
+
+        support.removeDraftChanges("p1", "kay", "spreadsheet-import-abc");
+
+        assertEquals(2, count("draft_change"));
+    }
+
+    @Test
+    void neverTouchesDraftChangesFromOtherSessions() {
+        draft("p1", "kay", "session_169", false);
         support.discardDraftChanges("p1", "kay", "session_169");
         support.discardDraftChanges("p1", "kay", null);
-        verify(mongo, never()).remove(any(Query.class), eq(DraftChange.class));
+        support.removeDraftChanges("p1", "kay", "session_169");
+        support.restoreDraftChanges("p1", "kay", "session_169");
+
+        assertEquals(1, count("draft_change"));
+        assertEquals(0, count("draft_change_parked"));
     }
 }

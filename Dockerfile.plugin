@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.m2 \
         mvn -Dhttp.keepAlive=false \
             -Dmaven.wagon.http.retryHandler.count=10 \
             -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-            clean install -pl shared/common-utils,ontology-plugin-service -DskipTests -B -ntp && exit 0; \
+            clean install -pl shared/common-utils,shared/common-db,ontology-plugin-service -DskipTests -B -ntp && exit 0; \
         echo "Plugin-service module build failed, retrying ($$attempt/3)..."; \
     done; \
     exit 1'

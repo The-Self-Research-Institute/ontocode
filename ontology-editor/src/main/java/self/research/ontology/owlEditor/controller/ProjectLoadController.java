@@ -41,7 +41,10 @@ import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.model.merge.ResolutionAction;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository.FileMetadataRecord;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.service.BlobResource;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
@@ -74,9 +77,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import org.bson.Document;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -243,7 +243,7 @@ public class ProjectLoadController {
 
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
-    private final MongoTemplate mongoTemplate;
+    private final FileMetadataRepository fileMetadataRepository;
     private final CodeViewReimportPipeline codeViewReimportPipeline;
     private final ProjectWriteLockRegistry lockRegistry;
     private final ProjectAuthorization authorization;
@@ -262,7 +262,7 @@ public class ProjectLoadController {
                                  ProjectRepository projectRepository,
                                  OntologyPreparseService preparseService,
                                  ImportWorkerDispatcher importWorkerDispatcher,
-                                 MongoTemplate mongoTemplate,
+                                 FileMetadataRepository fileMetadataRepository,
                                  self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService,
                                  CodeViewReimportPipeline codeViewReimportPipeline,
                                  ProjectWriteLockRegistry lockRegistry,
@@ -281,7 +281,7 @@ public class ProjectLoadController {
         this.projectRepository = projectRepository;
         this.preparseService = preparseService;
         this.importWorkerDispatcher = importWorkerDispatcher;
-        this.mongoTemplate = mongoTemplate;
+        this.fileMetadataRepository = fileMetadataRepository;
         this.exportJobService = exportJobService;
         this.codeViewReimportPipeline = codeViewReimportPipeline;
         this.lockRegistry = lockRegistry;
@@ -784,7 +784,7 @@ public class ProjectLoadController {
                 }
             }
 
-            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
+            FileMetadataRecord fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
 
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] file_metadata not found for fileId: {}", fileId);
@@ -792,11 +792,11 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "File not found: " + fileId));
             }
 
-            String gridfsId = fileMeta.getString("gridfsId");
-            String fileName = fileMeta.getString("fileName");
+            String gridfsId = fileMeta.blobId();
+            String fileName = fileMeta.fileName();
             log.info("[ProjectLoadController] Resolved file: fileName={}, gridfsId={}", fileName, gridfsId);
 
-            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            Optional<BlobResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
             if (resourceOpt.isEmpty()) {
                 log.error("[ProjectLoadController] GridFS content missing for gridfsId: {}", gridfsId);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -863,14 +863,10 @@ public class ProjectLoadController {
         }
     }
 
-    private Optional<Document> findFileMetadata(String fileId, String projectId, String parentProjectId) {
-        Document fileMeta = mongoTemplate.getDb()
-                .getCollection("file_metadata")
-                .find(new Document("fileId", fileId).append("isDeleted", new Document("$ne", true)))
-                .first();
-        return Optional.ofNullable(fileMeta)
+    private Optional<FileMetadataRecord> findFileMetadata(String fileId, String projectId, String parentProjectId) {
+        return fileMetadataRepository.findActiveByFileId(fileId)
                 .filter(meta -> projectId.startsWith(parentProjectId + "--")
-                        && parentProjectId.equals(meta.getString("projectId")));
+                        && parentProjectId.equals(meta.projectId()));
     }
 
     private String generateCopyFilename(String originalFilename, String ownerEmail) {
@@ -2216,13 +2212,13 @@ public class ProjectLoadController {
 
     private void materializeOntologyFromFileRef(String projectId, String fileId, String parentProjectId) {
         try {
-            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
+            FileMetadataRecord fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] Cannot materialize {} — file_metadata missing for fileId {}", projectId, fileId);
                 return;
             }
-            String gridfsId = fileMeta.getString("gridfsId");
-            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            String gridfsId = fileMeta.blobId();
+            Optional<BlobResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
             if (resourceOpt.isEmpty()) {
                 log.warn("[ProjectLoadController] Cannot materialize {} — GridFS missing for {}", projectId, gridfsId);
                 return;

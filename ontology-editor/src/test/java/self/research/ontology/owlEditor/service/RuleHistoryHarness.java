@@ -2,7 +2,6 @@ package self.research.ontology.owlEditor.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.bson.Document;
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.query.GraphQueryResult;
@@ -11,9 +10,6 @@ import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.semanticweb.owlapi.model.SWRLRule;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.model.RollbackAudit;
@@ -32,8 +28,10 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -50,10 +48,9 @@ final class RuleHistoryHarness implements AutoCloseable {
     final List<HistoryChange> rows = new ArrayList<>();
     final SparqlDatasetService datasets = mock(SparqlDatasetService.class);
     final HistoryChangeRepository repository = mock(HistoryChangeRepository.class);
-    final MongoTemplate mongo = mock(MongoTemplate.class);
     final EditorReasonerCacheService reasonerCache = mock(EditorReasonerCacheService.class);
     final OntologyHistoryService history = new OntologyHistoryService(datasets);
-    final HistorySyncService sync = new HistorySyncService(repository, mongo, history);
+    final HistorySyncService sync = new HistorySyncService(repository, history);
     final RollbackAuditRepository audits = mock(RollbackAuditRepository.class);
     final OntologyMutationService mutations;
     final RawUpdateHistory raw;
@@ -77,7 +74,7 @@ final class RuleHistoryHarness implements AutoCloseable {
         wireRepository();
         ReflectionTestUtils.setField(history, "historySyncService", sync);
         ReflectionTestUtils.setField(history, "self", mock(OntologyHistoryService.class));
-        ReflectionTestUtils.setField(history, "exactCoverService", new ExactCoverService(mongo));
+        ReflectionTestUtils.setField(history, "exactCoverService", new ExactCoverService(repository));
         raw = new RawUpdateHistory(datasets);
         ReflectionTestUtils.setField(raw, "historyService", history);
         ReflectionTestUtils.setField(raw, "draftTrackingService", mock(DraftTrackingService.class));
@@ -101,7 +98,7 @@ final class RuleHistoryHarness implements AutoCloseable {
                 locks, mock(DraftTrackingService.class), null);
         HistoryChangeRepository blockerRepository = repository;
         ReflectionTestUtils.setField(rollback, "blockers", new UndoBlockers(blockerRepository, mock(ProjectImportService.class)));
-        published = new PublishedHistory(mongo, datasets, history);
+        published = new PublishedHistory(repository, datasets, history);
         ledger = new RuleImportLedger(repository, raw, mutations, locks, null);
         rules = new RuleService(clients == null ? client() : clients.apply(this),
                 (projectId, draft, user) -> store.ontology(draft ? DRAFT : MAIN),
@@ -234,15 +231,32 @@ final class RuleHistoryHarness implements AutoCloseable {
             Collections.reverse(newestFirst);
             return newestFirst;
         });
-        when(mongo.updateFirst(any(Query.class), any(Update.class), eq(HistoryChange.class))).thenAnswer(inv -> {
-            applyUpdate(inv.getArgument(0), inv.getArgument(1), false);
+        doAnswer(inv -> {
+            rows.stream().filter(r -> inv.getArgument(0).equals(r.getId())).forEach(r -> {
+                r.setReverted(inv.getArgument(1));
+                r.setRevertedAuditId(inv.getArgument(2));
+            });
             return null;
-        });
-        when(mongo.updateMulti(any(Query.class), any(Update.class), eq(HistoryChange.class))).thenAnswer(inv -> {
-            applyUpdate(inv.getArgument(0), inv.getArgument(1), true);
+        }).when(repository).setEntryReverted(anyString(), anyBoolean(), any());
+        doAnswer(inv -> {
+            rows.stream().filter(r -> inv.getArgument(0).equals(r.getId())).forEach(r -> {
+                r.setUndoBlockedReason(inv.getArgument(3));
+                r.setExactDeleted(null);
+                r.setExactInserted(null);
+                r.setExactCovers(0);
+            });
+            rows.stream().filter(r -> inv.getArgument(1).equals(r.getCoveredBy())
+                    && inv.getArgument(2).equals(r.getProjectId())).forEach(r -> {
+                r.setUndoBlockedReason(inv.getArgument(3));
+                r.setCoveredBy(null);
+            });
             return null;
-        });
-        when(mongo.find(any(Query.class), eq(HistoryChange.class))).thenAnswer(inv -> {
+        }).when(repository).blockExact(anyString(), anyString(), anyString(), anyString());
+        doAnswer(inv -> {
+            rows.stream().filter(r -> inv.getArgument(1).equals(r.getEditId())).forEach(r -> r.setExactCovers(inv.getArgument(2)));
+            return null;
+        }).when(repository).setExactCovers(anyString(), anyString(), anyInt());
+        when(repository.findDraftRowsOfUser(anyString(), anyString())).thenAnswer(inv -> {
             List<HistoryChange> draftRows = new ArrayList<>();
             for (HistoryChange row : rows) {
                 if (row.isDraft()) {
@@ -251,62 +265,6 @@ final class RuleHistoryHarness implements AutoCloseable {
             }
             return draftRows;
         });
-    }
-
-    @SuppressWarnings("unchecked")
-    private void applyUpdate(Query query, Update update, boolean multi) {
-        Document filter = query.getQueryObject();
-        Document body = update.getUpdateObject();
-        for (HistoryChange row : rows) {
-            if (!matches(row, filter)) {
-                continue;
-            }
-            Document set = (Document) body.get("$set");
-            if (set != null) {
-                for (Map.Entry<String, Object> entry : set.entrySet()) {
-                    switch (entry.getKey()) {
-                        case "reverted" -> row.setReverted((Boolean) entry.getValue());
-                        case "revertedAuditId" -> row.setRevertedAuditId((String) entry.getValue());
-                        case "exactCovers" -> row.setExactCovers((Integer) entry.getValue());
-                        case "undoBlockedReason" -> row.setUndoBlockedReason((String) entry.getValue());
-                        default -> {
-                        }
-                    }
-                }
-            }
-            Document unset = (Document) body.get("$unset");
-            if (unset != null) {
-                for (String key : unset.keySet()) {
-                    switch (key) {
-                        case "exactDeleted" -> row.setExactDeleted(null);
-                        case "exactInserted" -> row.setExactInserted(null);
-                        case "coveredBy" -> row.setCoveredBy(null);
-                        default -> {
-                        }
-                    }
-                }
-            }
-            if (!multi) {
-                return;
-            }
-        }
-    }
-
-    private static boolean matches(HistoryChange row, Document filter) {
-        for (Map.Entry<String, Object> entry : filter.entrySet()) {
-            Object want = entry.getValue();
-            boolean ok = switch (entry.getKey()) {
-                case "_id" -> want.equals(row.getId());
-                case "projectId" -> want.equals(row.getProjectId());
-                case "editId" -> want.equals(row.getEditId());
-                case "coveredBy" -> want.equals(row.getCoveredBy());
-                default -> true;
-            };
-            if (!ok) {
-                return false;
-            }
-        }
-        return true;
     }
 
     String graphFor(boolean draft) {

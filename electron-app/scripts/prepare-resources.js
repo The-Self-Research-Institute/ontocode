@@ -1,6 +1,7 @@
 
 
 const fs            = require('fs');
+const os            = require('os');
 const path          = require('path');
 const { execSync, execFileSync } = require('child_process');
 const https         = require('https');
@@ -27,15 +28,16 @@ const FUSEKI_SHA512 = '75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158b
 const FUSEKI_MIRROR_URL = `https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 
-const MONGODB_VERSION = '6.0.29';
-const MONGODB_WIN32_URL = `https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-${MONGODB_VERSION}.zip`;
-const MONGODB_WIN32_SHA256 = 'abfd03e5e02c962004e0b46d47777cdd3bca767b1a200dcafc2194cc5415cd55';
-
-const MONGODB_LINUX_UBUNTU2204_URL = `https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz`;
-const MONGODB_LINUX_UBUNTU2204_SHA256 = '46de5a28be8066e0c44b60e9919e5edd00c28f55fc187f8e0c60ab38dedc9054';
-
-const MONGODB_LINUX_ARM64_UBUNTU2204_URL = `https://fastdl.mongodb.org/linux/mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz`;
-const MONGODB_LINUX_ARM64_UBUNTU2204_SHA256 = '81003080fd01a95dc7bbc08a5e62c80d22b55df0ce5df6b674c2ec915a4b825b';
+const POSTGRES_VERSION = '17.11.0';
+const POSTGRES_MAJOR = '17';
+const POSTGRES_MAVEN_BASE = 'https://repo1.maven.org/maven2/io/zonky/test/postgres';
+const POSTGRES_BUILDS = {
+    'win32-x64':    { artifact: 'windows-amd64',  sha256: '98040fae18dd9633ff95932125b0cecf0a45a1a9312e216e2a33ad03a31d4251' },
+    'linux-x64':    { artifact: 'linux-amd64',    sha256: '0dd7b72b6f335b8ecfb355fa24c5781e8a93edd09880bb77eb52ebbf29b3e96d' },
+    'linux-arm64':  { artifact: 'linux-arm64v8',  sha256: '8b042e0ea418b1927d95399207950da0734d27fe01e29503ade3bdc464ad4c2b' },
+    'darwin-x64':   { artifact: 'darwin-amd64',   sha256: 'd464ff178e9860ba204662ac23fa547504b7fd392392ff2fb92e3fd73b5bdb64' },
+    'darwin-arm64': { artifact: 'darwin-arm64v8', sha256: 'a1c2786acb0c398f9b2d76806fc52f5dc8b222cbc8e9383a9b9702084daaf3a5' },
+};
 
 const JLINK_MODULES = [
     'java.base',
@@ -233,229 +235,98 @@ async function downloadFuseki(cachedSrc) {
     }
 }
 
-async function copyMongod() {
-    console.log('\n[3/4] MongoDB binary');
-    let anyMissing = false;
-    for (const platform of ['win32', 'darwin', 'linux']) {
-        const ext  = platform === 'win32' ? '.exe' : '';
-
-        const isLinuxArm64 = platform === 'linux' && TARGET_ARCH === 'arm64';
-        const cacheSubdir = platform === 'linux' ? (isLinuxArm64 ? 'linux-arm64' : 'linux-x64') : platform;
-        const cachedSrc = path.join(REPO_ROOT, 'data', 'mongodb', 'bin', cacheSubdir, `mongod${ext}`);
-        const dest = path.join(RESOURCES, 'mongodb', platform, `mongod${ext}`);
-        let ok = copyIfExists(cachedSrc, dest, `mongodb/${platform}/mongod${ext}`);
-        if (!ok && platform === 'win32') {
-            console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION}…`);
-            ok = await downloadMongodWin32(cachedSrc, dest);
-        }
-        if (!ok && platform === 'linux' && (platform === TARGET_PLATFORM || CROSS_BUILDING)) {
-            if (isLinuxArm64) {
-                console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION} (Ubuntu 22.04, arm64)…`);
-                ok = await downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest);
-            } else {
-                console.log(`  → Not found locally — downloading MongoDB Community Server ${MONGODB_VERSION} (Ubuntu 22.04)…`);
-                ok = await downloadMongodLinuxUbuntu2204(cachedSrc, dest);
-            }
-        }
-        if (!ok) anyMissing = true;
+async function copyPostgres() {
+    console.log('\n[3/4] PostgreSQL binaries');
+    const key = `${TARGET_PLATFORM}-${TARGET_ARCH}`;
+    const source = POSTGRES_BUILDS[key];
+    const destDir = path.join(RESOURCES, 'postgres', TARGET_PLATFORM);
+    const exe = TARGET_PLATFORM === 'win32' ? 'postgres.exe' : 'postgres';
+    if (!source) {
+        console.error(`  ✗  No bundled PostgreSQL build for ${key}`);
+        return false;
     }
-    if (anyMissing) {
-        console.log('       macOS/Linux still require the manual download:');
-        console.log('       Download: https://www.mongodb.com/try/download/community (zip/tgz)');
-        console.log('       Extract mongod[.exe] → data/mongodb/bin/<platform>/');
+    if (fs.existsSync(path.join(destDir, 'bin', exe)) && fs.existsSync(path.join(destDir, 'PG_MAJOR'))
+        && fs.readFileSync(path.join(destDir, 'PG_MAJOR'), 'utf8').trim() === POSTGRES_MAJOR) {
+        console.log(`  ✓  postgres/${TARGET_PLATFORM} already prepared`);
+    } else {
+        const ok = await downloadPostgres(source, destDir);
+        if (!ok) return false;
     }
+    await buildPostgresClusterTemplate(destDir);
+    return true;
 }
 
-async function downloadMongodWin32(cachedSrc, dest) {
-    const archivePath = path.join(RESOURCES, `mongodb-windows-x86_64-${MONGODB_VERSION}.zip`);
+async function downloadPostgres(source, destDir) {
+    const jarName = `embedded-postgres-binaries-${source.artifact}-${POSTGRES_VERSION}.jar`;
+    const localJar = path.join(os.homedir(), '.m2', 'repository', 'io', 'zonky', 'test', 'postgres',
+        `embedded-postgres-binaries-${source.artifact}`, POSTGRES_VERSION, jarName);
+    const jarPath = path.join(RESOURCES, jarName);
+    const extractDir = path.join(RESOURCES, `_postgres-extract-${TARGET_PLATFORM}`);
     ensureDir(RESOURCES);
-
     try {
-        await downloadFile(MONGODB_WIN32_URL, archivePath);
-
-        const actualSha256 = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
-        if (actualSha256 !== MONGODB_WIN32_SHA256) {
-            throw new Error(
-                `Checksum mismatch for mongodb-windows-x86_64-${MONGODB_VERSION}.zip\n` +
-                `       expected: ${MONGODB_WIN32_SHA256}\n       got:      ${actualSha256}`
-            );
+        if (fs.existsSync(localJar)) {
+            fs.copyFileSync(localJar, jarPath);
+        } else {
+            console.log(`  → Downloading PostgreSQL ${POSTGRES_VERSION} (${source.artifact}) from Maven Central…`);
+            await downloadFile(`${POSTGRES_MAVEN_BASE}/embedded-postgres-binaries-${source.artifact}/${POSTGRES_VERSION}/${jarName}`, jarPath);
+        }
+        const actual = crypto.createHash('sha256').update(fs.readFileSync(jarPath)).digest('hex');
+        if (actual !== source.sha256) {
+            throw new Error(`Checksum mismatch for ${jarName}\n       expected: ${source.sha256}\n       got:      ${actual}`);
         }
         console.log('  ✓  Checksum verified');
 
-        const extractDir = path.join(RESOURCES, `_mongodb-extract-${MONGODB_VERSION}`);
-        fs.rmSync(extractDir, { recursive: true, force: true });
+        removeDir(extractDir);
         ensureDir(extractDir);
-        execSync(
-            `powershell -NoProfile -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${extractDir}' -Force"`,
-            { stdio: 'inherit', timeout: 120_000 },
-        );
-
-        const extractedExe = findFileRecursive(extractDir, 'mongod.exe');
-        if (!extractedExe) throw new Error(`mongod.exe not found anywhere inside the extracted archive`);
-
-        ensureDir(path.dirname(dest));
-        fs.copyFileSync(extractedExe, dest);
-
-        ensureDir(path.dirname(cachedSrc));
-        fs.copyFileSync(extractedExe, cachedSrc);
-        console.log('  ✓  Downloaded and installed mongod.exe');
-
-        fs.rmSync(extractDir, { recursive: true, force: true });
-        fs.rmSync(archivePath, { force: true });
-        return true;
-    } catch (err) {
-        console.error(`  ✗  MongoDB download failed: ${err.message}`);
-        fs.rmSync(archivePath, { force: true });
-        return false;
-    }
-}
-
-async function downloadMongodLinuxUbuntu2204(cachedSrc, dest) {
-    const archivePath = path.join(RESOURCES, `mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz`);
-    ensureDir(RESOURCES);
-
-    try {
-        await downloadFile(MONGODB_LINUX_UBUNTU2204_URL, archivePath);
-
-        const actualSha256 = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
-        if (actualSha256 !== MONGODB_LINUX_UBUNTU2204_SHA256) {
-            throw new Error(
-                `Checksum mismatch for mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz\n` +
-                `       expected: ${MONGODB_LINUX_UBUNTU2204_SHA256}\n       got:      ${actualSha256}`
-            );
+        if (process.platform === 'win32') {
+            const zipCopy = path.join(extractDir, 'pg.zip');
+            fs.copyFileSync(jarPath, zipCopy);
+            execFileSync('powershell', ['-NoProfile', '-Command',
+                `Expand-Archive -Path '${zipCopy}' -DestinationPath '${extractDir}' -Force`], { stdio: 'inherit', timeout: 120_000 });
+        } else {
+            execFileSync('unzip', ['-oq', jarPath, '-d', extractDir], { stdio: 'inherit', timeout: 120_000 });
         }
-        console.log('  ✓  Checksum verified');
+        const txz = fs.readdirSync(extractDir).find((n) => n.endsWith('.txz'));
+        if (!txz) throw new Error('The PostgreSQL archive did not contain a .txz payload');
 
-        const extractDir = path.join(RESOURCES, `_mongodb-extract-linux-${MONGODB_VERSION}`);
-        fs.rmSync(extractDir, { recursive: true, force: true });
-        ensureDir(extractDir);
-        const tarArchivePath = archivePath.replace(/\\/g, '/');
-        const tarExtractDir = extractDir.replace(/\\/g, '/');
-        execSync(`tar --force-local -xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
-
-        const extractedBin = findFileRecursive(extractDir, 'mongod');
-        if (!extractedBin) throw new Error(`mongod not found anywhere inside the extracted archive`);
-
-        ensureDir(path.dirname(dest));
-        fs.copyFileSync(extractedBin, dest);
-        fs.chmodSync(dest, 0o755);
-
-        ensureDir(path.dirname(cachedSrc));
-        fs.copyFileSync(extractedBin, cachedSrc);
-        fs.chmodSync(cachedSrc, 0o755);
-        console.log('  ✓  Downloaded and installed mongod (linux/ubuntu2204)');
-
-        fs.rmSync(extractDir, { recursive: true, force: true });
-        fs.rmSync(archivePath, { force: true });
+        removeDir(destDir);
+        ensureDir(destDir);
+        execFileSync('tar', ['-xJf', txz, '-C', path.relative(extractDir, destDir).replace(/\\/g, '/')],
+            { stdio: 'inherit', timeout: 300_000, cwd: extractDir });
+        fs.writeFileSync(path.join(destDir, 'PG_MAJOR'), POSTGRES_MAJOR, 'utf8');
+        console.log(`  ✓  Installed PostgreSQL ${POSTGRES_VERSION} into postgres/${TARGET_PLATFORM}`);
         return true;
     } catch (err) {
-        console.error(`  ✗  MongoDB (Linux) download failed: ${err.message}`);
-        fs.rmSync(archivePath, { force: true });
+        console.error(`  ✗  PostgreSQL preparation failed: ${err.message}`);
         return false;
-    }
-}
-
-async function downloadMongodLinuxArm64Ubuntu2204(cachedSrc, dest) {
-    const archivePath = path.join(RESOURCES, `mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz`);
-    ensureDir(RESOURCES);
-
-    try {
-        await downloadFile(MONGODB_LINUX_ARM64_UBUNTU2204_URL, archivePath);
-
-        const actualSha256 = crypto.createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
-        if (actualSha256 !== MONGODB_LINUX_ARM64_UBUNTU2204_SHA256) {
-            throw new Error(
-                `Checksum mismatch for mongodb-linux-aarch64-ubuntu2204-${MONGODB_VERSION}.tgz\n` +
-                `       expected: ${MONGODB_LINUX_ARM64_UBUNTU2204_SHA256}\n       got:      ${actualSha256}`
-            );
-        }
-        console.log('  ✓  Checksum verified');
-
-        const extractDir = path.join(RESOURCES, `_mongodb-extract-linux-arm64-${MONGODB_VERSION}`);
-        fs.rmSync(extractDir, { recursive: true, force: true });
-        ensureDir(extractDir);
-        const tarArchivePath = archivePath.replace(/\\/g, '/');
-        const tarExtractDir = extractDir.replace(/\\/g, '/');
-        execSync(`tar --force-local -xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
-
-        const extractedBin = findFileRecursive(extractDir, 'mongod');
-        if (!extractedBin) throw new Error(`mongod not found anywhere inside the extracted archive`);
-
-        ensureDir(path.dirname(dest));
-        fs.copyFileSync(extractedBin, dest);
-        fs.chmodSync(dest, 0o755);
-
-        ensureDir(path.dirname(cachedSrc));
-        fs.copyFileSync(extractedBin, cachedSrc);
-        fs.chmodSync(cachedSrc, 0o755);
-        console.log('  ✓  Downloaded and installed mongod (linux-arm64/ubuntu2204)');
-
-        fs.rmSync(extractDir, { recursive: true, force: true });
-        fs.rmSync(archivePath, { force: true });
-        return true;
-    } catch (err) {
-        console.error(`  ✗  MongoDB (Linux arm64) download failed: ${err.message}`);
-        fs.rmSync(archivePath, { force: true });
-        return false;
-    }
-}
-
-const MONGOD_VC_RUNTIME_DLLS = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll'];
-const IMAGE_FILE_MACHINE_AMD64 = 0x8664;
-
-function peMachine(file) {
-    const fd = fs.openSync(file, 'r');
-    try {
-        const dosHeader = Buffer.alloc(0x40);
-        fs.readSync(fd, dosHeader, 0, 0x40, 0);
-        const peHeader = Buffer.alloc(6);
-        fs.readSync(fd, peHeader, 0, 6, dosHeader.readUInt32LE(0x3c));
-        return peHeader.toString('latin1', 0, 4) === 'PE\0\0' ? peHeader.readUInt16LE(4) : null;
-    } catch (_) {
-        return null;
     } finally {
-        fs.closeSync(fd);
+        fs.rmSync(jarPath, { force: true });
+        removeDir(extractDir);
     }
 }
 
-function isX64Dll(file) {
-    return fs.existsSync(file) && peMachine(file) === IMAGE_FILE_MACHINE_AMD64;
-}
-
-function mongodRuntimeDllSources() {
-    const dirs = [
-        path.join(JRE_DIR, 'bin'),
-        path.join(JRE17_DIR, 'bin'),
-        path.join(jreCacheDir('win32-x64'), 'bin'),
-        path.join(jreCacheDir('swrl-win32-x64'), 'bin'),
-    ];
-    if (process.platform === 'win32' && process.arch === 'x64') {
-        dirs.push(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32'));
+async function buildPostgresClusterTemplate(destDir) {
+    const template = path.join(destDir, 'cluster-template');
+    if (fs.existsSync(path.join(template, 'PG_VERSION'))) {
+        console.log('  ✓  Empty database template already built');
+        return;
     }
-    return dirs;
-}
-
-function mongodRuntimeDllsPresent() {
-    const dir = path.join(RESOURCES, 'mongodb', 'win32');
-    return MONGOD_VC_RUNTIME_DLLS.every((dll) => isX64Dll(path.join(dir, dll)));
-}
-
-function bundleMongodRuntimeDlls() {
-    console.log('\n[6/6] Visual C++ runtime for mongod.exe');
-    const destDir = path.join(RESOURCES, 'mongodb', 'win32');
-    ensureDir(destDir);
-    let allOk = true;
-    for (const dll of MONGOD_VC_RUNTIME_DLLS) {
-        const src = mongodRuntimeDllSources().map((dir) => path.join(dir, dll)).find(isX64Dll);
-        if (!src) {
-            console.error(`  ✗  No x64 ${dll} found (looked in the bundled JREs, the JRE cache and System32)`);
-            allOk = false;
-            continue;
-        }
-        fs.copyFileSync(src, path.join(destDir, dll));
-        console.log(`  ✓  ${dll} from ${path.dirname(src)}`);
+    if (CROSS_BUILDING || CROSS_ARCH) {
+        console.log('  ⚠  Cross-building: no empty database template (the app creates it on first start, which takes longer)');
+        return;
     }
-    return allOk;
+    console.log('  → Building the empty database template (saves about 35 seconds on a first start)…');
+    const runtime = require('../services/PostgresRuntime');
+    removeDir(template);
+    const password = crypto.randomBytes(24).toString('base64url');
+    try {
+        await runtime.buildCluster(destDir, template, password, { log: (l, m) => console.log('     ' + m) });
+        fs.rmSync(path.join(template, 'postmaster.pid'), { force: true });
+        console.log('  ✓  Empty database template ready');
+    } catch (err) {
+        removeDir(template);
+        console.error('  ⚠  Could not build the database template (' + err.message + '); the app will create it on first start');
+    }
 }
 
 function findFileRecursive(dir, name) {
@@ -839,12 +710,11 @@ async function main() {
 
     copyOwlEditorJar();
     await copyFusekiJar();
-    await copyMongod();
+    await copyPostgres();
     await bundleJre();
     console.log('\n[5/5] SWRL JRE (dedicated JDK 17 — Drools/MVEL incompatible with JDK 21+)');
     await bundleSwrlJre();
     copySwrlJar();
-    if (TARGET_PLATFORM === 'win32') bundleMongodRuntimeDlls();
     generateJreBaseCdsArchives();
 
     if (!requiredResourcesPresent()) {
@@ -859,7 +729,7 @@ function requiredResourcesPresent() {
     const checks = {
         'desktop.jar':       path.join(JARS_DIR, 'desktop.jar'),
         'fuseki-server.jar': path.join(JARS_DIR, 'fuseki-server.jar'),
-        'mongod':            path.join(RESOURCES, 'mongodb', TARGET_PLATFORM, `mongod${TARGET_PLATFORM === 'win32' ? '.exe' : ''}`),
+        'postgres':          path.join(RESOURCES, 'postgres', TARGET_PLATFORM, 'bin', `postgres${TARGET_PLATFORM === 'win32' ? '.exe' : ''}`),
         'JRE':               path.join(JRE_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java'),
     };
     let allOk = true;
@@ -868,11 +738,8 @@ function requiredResourcesPresent() {
         console.log(`  ${ok ? '✓' : '✗'}  ${label}`);
         if (!ok) allOk = false;
     }
-    if (TARGET_PLATFORM === 'win32') {
-        const dllsOk = mongodRuntimeDllsPresent();
-        console.log(`  ${dllsOk ? '✓' : '✗'}  mongod.exe VC++ runtime (${MONGOD_VC_RUNTIME_DLLS.join(', ')})`);
-        if (!dllsOk) allOk = false;
-    }
+    const templateOk = fs.existsSync(path.join(RESOURCES, 'postgres', TARGET_PLATFORM, 'cluster-template', 'PG_VERSION'));
+    console.log(`  ${templateOk ? '✓' : '⚠'}  empty database template${templateOk ? '' : ' — missing, the first start will take about 35 seconds longer'}`);
 
     const swrlJreOk = fs.existsSync(path.join(JRE17_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java'));
     console.log(`  ${swrlJreOk ? '✓' : '⚠'}  SWRL JRE (JDK 17)${swrlJreOk ? '' : ' — missing, SWRL reasoning will fail at runtime'}`);
@@ -881,4 +748,8 @@ function requiredResourcesPresent() {
     return allOk;
 }
 
-main().catch(err => { console.error(err); process.exit(1); });
+if (require.main === module) {
+    main().catch(err => { console.error(err); process.exit(1); });
+}
+
+module.exports = { copyPostgres, POSTGRES_BUILDS };

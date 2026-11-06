@@ -1,20 +1,10 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.CompoundIndexes;
-import org.springframework.data.mongodb.core.mapping.Document;
-
 import java.time.LocalDateTime;
 import java.util.Map;
 
-@Document(collection = "draft_sessions")
-@CompoundIndexes({
-    @CompoundIndex(name = "project_user_unique", def = "{'projectId': 1, 'userId': 1}", unique = true)
-})
 public class DraftSession {
 
-    @Id
     private String id;
 
     private String projectId;

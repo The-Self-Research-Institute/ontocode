@@ -2,13 +2,10 @@ package self.research.ontology.owlEditor.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.model.ProjectStatus;
+import self.research.ontology.owlEditor.repository.ProjectAccessRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 
 import java.time.Instant;
@@ -22,11 +19,11 @@ public class ProjectMetadataService {
     private static final Logger log = LoggerFactory.getLogger(ProjectMetadataService.class);
     
     private final ProjectRepository projectRepository;
-    private final MongoTemplate mongoTemplate;
+    private final ProjectAccessRepository accessRepository;
 
-    public ProjectMetadataService(ProjectRepository projectRepository, MongoTemplate mongoTemplate) {
+    public ProjectMetadataService(ProjectRepository projectRepository, ProjectAccessRepository accessRepository) {
         this.projectRepository = projectRepository;
-        this.mongoTemplate = mongoTemplate;
+        this.accessRepository = accessRepository;
     }
 
     public Optional<ProjectStatus> readStatus(String projectId) {
@@ -40,14 +37,7 @@ public class ProjectMetadataService {
     }
 
     public void writeStatus(String projectId, ProjectStatus status) {
-        Instant now = Instant.now();
-        Update update = newProjectUpdate(projectId, now)
-                .set("status", status.status())
-                .set("statusMessage", status.statusMessage())
-                .set("filename", status.filename())
-                .set("updatedAt", now);
-
-        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
+        projectRepository.upsertStatus(projectId, status.status(), status.statusMessage(), status.filename(), Instant.now());
     }
 
     public Optional<Map<String, Object>> readMeta(String projectId) {
@@ -59,13 +49,7 @@ public class ProjectMetadataService {
         Instant now = Instant.now();
         Map<String, Object> metadata = new HashMap<>(meta);
         metadata.put("lastUpdated", now.toString());
-
-        Update update = newProjectUpdate(projectId, now)
-                .setOnInsert("status", "UPLOADED")
-                .set("metadata", metadata)
-                .set("updatedAt", now);
-
-        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
+        projectRepository.upsertMetadata(projectId, metadata, "UPLOADED", now);
     }
 
     /** Persist import progress for polling clients (Project Library cards). */
@@ -80,35 +64,17 @@ public class ProjectMetadataService {
             progressMeta.put("message", message);
         }
         progressMeta.put("lastUpdated", now.toString());
-
-        Update update = newProjectUpdate(projectId, now)
-                .set("statusMessage", message != null ? message : "Importing…")
-                .set("metadata.importProgress", progressMeta)
-                .set("updatedAt", now);
-
-        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
+        projectRepository.upsertImportProgress(projectId, progressMeta, message != null ? message : "Importing…", now);
     }
-    
+
     public void setOwnerEmail(String projectId, String ownerEmail) {
-        Instant now = Instant.now();
-        Update update = newProjectUpdate(projectId, now)
-                .setOnInsert("status", "UPLOADED")
-                .set("ownerEmail", ownerEmail)
-                .set("updatedAt", now);
-
-        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
+        projectRepository.upsertOwnerEmail(projectId, ownerEmail, Instant.now());
     }
-    
+
     public void setGridfsFileId(String projectId, String gridfsFileId) {
-        Instant now = Instant.now();
-        Update update = newProjectUpdate(projectId, now)
-                .setOnInsert("status", "UPLOADED")
-                .set("gridfsFileId", gridfsFileId)
-                .set("updatedAt", now);
-
-        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
+        projectRepository.upsertBlobId(projectId, gridfsFileId, Instant.now());
     }
-    
+
     public boolean isDuplicateFilename(String filename, String ownerEmail) {
         if (filename == null || ownerEmail == null) {
             return false;
@@ -141,43 +107,31 @@ public class ProjectMetadataService {
         log.info("[ProjectMetadataService] Updating project metadata - projectId: {}, owner: {}, workspace: {}, parentProject: {}, status: {}", 
             projectId, ownerEmail, workspaceId, parentProjectId, status.status());
             
-        Instant now = Instant.now();
-        Update update = newProjectUpdate(projectId, now)
-                .set("status", status.status())
-                .set("statusMessage", status.statusMessage())
-                .set("filename", status.filename())
-                .set("gridfsFileId", gridfsFileId)
-                .set("updatedAt", now);
-
         if (ownerEmail != null && !ownerEmail.isEmpty()) {
-            update.setOnInsert("ownerEmail", ownerEmail);
             log.info("[ProjectMetadataService] Owner email {} applies only if project {} is new", ownerEmail, projectId);
         } else {
             log.warn("[ProjectMetadataService] No owner email provided for project: {}", projectId);
         }
-
-        if (ownerId != null && !ownerId.isBlank()) {
-            update.setOnInsert("ownerId", ownerId);
-        }
-
         if (workspaceId != null && !workspaceId.isEmpty()) {
-            update.set("workspaceId", workspaceId);
             log.info("[ProjectMetadataService] Setting workspace ID: {} for project: {}", workspaceId, projectId);
         }
-
         if (parentProjectId != null && !parentProjectId.isEmpty()) {
-            update.set("projectId", parentProjectId);
             log.info("[ProjectMetadataService] Setting parent project ID: {} for file: {}", parentProjectId, projectId);
         }
 
-        mongoTemplate.upsert(projectQuery(projectId), update, ProjectDocument.class);
-        log.info("[ProjectMetadataService] ✓ Project saved to MongoDB - id: {}, owner: {}, filename: {}", 
+        projectRepository.upsertProjectMetadata(projectId, status.status(), status.statusMessage(), status.filename(),
+                gridfsFileId, ownerEmail, ownerId, workspaceId, parentProjectId, Instant.now());
+        log.info("[ProjectMetadataService] Project saved - id: {}, owner: {}, filename: {}",
             projectId, ownerEmail, status.filename());
     }
     
     public Optional<String> getOwnerEmail(String projectId) {
-        return WorkspaceProjectRecord.find(mongoTemplate, projectId)
-                .flatMap(WorkspaceProjectRecord::ownerEmail)
+        if (projectId == null || projectId.isBlank()) {
+            return Optional.empty();
+        }
+        return accessRepository.findWorkspaceProject(ProjectAccessService.parentOf(projectId))
+                .map(ProjectAccessRepository.WorkspaceProject::ownerEmail)
+                .filter(email -> email != null && !email.isBlank())
                 .or(() -> projectRepository.findById(projectId).map(ProjectDocument::getOwnerEmail));
     }
 
@@ -222,46 +176,16 @@ public class ProjectMetadataService {
      * a later one that raced in between a write + separate read.
      */
     public long incrementMutationVersion(String projectId) {
-        Instant now = Instant.now();
-        Update update = new Update()
-                .inc("mutationVersion", 1)
-                .set("updatedAt", now);
-        ProjectDocument updated = mongoTemplate.findAndModify(
-                projectQuery(projectId),
-                update,
-                org.springframework.data.mongodb.core.FindAndModifyOptions.options().returnNew(true),
-                ProjectDocument.class);
-        return updated != null && updated.getMutationVersion() != null
-                ? updated.getMutationVersion() : 0L;
+        return projectRepository.incrementMutationVersion(projectId, Instant.now());
     }
 
     public long incrementMainGraphRevision(String projectId) {
-        Instant now = Instant.now();
-        Update update = new Update()
-                .inc("mainGraphRevision", 1)
-                .set("updatedAt", now);
-        ProjectDocument updated = mongoTemplate.findAndModify(
-                projectQuery(projectId),
-                update,
-                org.springframework.data.mongodb.core.FindAndModifyOptions.options().returnNew(true),
-                ProjectDocument.class);
-        return updated != null && updated.getMainGraphRevision() != null
-                ? updated.getMainGraphRevision() : 0L;
+        return projectRepository.incrementMainGraphRevision(projectId, Instant.now());
     }
 
     public long getMainGraphRevision(String projectId) {
         return projectRepository.findById(projectId)
                 .map(ProjectDocument::getMainGraphRevision)
                 .orElse(0L);
-    }
-
-    private Query projectQuery(String projectId) {
-        return Query.query(Criteria.where("_id").is(projectId));
-    }
-
-    private Update newProjectUpdate(String projectId, Instant now) {
-        return new Update()
-                .setOnInsert("name", projectId)
-                .setOnInsert("createdAt", now);
     }
 }

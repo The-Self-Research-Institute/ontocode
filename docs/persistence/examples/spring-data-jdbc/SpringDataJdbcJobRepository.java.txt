@@ -1,0 +1,19 @@
+package self.research.ontology.reasoner.repository.springjdbc;
+
+import org.springframework.data.jdbc.repository.query.Modifying;
+import org.springframework.data.jdbc.repository.query.Query;
+import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
+
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
+
+public interface SpringDataJdbcJobRepository extends CrudRepository<JobRow, String> {
+
+    List<JobRow> findByStatusIn(Collection<String> statuses);
+
+    @Modifying
+    @Query("delete from reasoning_job where updated_at < :cutoff")
+    int deleteOlderThan(@Param("cutoff") Instant cutoff);
+}

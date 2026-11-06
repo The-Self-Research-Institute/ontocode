@@ -15,11 +15,8 @@ import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditS
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.apibinding.OWLManager;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Criteria;
-import com.mongodb.client.gridfs.model.GridFSFile;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
+import self.research.ontology.owlEditor.service.BlobResource;
+import self.research.ontology.owlEditor.service.GridFSFileService;
 
 import java.io.InputStream;
 import java.util.List;
@@ -42,7 +39,7 @@ import java.util.Map;
 public class GraphViewController {
 
     private final GraphGeneratingService graphGeneratingService;
-    private final GridFsTemplate gridfs;
+    private final GridFSFileService gridfs;
     private final CollaborativeEditService collaborativeEditService;
     private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
     private final self.research.ontology.owlEditor.cache.BoundedOntologyLru ontologyCache =
@@ -76,12 +73,8 @@ public class GraphViewController {
     }
 
     private OWLOntology readOntologyFromGridFs(String projectId) throws Exception {
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-        if (file == null) {
-            throw new RuntimeException("Ontology file not found for project: " + projectId);
-        }
-
-        GridFsResource resource = gridfs.getResource(file);
+        BlobResource resource = gridfs.getFileByProjectId(projectId)
+                .orElseThrow(() -> new RuntimeException("Ontology file not found for project: " + projectId));
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             return manager.loadOntologyFromOntologyDocument(inputStream);

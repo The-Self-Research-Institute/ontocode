@@ -1,6 +1,5 @@
 package self.research.ontology.owlEditor.service;
 
-import org.bson.Document;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.vocabulary.OWL;
 import org.eclipse.rdf4j.model.vocabulary.RDF;
@@ -13,12 +12,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.document.ProjectDocument;
+import self.research.ontology.owlEditor.repository.AppMigrationRepository;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 
 import java.io.InputStream;
@@ -32,7 +29,6 @@ public class PrefixBackfillStartupJob {
 
     private static final Logger log = LoggerFactory.getLogger(PrefixBackfillStartupJob.class);
 
-    private static final String MIGRATIONS = "app_migrations";
     private static final String MARKER_ID = "prefix-backfill-v3";
     private static final List<String> UPLOADED_FILES = List.of(
             "ontology.current.owl", "ontology.current.ttl", "ontology.current.nt", "ontology.current.jsonld");
@@ -40,16 +36,18 @@ public class PrefixBackfillStartupJob {
     private final ProjectRepository projectRepository;
     private final ProjectMetadataService metadataService;
     private final StorageManager storageManager;
-    private final MongoTemplate mongoTemplate;
+    private final AppMigrationRepository migrations;
+    private final FileMetadataRepository fileMetadata;
     private final GridFSFileService gridFSFileService;
 
     public PrefixBackfillStartupJob(ProjectRepository projectRepository, ProjectMetadataService metadataService,
-                                    StorageManager storageManager, MongoTemplate mongoTemplate,
-                                    GridFSFileService gridFSFileService) {
+                                    StorageManager storageManager, AppMigrationRepository migrations,
+                                    FileMetadataRepository fileMetadata, GridFSFileService gridFSFileService) {
         this.projectRepository = projectRepository;
         this.metadataService = metadataService;
         this.storageManager = storageManager;
-        this.mongoTemplate = mongoTemplate;
+        this.migrations = migrations;
+        this.fileMetadata = fileMetadata;
         this.gridFSFileService = gridFSFileService;
     }
 
@@ -62,8 +60,7 @@ public class PrefixBackfillStartupJob {
 
     void runOnce() {
         try {
-            Query marker = Query.query(Criteria.where("_id").is(MARKER_ID));
-            if (mongoTemplate.exists(marker, MIGRATIONS)) {
+            if (migrations.isDone(MARKER_ID)) {
                 return;
             }
             int updated = 0, skipped = 0, deleted = 0, noFile = 0, failed = 0;
@@ -76,10 +73,14 @@ public class PrefixBackfillStartupJob {
                     default -> skipped++;
                 }
             }
-            mongoTemplate.save(new Document("_id", MARKER_ID)
-                    .append("completedAt", Instant.now().toString())
-                    .append("updated", updated).append("skipped", skipped).append("deleted", deleted)
-                    .append("noFile", noFile).append("failed", failed), MIGRATIONS);
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("completedAt", Instant.now().toString());
+            summary.put("updated", updated);
+            summary.put("skipped", skipped);
+            summary.put("deleted", deleted);
+            summary.put("noFile", noFile);
+            summary.put("failed", failed);
+            migrations.markDone(MARKER_ID, summary);
             log.info("[PREFIX-BACKFILL] Done: updated={} skipped={} deleted={} noFile={} failed={}",
                     updated, skipped, deleted, noFile, failed);
         } catch (Exception e) {
@@ -195,9 +196,7 @@ public class PrefixBackfillStartupJob {
         if (sep < 0) {
             return false;
         }
-        Document fileMeta = mongoTemplate.getDb().getCollection("file_metadata")
-                .find(new Document("fileId", projectId.substring(sep + 2))).first();
-        return fileMeta != null && Boolean.TRUE.equals(fileMeta.getBoolean("isDeleted"));
+        return fileMetadata.findByFileId(projectId.substring(sep + 2)).map(meta -> meta.deleted()).orElse(false);
     }
 
     private HeaderScan scanGridFs(String projectId) throws Exception {
@@ -205,20 +204,17 @@ public class PrefixBackfillStartupJob {
         if (sep < 0) {
             return null;
         }
-        Document fileMeta = mongoTemplate.getDb().getCollection("file_metadata")
-                .find(new Document("fileId", projectId.substring(sep + 2))
-                        .append("isDeleted", new Document("$ne", true)))
-                .first();
-        if (fileMeta == null || fileMeta.getString("gridfsId") == null) {
+        var fileMeta = fileMetadata.findActiveByFileId(projectId.substring(sep + 2)).orElse(null);
+        if (fileMeta == null || fileMeta.blobId() == null) {
             return null;
         }
-        Optional<GridFsResource> resource = gridFSFileService.getFileById(fileMeta.getString("gridfsId"));
+        Optional<BlobResource> resource = gridFSFileService.getFileById(fileMeta.blobId());
         if (resource.isEmpty()) {
             return null;
         }
-        String fileName = fileMeta.getString("fileName") != null ? fileMeta.getString("fileName") : "upload.owl";
+        String fileName = fileMeta.fileName() != null ? fileMeta.fileName() : "upload.owl";
         try (InputStream in = resource.get().getInputStream()) {
-            return scanHeader(in, fileName, "GridFS");
+            return scanHeader(in, fileName, "stored file");
         }
     }
 

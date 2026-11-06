@@ -29,11 +29,19 @@ spec:
         - containerPort: 8086
           name: http
         env:
-        - name: MONGODB_URI
+        - name: ONTOCODE_DB_URL
+          value: "jdbc:postgresql://postgres:5432/ontocode?socketTimeout=10&connectTimeout=3"
+        - name: ONTOCODE_DB_USER
+          value: ontocode
+        - name: ONTOCODE_DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mongodb-uri
-              key: uri
+              name: postgres-credentials
+              key: password
+        - name: ONTOCODE_BLOBS_DIR
+          value: /data/blobs
+        - name: ONTOCODE_DB_POOL_MAX
+          value: "30"
         - name: CORS_ORIGINS
           value: "http://localhost,https://ontocode.app"
         - name: SPRING_PROFILES_ACTIVE
@@ -59,6 +67,15 @@ spec:
             port: 8086
           initialDelaySeconds: 30
           periodSeconds: 5
+        volumeMounts:
+        - name: ontocode-blobs
+          mountPath: /data/blobs
+      securityContext:
+        fsGroup: 1000
+      volumes:
+      - name: ontocode-blobs
+        persistentVolumeClaim:
+          claimName: ontocode-blobs-pvc
 ---
 apiVersion: v1
 kind: Service

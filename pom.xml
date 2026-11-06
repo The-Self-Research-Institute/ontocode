@@ -23,12 +23,14 @@
     <modules>
         <module>shared/common-models</module>
         <module>shared/common-utils</module>
+        <module>shared/common-db</module>
         <module>ontology-gateway</module>
         <module>ontology-editor</module>
         <module>ontology-auth</module>
         <module>ontology-swrl</module>
         <module>ontology-plugin-service</module>
         <module>ontology-reasoner-worker</module>
+        <module>ontology-data-migrator</module>
     </modules>
 
     <properties>

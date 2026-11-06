@@ -8,7 +8,6 @@ import org.eclipse.rdf4j.repository.sail.SailRepository;
 import org.eclipse.rdf4j.sail.memory.MemoryStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.ImportReferenceUpdater.Actor;
@@ -56,7 +55,7 @@ class ImportReferenceUpdaterTest {
     }
 
     private ImportReferenceUpdater updater(boolean desktop) {
-        return new ImportReferenceUpdater(datasets, projects, mock(MongoTemplate.class), ownership, mutations,
+        return new ImportReferenceUpdater(datasets, projects, ownership, mutations,
                 new ProjectWriteLockRegistry(), desktop);
     }
 

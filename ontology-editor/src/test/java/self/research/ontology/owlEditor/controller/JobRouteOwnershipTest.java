@@ -5,7 +5,7 @@ import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -232,7 +232,7 @@ class JobRouteOwnershipTest {
                 mock(ProjectShareService.class), mock(DraftTrackingService.class), mock(DraftCopyService.class),
                 mock(OntologyHistoryService.class), mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class),
                 mock(SparqlDatasetService.class), mock(ProjectRepository.class), mock(OntologyPreparseService.class),
-                mock(ImportWorkerDispatcher.class), mock(MongoTemplate.class), exportJobs,
+                mock(ImportWorkerDispatcher.class), mock(FileMetadataRepository.class), exportJobs,
                 mock(CodeViewReimportPipeline.class), new ProjectWriteLockRegistry(),
                 mock(self.research.ontology.owlEditor.service.ProjectAuthorization.class));
         ReflectionTestUtils.setField(controller, "jobAccess", jobAccess);

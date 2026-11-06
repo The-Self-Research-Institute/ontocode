@@ -45,7 +45,7 @@ Flags (combine as needed):
   --patch-web         Patch only app.asar (UI fix, ~1–2 min). No Maven.
   --java              mvn package ontology-desktop → desktop.jar
   --web               npm run build:electron in webview-src
-  --resources         prepare-resources (Fuseki, Mongo, JRE, copy desktop.jar)
+  --resources         prepare-resources (Fuseki, PostgreSQL, JRE, copy desktop.jar)
   --resources --build-java   Same as --resources but run Maven if desktop.jar missing
   --renderer          Copy webview dist → electron-app/renderer/dist
   --win | --mac | --linux   Run electron-builder for that platform (implies --full steps)
@@ -54,7 +54,7 @@ Flags (combine as needed):
   --staging-dir=PATH  ASAR staging dir (default: E:\\tmp\\ontocode-asar-staging)
   --skip-jre          Pass through to prepare-resources (skip JRE download/jlink)
   --plugins           Build JS plugin bundles + copy to resources/backend/plugin-bundles
-                      (seeded into local Mongo on first desktop run)
+                      (seeded into the local database on first desktop run)
 
 Examples:
   node scripts/build-desktop.js --full --resources --plugins --portable
@@ -217,7 +217,7 @@ function portableLockHint(portableDir) {
     return (
         `\nPortable folder is locked: ${portableDir}\n` +
         '  • Quit OntoCode Studio if it was started from that folder\n' +
-        '  • End stray java.exe / mongod.exe from an old portable run (Task Manager)\n' +
+        '  • End stray java.exe / postgres.exe from an old portable run (Task Manager)\n' +
         '  • Or use a fresh output path: --portable-dir=E:\\tmp\\ontocode-portable-2\n' +
         'Then retry packaging only:\n' +
         '  node scripts/build-desktop.js --portable --renderer\n'

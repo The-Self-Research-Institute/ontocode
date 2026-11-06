@@ -18,7 +18,7 @@ class HistorySyncServiceTest {
     private final HistorySyncService service = newService();
 
     private static HistorySyncService newService() {
-        HistorySyncService service = new HistorySyncService(null, null, null);
+        HistorySyncService service = new HistorySyncService(null, null);
         ReflectionTestUtils.setField(service, "conflictWindowHours", 24L);
         return service;
     }

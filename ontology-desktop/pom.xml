@@ -10,7 +10,7 @@
 
         Combines ontology-auth + ontology-editor + ontology-plugin-service into one
         Spring Boot application so Electron only spawns one Java process (plus Fuseki
-        and MongoDB).  SWRL stays separate because it requires owlapi 4.x which
+        and PostgreSQL).  SWRL stays separate because it requires owlapi 4.x which
         conflicts with the editor's owlapi 5.x at the classloader level.
 
         Web/cloud deployment is unaffected: each module still builds and deploys as
