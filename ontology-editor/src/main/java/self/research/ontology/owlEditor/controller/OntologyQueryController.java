@@ -29,6 +29,9 @@ import self.research.ontology.owlEditor.service.OntologyMetadataService;
 import self.research.ontology.owlEditor.service.OntologyQueryService;
 import self.research.ontology.owlEditor.service.ProjectMetadataService;
 import self.research.ontology.owlEditor.service.SparqlQueryContext;
+import self.research.ontology.owlEditor.service.search.EntitySearch.EntityType;
+import self.research.ontology.owlEditor.service.search.SearchMatcher;
+import self.research.ontology.owlEditor.service.search.EntitySearch.SearchRequest;
 
 import java.util.HashMap;
 import java.util.List;
@@ -81,6 +84,9 @@ public class OntologyQueryController {
 
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
+
+    @Autowired(required = false) @Nullable
+    private self.research.ontology.owlEditor.service.search.EntitySearchSparql entitySearchSparql;
 
     @Autowired(required = false) @Nullable
     private self.research.ontology.owlEditor.service.ProjectImportService projectImportService;
@@ -470,28 +476,52 @@ public class OntologyQueryController {
         }
     }
 
-    /**
-     * Class search for the lazily-loaded hierarchy: matches (label/IRI substring) plus the
-     * ancestor chain (with depth) the client must expand so the matches are reachable.
-     */
-    @GetMapping("/classes/search/{projectId:.+}")
-    public ResponseEntity<?> searchClasses(@PathVariable String projectId,
-                                           @RequestParam("q") String q,
-                                           @RequestParam(defaultValue = "50") int limit,
-                                           @RequestParam(defaultValue = "active") String scope) {
+    @GetMapping("/search/{projectId:.+}")
+    public ResponseEntity<?> searchEntities(@PathVariable String projectId,
+                                            @RequestParam("q") String q,
+                                            @RequestParam(required = false) String types,
+                                            @RequestParam(defaultValue = "false") boolean annotations,
+                                            @RequestParam(defaultValue = "false") boolean regex,
+                                            @RequestParam(defaultValue = "false") boolean hideDeprecated,
+                                            @RequestParam(defaultValue = "false") boolean hideBuiltins,
+                                            @RequestParam(defaultValue = "false") boolean caseSensitive,
+                                            @RequestParam(defaultValue = "false") boolean wholeWords,
+                                            @RequestParam(defaultValue = "false") boolean ignoreWhitespace,
+                                            @RequestParam(defaultValue = "true") boolean searchIris,
+                                            @RequestParam(defaultValue = "false") boolean showAll,
+                                            @RequestParam(defaultValue = "50") int limit,
+                                            @RequestParam(defaultValue = "active") String scope) {
+        SearchRequest request;
+        try {
+            request = new SearchRequest(
+                    SearchMatcher.of(q, regex, caseSensitive, wholeWords, ignoreWhitespace),
+                    EntityType.parse(types), annotations, hideDeprecated, hideBuiltins,
+                    showAll ? 5000 : Math.min(Math.max(1, limit), 200), searchIris);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
+        }
         org.semanticweb.owlapi.model.parameters.Imports importsScope =
                 "closure".equalsIgnoreCase(scope)
                         ? org.semanticweb.owlapi.model.parameters.Imports.INCLUDED
                         : org.semanticweb.owlapi.model.parameters.Imports.EXCLUDED;
-        int cap = Math.min(Math.max(1, limit), 200);
-        if (preferOwlApiPath(projectId)
-                && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
-            return ResponseEntity.ok(desktopHierarchyService.searchClasses(projectId, q, cap, importsScope));
-        }
         try {
-            return ResponseEntity.ok(queryService.searchClasses(projectId, q, cap));
+            boolean owlApiPreferred = preferOwlApiPath(projectId);
+            if (owlApiPreferred && desktopHierarchyService != null && desktopHierarchyService.hasOntology(projectId)) {
+                return ResponseEntity.ok(desktopHierarchyService.searchEntities(projectId, request, importsScope));
+            }
+            if (owlApiPreferred && desktopMode) {
+                ensureOwlApiWarming(projectId);
+                return owlApiWarmingListResponse();
+            }
+            if (entitySearchSparql == null) {
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(Map.of("success", false, "error", "Search is not available"));
+            }
+            return ResponseEntity.ok(entitySearchSparql.search(projectId, request));
+        } catch (SearchMatcher.SearchTimeoutException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("success", false, "error", "Search failed: " + e.getMessage()));
         }
     }

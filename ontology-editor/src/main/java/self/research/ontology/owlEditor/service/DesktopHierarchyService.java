@@ -16,6 +16,8 @@ import self.research.ontology.owlEditor.hierarchy.HierarchySnapshotBuilder;
 import self.research.ontology.owlEditor.hierarchy.OntologyMetricsComputer;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiOntologyContext;
 import self.research.ontology.owlEditor.service.owlapi.OwlApiQuerySupport;
+import self.research.ontology.owlEditor.service.search.EntitySearchOwlApi;
+import self.research.ontology.owlEditor.service.search.EntitySearch.SearchRequest;
 import self.research.ontology.owlEditor.util.AnnotationValueCollector;
 
 import java.util.*;
@@ -109,9 +111,10 @@ public class DesktopHierarchyService {
             .orElse(Collections.emptyList());
     }
 
-    public Map<String, Object> searchClasses(String projectId, String query, int limit, Imports importsScope) {
+    public Map<String, Object> searchEntities(String projectId, SearchRequest request, Imports importsScope) {
+        EntitySearchOwlApi engine = new EntitySearchOwlApi(snapshotBuilder);
         return ontologyCache.get(projectId)
-            .map(c -> snapshotBuilder.searchClasses(c.ontology(), query, limit, importsScope))
+            .map(c -> engine.search(c.ontology(), request, importsScope))
             .orElse(Collections.emptyMap());
     }
 

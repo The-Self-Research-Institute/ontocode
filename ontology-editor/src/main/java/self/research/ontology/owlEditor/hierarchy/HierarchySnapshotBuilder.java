@@ -8,7 +8,6 @@ import self.research.ontology.owlEditor.dto.OntologyDto;
 
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * asserted class hierarchy (structural reasoner for top-level,
@@ -311,7 +310,7 @@ public class HierarchySnapshotBuilder {
      * dangling rdf:first/rdf:rest list left over from a partial delete). {@code OWLClass.isBuiltIn()}
      * only ever returns true for owl:Thing/owl:Nothing, so it doesn't catch either case.
      */
-    private static boolean isBuiltInOrPlaceholder(OWLClass c) {
+    public static boolean isBuiltInOrPlaceholder(OWLClass c) {
         String iri = c.getIRI().toString();
         return iri.startsWith("http://www.w3.org/2001/XMLSchema#")
                 || iri.startsWith("http://www.w3.org/2000/01/rdf-schema#")
@@ -627,46 +626,9 @@ public class HierarchySnapshotBuilder {
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Case-insensitive label/IRI search over every named class, returning the matches plus their
-     * asserted ancestor chain (see {@link self.research.ontology.owlEditor.service.ClassSearchResult}).
-     */
-    public Map<String, Object> searchClasses(OWLOntology ont, String query, int limit, Imports importsScope) {
-        String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
-        Map<String, String> matches = new LinkedHashMap<>();
-        boolean truncated = false;
-        if (!needle.isEmpty()) {
-            List<OWLClass> sorted = ont.getClassesInSignature(importsScope).stream()
-                    .filter(c -> !c.isBuiltIn() && !c.isOWLNothing() && !isBuiltInOrPlaceholder(c))
-                    .sorted(Comparator.comparing(c -> c.getIRI().toString()))
-                    .collect(Collectors.toList());
-            for (OWLClass c : sorted) {
-                String label = getLabel(ont, c, importsScope);
-                if (c.getIRI().toString().toLowerCase(Locale.ROOT).contains(needle)
-                        || (label != null && label.toLowerCase(Locale.ROOT).contains(needle))) {
-                    if (matches.size() >= limit) {
-                        truncated = true;
-                        break;
-                    }
-                    matches.put(c.getIRI().toString(), label);
-                }
-            }
-        }
-
-        OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
-        Map<String, Set<String>> parentsOf = new HashMap<>();
-        java.util.ArrayDeque<String> frontier = new java.util.ArrayDeque<>(matches.keySet());
-        while (!frontier.isEmpty()) {
-            String iri = frontier.poll();
-            if (parentsOf.containsKey(iri)) {
-                continue;
-            }
-            Set<String> parents = structuralNamedParents(ont, df.getOWLClass(IRI.create(iri)), importsScope).stream()
-                    .map(p -> p.getIRI().toString())
-                    .collect(Collectors.toCollection(LinkedHashSet::new));
-            parentsOf.put(iri, parents);
-            frontier.addAll(parents);
-        }
-        return self.research.ontology.owlEditor.service.ClassSearchResult.build(matches, parentsOf, truncated);
+    public Set<String> namedParentIris(OWLOntology ont, OWLClass cls, Imports importsScope) {
+        return structuralNamedParents(ont, cls, importsScope).stream()
+                .map(p -> p.getIRI().toString())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 }
