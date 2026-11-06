@@ -177,7 +177,6 @@ export interface SavedRuleSet {
   description?: string | null;
   rules: Omit<TransformationRule, "id">[];
   createdBy?: string | null;
-  createdByUserId?: string | null;
   updatedBy?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -198,26 +197,21 @@ export async function saveRuleSet(
   user: string,
   id?: string,
   description?: string,
-  draft = false,
 ): Promise<SavedRuleSet> {
   const body = { name, description: description ?? null, rules: toRuleSpecs(rules), user };
-  const query = draft ? "?draft=true" : "";
   const res = id
     ? await apiClient.put<{ success: boolean; data: SavedRuleSet; error?: string }>(
-        `${ruleSetsBase(projectId)}/${encodeURIComponent(id)}${query}`,
+        `${ruleSetsBase(projectId)}/${encodeURIComponent(id)}`,
         body,
       )
-    : await apiClient.post<{ success: boolean; data: SavedRuleSet; error?: string }>(
-        `${ruleSetsBase(projectId)}${query}`,
-        body,
-      );
+    : await apiClient.post<{ success: boolean; data: SavedRuleSet; error?: string }>(ruleSetsBase(projectId), body);
   if (!res?.success) throw new Error(res?.error || "Could not save the rule set");
   return res.data;
 }
 
-export async function deleteRuleSet(projectId: string, id: string, draft = false): Promise<void> {
+export async function deleteRuleSet(projectId: string, id: string): Promise<void> {
   const res = await apiClient.delete<{ success: boolean; error?: string }>(
-    `${ruleSetsBase(projectId)}/${encodeURIComponent(id)}${draft ? "?draft=true" : ""}`,
+    `${ruleSetsBase(projectId)}/${encodeURIComponent(id)}`,
   );
   if (!res?.success) throw new Error(res?.error || "Could not delete the rule set");
 }

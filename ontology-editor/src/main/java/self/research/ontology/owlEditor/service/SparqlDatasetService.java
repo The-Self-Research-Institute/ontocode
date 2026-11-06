@@ -79,6 +79,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @Service
 public class SparqlDatasetService {
+    private static final int DEFAULT_QUERY_TIMEOUT_SECONDS = 300;
 
     private static final Logger log = LoggerFactory.getLogger(SparqlDatasetService.class);
     private static final Logger sparqlLog = LoggerFactory.getLogger("SPARQL");
@@ -1030,15 +1031,20 @@ public class SparqlDatasetService {
      * @param includeInferred false to skip transitive/OWL inference (much faster on large repos)
      */
     public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred) {
+        return execSelect(projectId, sparqlQuery, includeInferred, DEFAULT_QUERY_TIMEOUT_SECONDS);
+    }
+
+    public TupleQueryResult execSelect(String projectId, String sparqlQuery, boolean includeInferred,
+                                       int timeoutSeconds) {
         // Copy-on-switch draft is per-user; in-memory cache cannot include another user's draft graph.
         boolean draftScope = isDraftCopyReadyForRead(projectId);
         if (!includeInferred && !draftScope && projectRepoCache != null && projectRepoCache.isEnabled()) {
-            TupleQueryResult cached = trySelectFromMemCache(projectId, sparqlQuery);
+            TupleQueryResult cached = trySelectFromMemCache(projectId, sparqlQuery, timeoutSeconds);
             if (cached != null) {
                 return cached;
             }
         }
-        return execSelectGraphDB(projectId, sparqlQuery, includeInferred);
+        return execSelectGraphDB(projectId, sparqlQuery, includeInferred, timeoutSeconds);
     }
 
     private ProjectRepoCache.Loader projectRepoLoader() {
@@ -1080,7 +1086,7 @@ public class SparqlDatasetService {
      * Run a SELECT against the in-memory project repo. Returns {@code null} on
      * cache miss / load failure so the caller can fall back to GraphDB.
      */
-    private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery) {
+    private TupleQueryResult trySelectFromMemCache(String projectId, String sparqlQuery, int timeoutSeconds) {
         long start = System.nanoTime();
         ProjectRepoCache.Lease lease = projectRepoCache.borrow(projectId, projectRepoLoader());
         if (lease == null) {
@@ -1095,6 +1101,9 @@ public class SparqlDatasetService {
             String queryType = extractQueryType(finalQuery);
             TupleQuery query = conn.prepareTupleQuery(finalQuery);
             query.setIncludeInferred(false);
+            if (timeoutSeconds < DEFAULT_QUERY_TIMEOUT_SECONDS) {
+                query.setMaxExecutionTime(timeoutSeconds);
+            }
             List<BindingSet> results = new ArrayList<>();
             List<String> bindingNames = new ArrayList<>();
             try (TupleQueryResult rs = query.evaluate()) {
@@ -1149,7 +1158,8 @@ public class SparqlDatasetService {
      * Original GraphDB SELECT path — retained as the fallback behind the
      * in-memory cache.
      */
-    private TupleQueryResult execSelectGraphDB(String projectId, String sparqlQuery, boolean includeInferred) {
+    private TupleQueryResult execSelectGraphDB(String projectId, String sparqlQuery, boolean includeInferred,
+                                               int timeoutSeconds) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         String graphUri = binding.graphUri();
         long totalStart = System.nanoTime();
@@ -1173,7 +1183,7 @@ public class SparqlDatasetService {
             long queryStart = System.nanoTime();
             TupleQuery query = conn.prepareTupleQuery(sparqlQuery);
             query.setIncludeInferred(includeInferred);
-            query.setMaxExecutionTime(300); // 5-minute timeout to prevent indefinite hangs
+            query.setMaxExecutionTime(timeoutSeconds);
             // Materialize results into a list before closing connection
             List<BindingSet> results = new ArrayList<>();
             List<String> bindingNames = new ArrayList<>();
