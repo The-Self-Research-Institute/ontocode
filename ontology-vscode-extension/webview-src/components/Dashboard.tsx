@@ -118,6 +118,20 @@ import { readerUserId, resolveMutationActor } from "../utils/mutationActor";
 import { affectedLists, announceMutationApplied, subscribeCommittedChange, type EntityList } from "../utils/committedChange";
 import { isDraftScopeActive, withDraftScope, withDraftAndUser, draftBodyFields, draftControlsVisible } from "../utils/draftScope";
 import { isBuiltInPrefix } from "../utils/builtInPrefixes";
+import {
+  searchEntities,
+  buildSearchKey,
+  hitIdsOf,
+  ancestorLevels,
+  loadAncestorLevels,
+  pathToNode,
+  SEARCH_TYPE_BY_TAB,
+  TAB_BY_SEARCH_TYPE,
+  type EntitySearchAncestor,
+  type FlatHit,
+} from "../services/searchApi";
+import GlobalSearchDialog from "./GlobalSearchDialog";
+import TopBarSearchField from "./TopBarSearchField";
 import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNavigateDetail } from "../utils/collaborationNavigation";
 import codeViewCacheService from "../services/codeViewCacheService";
 import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
@@ -334,6 +348,7 @@ const TopMenuBar = ({
   hierarchyCustomTemplate,
   onHierarchyCustomTemplateChange,
   undoMenu,
+  onOpenSearch,
 }: {
   fileList: FileInfo[];
   myFiles: FileInfo[];
@@ -396,6 +411,7 @@ const TopMenuBar = ({
   hierarchyCustomTemplate?: string;
   onHierarchyCustomTemplateChange?: (tpl: string) => void;
   undoMenu?: UndoMenu;
+  onOpenSearch?: (text?: string) => void;
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1044,6 +1060,7 @@ const TopMenuBar = ({
       </div>
 
       <div className="flex items-center ml-auto mr-1 sm:mr-4 gap-1 sm:gap-2 flex-shrink-0 pl-1">
+        {onOpenSearch && <TopBarSearchField onOpen={onOpenSearch} />}
         <UndoRunControls menu={undoMenu} />
         {isDesktop() ? null : (
           <>
@@ -1490,12 +1507,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMatchSubtreeDepth, setSearchMatchSubtreeDepth] = useState(5);
-  const [searchOptions, setSearchOptions] = useState({
-    useRegex: false,
-    searchAnnotations: false,
-    hideDeprecated: false,
-    hideBuiltins: false,
-  });
+  const [serverSearch, setServerSearch] = useState<{ key: string; ids: Set<string> } | null>(null);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [hasFetchedProjects, setHasFetchedProjects] = useState(false);
@@ -2411,80 +2423,30 @@ const Dashboard: React.FC<DashboardProps> = ({
     let perfNodesVisited = 0;
     const trimmedQuery = searchQuery.trim();
     const lowercasedQuery = trimmedQuery.toLowerCase();
-    let regex: RegExp | null = null;
-    if (searchOptions.useRegex && trimmedQuery) {
-      try {
-        regex = new RegExp(trimmedQuery, "i");
-      } catch (error) {
-        console.warn("[Dashboard] Invalid regex:", error);
-        regex = null;
-      }
-    }
-
-    const builtinsByTab: Record<string, Set<string>> = {
-      Classes: new Set(["http://www.w3.org/2002/07/owl#Thing", "http://www.w3.org/2002/07/owl#Nothing"]),
-      ObjectProperties: new Set([
-        "http://www.w3.org/2002/07/owl#topObjectProperty",
-        "http://www.w3.org/2002/07/owl#bottomObjectProperty",
-      ]),
-      DataProperties: new Set([
-        "http://www.w3.org/2002/07/owl#topDataProperty",
-        "http://www.w3.org/2002/07/owl#bottomDataProperty",
-      ]),
-      AnnotationProperties: new Set([
-        "http://www.w3.org/2000/01/rdf-schema#label",
-        "http://www.w3.org/2000/01/rdf-schema#comment",
-        "http://www.w3.org/2000/01/rdf-schema#seeAlso",
-        "http://www.w3.org/2000/01/rdf-schema#isDefinedBy",
-        "http://www.w3.org/2002/07/owl#deprecated",
-      ]),
-      Datatypes: new Set([
-        "http://www.w3.org/2000/01/rdf-schema#Literal",
-        "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral",
-        "http://www.w3.org/2001/XMLSchema#string",
-        "http://www.w3.org/2001/XMLSchema#integer",
-        "http://www.w3.org/2001/XMLSchema#decimal",
-        "http://www.w3.org/2001/XMLSchema#float",
-        "http://www.w3.org/2001/XMLSchema#double",
-        "http://www.w3.org/2001/XMLSchema#boolean",
-        "http://www.w3.org/2001/XMLSchema#date",
-        "http://www.w3.org/2001/XMLSchema#dateTime",
-        "http://www.w3.org/2001/XMLSchema#anyURI",
-      ]),
-    };
-
-    const isBuiltIn = (item: SelectableItem) => {
-      if (!searchOptions.hideBuiltins) return false;
-      const builtins = builtinsByTab[entitiesTab];
-      return builtins ? builtins.has(item.id) : false;
-    };
-
-    const isDeprecated = (item: SelectableItem) => {
-      if (!searchOptions.hideDeprecated) return false;
-      const annotations = (item as any).annotations || {};
-      const deprecatedValue = annotations["http://www.w3.org/2002/07/owl#deprecated"] || annotations["owl:deprecated"];
-      if (!deprecatedValue) return false;
-      const normalized = String(deprecatedValue).toLowerCase();
-      return normalized === "true" || normalized === "1" || normalized === "yes";
-    };
+    const serverMatchIds =
+      serverSearch &&
+      serverSearch.key ===
+        buildSearchKey(
+          entitiesTab,
+          trimmedQuery,
+          false,
+          false,
+          hierarchyImportsScope,
+        )
+        ? serverSearch.ids
+        : null;
 
     const matchesQuery = (item: SelectableItem) => {
       if (!trimmedQuery) return true;
-      const annotationBlob =
-        searchOptions.searchAnnotations && (item as any).annotations
-          ? Object.entries((item as any).annotations)
-            .map(([key, value]) => `${key} ${String(value)}`)
-            .join(" ")
-          : "";
-      const haystack = `${item.label || ""} ${item.id || ""} ${annotationBlob}`;
-      if (regex) return regex.test(haystack);
+      if (serverMatchIds && serverMatchIds.has(item.id)) return true;
+      const haystack = `${item.label || ""} ${item.id || ""}`;
       return haystack.toLowerCase().includes(lowercasedQuery);
     };
 
     const clipToDepth = (items: SelectableItem[], maxDepth: number): SelectableItem[] => {
       if (!Array.isArray(items) || maxDepth < 0) return [];
       return items
-        .filter((item) => item && item.id && !isDeprecated(item) && !isBuiltIn(item))
+        .filter((item) => item && item.id)
         .map((item) => {
           const kids = Array.isArray((item as any).children) ? (item as any).children : [];
           if (maxDepth === 0) {
@@ -2513,16 +2475,8 @@ const Dashboard: React.FC<DashboardProps> = ({
       for (const item of items) {
         perfNodesVisited++;
         if (!item || !item.id) continue;
-        if (isDeprecated(item)) continue;
 
         const children = Array.isArray((item as any).children) ? (item as any).children : [];
-
-        if (isBuiltIn(item) && children.length > 0) {
-          const childResults = filterRecursively(children);
-          results.push(...childResults);
-          continue;
-        }
-        if (isBuiltIn(item)) continue;
 
         if (!trimmedQuery) {
           results.push(item);
@@ -2559,7 +2513,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       );
     }
     return result;
-  }, [searchQuery, sourceData, entitiesTab, searchOptions, searchMatchSubtreeDepth]);
+  }, [searchQuery, sourceData, entitiesTab, searchMatchSubtreeDepth, serverSearch, hierarchyImportsScope]);
 
   useEffect(() => {
     const trimmed = searchQuery.trim();
@@ -7451,6 +7405,76 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     [projectId, classInstanceCounts, applyInstanceCountsToTree, hierarchyImportsScope, user],
   );
 
+  useEffect(() => {
+    const query = searchQuery.trim();
+    const type = SEARCH_TYPE_BY_TAB[entitiesTab];
+    const inferredView = (hierarchyViewModes as Record<string, string>)[entitiesTab] === "inferred";
+    if (!projectId || !query || !type || inferredView) {
+      setServerSearch((previous) => (previous === null ? previous : null));
+      return;
+    }
+
+    const key = buildSearchKey(
+      entitiesTab,
+      query,
+      false,
+      false,
+      hierarchyImportsScope,
+    );
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const run = async (attempt: number): Promise<void> => {
+      try {
+        const response = await searchEntities(
+          projectId,
+          {
+            query,
+            types: [type],
+            scope: hierarchyImportsScope,
+            userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+            draft: isDraftScopeActive(),
+          },
+          controller.signal,
+        );
+        if (cancelled) return;
+        if (response.warming) {
+          if (attempt < 5) {
+            setTimeout(() => {
+              if (!cancelled) void run(attempt + 1);
+            }, 1500);
+          }
+          return;
+        }
+        setServerSearch({ key, ids: hitIdsOf(response, type) });
+        if (type === "CLASS") {
+          const levels = ancestorLevels(response.classAncestors, classHierarchyRef.current);
+          await loadAncestorLevels(levels, loadChildren, () => cancelled);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("[Dashboard] Entity search failed:", error);
+        }
+      }
+    };
+
+    const timer = setTimeout(() => void run(0), 300);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [
+    searchQuery,
+    projectId,
+    entitiesTab,
+    hierarchyViewModes,
+    hierarchyImportsScope,
+    user,
+    loadChildren,
+  ]);
+
   const fetchInferredChildren = useCallback(
     async (nodeId: string) => {
       if (!projectId) return [];
@@ -11686,6 +11710,86 @@ const updateItemInState = useCallback(
     window.addEventListener("graph-view:delete-class", handleGraphDelete as EventListener);
     return () => window.removeEventListener("graph-view:delete-class", handleGraphDelete as EventListener);
   }, [findClassNodeById, handleDeleteItem, projectId, showNotification]);
+
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchSeed, setGlobalSearchSeed] = useState("");
+  const openGlobalSearch = useCallback((text?: string) => {
+    setGlobalSearchSeed(text ?? "");
+    setGlobalSearchOpen(true);
+  }, []);
+
+  const navigateToSearchHit = useCallback(
+    async (hit: FlatHit, ancestors: EntitySearchAncestor[]) => {
+      setSearchQuery("");
+      setMainTab("Entities");
+      setEntitiesTab(TAB_BY_SEARCH_TYPE[hit.type]);
+
+      let item: SelectableItem | null = null;
+      if (hit.type === "CLASS") {
+        try {
+          await loadAncestorLevels(ancestorLevels(ancestors, classHierarchyRef.current), loadChildren, () => false);
+        } catch (error) {
+          console.error("[Dashboard] Could not load the parents of the search result:", error);
+        }
+        let path = pathToNode(classHierarchyRef.current, hit.id);
+        for (let attempt = 0; attempt < 20 && !path; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          path = pathToNode(classHierarchyRef.current, hit.id);
+        }
+        const expand = path ? path.slice(0, -1).map((node) => node.id) : ancestors.map((a) => a.id);
+        setExpandedNodes((prev) => Array.from(new Set([...prev, ...expand])));
+        item = path ? path[path.length - 1] : null;
+      } else if (hit.type === "INDIVIDUAL") {
+        item = individuals.find((i) => i.id === hit.id) || null;
+      } else if (hit.type === "OBJECT_PROPERTY") {
+        item = flattenTree(objectPropertyHierarchy).find((n) => n.id === hit.id) || objectProperties.find((p) => p.id === hit.id) || null;
+      } else if (hit.type === "DATA_PROPERTY") {
+        item = flattenTree(dataPropertyHierarchy).find((n) => n.id === hit.id) || dataProperties.find((p) => p.id === hit.id) || null;
+      } else if (hit.type === "ANNOTATION_PROPERTY") {
+        item = flattenTree(annotationPropertyHierarchy).find((n) => n.id === hit.id) || annotationProperties.find((p) => p.id === hit.id) || null;
+      } else if (hit.type === "DATATYPE") {
+        item = datatypes.find((d) => d.id === hit.id) || null;
+      }
+
+      setSelectedItem(item || ({ id: hit.id, label: hit.label, children: [], hasChildren: false } as TreeNode));
+
+      const scrollToRow = (attempt: number) => {
+        const row = Array.from(document.querySelectorAll<HTMLElement>("[data-class-id]")).find(
+          (el) => el.dataset.classId === hit.id,
+        );
+        if (row) {
+          row.scrollIntoView({ block: "center" });
+        } else if (attempt < 20) {
+          setTimeout(() => scrollToRow(attempt + 1), 150);
+        }
+      };
+      setTimeout(() => scrollToRow(0), 100);
+    },
+    [
+      loadChildren,
+      flattenTree,
+      individuals,
+      objectProperties,
+      dataProperties,
+      annotationProperties,
+      datatypes,
+      objectPropertyHierarchy,
+      dataPropertyHierarchy,
+      annotationPropertyHierarchy,
+    ],
+  );
+
+  useEffect(() => {
+    const handleGlobalSearchShortcut = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      if (e.key !== "f" && e.key !== "F") return;
+      if (mainTab !== "Entities") return;
+      e.preventDefault();
+      openGlobalSearch();
+    };
+    window.addEventListener("keydown", handleGlobalSearchShortcut);
+    return () => window.removeEventListener("keydown", handleGlobalSearchShortcut);
+  }, [mainTab, openGlobalSearch]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -17301,6 +17405,16 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         error={duplicateCopyError}
         isSubmitting={duplicateCopySubmitting}
       />
+      <GlobalSearchDialog
+        open={globalSearchOpen && mainTab === "Entities"}
+        seedQuery={globalSearchSeed}
+        projectId={projectId}
+        userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+        draft={isDraftScopeActive()}
+        allowClosure={isDesktop()}
+        onClose={() => setGlobalSearchOpen(false)}
+        onNavigate={navigateToSearchHit}
+      />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         onClose={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
@@ -17617,6 +17731,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           hierarchyCustomTemplate={hierarchyCustomTemplate}
           onHierarchyCustomTemplateChange={setHierarchyCustomTemplate}
           undoMenu={ontologyUndoRedo.menu}
+          onOpenSearch={mainTab === "Entities" ? openGlobalSearch : undefined}
           onOpenMergeWizard={async () => {
             setMergeWizardOpen(true);
             if (projectId && !initialProjectId) {
@@ -17933,8 +18048,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   expandedNodes={expandedNodes}
                   searchQuery={searchQuery}
                   onSearchQueryChange={setSearchQuery}
-                  searchOptions={searchOptions}
-                  onSearchOptionsChange={setSearchOptions}
                   searchMatchSubtreeDepth={searchMatchSubtreeDepth}
                   onSearchMatchSubtreeDepthChange={setSearchMatchSubtreeDepth}
                   onSelectItem={setSelectedItem}

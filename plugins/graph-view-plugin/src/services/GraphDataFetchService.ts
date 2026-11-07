@@ -1102,6 +1102,16 @@ export class GraphDataFetchService {
       const datatypeIri = datatype.iri || datatype.datatypeIRI || datatype.id || datatype.uri;
       if (!datatypeIri) continue;
 
+      const existing = nodes.find(n => n.id === datatypeIri);
+      if (existing && existing.type === 'class') {
+        existing.type = 'datatype';
+        for (let i = edges.length - 1; i >= 0; i--) {
+          const e = edges[i];
+          if (e.from === datatypeIri && e.type === 'subClassOf' && e.metadata?.synthetic) edges.splice(i, 1);
+        }
+        connectedDatatypeIds?.add(datatypeIri);
+      }
+
       if (connectedDatatypeIds && !connectedDatatypeIds.has(datatypeIri)) {
         continue;
       }

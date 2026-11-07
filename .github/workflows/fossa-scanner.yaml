@@ -16,3 +16,31 @@ jobs:
         uses: fossas/fossa-action@v1
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
+
+      - name: Fail on license policy violations
+        uses: fossas/fossa-action@v1
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          run-tests: true
+
+  fossa-container-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['mongo:6']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan container image ${{ matrix.image }}
+        uses: fossas/fossa-action@v1
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          container: ${{ matrix.image }}
+
+      - name: Fail on license policy violations for ${{ matrix.image }}
+        uses: fossas/fossa-action@v1
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          container: ${{ matrix.image }}
+          run-tests: true

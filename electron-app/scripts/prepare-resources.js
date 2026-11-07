@@ -27,6 +27,7 @@ const FUSEKI_VERSION = '6.1.0';
 const FUSEKI_SHA512 = '75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158bc5c6813bc036ec1539ddc4dffd26201f5cc31fadec299ca5c3dc2548b723513ed31d326';
 const FUSEKI_MIRROR_URL = `https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
+const TAR_LOCAL = process.platform === 'win32' ? '--force-local ' : '';
 
 const POSTGRES_VERSION = '17.11.0';
 const POSTGRES_MAJOR = '17';
@@ -209,7 +210,7 @@ async function downloadFuseki(cachedSrc) {
 
         const tarArchivePath = archivePath.replace(/\\/g, '/');
         const tarExtractDir = extractDir.replace(/\\/g, '/');
-        execSync(`tar --force-local -xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
+        execSync(`tar ${TAR_LOCAL}-xzf "${tarArchivePath}" -C "${tarExtractDir}"`, { stdio: 'inherit', timeout: 120_000 });
 
         const topLevel = fs.readdirSync(extractDir).find((n) => n.startsWith('apache-jena-fuseki'));
         if (!topLevel) throw new Error('Extracted archive did not contain an apache-jena-fuseki* directory');
@@ -664,7 +665,7 @@ function extractJreArchive(archivePath, targetDir, platform) {
         const tarArchivePath = archivePath.replace(/\\/g, '/');
         const tarTargetDir = targetDir.replace(/\\/g, '/');
         execSync(
-            `tar --force-local -xzf "${tarArchivePath}" -C "${tarTargetDir}" --strip-components=1`,
+            `tar ${TAR_LOCAL}-xzf "${tarArchivePath}" -C "${tarTargetDir}" --strip-components=1`,
             { stdio: 'inherit', timeout: 120_000 },
         );
     }
