@@ -7,6 +7,11 @@ on:
         type: choice
         options: [arm64, x64, both]
         default: arm64
+      arm64_runner:
+        description: Which GitHub machine builds the Apple silicon app (switch if one is queued for a long time)
+        type: choice
+        options: [macos-14, macos-15, macos-latest]
+        default: macos-14
       notarize:
         description: Send the app to Apple for notarization (slower, run after signing works)
         type: boolean
@@ -24,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.arch == 'arm64' && '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"}]' || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]' || '[{"arch":"arm64","runner":"macos-15","mongo":"macos-arm64"},{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]') }}
+        include: ${{ fromJSON(inputs.arch == 'arm64' && format('[{{"arch":"arm64","runner":"{0}","mongo":"macos-arm64"}}]', inputs.arm64_runner) || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]' || format('[{{"arch":"arm64","runner":"{0}","mongo":"macos-arm64"}},{{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}}]', inputs.arm64_runner)) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
@@ -65,7 +70,9 @@ jobs:
           chmod +x data/mongodb/bin/darwin/mongod
       - name: Build backend jars
         run: |
-          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -pl ontology-swrl -am package -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -N install -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean install -pl shared/common-models,shared/common-utils -DskipTests -Djava.version=17 -Dmaven.compiler.source=17 -Dmaven.compiler.target=17 -Dmaven.compiler.release=17
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean package -pl ontology-swrl -DskipTests
           JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -Dgit.commit="$GITHUB_SHA"
           (cd ontology-desktop && JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q clean package -DskipTests -Dgit.commit="$GITHUB_SHA")
       - name: Install web dependencies
@@ -73,6 +80,15 @@ jobs:
           for d in electron-app ontology-vscode-extension ontology-vscode-extension/webview-src plugins/*; do
             (cd "$d" && npm ci)
           done
+      - name: Point the web build at the production API
+        run: |
+          api="https://${ONTOCODE_UPDATE_HOST}"
+          {
+            echo "VITE_CLOUD_GATEWAY_URL=$api"
+            echo "VITE_CLOUD_EDITOR_URL=$api"
+            echo "VITE_CLOUD_PLUGIN_URL=$api:8087"
+          } > ontology-vscode-extension/webview-src/.env.production
+          cat ontology-vscode-extension/webview-src/.env.production
       - name: Build the plugin bundles
         working-directory: electron-app
         run: node scripts/build-desktop.js --plugins
@@ -149,6 +165,15 @@ jobs:
             npx electron-builder --prepackaged "$app" --mac dmg --${{ matrix.arch }} --publish never -c.mac.identity=null
             break
           done
+      - name: Check the app points at the production API
+        run: |
+          dist=ontology-vscode-extension/webview-src/dist
+          if grep -rIl "ontocodedevapi" "$dist"; then
+            echo "The web build still points at the dev API"
+            exit 1
+          fi
+          grep -rIq "ontocodeapi.selfresearch.org" "$dist" || { echo "The production API address is missing from the web build"; exit 1; }
+          echo "The web build points at the production API"
       - name: Check the app is signed
         if: inputs.target != 'mas-dev'
         working-directory: electron-app
@@ -159,7 +184,8 @@ jobs:
           hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -readonly
           app=$(ls -d "$mnt"/*.app | head -1)
           codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -dv "$app" 2>&1 | grep -E "Signature|Identifier"
+          codesign -dv "$app" 2>&1 | grep -E "Signature|Authority|TeamIdentifier|Identifier"
+          xcrun stapler validate "$app" || echo "Not notarized"
           hdiutil detach "$mnt"
       - name: Pack the sandboxed test app
         if: inputs.target == 'mas-dev'
