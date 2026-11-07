@@ -15,6 +15,7 @@ COPY ontology-editor/ ./ontology-editor/
 COPY ontology-swrl/ ./ontology-swrl/
 COPY ontology-plugin-service/ ./ontology-plugin-service/
 COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
+COPY ontology-data-migrator/pom.xml ./ontology-data-migrator/pom.xml
 
 # Build shared modules first (these are dependencies for all services)
 # Uses BuildKit cache for ~/.m2 to avoid re-downloading dependencies on every build.

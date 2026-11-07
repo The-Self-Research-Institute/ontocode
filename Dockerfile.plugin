@@ -12,6 +12,7 @@ COPY ontology-editor/ ./ontology-editor/
 COPY ontology-swrl/ ./ontology-swrl/
 COPY ontology-plugin-service/ ./ontology-plugin-service/
 COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
+COPY ontology-data-migrator/pom.xml ./ontology-data-migrator/pom.xml
 
 RUN --mount=type=cache,target=/root/.m2 \
     sh -c 'for attempt in 1 2 3; do \
