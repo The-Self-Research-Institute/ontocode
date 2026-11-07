@@ -98,6 +98,7 @@ export interface GraphToolbarProps {
   showHierarchyDialog: boolean;
   statsLabel: string;
   statsData: { visible: number; total: number; expanded: number };
+  statsWarning?: string | null;
   lazyLoadingActive: boolean;
   webglRenderer: boolean;
   webglSupported: boolean;
@@ -286,6 +287,15 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
         data-expanded-nodes={props.statsData.expanded}
       >
         {props.statsLabel}
+        {props.statsWarning && (
+          <span
+            data-testid="graph-stats-shared-ids"
+            title={props.statsWarning}
+            style={{ color: '#d97706', marginLeft: '8px', cursor: 'help' }}
+          >
+            ⚠ {props.statsWarning.split(' (')[0]}
+          </span>
+        )}
         {props.lazyLoadingActive && <span style={{ color: '#10b981', marginLeft: '8px' }}>⚡ Lazy Loading</span>}
       </div>
 
@@ -329,6 +339,7 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
             right: 8,
             zIndex: 60,
             width: 340,
+            maxWidth: 'calc(100vw - 32px)',
             maxHeight: '70vh',
             overflowY: 'auto',
             padding: '12px 14px',
@@ -635,6 +646,12 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
           </div>
           <div style={{ ...styles.relationshipControlsGroup, marginTop: 6 }} title="OntoCode relationship visibility">
             <span style={styles.relationshipControlsLabel}>Relations</span>
+            <button onClick={props.onShowAllRelations} style={styles.relationshipMiniAction} title="Show all relationship types">
+              All
+            </button>
+            <button onClick={props.onHideAllRelations} style={styles.relationshipMiniAction} title="Hide all relationship types">
+              None
+            </button>
             {RELATIONSHIP_VISIBILITY_CONTROLS.map(control => {
               const isEnabled = control.edgeTypes.every(type => props.edgeTypeFilters.has(type));
               const isPartial = !isEnabled && control.edgeTypes.some(type => props.edgeTypeFilters.has(type));
@@ -649,12 +666,6 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
                 </button>
               );
             })}
-            <button onClick={props.onShowAllRelations} style={styles.relationshipMiniAction} title="Show all relationship types">
-              All
-            </button>
-            <button onClick={props.onHideAllRelations} style={styles.relationshipMiniAction} title="Hide all relationship types">
-              None
-            </button>
           </div>
 
           <div style={sectionTitle}>Saved views</div>

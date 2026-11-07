@@ -135,6 +135,7 @@ export interface WebGLGraphViewProps {
    * instead of repositioning it, so it never renders on top of that panel.
    */
   searchPanelOpen?: boolean;
+  onZoomChange?: (zoom: number) => void;
 }
 
 /** Synthetic graph for renderer benchmarks (?bench=N or the perf harness). */
@@ -186,9 +187,12 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   viewportFitToken = 0,
   showGrid = false,
   physicsEnabled = true,
-  searchPanelOpen = false
+  searchPanelOpen = false,
+  onZoomChange
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
   const sigmaRef = useRef<Sigma | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const hoveredNodeStateRef = useRef<string | null>(null);
@@ -234,7 +238,8 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   insightsRef.current = insights;
 
   // Layout: ForceAtlas2 in a worker when physics is on and no saved positions
-  useFA2Layout(graph, physicsEnabled && (!positions || positions.size === 0));
+  const getViewportPx = useCallback(() => containerRef.current?.clientWidth ?? 0, []);
+  useFA2Layout(graph, physicsEnabled && (!positions || positions.size === 0), getViewportPx);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -384,7 +389,21 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     };
     renderer.getMouseCaptor().on('mouseup', endDrag);
 
+    const camera = renderer.getCamera();
+    let zoomFrame: number | null = null;
+    const reportZoom = () => {
+      if (zoomFrame != null) return;
+      zoomFrame = requestAnimationFrame(() => {
+        zoomFrame = null;
+        onZoomChangeRef.current?.(1 / camera.ratio);
+      });
+    };
+    camera.on('updated', reportZoom);
+    onZoomChangeRef.current?.(1 / camera.ratio);
+
     return () => {
+      camera.off('updated', reportZoom);
+      if (zoomFrame != null) cancelAnimationFrame(zoomFrame);
       if (hoverClearTimerRef.current) clearTimeout(hoverClearTimerRef.current);
       renderer.kill();
       sigmaRef.current = null;

@@ -682,6 +682,90 @@ export const collapseAll = (
   };
 };
 
+export const VOWL_DEGREE_NODE_LIMIT = 50;
+
+const DEGREE_EDGE_TYPES: ReadonlySet<string> = new Set([
+  'subClassOf',
+  'equivalentClass',
+  'disjointWith',
+  'propertyRelation',
+  'restriction'
+]);
+
+const OWL_THING_IRI = 'http://www.w3.org/2002/07/owl#Thing';
+
+const unorderedPair = (a: string, b: string): string => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+export const computeClassDegrees = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[]
+): Map<string, number> => {
+  const degrees = new Map<string, number>();
+  const inverseOf = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.type === 'class' && node.id !== OWL_THING_IRI) degrees.set(node.id, 0);
+    const inverse = node.type === 'objectProperty' ? node.metadata?.inverseOf : null;
+    if (typeof inverse === 'string' && inverse) {
+      inverseOf.set(node.id, inverse);
+      if (!inverseOf.has(inverse)) inverseOf.set(inverse, node.id);
+    }
+  }
+  const counted = new Set<string>();
+  for (const edge of edges) {
+    if (!DEGREE_EDGE_TYPES.has(edge.type as string)) continue;
+    if (edge.metadata?.propertyType === 'dataProperty') continue;
+    if (!degrees.has(edge.from) || !degrees.has(edge.to)) continue;
+    let key: string | null = null;
+    if (edge.type === 'disjointWith') {
+      key = `disjointWith|${unorderedPair(edge.from, edge.to)}`;
+    } else if (edge.type === 'propertyRelation') {
+      const prop = edge.metadata?.propertyIri as string | undefined;
+      if (prop) {
+        const inverse = inverseOf.get(prop);
+        key = inverse && inverse < prop
+          ? `property|${inverse}|${edge.to}|${edge.from}`
+          : `property|${prop}|${edge.from}|${edge.to}`;
+      }
+    }
+    if (key) {
+      if (counted.has(key)) continue;
+      counted.add(key);
+    }
+    degrees.set(edge.from, (degrees.get(edge.from) ?? 0) + 1);
+    if (edge.to !== edge.from) degrees.set(edge.to, (degrees.get(edge.to) ?? 0) + 1);
+  }
+  return degrees;
+};
+
+export const pickAutoDegree = (
+  degrees: Map<string, number>,
+  limit: number = VOWL_DEGREE_NODE_LIMIT
+): number => {
+  const values = Array.from(degrees.values());
+  const max = values.reduce((m, v) => Math.max(m, v), 0);
+  for (let degree = 0; degree <= max; degree++) {
+    if (values.filter(v => v >= degree).length <= limit) return degree;
+  }
+  return max;
+};
+
+export const visibilityForDegree = (
+  nodes: OntologyNode[],
+  edges: OntologyEdge[],
+  degrees: Map<string, number>,
+  degree: number
+): {
+  newExpandedIds: Set<string>;
+  newVisibleIds: Set<string>;
+} => {
+  if (degree <= 0) return expandAll(nodes);
+  const visible = new Set<string>();
+  degrees.forEach((value, id) => {
+    if (value >= degree) visible.add(id);
+  });
+  return { newExpandedIds: new Set<string>(), newVisibleIds: visible };
+};
+
 export const getExpansionStats = (
   totalNodes: number,
   visibleNodes: number,
