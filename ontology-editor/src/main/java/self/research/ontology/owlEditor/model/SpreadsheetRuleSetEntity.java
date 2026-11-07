@@ -20,7 +20,6 @@ public class SpreadsheetRuleSetEntity {
     private String description;
     private List<RuleSpec> rules = new ArrayList<>();
     private String createdBy;
-    private String createdByUserId;
     private String updatedBy;
     private Date createdAt = new Date();
     private Date updatedAt = new Date();
@@ -42,9 +41,6 @@ public class SpreadsheetRuleSetEntity {
 
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
-
-    public String getCreatedByUserId() { return createdByUserId; }
-    public void setCreatedByUserId(String createdByUserId) { this.createdByUserId = createdByUserId; }
 
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }

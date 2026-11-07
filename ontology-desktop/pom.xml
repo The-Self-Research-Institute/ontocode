@@ -87,10 +87,6 @@
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
                         </exclude>
-                        <exclude>
-                            <groupId>io.netty</groupId>
-                            <artifactId>netty-resolver-dns-native-macos</artifactId>
-                        </exclude>
                     </excludes>
                 </configuration>
                 <executions>

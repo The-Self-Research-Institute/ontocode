@@ -47,9 +47,6 @@ interface SpreadsheetImportPanelProps {
   username?: string;
   draftMode?: boolean;
   onImported?: () => void;
-  onViewOnlyAction?: () => void;
-  onDraftRequired?: () => void;
-  isDraftEditor?: boolean;
 }
 
 const actorOf = (userId?: string, username?: string) => ({
@@ -80,7 +77,7 @@ const emptyState: PanelState = {
 const newId = () => `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const errorText = (e: any): string | undefined =>
-  e?.data?.error || e?.response?.data?.error || e?.response?.data?.message || e?.message;
+  e?.response?.data?.error || e?.response?.data?.message || e?.message;
 
 const snapshotOf = (rules: TransformationRule[]) =>
   JSON.stringify(rules.map(({ id, ...rest }) => rest));
@@ -106,26 +103,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
   username,
   draftMode = false,
   onImported,
-  onViewOnlyAction,
-  onDraftRequired,
-  isDraftEditor = false,
 }) => {
-  const uploadBlocked = () => {
-    if (onViewOnlyAction) {
-      onViewOnlyAction();
-      return true;
-    }
-    if (onDraftRequired) {
-      onDraftRequired();
-      return true;
-    }
-    return false;
-  };
-
-  const openFilePicker = () => {
-    if (uploadBlocked()) return;
-    fileInput.current?.click();
-  };
   const key = projectId ?? "";
   const [state, setState] = useState<PanelState>(() => stateByProject.get(key) ?? emptyState);
   const [uploading, setUploading] = useState(false);
@@ -159,13 +137,6 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
   const storeKey = workKey(userId, key);
 
   const { file, workbook, activeSheet, rules, ruleSet, ruleSetSnapshot } = state;
-  const loadedSetInfo = ruleSet ? savedSets.find((s) => s.id === ruleSet.id) : undefined;
-  const ownsLoadedSet =
-    !isDraftEditor ||
-    !loadedSetInfo ||
-    (loadedSetInfo.createdByUserId
-      ? loadedSetInfo.createdByUserId === userId
-      : (loadedSetInfo.createdBy ?? "").toLowerCase() === (username ?? "").toLowerCase());
 
   useEffect(() => {
     const inMemory = stateByProject.get(key);
@@ -365,7 +336,6 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
     update({ rules: rules.map((r) => (r.id === id ? { ...r, active: !r.active } : r)) });
 
   const runPreview = async () => {
-    if (uploadBlocked()) return;
     if (!projectId || !file) return;
     setPreviewing(true);
     setPreviewError(null);
@@ -380,7 +350,6 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
   };
 
   const runCommit = async () => {
-    if (uploadBlocked()) return;
     if (!projectId || !file) return;
     setCommitting(true);
     setCommitError(null);
@@ -432,8 +401,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
     setSavingSet(true);
     setSaveError(null);
     try {
-      const saved = await saveRuleSet(projectId, name, rules, savedBy(), asNew ? undefined : ruleSet?.id, description,
-        isDraftEditor && draftMode);
+      const saved = await saveRuleSet(projectId, name, rules, savedBy(), asNew ? undefined : ruleSet?.id, description);
       update({
         ruleSet: { id: saved.id, name: saved.name, description: saved.description },
         ruleSetSnapshot: snapshotOf(rules),
@@ -449,21 +417,15 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
   };
 
   const quickSave = () => {
-    if (uploadBlocked()) return;
     if (ruleSet) persistRuleSet(ruleSet.name, ruleSet.description ?? "", false);
     else setSaveDialog("save");
-  };
-
-  const askDeleteRuleSet = () => {
-    if (uploadBlocked()) return;
-    setConfirmDelete({ kind: "ruleSet" });
   };
 
   const removeRuleSet = async () => {
     if (!projectId || !ruleSet) return;
     setDeleting(true);
     try {
-      await deleteRuleSet(projectId, ruleSet.id, isDraftEditor && draftMode);
+      await deleteRuleSet(projectId, ruleSet.id);
       setRuleSetNotice({ ok: true, text: `Deleted "${ruleSet.name}".` });
       update({ ruleSet: null, ruleSetSnapshot: null });
       refreshSavedSets();
@@ -535,7 +497,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
             onChange={(e) => handleFile(e.target.files?.[0])}
           />
           <button
-            onClick={openFilePicker}
+            onClick={() => fileInput.current?.click()}
             disabled={uploading}
             className="flex items-center gap-1.5 px-3 py-1 text-xs rounded bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50"
           >
@@ -592,7 +554,6 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
-            if (uploadBlocked()) return;
             handleFile(e.dataTransfer.files?.[0]);
           }}
         >
@@ -600,7 +561,7 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
           <p className="text-sm text-gray-600">Drop an Excel (.xlsx, .xls) or CSV file here</p>
           <p className="text-xs text-gray-400 mb-3">or</p>
           <button
-            onClick={openFilePicker}
+            onClick={() => fileInput.current?.click()}
             className="px-3 py-1 text-xs rounded border hover:bg-gray-50"
             disabled={uploading}
           >
@@ -678,10 +639,8 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
                 )}
                 <button
                   onClick={quickSave}
-                  disabled={rules.length === 0 || savingSet || (!!ruleSet && !unsavedChanges) || !ownsLoadedSet}
-                  title={!ownsLoadedSet
-                    ? `"${ruleSet?.name}" was saved by someone else. Use Save as to keep your own copy.`
-                    : ruleSet ? `Save changes to "${ruleSet.name}"` : "Save these rules in the project"}
+                  disabled={rules.length === 0 || savingSet || (!!ruleSet && !unsavedChanges)}
+                  title={ruleSet ? `Save changes to "${ruleSet.name}"` : "Save these rules in the project"}
                   className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border hover:bg-gray-50 disabled:opacity-40"
                 >
                   {savingSet && !saveDialog ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save
@@ -719,12 +678,9 @@ const SpreadsheetImportPanel: React.FC<SpreadsheetImportPanelProps> = ({
                 </button>
                 {ruleSet && (
                   <button
-                    onClick={askDeleteRuleSet}
-                    disabled={!ownsLoadedSet}
-                    title={ownsLoadedSet
-                      ? `Delete "${ruleSet.name}" from the project`
-                      : `"${ruleSet.name}" was saved by someone else, so you can't delete it.`}
-                    className="p-1 rounded border hover:bg-red-50 text-red-600 disabled:opacity-40"
+                    onClick={() => setConfirmDelete({ kind: "ruleSet" })}
+                    title={`Delete "${ruleSet.name}" from the project`}
+                    className="p-1 rounded border hover:bg-red-50 text-red-600"
                     aria-label="Delete saved rule set"
                   >
                     <Trash2 size={12} />
