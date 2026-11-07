@@ -1019,7 +1019,8 @@ export function applyVowlTransform(
     repNode.metadata = {
       ...(repNode.metadata || {}),
       vowlEquivalent: true,
-      equivalentLabels: labels
+      equivalentLabels: labels,
+      equivalentIds: [...members]
     };
     for (const m of members.slice(1)) mergedInto.set(m, rep);
   });
