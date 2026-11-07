@@ -71,11 +71,14 @@ import {
   expandSeedsToDepth,
   initialGraphVisibility,
   smartInitialGraphVisibility,
-  networkGraphVisibility,
   NETWORK_VISIBILITY_NODE_BUDGET,
   getExpansionStats,
-  findPathToNode
+  findPathToNode,
+  computeClassDegrees,
+  pickAutoDegree,
+  visibilityForDegree
 } from './HierarchicalLazyLoading';
+import { VowlDegreeControl } from './components/VowlDegreeControl';
 import { useIsDarkTheme } from './hooks/useIsDarkTheme';
 import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion';
 import { loadLastView, saveLastView, loadUiPrefs, saveUiPrefs, OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from './viewMemory';
@@ -130,6 +133,13 @@ const normalizeNodeType = (type: string): NodeType => {
         type === 'DATATYPE' ? 'datatype' :
         type.toLowerCase();
   return normalized as NodeType;
+};
+
+const isDataPropertyEdge = (edge: { metadata?: any } | undefined, source?: { type?: string }, target?: { type?: string }): boolean => {
+  const propertyType = edge?.metadata?.propertyType;
+  if (propertyType === 'dataProperty') return true;
+  if (propertyType === 'objectProperty') return false;
+  return target?.type === 'datatype' || source?.type === 'dataProperty';
 };
 
 const normalizeEdgeType = (type: string): EdgeType => {
@@ -1055,6 +1065,80 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     return filtered;
   }, [allNodes, visibleNodeIds, focusedNodeIds, focusedNodeId]);
 
+  const visibleEntryCount = useMemo(
+    () => allNodes.filter(n => visibleNodeIds.has(n.id)).length,
+    [allNodes, visibleNodeIds]
+  );
+
+  useEffect(() => {
+    const nodeIds = new Set(allNodes.map(n => n.id));
+    setSelectedNodes(prev => {
+      if (prev.size === 0) return prev;
+      const kept = new Set(Array.from(prev).filter(id => nodeIds.has(id)));
+      return kept.size === prev.size ? prev : kept;
+    });
+    setSelectedNodeInfo(prev => (prev && !nodeIds.has(prev.id) ? null : prev));
+  }, [allNodes]);
+
+  useEffect(() => {
+    setSelectedEdgeId(prev => (prev && !allEdges.some(e => e.id === prev) ? null : prev));
+  }, [allEdges]);
+
+  const sharedIdInfo = useMemo(() => {
+    const typesById = new Map<string, string[]>();
+    for (const n of allNodes) {
+      const list = typesById.get(n.id);
+      if (list) list.push(n.type);
+      else typesById.set(n.id, [n.type]);
+    }
+    const groups = new Map<string, number>();
+    let sharedIds = 0;
+    typesById.forEach(types => {
+      if (types.length < 2) return;
+      sharedIds++;
+      const key = Array.from(new Set(types)).sort().join(' + ');
+      groups.set(key, (groups.get(key) ?? 0) + 1);
+    });
+    return { uniqueIds: Array.from(typesById.keys()), sharedIds, groups };
+  }, [allNodes]);
+
+  const visibleUniqueCount = useMemo(
+    () => sharedIdInfo.uniqueIds.reduce((count, id) => count + (visibleNodeIds.has(id) ? 1 : 0), 0),
+    [sharedIdInfo, visibleNodeIds]
+  );
+
+  const headerTotal = webglActive ? sharedIdInfo.uniqueIds.length : allNodes.length;
+  const headerVisible = webglActive ? visibleUniqueCount : visibleEntryCount;
+  const sharedIdWarning = webglActive && sharedIdInfo.sharedIds > 0
+    ? `${sharedIdInfo.sharedIds} IRIs are used by more than one entity (punning: ${Array.from(sharedIdInfo.groups.entries()).map(([key, count]) => `${count} ${key}`).join(', ')}) — each is shown as one node`
+    : null;
+
+  const [vowlDegree, setVowlDegree] = useState<number | null>(null);
+  const [vowlDegreeOpenToken, setVowlDegreeOpenToken] = useState(0);
+  const vowlDegreeVisibleRef = useRef<Set<string> | null>(null);
+  const classDegrees = useMemo(() => computeClassDegrees(allNodes, allEdges), [allNodes, allEdges]);
+  const maxClassDegree = useMemo(
+    () => Array.from(classDegrees.values()).reduce((m, v) => Math.max(m, v), 0),
+    [classDegrees]
+  );
+  const applyVowlDegree = useCallback((degree: number) => {
+    const { newExpandedIds, newVisibleIds } = visibilityForDegree(allNodes, allEdges, classDegrees, degree);
+    vowlDegreeVisibleRef.current = newVisibleIds;
+    setVowlDegree(degree);
+    updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
+    requestViewportFitAfterBulkExpand();
+  }, [allNodes, allEdges, classDegrees, updateHierarchyState, requestViewportFitAfterBulkExpand]);
+  const vowlDegreeActive = vowlDegree !== null && vowlDegreeVisibleRef.current === visibleNodeIds;
+  const degreeCollapseAvailable = webglActive ||
+    visualizationType === 'vowl' ||
+    (visualizationType === 'ontograph' && ontographLayoutType === 'tree');
+  const vowlDegreeShownClasses = useMemo(() => {
+    if (vowlDegree === null) return 0;
+    let count = 0;
+    classDegrees.forEach(value => { if (value >= vowlDegree) count++; });
+    return count;
+  }, [classDegrees, vowlDegree]);
+
   const visibleEdges = useMemo(() => {
     if (focusedNodeIds) {
       const edges = allEdges.filter(e => focusedNodeIds.has(e.from) && focusedNodeIds.has(e.to));
@@ -1062,7 +1146,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return edges;
     }
     if (visibleNodeIds.size === 0) return [];
-    if (visibleNodeIds.size === allNodes.length) return allEdges;
+    if (visibleEntryCount === allNodes.length) return allEdges;
 
     const edges = allEdges.filter(e =>
       visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to)
@@ -1115,7 +1199,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
 
     return edges;
-  }, [allEdges, visibleNodeIds, allNodes.length, allNodes, focusedNodeIds]);
+  }, [allEdges, visibleNodeIds, allNodes.length, allNodes, focusedNodeIds, visibleEntryCount]);
 
   const namespaceOfIri = (iri: string): string | null => {
     if (!iri || !iri.startsWith('http')) return null;
@@ -1157,6 +1241,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, []);
 
   const filteredNodes = useMemo(() => {
+    const filterMode: VisualizationType = webglActive ? 'force' : visualizationType;
 
     let filtered = visibleNodes.filter(node => {
       if (!filters.nodeTypes.has(node.type)) return false;
@@ -1165,10 +1250,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       return true;
     });
 
-    if (visualizationType === 'vowl' || visualizationType === 'ontograph') {
+    if (filterMode === 'vowl' || filterMode === 'ontograph') {
       const beforeFilter = filtered.length;
       
-      if (visualizationType === 'vowl') {
+      if (filterMode === 'vowl') {
         filtered = filtered.filter(node =>
           node.type === 'class' ||
           node.type === 'individual' ||
@@ -1194,10 +1279,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return true;
       });
       
-      if (GRAPH_DEBUG) console.log(`[Filtering] ${visualizationType} mode: After vowlFilters, showing ${filtered.length} nodes (from ${beforeFilter})`);
+      if (GRAPH_DEBUG) console.log(`[Filtering] ${filterMode} mode: After vowlFilters, showing ${filtered.length} nodes (from ${beforeFilter})`);
     }
 
-    if (visualizationType === 'force') {
+    if (filterMode === 'force') {
       filtered = filtered.filter(node =>
         node.type === 'class' ||
         node.type === 'individual' ||
@@ -1206,7 +1291,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (GRAPH_DEBUG) console.log(`[Filtering] Force mode: Filtered to classes, individuals, datatypes - ${filtered.length} nodes`);
     }
 
-    if (visualizationType !== 'vowl') {
+    if (filterMode !== 'vowl') {
       const nonVowlConnected = new Set<string>();
       for (const e of allEdges) {
         if (e.metadata?.vowlOnly) continue;
@@ -1216,14 +1301,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       filtered = filtered.filter(node => node.type !== 'datatype' || nonVowlConnected.has(node.id));
     }
 
-    if (visualizationType === 'ontograph') {
+    if (filterMode === 'ontograph') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(node => node.type === 'class' || node.type === 'individual');
       if (GRAPH_DEBUG) console.log(`[Filtering] OntoGraph mode: Focused on classes and individuals ${beforeFilter} -> ${filtered.length}`);
     }
 
     if (
-      (visualizationType === 'vowl' || visualizationType === 'force') &&
+      (filterMode === 'vowl' || filterMode === 'force') &&
       (vowlOptions.degreeCollapsing > 0 || vowlOptions.hideSolitarySubclasses)
     ) {
       const inSet = new Set(filtered.map(n => n.id));
@@ -1267,23 +1352,24 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (GRAPH_DEBUG) console.log(`[Filtering] Final filtered nodes: ${filtered.length}`);
 
     return filtered;
-  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters, assertionView, vowlOptions, allEdges]);
+  }, [visibleNodes, filters, searchQuery, sidebarSearchTerm, visualizationType, vowlFilters, assertionView, vowlOptions, allEdges, webglActive]);
 
   const filteredEdges = useMemo(() => {
+    const filterMode: VisualizationType = webglActive ? 'force' : visualizationType;
     const nodeIds = new Set(filteredNodes.map(n => n.id));
     let filtered = visibleEdges.filter(edge =>
-      filters.edgeTypes.has(edge.type) &&
+      (filters.edgeTypes.has(edge.type) || (edge.type === 'restriction' && filterMode === 'vowl')) &&
       nodeIds.has(edge.from) &&
       nodeIds.has(edge.to) &&
-      !(edge.metadata?.vowlOnly && visualizationType !== 'vowl') &&
+      !(edge.metadata?.vowlOnly && filterMode !== 'vowl') &&
       (assertionView === 'all' ||
         (assertionView === 'inferred' ? isInferredEntity(edge) : !isInferredEntity(edge)))
     );
     
-    if (visualizationType === 'vowl' || visualizationType === 'ontograph') {
+    if (filterMode === 'vowl' || filterMode === 'ontograph') {
       const beforeFilter = filtered.length;
       
-      if (visualizationType === 'vowl') {
+      if (filterMode === 'vowl') {
         filtered = filtered.filter(edge => 
           edge.type !== 'domain' && edge.type !== 'range'
         );
@@ -1307,7 +1393,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             return true;
           }
           
-          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+          if (isDataPropertyEdge(edge, sourceNode, targetNode)) {
             return vowlFilters.showDataProperties;
           }
           
@@ -1333,16 +1419,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             return true;
           }
           
-          return visualizationType !== 'vowl';
+          return filterMode !== 'vowl';
         }
         
         return true;
       });
       
-      console.log(`[Filtering] ${visualizationType} mode: Filtered ${beforeFilter} -> ${filtered.length} edges`);
+      console.log(`[Filtering] ${filterMode} mode: Filtered ${beforeFilter} -> ${filtered.length} edges`);
     }
     
-    if (visualizationType === 'force') {
+    if (filterMode === 'force') {
       const beforeFilter = filtered.length;
       filtered = filtered.filter(edge => {
         if (edge.type === 'propertyRelation') {
@@ -1353,7 +1439,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             return filters.nodeTypes.has('annotation');
           }
           
-          if (sourceNode?.type === 'dataProperty' || targetNode?.type === 'datatype') {
+          if (isDataPropertyEdge(edge, sourceNode, targetNode)) {
             return filters.nodeTypes.has('dataProperty');
           }
           
@@ -1366,10 +1452,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return true;
       });
       
-      console.log(`[Filtering] ${visualizationType} mode: Filtered property edges ${beforeFilter} -> ${filtered.length}`);
+      console.log(`[Filtering] ${filterMode} mode: Filtered property edges ${beforeFilter} -> ${filtered.length}`);
     }
 
-    if (visualizationType === 'ontograph') {
+    if (filterMode === 'ontograph') {
       const beforeFilter = filtered.length;
       const ontographRelationshipTypes = new Set(
         RELATIONSHIP_VISIBILITY_CONTROLS.flatMap(control => control.edgeTypes)
@@ -1380,7 +1466,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.log(`[Filtering] OntoGraph mode: Applied relationship visibility ${beforeFilter} -> ${filtered.length}`);
     }
 
-    if (visualizationType === 'vowl') {
+    if (filterMode === 'force') {
+      filtered = filtered.filter(e => e.type !== 'disjointWith');
+    }
+
+    if (filterMode === 'vowl') {
       if (!vowlOptions.showDisjointness) {
         filtered = filtered.filter(e => e.type !== 'disjointWith');
       }
@@ -1396,7 +1486,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     
     return filtered;
-  }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes, assertionView, vowlOptions]);
+  }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes, assertionView, vowlOptions, webglActive]);
 
   const graphAnalytics = useMemo(
     () => computeGraphAnalytics(filteredNodes, filteredEdges),
@@ -1443,13 +1533,13 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const objProps = filteredEdges.filter(e => {
           const target = allNodes.find(n => n.id === e.to);
           const source = allNodes.find(n => n.id === e.from);
-          return e.type === 'propertyRelation' && target?.type !== 'datatype' && source?.type !== 'annotation';
+          return e.type === 'propertyRelation' && !isDataPropertyEdge(e, source, target) && source?.type !== 'annotation';
         }).length;
         
         const dataProps = filteredEdges.filter(e => {
           const target = allNodes.find(n => n.id === e.to);
           const source = allNodes.find(n => n.id === e.from);
-          return e.type === 'propertyRelation' && (target?.type === 'datatype' || source?.type === 'dataProperty');
+          return e.type === 'propertyRelation' && isDataPropertyEdge(e, source, target);
         }).length;
         
         const annoProps = filteredEdges.filter(e => {
@@ -1607,7 +1697,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
         fetchInferredGraphData(apiBaseUrl, authToken)
           .then((inferredGraph) => {
-            if (assertedGraphRef.current) {
+            if (assertedGraphRef.current && assertionView !== 'asserted') {
               applyGraphForAssertionView(assertionView, assertedGraphRef.current, inferredGraph);
             }
           })
@@ -1684,6 +1774,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         setSelectedNodes(new Set());
         setSelectedEdgeId(null);
         setSelectedNodeInfo(null);
+        g.selectAll('.node').classed('highlighted', false);
       });
     svg.style('background', (visualizationType === 'vowl' ? '#ecf0f1' : '') as string);
     const g = d3.select(gRef.current);
@@ -2808,7 +2899,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
             const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             if (sourceNode?.type === 'annotation') return isDark ? '#818cf8' : '#4f46e5';
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f472b6' : '#db2777';
+            if (isDataPropertyEdge(d, sourceNode, targetNode)) return isDark ? '#f472b6' : '#db2777';
             return isDark ? '#34d399' : '#059669';
           }
           return isDark ? '#60a5fa' : '#3b82f6';
@@ -2870,7 +2961,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             
             if (sourceNode?.type === 'annotation') return 'url(#arrow-vowl-annotation)';
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-vowl-data)';
+            if (isDataPropertyEdge(d, sourceNode, targetNode)) return 'url(#arrow-vowl-data)';
             return 'url(#arrow-vowl-object)';
           }
           return `url(#arrow-vowl-${d.type})`;
@@ -2882,7 +2973,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
             const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             if (sourceNode?.type === 'annotation') return 'url(#arrow-ontograph-annotationProperty)';
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-ontograph-dataProperty)';
+            if (isDataPropertyEdge(d, sourceNode, targetNode)) return 'url(#arrow-ontograph-dataProperty)';
             return 'url(#arrow-ontograph-objectProperty)';
           }
           return 'url(#arrow-ontograph-subClassOf)';
@@ -2925,7 +3016,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             if (sourceNode?.type === 'annotation') {
               return isDark ? '#5b21b6' : '#ddd6fe';
             }
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+            if (isDataPropertyEdge(d, sourceNode, targetNode)) {
               return isDark ? '#4d7c0f' : '#99cc66';
             }
             return isDark ? '#1d4ed8' : '#69c';
@@ -2942,7 +3033,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (sourceNode?.type === 'annotation') {
             return isDark ? (isFunctional ? '#5b21b6' : '#4c1d95') : (isFunctional ? '#E9D5FF' : '#F3E8FF');
           }
-          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+          if (isDataPropertyEdge(d, sourceNode, targetNode)) {
             return isDark ? (isFunctional ? '#9d174d' : '#831843') : (isFunctional ? '#FCE7F3' : '#FDF2F8');
           }
           return isDark ? (isFunctional ? '#065f46' : '#155e75') : (isFunctional ? '#A7F3D0' : '#CFFAFE');
@@ -2965,7 +3056,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           if (d.type === 'subClassOf') return effectiveDark ? '#9ca3af' : '#6b7280';
           if (d.type === 'propertyRelation') {
             if (sourceNode?.type === 'annotation') return effectiveDark ? '#c4b5fd' : '#7c3aed';
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+            if (isDataPropertyEdge(d, sourceNode, targetNode)) {
               return effectiveDark ? '#a3e635' : '#4d7c0f';
             }
             return effectiveDark ? '#93c5fd' : '#34608d';
@@ -3005,7 +3096,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             if (sourceNode?.type === 'annotation') {
               return isDark ? '#ede9fe' : '#4c1d95';
             }
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') {
+            if (isDataPropertyEdge(d, sourceNode, targetNode)) {
               return isDark ? '#f7fee7' : '#1a2e05';
             }
             return '#ffffff';
@@ -3017,7 +3108,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           const sourceNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.from));
           const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
           if (sourceNode?.type === 'annotation') return isDark ? '#c4b5fd' : '#7c3aed';
-          if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return isDark ? '#f9a8d4' : '#db2777';
+          if (isDataPropertyEdge(d, sourceNode, targetNode)) return isDark ? '#f9a8d4' : '#db2777';
           return isDark ? '#67e8f9' : '#0891b2';
         }
         if (d.type === 'subClassOf') return isDark ? '#c4b5fd' : '#7c3aed';
@@ -3053,7 +3144,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
           let prefix = '';
           if (sourceNode?.type === 'annotation') prefix = '📝';
-          else if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') prefix = '📊';
+          else if (isDataPropertyEdge(d, sourceNode, targetNode)) prefix = '📊';
           else prefix = '🔗';
 
           return `${prefix} ${label}${buildCharSuffix(d)}`;
@@ -4760,7 +4851,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       if (entranceTimeout) clearTimeout(entranceTimeout);
       if (smoothWheelRaf != null) cancelAnimationFrame(smoothWheelRaf);
     };
-  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, settings.physics, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions]);
+  }, [filteredNodes, filteredEdges, settings.nodeSize, settings.showArrows, settings.tooltips, settings.physics, allEdges, allNodes, expandedNodeIds, classDistance, datatypeDistance, isLayoutPaused, visualizationType, ontographLayoutType, graphAnalytics, colorByCluster, sizeByInfluence, isDarkTheme, prefersReducedMotion, projectId, vowlOptions, webglActive]);
 
   useEffect(() => {
     if (visualizationType !== 'ontograph' || ontographLayoutType === 'spring') return;
@@ -4772,7 +4863,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       const width = svgRef.current.clientWidth;
       const height = svgRef.current.clientHeight;
       if (!width || !height) return false;
-      const scale = Math.min(0.9, 0.9 / Math.max(bounds.width / width, bounds.height / height));
+      const scale = Math.max(0.1, Math.min(0.9, 0.9 / Math.max(bounds.width / width, bounds.height / height)));
       const translate = [
         width / 2 - scale * (bounds.x + bounds.width / 2),
         height / 2 - scale * (bounds.y + bounds.height / 2)
@@ -4800,16 +4891,32 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       }
     }
 
-    const selectionActive = selectedNodes.size > 0;
+    const renderedSelected = new Set<string>();
+    if (selectedNodes.size > 0) {
+      g.selectAll<SVGGElement, any>('.node').each((d: any) => {
+        if (!d?.id) return;
+        const equivalentIds: string[] = Array.isArray(d.metadata?.equivalentIds) ? d.metadata.equivalentIds : [];
+        if (
+          selectedNodes.has(d.id) ||
+          selectedNodes.has(vowlOriginalNodeId(d.id)) ||
+          equivalentIds.some(id => selectedNodes.has(id))
+        ) {
+          renderedSelected.add(d.id);
+        }
+      });
+    }
+    const selectionActive = renderedSelected.size > 0;
+    const focusActive = selectionActive &&
+      (visualizationType !== 'vowl' || !!vowlOptions.isolateOnSelect);
     const focusNodeIds = new Set<string>();
     const focusEdgeIds = new Set<string>();
-    if (selectionActive) {
-      selectedNodes.forEach(id => focusNodeIds.add(id));
+    if (focusActive) {
+      renderedSelected.forEach(id => focusNodeIds.add(id));
       g.selectAll('.edge-path').each((d: any) => {
         if (!d) return;
         const sourceId = typeof d.source === 'string' ? d.source : d.source?.id ?? d.from;
         const targetId = typeof d.target === 'string' ? d.target : d.target?.id ?? d.to;
-        if (selectedNodes.has(sourceId) || selectedNodes.has(targetId)) {
+        if (renderedSelected.has(sourceId) || renderedSelected.has(targetId)) {
           focusEdgeIds.add(d.id);
           if (sourceId) focusNodeIds.add(sourceId);
           if (targetId) focusNodeIds.add(targetId);
@@ -4821,7 +4928,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .attr('stroke-width', (d: any) => {
         const baseWidth = visualizationType === 'vowl' ? 1 : 2;
         if (selectedEdgeId === d.id) return baseWidth + 2;
-        if (selectionActive && focusEdgeIds.has(d.id)) return baseWidth + 0.6;
+        if (focusActive && focusEdgeIds.has(d.id)) return baseWidth + 0.6;
         return baseWidth;
       })
       .attr('stroke-opacity', (d: any) => {
@@ -4832,7 +4939,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           return inFocus ? 1 : 0.08;
         }
         if (selectedEdgeId) return selectedEdgeId === d.id ? 1 : 0.3;
-        if (selectionActive) return focusEdgeIds.has(d.id) ? 1 : 0.08;
+        if (focusActive) return focusEdgeIds.has(d.id) ? 1 : 0.08;
         if (hoveredNode) {
           const sourceId = typeof d.source === 'string' ? d.source : d.source.id;
           const targetId = typeof d.target === 'string' ? d.target : d.target.id;
@@ -4849,7 +4956,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             const targetNode = allNodes.find(n => n.id === vowlOriginalNodeId(d.to));
             
             if (sourceNode?.type === 'annotation') return 'url(#arrow-vowl-annotation)';
-            if (targetNode?.type === 'datatype' || sourceNode?.type === 'dataProperty') return 'url(#arrow-vowl-data)';
+            if (isDataPropertyEdge(d, sourceNode, targetNode)) return 'url(#arrow-vowl-data)';
             return 'url(#arrow-vowl-object)';
           }
           return `url(#arrow-vowl-${d.type})`;
@@ -4866,12 +4973,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .style('opacity', (d: any) => {
         if (visualizationType === 'vowl') {
           if (chipAlwaysVisible(d)) {
-            return selectionActive && !focusEdgeIds.has(d.id) ? 0.12 : 1;
+            return focusActive && !focusEdgeIds.has(d.id) ? 0.12 : 1;
           }
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
         if (!settings.showLabels) return 0;
-        return selectionActive && !focusEdgeIds.has(d.id) ? 0.12 : 1;
+        return focusActive && !focusEdgeIds.has(d.id) ? 0.12 : 1;
       });
       
     g.selectAll('.edge-label-bg')
@@ -4879,11 +4986,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (visualizationType === 'vowl') {
           if (d.type === 'disjointWith') return 0;
           if (chipAlwaysVisible(d)) {
-            return selectionActive && !focusEdgeIds.has(d.id) ? 0.12 : 1;
+            return focusActive && !focusEdgeIds.has(d.id) ? 0.12 : 1;
           }
           return (selectedEdgeId === d.id || hoveredEdgeId === d.id) ? 1 : 0;
         }
-        return selectionActive && !focusEdgeIds.has(d.id) ? 0.12 : 0.85;
+        return focusActive && !focusEdgeIds.has(d.id) ? 0.12 : 0.85;
       });
       
     const searchLower = searchQuery ? searchQuery.toLowerCase() : '';
@@ -4894,7 +5001,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     g.selectAll<SVGGraphicsElement, any>('.node-shape')
       .attr('fill', function(d: any) {
         const base = this.getAttribute('data-base-fill') || this.getAttribute('fill');
-        if (!selectionActive || !focusNodeIds.has(d.id) || selectedNodes.has(d.id)) {
+        if (!focusActive || !focusNodeIds.has(d.id) || renderedSelected.has(d.id)) {
           return base;
         }
         if (d.type === 'datatype') return '#f5c842';
@@ -4903,15 +5010,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .attr('stroke', function(d: any) {
         if (isSearchMatch(d)) return '#f59e0b';
-        if (selectedNodes.has(d.id)) return '#818cf8';
-        if (selectionActive && focusNodeIds.has(d.id)) return '#4f46e5';
+        if (renderedSelected.has(d.id)) return '#818cf8';
+        if (focusActive && focusNodeIds.has(d.id)) return '#4f46e5';
         return this.getAttribute('data-base-stroke');
       })
       .attr('stroke-width', function(d: any) {
         const base = parseFloat(this.getAttribute('data-base-stroke-width') || '2');
         if (isSearchMatch(d)) return base + 2;
-        if (selectedNodes.has(d.id)) return base + 1.5;
-        if (selectionActive && focusNodeIds.has(d.id)) {
+        if (renderedSelected.has(d.id)) return base + 1.5;
+        if (focusActive && focusNodeIds.has(d.id)) {
           if (d.type === 'datatype' || isThingIri(d.id) || d.label === 'Thing') return base + 2;
           return base + 1.25;
         }
@@ -4919,8 +5026,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       })
       .style('filter', function(d: any) {
         if (isSearchMatch(d)) return 'url(#search-glow)';
-        if (selectedNodes.has(d.id)) return 'url(#sel-glow)';
-        if (selectionActive && focusNodeIds.has(d.id)) return 'url(#sel-glow)';
+        if (renderedSelected.has(d.id)) return 'url(#sel-glow)';
+        if (focusActive && focusNodeIds.has(d.id)) return 'url(#sel-glow)';
         if (hoveredNode === d.id) {
           return `url(#hover-glow-${ACCENT_COLORS[d.type] ? d.type : 'class'})`;
         }
@@ -4945,17 +5052,17 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         if (searchFilterMode === 'dim' && searchFocusIds.size > 0) {
           return searchFocusIds.has(n.id) ? 1 : 0.12;
         }
-        if (!selectionActive) return 1;
+        if (!focusActive) return 1;
         return focusNodeIds.has(n.id) ? 1 : 0.1;
       });
 
     g.selectAll('.disjoint-symbol')
       .style('opacity', (d: any) => {
-        if (!selectionActive) return 1;
+        if (!focusActive) return 1;
         return focusEdgeIds.has(d.id) ? 1 : 0.1;
       });
 
-  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, searchFilterMode, searchFocusIds, vowlChipDensityOk]);
+  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, searchFilterMode, searchFocusIds, vowlChipDensityOk, vowlOptions.isolateOnSelect]);
 
   useEffect(() => {
     if (!gRef.current) return;
@@ -5831,7 +5938,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     const bw = Math.max(1, maxX - minX);
     const bh = Math.max(1, maxY - minY);
-    let scale = Math.min(0.9 / Math.max(bw / w, bh / h), 2);
+    let scale = Math.max(0.1, Math.min(0.9 / Math.max(bw / w, bh / h), 2));
     const tx = w / 2 - scale * ((minX + maxX) / 2);
     const ty = h / 2 - scale * ((minY + maxY) / 2);
 
@@ -6771,8 +6878,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             physicsEnabled={settings.physics}
             showLegend={showLegend}
             showHierarchyDialog={showHierarchyDialog}
-            statsLabel={`${getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)} · ${zoomLevel.toFixed(1)}x`}
-            statsData={{ visible: visibleNodeIds.size, total: allNodes.length, expanded: expandedNodeIds.size }}
+            statsLabel={`${getExpansionStats(headerTotal, headerVisible, expandedNodeIds.size)} · ${zoomLevel.toFixed(1)}x`}
+            statsData={{ visible: headerVisible, total: headerTotal, expanded: expandedNodeIds.size }}
+            statsWarning={sharedIdWarning}
             lazyLoadingActive={allNodes.length > 1000}
             webglRenderer={webglActive}
             webglSupported={webglSupported}
@@ -6780,32 +6888,27 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             onChangeVowlOptions={(patch) => setVowlOptions(prev => ({ ...prev, ...patch }))}
             onToggleWebGL={() => setSettings(prev => ({ ...prev, renderer: prev.renderer === 'webgl' ? 'svg' : 'webgl' }))}
             showOverflowHint={showToolbarHint}
-            onRefresh={() => fetchGraphData({ bypassCache: true })}
+            onRefresh={() => {
+              setSelectedNodes(new Set());
+              setSelectedEdgeId(null);
+              setSelectedNodeInfo(null);
+              d3.selectAll('.node').classed('highlighted', false);
+              fetchGraphData({ bypassCache: true });
+            }}
             onPresetNetwork={() => {
+              if (webglActive) return;
               setSettings(prev => prev.renderer === 'webgl' ? prev : { ...prev, renderer: 'webgl' });
-              const { newExpandedIds, newVisibleIds, capped } = networkGraphVisibility(allNodes, allEdges);
+              const { newExpandedIds, newVisibleIds } = smartInitialGraphVisibility(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
               requestViewportFitAfterBulkExpand();
-              if (capped) {
-                setClassActionFeedback({
-                  type: 'success',
-                  message: `Network shows ~${NETWORK_VISIBILITY_NODE_BUDGET} of ${allNodes.length} nodes — expand branches or use Expand All for more.`
-                });
-              }
             }}
             onPresetTree={() => {
               setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
               setVisualizationType('ontograph');
               setOntographLayoutType('tree');
-              const { newExpandedIds, newVisibleIds, capped } = networkGraphVisibility(allNodes, allEdges);
+              const { newExpandedIds, newVisibleIds } = smartInitialGraphVisibility(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
               requestViewportFitAfterBulkExpand();
-              if (capped) {
-                setClassActionFeedback({
-                  type: 'success',
-                  message: `Tree shows ~${NETWORK_VISIBILITY_NODE_BUDGET} of ${allNodes.length} nodes — expand branches for more.`
-                });
-              }
             }}
             onSetVisualizationType={(next) => {
               setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
@@ -6851,6 +6954,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               }
             }}
             onCollapseAll={() => {
+              if (degreeCollapseAvailable) {
+                applyVowlDegree(pickAutoDegree(classDegrees));
+                setVowlDegreeOpenToken(t => t + 1);
+                return;
+              }
               const { newExpandedIds, newVisibleIds } = collapseAllNodes(allNodes, allEdges);
               updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
               requestViewportFitAfterBulkExpand();
@@ -6926,6 +7034,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
           <div style={styles.graphWorkspace}>
           <div style={{ ...styles.graphContentArea, flex: 1, position: 'relative' }}>
+            {degreeCollapseAvailable && (
+              <VowlDegreeControl
+                degree={vowlDegreeActive ? vowlDegree : null}
+                maxDegree={maxClassDegree}
+                shownClasses={vowlDegreeShownClasses}
+                totalClasses={classDegrees.size}
+                openToken={vowlDegreeOpenToken}
+                onChange={applyVowlDegree}
+              />
+            )}
             {!showPropertyPanel && (
               <button
                 data-testid="graph-explorer-rail"
@@ -6963,6 +7081,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 draftMode={draftScope}
                 showGrid={showGrid}
                 physicsEnabled={settings.physics}
+                onZoomChange={setZoomLevel}
                 onNodeClick={(id) => {
                   const found = allNodes.find(n => n.id === id);
                   setSelectedNodes(new Set([id]));
@@ -7433,7 +7552,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                     : 'Fade others — non-matches faded'}
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>
-                  {getExpansionStats(allNodes.length, visibleNodeIds.size, expandedNodeIds.size)}
+                  {getExpansionStats(headerTotal, headerVisible, expandedNodeIds.size)}
                   {searchFocusIds.size > 0 ? ` · focus ${searchFocusIds.size}` : ''}
                 </div>
                 <button
@@ -7456,7 +7575,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             )}
             {!searchQuery && (
               <div style={styles.searchResults}>
-                {visibleNodeIds.size} visible nodes
+                {headerVisible} visible nodes
               </div>
             )}
           </div>
@@ -8133,7 +8252,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: '6px',
     alignItems: 'center',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     boxShadow: 'none'
   },
   btn: {
@@ -8251,6 +8370,7 @@ const styles: Record<string, React.CSSProperties> = {
   relationshipControlsGroup: {
     display: 'flex',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: '4px',
     padding: '3px 4px',
     borderRadius: '6px',
@@ -8298,7 +8418,11 @@ const styles: Record<string, React.CSSProperties> = {
   stats: {
     fontSize: '13px',
     color: 'var(--text-secondary)',
-    padding: '0 12px'
+    padding: '0 12px',
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
   },
   graphWorkspace: {
     flex: 1,

@@ -473,6 +473,7 @@ public class OntologyQueryService {
               } UNION {
                 ?prop rdfs:domain ?c . FILTER(isIRI(?c))
               } UNION {
+                ?prop a owl:ObjectProperty .
                 ?prop rdfs:range ?c . FILTER(isIRI(?c))
               } UNION {
                 ?restrict owl:someValuesFrom ?c . FILTER(isIRI(?c))
@@ -489,6 +490,7 @@ public class OntologyQueryService {
               FILTER(!STRSTARTS(STR(?c), "http://www.w3.org/2001/XMLSchema#"))
               FILTER(!STRSTARTS(STR(?c), "http://www.w3.org/2000/01/rdf-schema#"))
               FILTER(!STRSTARTS(STR(?c), "http://www.w3.org/1999/02/22-rdf-syntax-ns#"))
+              FILTER NOT EXISTS { ?c a rdfs:Datatype }
               OPTIONAL { ?c rdfs:label ?label }
               OPTIONAL { ?c rdfs:comment ?description }
               OPTIONAL {
@@ -1734,10 +1736,9 @@ public class OntologyQueryService {
     }
 
     /**
-     * Enrich a list of tree nodes with their pairwise owl:disjointWith partners.
+     * Enrich a list of tree nodes with their owl:disjointWith and owl:AllDisjointClasses partners.
      * Runs one SPARQL query for the entire batch using a VALUES clause, mirroring
-     * enrichWithEquivalentClasses(). Does not cover n-ary owl:AllDisjointClasses axioms —
-     * those are handled separately for the per-class detail/usage views.
+     * enrichWithEquivalentClasses().
      */
     private void enrichWithDisjointClasses(String projectId, List<OntologyDto.TreeNode> nodes) {
         if (nodes.isEmpty()) return;
@@ -1753,6 +1754,11 @@ public class OntologyQueryService {
                 ?cls owl:disjointWith ?disjoint .
               } UNION {
                 ?disjoint owl:disjointWith ?cls .
+              } UNION {
+                ?group a owl:AllDisjointClasses ;
+                       owl:members ?members .
+                ?members rdf:rest*/rdf:first ?cls .
+                ?members rdf:rest*/rdf:first ?disjoint .
               }
               FILTER(?disjoint != ?cls && isIRI(?disjoint))
               OPTIONAL { ?disjoint rdfs:label ?disjointLabel }
