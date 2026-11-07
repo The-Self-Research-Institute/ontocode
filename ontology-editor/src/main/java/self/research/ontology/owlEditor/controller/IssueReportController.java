@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import self.research.ontology.owlEditor.config.CallerEmail;
+import self.research.ontology.owlEditor.config.CallerIdentity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -11,12 +13,10 @@ import self.research.ontology.owlEditor.service.IssueReportService;
 import self.research.ontology.owlEditor.service.OpenProjectService;
 
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Slf4j
 @RestController
@@ -24,6 +24,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @CrossOrigin(originPatterns = "*", allowedHeaders = "*", allowCredentials = "false", methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.DELETE, RequestMethod.OPTIONS})
 public class IssueReportController {
 
+    private static final int MAX_TEXT_CHARS = 20_000;
+    private static final int MAX_LOG_CHARS = 200_000;
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
     private final IssueReportService issueReportService;
@@ -32,46 +34,8 @@ public class IssueReportController {
         this.issueReportService = issueReportService;
     }
 
-    private Map<String, String> extractUserFromToken(HttpServletRequest request) {
-        Map<String, String> userInfo = new HashMap<>();
-        try {
-            String authHeader = request.getHeader("Authorization");
-            log.info("Authorization header: {}", authHeader != null ? "Present (Bearer token)" : "Not present");
-
-            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                String token = authHeader.substring(7);
-                String[] parts = token.split("\\.");
-                if (parts.length >= 2) {
-                    String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
-                    log.info("JWT payload decoded successfully");
-
-                    ObjectMapper mapper = new ObjectMapper();
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> claims = mapper.readValue(payload, Map.class);
-
-                    log.info("JWT claims: {}", claims.keySet());
-
-                    if (claims.containsKey("sub")) {
-                        userInfo.put("username", claims.get("sub").toString());
-                        log.info("Extracted username from 'sub': {}", claims.get("sub"));
-                    } else {
-                        log.warn("'sub' claim not found in token");
-                    }
-
-                    if (claims.containsKey("email")) {
-                        userInfo.put("email", claims.get("email").toString());
-                        log.info("Extracted email: {}", claims.get("email"));
-                    } else {
-                        log.warn("'email' claim not found in token");
-                    }
-                }
-            } else {
-                log.warn("No Bearer token found in Authorization header");
-            }
-        } catch (Exception e) {
-            log.error("Failed to extract user info from JWT token", e);
-        }
-        return userInfo;
+    private static String limited(String value, int maxChars) {
+        return value == null || value.length() <= maxChars ? value : value.substring(0, maxChars);
     }
 
     @PostMapping(value = "/report", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -96,11 +60,9 @@ public class IssueReportController {
         try {
             log.info("Received issue report: {}", title);
 
-            Map<String, String> userInfo = extractUserFromToken(request);
-            String reporterUsername = userInfo.get("username");
-            String reporterEmail = userInfo.get("email");
-
-            log.info("Reporter: {} ({})", reporterUsername, reporterEmail);
+            CallerIdentity caller = CallerIdentity.of(request);
+            String reporterUsername = caller.userId();
+            String reporterEmail = caller.email();
 
             boolean signedIn = reporterEmail != null && !reporterEmail.isBlank();
             boolean validContactEmail = userEmail != null && EMAIL_PATTERN.matcher(userEmail.trim()).matches();
@@ -120,15 +82,15 @@ public class IssueReportController {
 
             IssueReport issueReport = IssueReport.builder()
                 .title(title)
-                .description(description)
-                .stepsToReproduce(stepsToReproduce)
+                .description(limited(description, MAX_TEXT_CHARS))
+                .stepsToReproduce(limited(stepsToReproduce, MAX_TEXT_CHARS))
                 .userEmail(userEmail)
                 .reporterUsername(reporterUsername)
                 .reporterEmail(reporterEmail)
                 .projectId(projectId)
                 .projectName(projectName)
                 .ontologyFilePath(ontologyFilePath)
-                .errorLogs(errorLogs)
+                .errorLogs(limited(errorLogs, MAX_LOG_CHARS))
                 .issueType(issueType)
                 .priority(priority)
                 .systemInfo(systemInfo)
@@ -170,7 +132,11 @@ public class IssueReportController {
     }
 
     @GetMapping("/user/{email}")
-    public ResponseEntity<List<IssueReport>> getUserIssueReports(@PathVariable String email) {
+    public ResponseEntity<List<IssueReport>> getUserIssueReports(@PathVariable String email,
+                                                                 @CallerEmail String callerEmail) {
+        if (callerEmail == null || !callerEmail.equalsIgnoreCase(email)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         try {
             List<IssueReport> reports = issueReportService.getUserIssueReports(email);
             return ResponseEntity.ok(reports);

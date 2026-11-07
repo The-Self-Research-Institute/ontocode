@@ -21,31 +21,20 @@ COPY ontology-reasoner-worker/pom.xml ./ontology-reasoner-worker/pom.xml
 COPY shared/ ./shared/
 COPY ontology-swrl/ ./ontology-swrl/
 
-# Build shared modules first (these are dependencies for all services).
 # Parent POM defaults to Java 21, but this image is JDK 17 (required for SWRLAPI).
-# Force shared modules to Java 17 bytecode so they compile and link here.
+# Build the shared modules inside this reactor with Java 17 bytecode instead of reading a
+# common-utils jar from the shared Maven cache, which other service images overwrite with Java 21.
 RUN --mount=type=cache,target=/root/.m2 \
     sh -c 'for attempt in 1 2 3; do \
         mvn -Dhttp.keepAlive=false \
             -Dmaven.wagon.http.retryHandler.count=10 \
             -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-            clean install -pl shared/common-models,shared/common-utils -am -DskipTests -B -ntp \
+            clean package -pl ontology-swrl -am -DskipTests -B -ntp \
             -Djava.version=17 \
             -Dmaven.compiler.source=17 \
             -Dmaven.compiler.target=17 \
             -Dmaven.compiler.release=17 && exit 0; \
-        echo "Shared module build failed, retrying ($$attempt/3)..."; \
-    done; \
-    exit 1'
-
-# Build SWRL module - package goal includes spring-boot:repackage automatically
-RUN --mount=type=cache,target=/root/.m2 \
-    sh -c 'for attempt in 1 2 3; do \
-        mvn -Dhttp.keepAlive=false \
-            -Dmaven.wagon.http.retryHandler.count=10 \
-            -Dmaven.wagon.httpconnectionManager.ttlSeconds=120 \
-            clean package -pl ontology-swrl -DskipTests -B -ntp && exit 0; \
-        echo "SWRL module build failed, retrying ($$attempt/3)..."; \
+        echo "SWRL build failed, retrying ($$attempt/3)..."; \
     done; \
     exit 1'
 

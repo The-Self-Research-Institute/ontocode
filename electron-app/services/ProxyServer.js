@@ -55,7 +55,21 @@ async function proxyHttp(req, res) {
         return;
     }
 
-    if (port === SWRL_PORT) {
+    const isSwrl = port === SWRL_PORT;
+    svcMgr.noteActivity({ swrl: isSwrl });
+    svcMgr.beginRequest();
+    let requestEnded = false;
+    const finishRequest = () => {
+        if (requestEnded) return;
+        requestEnded = true;
+        svcMgr.endRequest();
+        svcMgr.noteActivity({ swrl: isSwrl });
+    };
+    res.once('close', finishRequest);
+
+    if (!isSwrl) await svcMgr.resumeAfterIdle();
+
+    if (isSwrl) {
         try {
             await svcMgr.ensureSwrl();
         } catch (err) {
@@ -93,6 +107,7 @@ async function proxyHttp(req, res) {
 
 function proxyWs(req, socket, head) {
     const port = targetPort(req.url);
+    svcMgr.noteActivity({ swrl: port === SWRL_PORT });
 
     const upstream = net.createConnection({ host: '127.0.0.1', port }, () => {
         let rawHeaders = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
@@ -110,11 +125,15 @@ function proxyWs(req, socket, head) {
     socket.on('error', () => upstream.destroy());
 }
 
-async function start(desktopPort, swrlPort) {
+async function start(desktopPort, swrlPort, proxyPort) {
 
     if (desktopPort) DESKTOP_PORT = desktopPort;
     if (swrlPort)    SWRL_PORT    = swrlPort;
-    await findFreeProxyPort();
+    if (proxyPort) {
+        PROXY_PORT = proxyPort;
+    } else {
+        await findFreeProxyPort();
+    }
 
     return new Promise((resolve, reject) => {
         proxyServer = http.createServer(proxyHttp);
@@ -142,4 +161,10 @@ function stop() {
     });
 }
 
-module.exports = { start, stop, PROXY_PORT, DESKTOP_PORT, SWRL_PORT };
+module.exports = {
+    start,
+    stop,
+    get PROXY_PORT() { return PROXY_PORT; },
+    DESKTOP_PORT,
+    SWRL_PORT,
+};

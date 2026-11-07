@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import self.research.ontology.owlEditor.service.PublicEditGate;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -11,16 +13,22 @@ import org.springframework.web.multipart.MultipartFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import self.research.ontology.owlEditor.model.merge.*;
+import self.research.ontology.common.disk.DiskSpaceGate;
+import self.research.ontology.common.disk.InsufficientDiskSpaceException;
+import self.research.ontology.owlEditor.service.BusyException;
+import self.research.ontology.owlEditor.service.MergeInputTooLargeException;
 import self.research.ontology.owlEditor.service.DraftMergeTooLargeException;
 import self.research.ontology.owlEditor.service.DraftNotReadyException;
 import self.research.ontology.owlEditor.service.OntologyMergeService;
 import self.research.ontology.owlEditor.service.RequestActor;
-import self.research.ontology.owlEditor.service.ProjectMetadataService;
+import self.research.ontology.owlEditor.util.TempFiles;
+import self.research.ontology.owlEditor.service.AccessDenial;
+import self.research.ontology.owlEditor.service.MergeTargetResolver;
 
 import java.nio.file.Path;
-import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * REST controller for ontology merging operations 
@@ -30,20 +38,39 @@ import java.util.Map;
 @RequestMapping("/api/projects/{projectId}/merge")
 public class OntologyMergeController {
 
+    @Autowired(required = false)
+    private PublicEditGate publicEditGate;
+
     private static final Logger log = LoggerFactory.getLogger(OntologyMergeController.class);
     private static final String DESKTOP_USER_ID = "desktop-user-local";
 
     private final OntologyMergeService mergeService;
-    private final ProjectMetadataService metadataService;
+    private final MergeTargetResolver targetResolver;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @org.springframework.beans.factory.annotation.Value("${ontocode.desktop.mode:false}")
     private boolean desktopMode;
 
     public OntologyMergeController(OntologyMergeService mergeService,
-                                   ProjectMetadataService metadataService) {
+                                   MergeTargetResolver targetResolver) {
         this.mergeService = mergeService;
-        this.metadataService = metadataService;
+        this.targetResolver = targetResolver;
+    }
+
+    @org.springframework.beans.factory.annotation.Value("${ontocode.data.dir:./data}")
+    private String dataDir;
+
+    private Path saveSource(MultipartFile file) throws java.io.IOException {
+        Path dir = dataDir == null ? null : Path.of(dataDir).toAbsolutePath().normalize().resolve("tmp");
+        if (dir != null) {
+            DiskSpaceGate.defaults().requireFree(dir, file.getSize() * 3);
+        }
+        return TempFiles.saveUpload(file, dir, "merge-source-", ".owl");
+    }
+
+    private ResponseEntity<?> inputTooLarge(MergeInputTooLargeException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(Map.of("error", e.getMessage(), "limitBytes", e.limitBytes()));
     }
 
     private String effectiveUserId(HttpServletRequest request, String userId, boolean draft) {
@@ -90,13 +117,14 @@ public class OntologyMergeController {
                         .body(Map.of("error", "No file uploaded"));
             }
             
-            // Save uploaded file temporarily
-            tempFile = Files.createTempFile("merge-source-", ".owl");
-            log.info("[MERGE] Saving uploaded file to: {}", tempFile);
-            file.transferTo(tempFile.toFile());
+            tempFile = saveSource(file);
             
             // Analyze for conflicts
-            String effectiveTargetProjectId = resolveEffectiveTargetProjectId(projectId, targetProjectId, targetFileName);
+            String effectiveTargetProjectId = targetResolver.resolve(projectId, targetProjectId, targetFileName);
+            Optional<AccessDenial> denial = targetResolver.denialFor(httpRequest, projectId, effectiveTargetProjectId);
+            if (denial.isPresent()) {
+                return denial.get().toResponse();
+            }
             MergeAnalysisResult result = mergeService.analyzeOntologies(
                 projectId + "_source",  // source project ID (not used, just for logging)
                 tempFile,
@@ -109,6 +137,10 @@ public class OntologyMergeController {
             
             return ResponseEntity.ok(result);
             
+        } catch (BusyException | InsufficientDiskSpaceException e) {
+            throw e;
+        } catch (MergeInputTooLargeException e) {
+            return inputTooLarge(e);
         } catch (OWLOntologyCreationException e) {
             log.error("[MERGE] Error loading ontologies", e);
             String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
@@ -122,22 +154,7 @@ public class OntologyMergeController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to analyze ontologies: " + errorMsg, "details", e.toString()));
         } finally {
-            // Clean up temp file
-            if (tempFile != null) {
-                try {
-                    // Try to delete immediately first
-                    boolean deleted = Files.deleteIfExists(tempFile);
-                    if (!deleted) {
-                        // If deletion fails (Windows file locking), mark for deletion on JVM exit
-                        tempFile.toFile().deleteOnExit();
-                        log.debug("[MERGE] Temp file marked for deletion on exit: {}", tempFile);
-                    }
-                } catch (Exception e) {
-                    // On Windows, file may still be locked by OWL API - mark for deletion on exit
-                    tempFile.toFile().deleteOnExit();
-                    log.debug("[MERGE] Temp file locked, marked for deletion on exit: {}", tempFile);
-                }
-            }
+            TempFiles.discard(tempFile);
         }
     }
 
@@ -166,14 +183,17 @@ public class OntologyMergeController {
             @RequestParam(value = "username", required = false) String username,
             @RequestParam(value = "draft", defaultValue = "false") boolean draft,
             HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, draft);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
 
         log.info("[MERGE] Executing merge for project {}", projectId);
         log.info("[MERGE] Strategy: {}, Rename suffix: {}", strategy, renameSuffix);
         
+        Path tempFile = null;
         try {
-            // Save uploaded file temporarily
-            Path tempFile = Files.createTempFile("merge-source-", ".owl");
-            file.transferTo(tempFile.toFile());
+            tempFile = saveSource(file);
             
             // Create merge options
             MergeOptions options = new MergeOptions();
@@ -191,7 +211,11 @@ public class OntologyMergeController {
             
             // Execute merge
             long startTime = System.currentTimeMillis();
-            String effectiveTargetProjectId = resolveEffectiveTargetProjectId(projectId, targetProjectId, targetFileName);
+            String effectiveTargetProjectId = targetResolver.resolve(projectId, targetProjectId, targetFileName);
+            Optional<AccessDenial> denial = targetResolver.denialFor(httpRequest, projectId, effectiveTargetProjectId);
+            if (denial.isPresent()) {
+                return denial.get().toResponse();
+            }
             MergeResult result = mergeService.mergeOntologies(
                 projectId + "_source",
                 tempFile,
@@ -206,21 +230,15 @@ public class OntologyMergeController {
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
 
-            // Clean up temp file (handle Windows file locking)
-            try {
-                boolean deleted = Files.deleteIfExists(tempFile);
-                if (!deleted) {
-                    tempFile.toFile().deleteOnExit();
-                }
-            } catch (Exception ex) {
-                tempFile.toFile().deleteOnExit();
-                log.debug("[MERGE] Temp file locked, marked for deletion on exit: {}", tempFile);
-            }
 
             log.info("[MERGE] Merge complete in {}ms", duration);
             
             return ResponseEntity.ok(result);
             
+        } catch (BusyException | InsufficientDiskSpaceException e) {
+            throw e;
+        } catch (MergeInputTooLargeException e) {
+            return inputTooLarge(e);
         } catch (DraftNotReadyException | DraftMergeTooLargeException e) {
             return draftMergeRefusal(e);
         } catch (StackOverflowError soe) {
@@ -231,6 +249,8 @@ public class OntologyMergeController {
             log.error("[MERGE] Error executing merge", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to merge ontologies: " + e.getMessage()));
+        } finally {
+            TempFiles.discard(tempFile);
         }
     }
 
@@ -251,14 +271,17 @@ public class OntologyMergeController {
             @RequestParam(value = "username", required = false) String username,
             @RequestBody MergeOptions options,
             HttpServletRequest httpRequest) {
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, false);
+        if (publicEditOff != null) {
+            return publicEditOff;
+        }
 
         log.info("[MERGE] Executing merge with manual resolutions for project {}", projectId);
         log.info("[MERGE] Resolutions provided: {}", options.getConflictResolutions().size());
         
+        Path tempFile = null;
         try {
-            // Save uploaded file temporarily
-            Path tempFile = Files.createTempFile("merge-source-", ".owl");
-            file.transferTo(tempFile.toFile());
+            tempFile = saveSource(file);
             
             // Execute merge with resolutions
             long startTime = System.currentTimeMillis();
@@ -275,21 +298,15 @@ public class OntologyMergeController {
             long duration = System.currentTimeMillis() - startTime;
             result.setDurationMs(duration);
             
-            // Clean up temp file (handle Windows file locking)
-            try {
-                boolean deleted = Files.deleteIfExists(tempFile);
-                if (!deleted) {
-                    tempFile.toFile().deleteOnExit();
-                }
-            } catch (Exception ex) {
-                tempFile.toFile().deleteOnExit();
-                log.debug("[MERGE] Temp file locked, marked for deletion on exit: {}", tempFile);
-            }
             
             log.info("[MERGE] Merge with resolutions complete in {}ms", duration);
             
             return ResponseEntity.ok(result);
             
+        } catch (BusyException | InsufficientDiskSpaceException e) {
+            throw e;
+        } catch (MergeInputTooLargeException e) {
+            return inputTooLarge(e);
         } catch (StackOverflowError soe) {
             log.error("[MERGE] Stack overflow during merge-with-resolutions — ontology may be too large or circular", soe);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -298,6 +315,8 @@ public class OntologyMergeController {
             log.error("[MERGE] Error executing merge with resolutions", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to merge ontologies: " + e.getMessage()));
+        } finally {
+            TempFiles.discard(tempFile);
         }
     }
 
@@ -332,29 +351,6 @@ public class OntologyMergeController {
         actions.put("SKIP", "Skip this entity");
         
         return ResponseEntity.ok(actions);
-    }
-
-    private String resolveEffectiveTargetProjectId(String defaultProjectId,
-                                                   String targetProjectId,
-                                                   String targetFileName) {
-        if (targetProjectId != null && !targetProjectId.isBlank()) {
-            if (metadataService.readStatus(targetProjectId).isPresent()) {
-                return targetProjectId;
-            }
-            log.warn("[MERGE] Ignoring targetProjectId '{}' because no project status was found. Falling back to filename/default resolution.",
-                    targetProjectId);
-        }
-
-        if (targetFileName != null && !targetFileName.isBlank()) {
-            return metadataService.getProjectIdByFilename(targetFileName)
-                    .map(foundProjectId -> {
-                        log.info("[MERGE] Resolved target filename '{}' to project '{}'", targetFileName, foundProjectId);
-                        return foundProjectId;
-                    })
-                    .orElse(defaultProjectId);
-        }
-
-        return defaultProjectId;
     }
 
     /**

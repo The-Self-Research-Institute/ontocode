@@ -82,15 +82,28 @@ export function saveMode(projectId: string, mode: InferenceMode, storage?: Pick<
   }
 }
 
+export const COMPUTING_TEXT = 'Computing the inferred facts. This can take up to a minute.';
+
+export function needsCompute(status: InferenceStatus | null | undefined): boolean {
+  return !!status && status.available === false && !status.tooLarge;
+}
+
 export function switchState(status: InferenceStatus | null | undefined): SwitchState {
   if (!status) return { disabled: false, tooltip: DEFAULT_TOOLTIP };
   if (status.tooLarge) return { disabled: true, tooltip: 'Too large to include inferred facts' };
-  if (status.available === false) return { disabled: true, tooltip: 'Run the reasoner first' };
+  if (status.available === false) {
+    return {
+      disabled: false,
+      tooltip: status.stale
+        ? 'The ontology changed since the inferred facts were computed. Running the query computes them again.'
+        : 'Also search facts worked out by the reasoner. The first use computes them and can take up to a minute.'
+    };
+  }
   return { disabled: false, tooltip: DEFAULT_TOOLTIP };
 }
 
 export function effectiveMode(mode: InferenceMode, status: InferenceStatus | null | undefined): InferenceMode {
-  return mode === 'inferred' && switchState(status).disabled ? 'asserted' : mode;
+  return mode === 'inferred' && status?.tooLarge ? 'asserted' : mode;
 }
 
 export function toMillis(value: string | number | undefined | null): number | null {
@@ -175,7 +188,7 @@ export function countsText(info: InferredInfo): string | null {
 }
 
 const NEEDS_REASONING_TEXT: Record<string, string> = {
-  none: 'No reasoner result exists yet. Run the reasoner first, or run again with a refresh.',
+  none: 'The inferred facts have not been computed yet. Choose Run again with refresh to compute them.',
   stale: 'The ontology changed since the reasoner last ran, so inferred facts may be out of date.',
   too_large: 'This ontology is too large to include inferred facts. Query the asserted facts only.',
   timeout: 'The reasoner took too long and was stopped. Try again, or query the asserted facts only.',

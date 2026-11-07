@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: If you use this software in your research, please cite it as below.
+title: OntoCode Ontology Platform
+type: software
+version: 1.2.8
+license: MIT
+authors:
+  - name: The Self-Research Institute
+repository-code: https://github.com/The-Self-Research-Institute/ontocode
+url: https://github.com/The-Self-Research-Institute/ontocode
+keywords:
+  - ontology
+  - OWL
+  - RDF
+  - SPARQL
+  - SWRL

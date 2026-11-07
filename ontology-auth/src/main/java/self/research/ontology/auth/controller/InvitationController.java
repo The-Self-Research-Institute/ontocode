@@ -9,14 +9,13 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.auth.model.Invitation;
-import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.InvitationRepository;
-import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.UserRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
 import self.research.ontology.auth.service.InvitationService;
+import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.service.SystemSettingsService;
 
 import java.time.LocalDateTime;
@@ -34,7 +33,7 @@ public class InvitationController {
     private final InvitationRepository invitationRepository;
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
-    private final ProjectRepository projectRepository;
+    private final ProjectService projectService;
     private final SystemSettingsService systemSettingsService;
 
     @Value("${app.base-url:http://localhost:8082}")
@@ -44,13 +43,13 @@ public class InvitationController {
                                InvitationRepository invitationRepository,
                                UserRepository userRepository,
                                WorkspaceRepository workspaceRepository,
-                               ProjectRepository projectRepository,
+                               ProjectService projectService,
                                SystemSettingsService systemSettingsService) {
         this.invitationService = invitationService;
         this.invitationRepository = invitationRepository;
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
-        this.projectRepository = projectRepository;
+        this.projectService = projectService;
         this.systemSettingsService = systemSettingsService;
     }
 
@@ -77,7 +76,6 @@ public class InvitationController {
 
             User user = userOpt.get();
             
-            // Verify workspace access
             Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(request.workspaceId);
             if (workspaceOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
@@ -232,7 +230,6 @@ public class InvitationController {
 
             User user = userOpt.get();
             
-            // Get invitation details
             Optional<Invitation> invitationOpt = invitationService.getInvitationByToken(token);
             if (invitationOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Invitation not found"));
@@ -240,9 +237,11 @@ public class InvitationController {
             
             Invitation invitation = invitationOpt.get();
             
-            // Check if invitation is still pending
             if (!"PENDING".equals(invitation.getStatus())) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Invitation has already been " + invitation.getStatus().toLowerCase()));
+            }
+            if (!user.getEmail().equalsIgnoreCase(invitation.getInviteeEmail())) {
+                return ResponseEntity.status(403).body(Map.of("error", "This invitation was sent to a different email address"));
             }
             
             // Add user to workspace
@@ -310,38 +309,9 @@ public class InvitationController {
             // Accept the invitation (marks it as ACCEPTED)
             Invitation acceptedInvitation = invitationService.acceptInvitation(token, user.getId());
 
-            // Auto-add new member to workspace projects based on the invited role and project visibility:
-            //   ADMIN  → added to every non-private project (WORKSPACE or SPECIFIC, or legacy shared)
-            //   VIEWER → added only to WORKSPACE projects (created with "all workspace members")
-            // Private projects (visibility=PRIVATE or legacy single-owner) are never exposed.
-            try {
-                boolean isNewAdmin = "ADMIN".equalsIgnoreCase(invitation.getRole());
-                List<Project> workspaceProjects = projectRepository.findActiveByWorkspaceId(workspace.getWorkspaceId());
-                for (Project project : workspaceProjects) {
-                    boolean alreadyMember = project.getMembers().stream()
-                            .anyMatch(m -> user.getId().equals(m.getUserId()));
-                    boolean isOwner = user.getId().equals(project.getOwnerId());
-                    if (alreadyMember || isOwner) continue;
-
-                    String visibility = project.getVisibility();
-                    boolean isPrivate = "PRIVATE".equals(visibility)
-                            || (visibility == null && (project.getMembers() == null || project.getMembers().size() <= 1));
-                    if (isPrivate) continue;
-
-                    // Only ADMINs are auto-added to all non-private projects.
-                    // MEMBERs and VIEWERs are added manually per-project via Project Settings.
-                    boolean shouldAdd = isNewAdmin;
-                    if (shouldAdd) {
-                        String autoRole = "EDITOR";
-                        project.addMember(user.getId(), user.getUsername(), user.getEmail(), autoRole);
-                        projectRepository.save(project);
-                        log.info("Auto-added {} as {} to project {} (visibility={}) in workspace {}",
-                                user.getUsername(), autoRole, project.getName(), visibility, workspace.getWorkspaceId());
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Failed to auto-add user {} to workspace projects: {}", user.getUsername(), e.getMessage());
-            }
+            Workspace.WorkspaceMember joined = workspace.getMember(user.getId());
+            projectService.autoAddNewWorkspaceMember(workspace, user.getId(), user.getUsername(), user.getEmail(),
+                    joined != null ? joined.getRole() : null);
 
             return ResponseEntity.ok(Map.of(
                 "message", "Invitation accepted successfully",
@@ -382,7 +352,7 @@ public class InvitationController {
             }
             
             Workspace workspace = workspaceOpt.get();
-            if (!workspace.isMember(user.getId())) {
+            if (!workspace.canManageInvitations(user.getId())) {
                 return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
             
@@ -475,19 +445,18 @@ public class InvitationController {
                 return ResponseEntity.badRequest().body(Map.of("error", "User not found"));
             }
             
-            // Get invitation to find workspace
             Optional<Invitation> invitationOpt = invitationService.getInvitationByToken(token);
             if (invitationOpt.isPresent()) {
                 Invitation invitation = invitationOpt.get();
                 
-                // Remove pending member from workspace
                 Optional<Workspace> workspaceOpt = workspaceRepository.findByWorkspaceId(invitation.getWorkspaceId());
-                if (workspaceOpt.isPresent()) {
-                    Workspace workspace = workspaceOpt.get();
-                    workspace.cancelPendingMember(token);
-                    workspaceRepository.save(workspace);
-                    log.info("Removed pending member for token {} from workspace {}", token.substring(0, Math.min(10, token.length())), workspace.getWorkspaceId());
+                if (workspaceOpt.isEmpty() || !workspaceOpt.get().canManageInvitations(userOpt.get().getId())) {
+                    return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
                 }
+                Workspace workspace = workspaceOpt.get();
+                workspace.cancelPendingMember(token);
+                workspaceRepository.save(workspace);
+                log.info("Removed pending member for token {} from workspace {}", token.substring(0, Math.min(10, token.length())), workspace.getWorkspaceId());
             }
 
             invitationService.cancelInvitation(token);

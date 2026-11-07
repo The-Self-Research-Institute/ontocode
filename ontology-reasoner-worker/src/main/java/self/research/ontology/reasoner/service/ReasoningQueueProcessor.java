@@ -82,10 +82,7 @@ public class ReasoningQueueProcessor {
                 long minutes = jobTimeoutMs / 60_000;
                 log.error("[Reasoning] Job {} ({}) timed out after {} min — cancelled",
                         job.getJobId(), job.getJobType(), minutes);
-                queueManager.reportTimedOut(job,
-                        "Reasoning timed out after " + minutes + " minutes. "
-                        + "The ontology may be too complex for the selected reasoner. "
-                        + "Try ELK or reduce the ontology scope.");
+                queueManager.reportTimedOut(job, timeoutMessage(minutes, job.getReasonerType()));
                 awaitRunawayThreadThenReleaseSlot(job, jobThread, capturedThread[0]);
                 handedToReaper = true;
                 return;
@@ -121,6 +118,17 @@ public class ReasoningQueueProcessor {
             }
             processNext();
         }
+    }
+
+    static String timeoutMessage(long minutes, String reasonerType) {
+        String prefix = "Reasoning timed out after " + minutes + " minutes. ";
+        ReasonerType type = ReasonerType.fromRequest(reasonerType);
+        if (type == ReasonerType.HERMIT || type == ReasonerType.FACTPLUSPLUS) {
+            return prefix + type.getDisplayName() + " can be very slow on large ontologies. "
+                    + "Switch to the ELK reasoner, which is much faster but supports fewer OWL constructs.";
+        }
+        return prefix + "The ontology may be too complex for the selected reasoner. "
+                + "Try ELK or reduce the ontology scope.";
     }
 
     public ReasoningQueueManager.CancelResult cancel(String jobId) {

@@ -191,9 +191,9 @@ public class InferenceService {
         Optional<Instant> previous = cache.lastComputed(lookup);
         if (previous.isPresent()) {
             return new InferenceException(InferenceException.STALE,
-                    "The ontology changed since the inferred view was computed at " + previous.get() + ". Run the reasoner again.", previous.get());
+                    "The ontology changed since the inferred view was computed at " + previous.get() + ". Choose Refresh to compute them again.", previous.get());
         }
-        return new InferenceException(InferenceException.NONE, "Run the reasoner first to query inferred data.");
+        return new InferenceException(InferenceException.NONE, "The inferred facts have not been computed yet. Choose Refresh to compute them.");
     }
 
     private InferredSnapshot compute(SparqlQueryScope scope, String userId, InferenceSnapshotKey lookup) {

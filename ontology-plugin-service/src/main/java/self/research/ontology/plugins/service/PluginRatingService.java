@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import self.research.ontology.common.logging.EmailMasker;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -61,7 +62,14 @@ public class PluginRatingService {
     public List<RatingResponse> getPluginRatings(String pluginId) {
         return ratingRepository.findByPluginId(pluginId).stream()
                 .map(this::toRatingResponse)
+                .map(this::withoutEmailAddresses)
                 .collect(Collectors.toList());
+    }
+
+    private RatingResponse withoutEmailAddresses(RatingResponse rating) {
+        rating.setUserId(EmailMasker.mask(rating.getUserId()));
+        rating.setUsername(EmailMasker.mask(rating.getUsername()));
+        return rating;
     }
 
     public RatingResponse getUserRating(String pluginId, String userId) {

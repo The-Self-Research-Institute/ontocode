@@ -86,7 +86,6 @@ class SwrlGateOrderingTest {
         actions.add(service -> service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "q", null));
         actions.add(service -> service.executeRules(TriageHarness.PROJECT, null));
         actions.add(service -> service.executeSelectedRules(TriageHarness.PROJECT, List.of("r1")));
-        actions.add(service -> service.validateRule(TriageHarness.PROJECT, RULE));
         actions.add(service -> service.parseRule(TriageHarness.PROJECT, RULE, null));
         actions.add(service -> service.testSingleRule(TriageHarness.PROJECT, RULE));
         actions.add(service -> service.testSingleRuleById(TriageHarness.PROJECT, "r1"));

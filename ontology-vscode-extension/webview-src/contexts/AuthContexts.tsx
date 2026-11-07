@@ -12,6 +12,7 @@ import {
     DesktopLicense,
     DESKTOP_LICENSE_UPDATED_EVENT,
 } from '../utils/desktop';
+import { hasHostChannel, isTrustedAppMessage } from '../utils/trustedMessage';
 
 interface User {
     token: string;
@@ -207,8 +208,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }, []);
 
     const requestTokenFromVSCode = useCallback(() => {
-        if (window.vscode) {
-            window.vscode.postMessage({ type: 'requestAuthToken' });
+        if (hasHostChannel()) {
+            window.vscode?.postMessage({ type: 'requestAuthToken' });
         } else {
 
             const token = localStorage.getItem('authToken');
@@ -284,6 +285,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         requestTokenFromVSCode();
 
         const handleMessage = (event: MessageEvent) => {
+            if (!isTrustedAppMessage(event)) return;
             const message = event.data;
             switch (message.type) {
                 case 'storedAuthToken':
@@ -439,8 +441,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
                         setSessionExpiredMessage(null);
 
                         return;
-                    } else {
-                        console.warn('[AuthContext] ⚠️ No JWT in workspace select response');
                     }
                 } catch (wsError: any) {
                     console.error('[AuthContext] ❌ Failed to auto-select workspace:', wsError);
@@ -793,7 +793,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
 
         if (!workspaceData.jwt) {
-            console.error('[AuthContext] ❌ No JWT in workspaceData:', workspaceData);
             throw new Error('No token received from workspace selection');
         }
 

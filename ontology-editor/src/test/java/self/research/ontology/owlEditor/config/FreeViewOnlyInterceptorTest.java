@@ -512,11 +512,37 @@ class FreeViewOnlyInterceptorTest {
     }
 
     @Test
+    void viewerOnFreePlanCanAskForAnExplanationAndCancelIt() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);
+
+        MockHttpServletRequest ask = postRequest("/api/ontology/proj-5/explain-inference", "FREE");
+        MockHttpServletRequest cancel = postRequest("/api/ontology/proj-5/explain-inference/job-1", "FREE");
+        cancel.setMethod("DELETE");
+
+        assertTrue(interceptor.preHandle(ask, new MockHttpServletResponse(), new Object()));
+        assertTrue(interceptor.preHandle(cancel, new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
     void viewerStillCannotDeleteOtherProjectResources() throws Exception {
         when(workspaceOwnershipService.resolveProjectIdFromRequestPath(anyString())).thenReturn(Optional.of("proj-5"));
         when(workspaceOwnershipService.isViewerInProject("u1", "proj-5")).thenReturn(true);
         MockHttpServletRequest request = postRequest("/api/ontology/proj-5/classes/job-1", "FREE");
         request.setMethod("DELETE");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertFalse(interceptor.preHandle(request, response, new Object()));
+        assertEquals(403, response.getStatus());
+    }
+
+    @Test
+    void aViewerIsStillBlockedWhenTheQueryNamesAnotherProject() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(org.mockito.ArgumentMatchers.startsWith("/api/ontology/proj-9")))
+                .thenReturn(Optional.of("proj-9"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-9")).thenReturn(true);
+        MockHttpServletRequest request = postRequest("/api/ontology/proj-9/mutations", "PRO");
+        request.setParameter("projectId", "proj-own");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         assertFalse(interceptor.preHandle(request, response, new Object()));

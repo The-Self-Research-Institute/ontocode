@@ -40,6 +40,7 @@ import { CodeAssistantPanel } from "../components/CodeAssistantPanel";
 import { runAssistantLoop } from "../services/codeAssistantLoop";
 import { AssistantApiError, applyEditGroup, createAssistantSession } from "../services/codeAssistantSession";
 import { UNSAVED_CODE_VIEW_MESSAGE } from "../components/codeAssistantPanelHelpers";
+import { chatHistoryStorageKey } from "../components/codeAssistantPanelHelpers";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -273,7 +274,7 @@ describe("CodeAssistantPanel request identity", () => {
 
     expect(container.textContent).not.toContain("A is a class.");
     expect(container.textContent).not.toContain("What is A?");
-    const stored = window.localStorage.getItem("ontocode.askAi.chat.proj-1") ?? "";
+    const stored = window.localStorage.getItem(chatHistoryStorageKey("proj-1")) ?? "";
     expect(stored).toContain("What is A?");
     expect(stored).toContain("Cancelled because you switched to another project");
     expect(stored).not.toContain("A is a class.");
@@ -287,8 +288,8 @@ describe("CodeAssistantPanel request identity", () => {
     await send("Rename A");
     renderPanel({ projectId: "proj-2", onApplySuccess });
     await flush();
-    const stored = window.localStorage.getItem("ontocode.askAi.chat.proj-1") ?? "[]";
-    window.localStorage.setItem("ontocode.askAi.chat.proj-3", stored);
+    const stored = window.localStorage.getItem(chatHistoryStorageKey("proj-1")) ?? "[]";
+    window.localStorage.setItem(chatHistoryStorageKey("proj-3"), stored);
 
     renderPanel({ projectId: "proj-3", onApplySuccess });
     await flush();

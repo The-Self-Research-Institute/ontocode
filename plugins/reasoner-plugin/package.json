@@ -30,7 +30,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ontocode/reasoner-plugin"
+    "url": "https://github.com/The-Self-Research-Institute/ontocode",
+    "directory": "plugins/reasoner-plugin"
   },
   "main": "./dist/index.js",
   "scripts": {

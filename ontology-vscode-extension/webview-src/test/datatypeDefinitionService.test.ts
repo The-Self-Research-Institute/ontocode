@@ -22,6 +22,18 @@ import datatypeDefinitionService from "../services/datatypeDefinitionService";
 const ok = { data: { success: true, data: [] } };
 
 describe("datatypeDefinitionService", () => {
+  it("reads the envelope the gateway really returns, including an empty list", async () => {
+    get.mockResolvedValue({ success: true, data: [] });
+    await expect(datatypeDefinitionService.listDefinitions("p1", "http://x/Age")).resolves.toEqual([]);
+    get.mockResolvedValue({ success: true, data: [{ id: "d1" }] });
+    await expect(datatypeDefinitionService.listDefinitions("p1", "http://x/Age")).resolves.toEqual([{ id: "d1" }]);
+  });
+
+  it("still throws the server error when the call fails", async () => {
+    get.mockResolvedValue({ success: false, error: "nope" });
+    await expect(datatypeDefinitionService.listDefinitions("p1", "http://x/Age")).rejects.toThrow("nope");
+  });
+
   beforeEach(() => {
     get.mockReset().mockResolvedValue(ok);
     post.mockReset().mockResolvedValue({ data: { success: true, data: { id: "d1" } } });

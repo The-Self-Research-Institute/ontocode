@@ -7,21 +7,18 @@ import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import self.research.ontology.common.security.InternalToken;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 
 public class InternalTokenFilter implements Filter {
 
-    public static final String HEADER = "X-Ontocode-Internal-Token";
+    public static final String HEADER = InternalToken.HEADER;
 
-    private final byte[] expected;
+    private final String expected;
 
     public InternalTokenFilter(String expectedToken) {
-        this.expected = expectedToken == null || expectedToken.isEmpty()
-                ? null
-                : expectedToken.getBytes(StandardCharsets.UTF_8);
+        this.expected = expectedToken;
     }
 
     @Override
@@ -43,7 +40,6 @@ public class InternalTokenFilter implements Filter {
     }
 
     private boolean presentedMatches(String presented) {
-        return expected != null && presented != null
-                && MessageDigest.isEqual(expected, presented.getBytes(StandardCharsets.UTF_8));
+        return InternalToken.matches(expected, presented);
     }
 }

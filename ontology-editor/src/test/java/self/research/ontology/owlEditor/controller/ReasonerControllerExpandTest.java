@@ -10,6 +10,7 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.service.EditorReasonerCacheService;
+import self.research.ontology.owlEditor.service.ReasonerLease;
 import self.research.ontology.owlEditor.service.ReasonerService;
 import self.research.ontology.owlEditor.service.ReasonerType;
 
@@ -46,7 +47,9 @@ class ReasonerControllerExpandTest {
         NodeSet<OWLClass> none = mock(NodeSet.class);
         when(none.getNodes()).thenReturn(Set.of());
         when(reasoner.getSubClasses(any(OWLClass.class), anyBoolean())).thenReturn(none);
-        when(reasonerService.getClassHierarchyReasoner(ontology, ReasonerType.HERMIT)).thenReturn(reasoner);
+        ReasonerLease lease = mock(ReasonerLease.class);
+        when(lease.reasoner()).thenReturn(reasoner);
+        when(reasonerService.leaseClassHierarchy(ontology, ReasonerType.HERMIT, false)).thenReturn(lease);
         when(reasonerService.getInferredSubClasses(eq(reasoner), any(OWLClass.class), eq(true))).thenReturn(Set.of(dog));
 
         Map<String, Object> body = controller.getInferredSubClasses("proj-1", "http://example.org#Animal",
@@ -55,6 +58,7 @@ class ReasonerControllerExpandTest {
         assertEquals(true, body.get("success"));
         List<Map<String, Object>> children = (List<Map<String, Object>>) body.get("inferredSubClasses");
         assertEquals("http://example.org#Dog", children.get(0).get("iri"));
-        verify(reasonerService, never()).getReasoner(any(), any());
+        verify(reasonerService, never()).lease(any(), any());
+        verify(lease).close();
     }
 }

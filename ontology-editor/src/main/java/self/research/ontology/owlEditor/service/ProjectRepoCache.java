@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
+import self.research.ontology.common.admission.WorkKind;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -52,6 +53,8 @@ public class ProjectRepoCache {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectRepoCache.class);
 
+    private static final String MIRROR_OWNER = "projectRepoMirror";
+
     @Value("${ontocode.cache.memstore.enabled:true}")
     private boolean enabled;
 
@@ -78,6 +81,13 @@ public class ProjectRepoCache {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCapacityLedger(self.research.ontology.common.admission.ReservationLedger ledger) {
         this.account = ledger.cacheAccount("projectRepoMirror");
+    }
+
+    private volatile HeavyWorkAdmission heavyWork = HeavyWorkAdmission.disabled();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setHeavyWork(HeavyWorkAdmission heavyWork) {
+        this.heavyWork = heavyWork;
     }
 
     private static long mirrorBytes(Entry entry) {
@@ -118,15 +128,15 @@ public class ProjectRepoCache {
      * when the cache is disabled, the project exceeds the size ceiling, or
      * loading fails — callers must then fall back to GraphDB directly.
      */
-    public Repository getOrLoad(String projectId, Loader loader) {
+    public Lease borrow(String projectId, Loader loader) {
         if (!enabled || projectId == null) {
             return null;
         }
         Entry entry = cache.get(projectId);
-        if (entry != null) {
+        if (entry != null && entry.tryAcquire()) {
             entry.touch();
             hits.incrementAndGet();
-            return entry.repo;
+            return new Lease(entry);
         }
         // Fast path: if we already know this project is too large, skip the COUNT query entirely.
         if (knownLargeProjects.contains(projectId)) {
@@ -138,8 +148,9 @@ public class ProjectRepoCache {
         //   estimate == -1        → COUNT timed out or failed; skip loading too — CONSTRUCT ALL
         //                           would be even slower than COUNT on a cold/large dataset.
         //   estimate <= threshold → proceed to cache-load.
+        long estimate;
         try {
-            long estimate = loader.estimateTripleCount(projectId);
+            estimate = loader.estimateTripleCount(projectId);
             if (estimate < 0) {
                 // COUNT timed out (cold TDB2 or Fuseki unreachable) — skip cache loading.
                 // The caller will fall back to direct Fuseki queries which use indexed
@@ -166,8 +177,9 @@ public class ProjectRepoCache {
         Object existing = loadLocks.putIfAbsent(projectId, bgLock);
         if (existing == null) {
             // We won the race — start one background load.
+            long reserveTriples = estimate;
             java.util.concurrent.CompletableFuture.runAsync(() -> {
-                try {
+                try (HeavyWorkAdmission.Hold hold = heavyWork.admitLoad(MIRROR_OWNER, WorkKind.EXPORT, reserveTriples)) {
                     long start = System.currentTimeMillis();
                     Entry loaded = load(projectId, loader);
                     if (loaded == null) return;
@@ -182,6 +194,7 @@ public class ProjectRepoCache {
                     account.add(mirrorBytes(loaded));
                     if (replaced != null) {
                         account.remove(mirrorBytes(replaced));
+                        replaced.retire();
                     }
                     long ms = System.currentTimeMillis() - start;
                     loadMs.addAndGet(ms);
@@ -209,7 +222,7 @@ public class ProjectRepoCache {
         lastEvictedAtMs.put(projectId, System.currentTimeMillis());
         Entry removed = cache.remove(projectId);
         if (removed != null) {
-            try { removed.repo.shutDown(); } catch (Exception ignore) {}
+            removed.retire();
             account.remove(mirrorBytes(removed));
             log.info("[MEMCACHE] Evicted project={}", projectId);
         }
@@ -334,11 +347,75 @@ public class ProjectRepoCache {
         default long estimateTripleCount(String projectId) { return -1; }
     }
 
+    public static final class Lease implements AutoCloseable {
+        private final Entry entry;
+        private boolean closed;
+
+        private Lease(Entry entry) {
+            this.entry = entry;
+        }
+
+        public Repository repository() {
+            return entry.repo;
+        }
+
+        @Override
+        public synchronized void close() {
+            if (!closed) {
+                closed = true;
+                entry.release();
+            }
+        }
+    }
+
     private static final class Entry {
         final Repository repo;
         final long triples;
         final long loadStartedAt;
         volatile long lastAccessMs;
+        private int users;
+        private boolean retired;
+        private boolean shutDown;
+
+        synchronized boolean tryAcquire() {
+            if (retired) {
+                return false;
+            }
+            users++;
+            return true;
+        }
+
+        void release() {
+            boolean close;
+            synchronized (this) {
+                users--;
+                close = retired && users <= 0 && !shutDown;
+                if (close) {
+                    shutDown = true;
+                }
+            }
+            if (close) {
+                shutDownRepo();
+            }
+        }
+
+        void retire() {
+            boolean close;
+            synchronized (this) {
+                retired = true;
+                close = users <= 0 && !shutDown;
+                if (close) {
+                    shutDown = true;
+                }
+            }
+            if (close) {
+                shutDownRepo();
+            }
+        }
+
+        private void shutDownRepo() {
+            try { repo.shutDown(); } catch (Exception ignore) {}
+        }
 
         Entry(Repository repo, long triples, long loadStartedAt) {
             this.repo = repo;

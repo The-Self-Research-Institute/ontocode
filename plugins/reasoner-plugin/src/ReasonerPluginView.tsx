@@ -137,6 +137,7 @@ interface ReasonerPluginProps {
   apiBaseUrl?: string;
   draftUserId?: string;
   selectedReasoner?: string;
+  reasonerAdvice?: string | null;
   isReasonerRunning?: boolean;
   isReasonerLoading?: boolean;
   reasonerResults?: any;
@@ -313,6 +314,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
   apiBaseUrl = '',
   draftUserId,
   selectedReasoner: dashboardSelectedReasoner,
+  reasonerAdvice,
   isReasonerRunning: dashboardIsRunning,
   isReasonerLoading: dashboardIsLoading,
   reasonerResults: dashboardReasonerResults,
@@ -1568,6 +1570,25 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
           </button>
         )}
       </div>
+
+      {reasonerAdvice && (
+        <div
+          role="status"
+          className={`flex items-center gap-3 px-3 py-2 text-xs border-b flex-shrink-0 ${
+            isDark ? 'bg-yellow-900/20 border-yellow-800 text-yellow-300' : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+          }`}
+        >
+          <span className="flex-1">{reasonerAdvice}</span>
+          {dashboardSelectReasoner && selectedReasoner !== 'ELK' && (
+            <button
+              className="px-3 py-1 font-medium bg-blue-600 text-white rounded hover:bg-blue-700 flex-shrink-0"
+              onClick={() => dashboardSelectReasoner('ELK')}
+            >
+              Switch to ELK
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 flex overflow-hidden">
         {!reasonerResults && !isLoading ? (

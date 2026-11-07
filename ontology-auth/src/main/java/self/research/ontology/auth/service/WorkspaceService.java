@@ -380,6 +380,7 @@ public class WorkspaceService {
 
         workspace.addMember(userId, user.getUsername(), user.getEmail(), role);
         workspaceRepository.save(workspace);
+        projectService.autoAddNewWorkspaceMember(workspace, userId, user.getUsername(), user.getEmail(), role);
     }
 
     /**

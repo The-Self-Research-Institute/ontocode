@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
+    <conversionRule conversionWord="maskedMsg" converterClass="self.research.ontology.common.logging.EmailMaskingMessageConverter"/>
+    <conversionRule conversionWord="maskedEx" converterClass="self.research.ontology.common.logging.EmailMaskingThrowableConverter"/>
 
     <property name="LOG_DIR" value="${LOG_DIR:-logs}" />
     <property name="APP_NAME" value="owl-editor" />
@@ -11,7 +13,7 @@
          in a single bracketed segment. Individual MDC fields are still
          present for tools that need to filter by an exact id
          (e.g. `zgrep 'projectId=proj-abc'`). -->
-    <property name="MDC_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{ctx:-no-ctx}] - %msg%n" />
+    <property name="MDC_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%logger{36}] [%X{ctx:-no-ctx}] - %maskedMsg%n%maskedEx" />
 
     <!-- ==================== CONSOLE APPENDER ==================== -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
@@ -48,7 +50,7 @@
         <encoder>
             <!-- Performance log: same cascading ctx so timing rows can be
                  filtered alongside app rows by user / project / file. -->
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{ctx:-no-ctx}] %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{ctx:-no-ctx}] %maskedMsg%n%maskedEx</pattern>
         </encoder>
     </appender>
 
@@ -66,7 +68,7 @@
             <totalSizeCap>2GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>${MDC_PATTERN}%xException</pattern>
+            <pattern>${MDC_PATTERN}</pattern>
         </encoder>
     </appender>
 
@@ -81,7 +83,7 @@
             <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %maskedMsg%n%maskedEx</pattern>
         </encoder>
     </appender>
 
@@ -96,7 +98,7 @@
             <totalSizeCap>500MB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %maskedMsg%n%maskedEx</pattern>
         </encoder>
     </appender>
 

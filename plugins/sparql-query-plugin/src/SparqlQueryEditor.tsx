@@ -10,13 +10,15 @@ import {
   localPage, nextSort, pageCount, pageKey, resultsLine, resultsMeta, rowsPath, showingText, sortArrow, sortRows,
   truncationNotice
 } from './resultsPaging';
+import { MIN_RESULTS_HEIGHT, nextResultsHeight } from './resultsHeight';
 import type { ResultsMeta, ResultsSort } from './resultsPaging';
 import { buildExportTable, toCsv, toTsv, buildJsonBindings } from './exportColumns';
 import {
-  INCLUDED_ITEMS, NOT_INCLUDED_ITEMS, buildRequestBody, canRefresh, countsText, effectiveMode, infoLine,
-  loadMode, mapConflict, partialMessages, saveMode, statusUrl, switchState, usedInferred
+  COMPUTING_TEXT, INCLUDED_ITEMS, NOT_INCLUDED_ITEMS, buildRequestBody, canRefresh, countsText, effectiveMode, infoLine,
+  loadMode, mapConflict, needsCompute, partialMessages, saveMode, statusUrl, switchState, usedInferred
 } from './inferredState';
 import type { ConflictKind, InferenceMode, InferenceStatus, InferredInfo } from './inferredState';
+const RESULTS_AREA_RESERVED = 40;
 
 const GRAPH_FORMATS: { value: GraphFormat; label: string; ext: string; mime: string }[] = [
   { value: 'turtle', label: 'Turtle', ext: 'ttl', mime: 'text/turtle' },
@@ -118,13 +120,16 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
   const [queryName, setQueryName] = useState('New Query');
   const [results, setResults] = useState<SparqlQueryResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [computing, setComputing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPrefixesVisible, setPrefixesVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [activeResultTab, setActiveResultTab] = useState<'table' | 'json'>('table');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [resultsHeight, setResultsHeight] = useState(400);
+  const [resultsHeight, setResultsHeight] = useState<number | null>(null);
+  const resultsAreaRef = useRef<HTMLDivElement>(null);
+  const resultsPanelRef = useRef<HTMLDivElement>(null);
   const [isResizing, setIsResizing] = useState(false);
   const [activeTab, setActiveTab] = useState<'editor' | 'results'>('editor');
   const [selectedSample, setSelectedSample] = useState('');
@@ -369,7 +374,9 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       return;
     }
     const format = formatOverride ?? graphFormat;
+    const computeFirst = activeMode === 'inferred' && needsCompute(status);
     setIsLoading(true);
+    setComputing(computeFirst || (refresh && activeMode === 'inferred'));
     clearResults();
     setError(null);
     setConflict(null);
@@ -378,7 +385,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       const base: { query: string; format?: GraphFormat; pageSize?: number } = { query: queryText };
       if (isGraphForm(form)) base.format = format;
       if (form === 'select') base.pageSize = pageSize;
-      const body = buildRequestBody(base, activeMode, refresh);
+      const body = buildRequestBody(base, activeMode, refresh || computeFirst);
       const response = await apiClient.post<any>(
         `/api/sparql/query/${projectId}${draftMode ? '?draft=true' : ''}`,
         body
@@ -433,6 +440,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
       }
     } finally {
       setIsLoading(false);
+      setComputing(false);
       refreshStatus();
     }
   };
@@ -533,6 +541,8 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
     }
   };
 
+  const handleResetHeight = () => setResultsHeight(null);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -544,13 +554,9 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
 
     const handleMouseMove = (e: MouseEvent) => {
       e.preventDefault();
-      const rect = mainAreaRef.current?.getBoundingClientRect();
-      const bottom = rect?.bottom ?? window.innerHeight;
-      const maxHeight = (rect?.height ?? window.innerHeight) * 0.8;
-      const newHeight = bottom - e.clientY;
-      if (newHeight >= 200 && newHeight <= maxHeight) {
-        setResultsHeight(newHeight);
-      }
+      const panelTop = resultsPanelRef.current?.getBoundingClientRect().top ?? 0;
+      const areaHeight = resultsAreaRef.current?.getBoundingClientRect().height ?? window.innerHeight;
+      setResultsHeight(nextResultsHeight(e.clientY, panelTop, areaHeight - RESULTS_AREA_RESERVED));
     };
 
     const handleMouseUp = () => {
@@ -721,7 +727,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                 {isPrefixesVisible ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
               </button>
               {isPrefixesVisible && (
-                <div className="p-2 border-t border-default max-h-24 overflow-y-auto" style={{ backgroundColor: 'var(--surface-1)' }}>
+                <div className="p-2 border-t border-default max-h-48 overflow-y-auto" style={{ backgroundColor: 'var(--surface-1)' }}>
                   <pre className="text-xs text-primary font-mono whitespace-pre-wrap">
                     {prefixBlock}
                   </pre>
@@ -743,6 +749,13 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                 style={{ borderColor: 'var(--warning, #f59e0b)', backgroundColor: 'var(--surface-2)' }}
               >
                 {UPDATE_HINT}
+              </div>
+            )}
+
+            {isLoading && computing && (
+              <div data-testid="computing-inferred" className="p-3 border rounded-lg text-sm flex items-center gap-2" style={{ backgroundColor: 'var(--surface-2)' }}>
+                <Loader2 size={16} className="animate-spin" />
+                <span>{COMPUTING_TEXT}</span>
               </div>
             )}
 
@@ -898,8 +911,8 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
           )}
 
           {activeTab === 'results' && (
-          <div className="flex-1 min-h-0 overflow-hidden p-4 flex flex-col">
-          <div className="theme-panel rounded-lg overflow-hidden flex flex-col" style={{ height: `${resultsHeight}px`, minHeight: '200px', maxHeight: '80%' }}>
+          <div ref={resultsAreaRef} className="flex-1 min-h-0 overflow-hidden p-4 flex flex-col">
+          <div ref={resultsPanelRef} data-testid="results-panel" className={`theme-panel rounded-lg overflow-hidden flex flex-col min-h-0 ${resultsHeight === null ? 'flex-1' : 'flex-none'}`} style={resultsHeight === null ? { minHeight: `${MIN_RESULTS_HEIGHT}px` } : { height: `${resultsHeight}px`, minHeight: `${MIN_RESULTS_HEIGHT}px` }}>
 
             <div className="flex items-center justify-between p-3 border-b border-default" style={{ backgroundColor: 'var(--surface-2)' }}>
               <div className="flex items-center gap-4">
@@ -1054,14 +1067,14 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
               </div>
             )}
 
-            <div className="flex-1 overflow-auto">
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               {isLoading ? (
                 <div className="flex items-center justify-center h-64 text-secondary">
                   <Loader2 size={24} className="animate-spin mr-2" />
                   <span>Executing query...</span>
                 </div>
               ) : graphResult ? (
-                <div className="flex flex-col h-full">
+                <div className="flex flex-col flex-1 min-h-0">
                   {graphResult.truncated && (
                     <div className="p-2 text-xs border-b border-default" style={{ backgroundColor: 'var(--surface-2)' }}>
                       Showing first {graphResult.tripleCount ?? ''} triples; the rest were cut off. Add a LIMIT or narrow the query.
@@ -1085,7 +1098,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                   </span>
                 </div>
               ) : results ? (
-                <div className="flex flex-col h-full">
+                <div className="flex flex-col flex-1 min-h-0">
                   {notice && (
                     <div className="p-2 text-xs border-b border-default" style={{ backgroundColor: 'var(--surface-2)' }} data-testid="truncation-notice">
                       {notice}
@@ -1113,7 +1126,7 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
                       </select>
                     </label>
                   </div>
-                  <div className="flex-1 overflow-auto">
+                  <div className="flex-1 min-h-0 overflow-auto">
                     {activeResultTab === 'table' ? (
                       <table className="min-w-full text-sm">
                         <thead className="sticky top-0" style={{ backgroundColor: 'var(--surface-2)' }}>
@@ -1187,8 +1200,11 @@ export const SparqlQueryEditor: React.FC<SparqlQueryEditorProps> = ({
           </div>
           
           <div 
+            data-testid="results-resize-handle"
             onMouseDown={handleMouseDown}
-            className="h-2 cursor-row-resize hover:bg-purple-500/20 transition-colors flex items-center justify-center"
+            onDoubleClick={handleResetHeight}
+            title="Drag to resize, double-click to fill"
+            className="h-2 shrink-0 cursor-row-resize hover:bg-purple-500/20 transition-colors flex items-center justify-center"
             style={{ borderTop: '1px solid var(--border)' }}
           >
             <div className="w-12 h-1 bg-gray-400 rounded-full"></div>

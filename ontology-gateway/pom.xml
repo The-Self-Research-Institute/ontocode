@@ -17,6 +17,17 @@
 	<description>Ontology Platform API Gateway</description>
 
 	<dependencies>
+		<dependency>
+			<groupId>self.research.ontology</groupId>
+			<artifactId>common-utils</artifactId>
+			<version>${project.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>net.sourceforge.owlapi</groupId>
+					<artifactId>owlapi-distribution</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
 		<!-- Spring Cloud Gateway (includes WebFlux) -->
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>

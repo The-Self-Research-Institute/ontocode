@@ -81,6 +81,8 @@ import type {
 import { useAuth } from "../custom-hook/useAuth";
 import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilentDesktopFusekiSync, waitForDesktopOwlApiReady, isOwlApiWarmingResponse, getOntologyListWithRetry, isDesktopFusekiSyncPending } from "../utils/desktop";
 import { cancelOntologyExport } from "../services/exportService";
+import { warnAboutRulesInExport } from "../services/exportRulesWarning";
+import { adviceAfterSlowFailure, adviceBeforeRun } from "../utils/slowReasonerAdvice";
 import {
   cancelReasonerSnapshots,
   invalidateReasonerSnapshots,
@@ -134,6 +136,7 @@ import { COLLABORATION_NAVIGATE_EVENT, resolveEntitiesTab, type CollaborationNav
 import codeViewCacheService from "../services/codeViewCacheService";
 import { IMPORT_SETTLE_POLLS, isPostCompletionProgress, isProjectStatusCompleted } from "../utils/importProgress";
 import { formatQueueWait, importStageLabel, sanitizeImportMessage } from "../utils/importStatusText";
+import { safeHref } from "../utils/safeUrl";
 import { extractDeclarationCountsPatch } from "./dashboard-parts/dashboardUtils";
 import { toFriendlyErrorMessage } from "./codeAssistantPanelHelpers";
 import { normalizeRole, parseWorkspaceRole, isWorkspaceViewerRole } from "../utils/roles";
@@ -148,6 +151,7 @@ import {
 import { useCollaboration } from "../contexts/CollaborationContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useSubscription } from "../hooks/useSubscription";
+import { useProjectDraftSettings } from "../hooks/useProjectDraftSettings";
 import EntityHierarchy from "./EntityHierarchy";
 import ClassEditor from "./details/ClassEditor";
 import PropertyEditor from "./details/PropertyEditor";
@@ -214,6 +218,8 @@ import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePane
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
 import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
 import { getStoredShowLabelOverlay, setStoredShowLabelOverlay } from "../services/LlmInsightsService";
+import { userScopedKey } from "../utils/userScopedKey";
+import { isTrustedMessage } from '../utils/trustedMessage';
 import { useCodeViewDownload } from "./dashboard-parts/hooks/useCodeViewDownload";
 import { OpenFileDialog } from "./dashboard-parts/OpenFileDialog";
 import {
@@ -308,6 +314,7 @@ const TopMenuBar = ({
   onToggleSyncMode,
   requireDraftForMembers,
   isProjectOwner,
+  isProjectShared,
   isDraftEditorRole,
   autoDraftStatus,
   onToggleRequireDraftForMembers,
@@ -370,6 +377,7 @@ const TopMenuBar = ({
   onToggleSyncMode: () => void;
   requireDraftForMembers?: boolean;
   isProjectOwner?: boolean;
+  isProjectShared?: boolean;
   isDraftEditorRole?: boolean;
   autoDraftStatus?: 'idle' | 'copying' | 'ready';
   onToggleRequireDraftForMembers?: () => void;
@@ -425,6 +433,7 @@ const TopMenuBar = ({
 
   useEffect(() => {
     const handleExportMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       if (!message || (message.type !== "downloadOntologyComplete" && message.type !== "downloadOntologyFailed")) return;
       const pending = pendingExportRef.current;
@@ -959,6 +968,7 @@ const TopMenuBar = ({
                                 return;
                               }
                               setExportingFormat(format);
+                              void warnAboutRulesInExport(getBaseUrl(), currentProjectId, format);
                               const baseName = (
                                  activeFileName || 
                                 myFiles.find((f) => f.projectId === currentProjectId)?.filename ||
@@ -1101,7 +1111,7 @@ const TopMenuBar = ({
                 />
               </button>
             )}
-            {isProjectOwner && onToggleRequireDraftForMembers && (
+            {isProjectOwner && (isProjectShared || requireDraftForMembers) && onToggleRequireDraftForMembers && (
               <button
                 onClick={onToggleRequireDraftForMembers}
                 className={`ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${requireDraftForMembers
@@ -1279,7 +1289,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       collaboration.addNotification({
         type,
         message,
-        userId: user?.email || "system",
+        userId: user?.userId || "system",
         username: user?.username || "You",
         userColor: "#6366f1",
         timestamp: Date.now(),
@@ -1359,6 +1369,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       superClassIri?: string;
       superClassLabel?: string;
       definition?: string;
+      type?: string;
     }>
   >([]);
   const [ontologyAnnotations, setOntologyAnnotations] = useState<
@@ -1528,8 +1539,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
   const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
   const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
-  const [requireDraftForMembers, setRequireDraftForMembers] = useState(false);
-  const [isProjectOwner, setIsProjectOwner] = useState(false);
+  const {
+    requireDraftForMembers,
+    isProjectOwner,
+    isProjectShared: isProjectSharedBySettings,
+    setRequireDraftForMembers,
+    loadDraftSettings,
+    resetDraftSettings,
+  } = useProjectDraftSettings(projectId);
   const [autoDraftStatus, setAutoDraftStatus] = useState<'idle' | 'copying' | 'ready'>('idle');
   const [showPRsModal, setShowPRsModal] = useState(false);
   const [pendingPRCount, setPendingPRCount] = useState(0);
@@ -1692,14 +1709,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSwitchToDraftMode = useCallback(() => {
     setShowProPromptType(null);
     if (!projectId) return;
-    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+    const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
     ontologyMutationService.setDraftRequired(false);
     startDraftCopySession(projectId, effectiveUserId, {
       showModal: true,
       onReady: () => {
         setSyncMode('private');
         ontologyMutationService.setRealTimeSync(false);
-        localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
+        localStorage.setItem(userScopedKey(`ontocode_sync_mode_${projectId}`), 'private');
         userPreferencesService.saveSyncMode(projectId, 'private');
         notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
       },
@@ -1714,6 +1731,17 @@ const Dashboard: React.FC<DashboardProps> = ({
     pullPending.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchData is declared further
   }, [projectId, pullPending.refresh]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    ontologyMutationService.setPublicEditDisabledHandler(() => {
+      setRequireDraftForMembers(true);
+      setShowProPromptType('draftRequired');
+      const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
+      void loadDraftSettings(projectId, effectiveUserId);
+    });
+    return () => ontologyMutationService.setPublicEditDisabledHandler(null);
+  }, [projectId, user?.userId, user?.username, loadDraftSettings, setRequireDraftForMembers]);
 
   const refreshOpenPRCount = useCallback(async () => {
     if (!projectId) return;
@@ -2090,6 +2118,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedInsertionLine, setSelectedInsertionLine] = useState<number | null>(null);
 
   const [selectedReasoner, setSelectedReasoner] = useState<string>("HermiT");
+  const [reasonerAdvice, setReasonerAdvice] = useState<string | null>(null);
   const [isReasonerRunning, setIsReasonerRunning] = useState(false);
   const [isReasonerSynced, setIsReasonerSynced] = useState(false);
   const isReasonerSyncedRef = useRef(isReasonerSynced);
@@ -3171,6 +3200,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const isStaleRun = () => reasonerRunIdRef.current !== myRunId || currentProjectIdRef.current !== startedProjectId;
     inferredClassHierarchyAttemptedKeyRef.current = null;
 
+    setReasonerAdvice(adviceBeforeRun(selectedReasoner, (metadata as any)?.axiomCount ?? (metadata as any)?.logicalAxiomCount));
     setIsReasonerLoading(true);
     setIsReasonerRunning(true);
 
@@ -3306,6 +3336,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         backendData?.error || error?.message || "Classification failed for an unknown reason.";
       const suggestion = backendData?.suggestion ? ` ${backendData.suggestion}` : "";
       if (!isStaleRun()) {
+        const slowAdvice = adviceAfterSlowFailure(selectedReasoner, friendlyMessage);
+        if (slowAdvice) setReasonerAdvice(slowAdvice);
         notificationService.error("Classification Failed", `${friendlyMessage}${suggestion}`);
         setIsReasonerRunning(false);
       }
@@ -3319,6 +3351,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     isReasonerLoading,
     projectId,
     selectedReasoner,
+    metadata,
     loadInferredHierarchy,
     loadInferredObjectPropertyHierarchy,
     loadInferredDataPropertyHierarchy,
@@ -3388,6 +3421,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const handleSelectReasoner = useCallback(
     (reasoner: string) => {
       clearAutoSyncReasoner();
+      setReasonerAdvice(null);
       invalidateReasonerSnapshots(projectId ? { projectId } : undefined);
       if (isReasonerRunning) {
         reasonerRunIdRef.current += 1;
@@ -3613,7 +3647,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [projectId, selectedReasoner, checkConsistency]);
 
   const clearReasonerCache = useCallback(async () => {
-    const userId = user?.userId || user?.email || "system";
+    const userId = user?.userId || "system";
     if (!projectId) {
       collaboration.addNotification({
         type: "info",
@@ -3928,7 +3962,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const isAdminFlow = !!parentProjectId;
 
       if (currentProjectId) {
-        const earlySyncModeKey = `ontocode_sync_mode_${currentProjectId}`;
+        const earlySyncModeKey = userScopedKey(`ontocode_sync_mode_${currentProjectId}`);
         const earlySavedSyncMode = localStorage.getItem(earlySyncModeKey);
         {
           const applyDirectly = earlySavedSyncMode === null || earlySavedSyncMode === "public";
@@ -3936,7 +3970,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           ontologyMutationService.setDraftRequired(false);
           setSyncMode(applyDirectly ? "public" : "private");
           if (!applyDirectly && user && isAdminFlow) {
-            startDraftCopySession(currentProjectId, resolveMutationActor(user.userId || user.email, user.username).userId, { showModal: true });
+            startDraftCopySession(currentProjectId, resolveMutationActor(user.userId, user.username).userId, { showModal: true });
           }
           console.log("[Dashboard] 🔍 Early syncMode restore (covers admin flow):", {
             currentProjectId,
@@ -3950,12 +3984,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       console.log(`Loading ontology "${currentProjectId}"...`);
       console.log("[Dashboard] 🔄 Fetching data for project:", currentProjectId);
       console.log("[Dashboard]  Admin flow:", isAdminFlow, "Parent project:", parentProjectId);
-      console.log("[Dashboard] 👤 User context:", {
-        email: user?.email,
-        username: user?.username,
-        isAdmin: user?.isAdmin,
-        workspaceId: user?.workspaceId,
-      });
 
       if (window.vscode) {
         window.vscode.postMessage({ type: "requestCollaborationStatus" });
@@ -4077,6 +4105,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 definition: axiom.subClass || axiom.definition || "",
                 superClassIri: axiom.superClass || axiom.superClassIri || "",
                 subExpression: axiom.subClass || axiom.subExpression || "",
+                type: axiom.type,
               }))
               : [],
           );
@@ -4216,7 +4245,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           setLoadingStatusMessage("Opening ontology (fast path)…");
         }
 
-        const hierarchyUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const hierarchyUserId = resolveMutationActor(user?.userId, user?.username).userId;
         const draftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
         const topLevelClassesRes = (!desktopOwlapiReady && desktopHierarchyDeferredForProject.current === currentProjectId) ? null : await apiClient
           .get<any>(
@@ -4737,7 +4766,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               myProjectsList.map((f: any) => f.id),
             );
 
-            const syncModeKey = currentProjectId ? `ontocode_sync_mode_${currentProjectId}` : null;
+            const syncModeKey = currentProjectId ? userScopedKey(`ontocode_sync_mode_${currentProjectId}`) : null;
             const savedSyncMode = syncModeKey ? localStorage.getItem(syncModeKey) : null;
             let shouldApplyDirectly: boolean;
             if (savedSyncMode !== null) {
@@ -4764,24 +4793,24 @@ const Dashboard: React.FC<DashboardProps> = ({
             setSyncMode(shouldApplyDirectly ? "public" : "private");
 
             if (!shouldApplyDirectly && currentProjectId && !isShared && !isNonWorkspaceMode) {
-              const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+              const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
               startDraftCopySession(currentProjectId, effectiveUserId, { showModal: true });
             }
 
-            if (currentProjectId && !isNonWorkspaceMode && !isShared) {
-              const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
-              draftTrackingService.getDraftSettings(currentProjectId, effectiveUserId)
-                .then(({ requireDraftForMembers: rdm, isOwner }) => {
-                  setRequireDraftForMembers(rdm);
-                  setIsProjectOwner(isOwner);
-                  refreshOpenPRCount();
-                  if ((rdm || isProjectDraftEditorRoleRef.current) && !isOwner && !isProjectViewerRoleRef.current) {
-                    if (shouldApplyDirectly) {
-                      ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
-                    }
+            if (currentProjectId && !isNonWorkspaceMode) {
+              const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
+              void loadDraftSettings(currentProjectId, effectiveUserId).then((settings) => {
+                if (!settings) return;
+                const { requireDraftForMembers: rdm, isOwner } = settings;
+                refreshOpenPRCount();
+                if ((rdm || isProjectDraftEditorRoleRef.current) && !isOwner && !isProjectViewerRoleRef.current) {
+                  if (shouldApplyDirectly) {
+                    ontologyMutationService.setDraftRequired(true, () => setShowProPromptType('draftRequired'));
                   }
-                })
-                .catch(() => undefined);
+                }
+              });
+            } else {
+              resetDraftSettings();
             }
 
             if (isDesktop() && !isShared) {
@@ -4835,6 +4864,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           }
         } else {
           console.log("[Dashboard] ℹ️ Admin flow detected - skipping user file fetch (will use project files)");
+          if (!isDesktop()) {
+            const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
+            void loadDraftSettings(currentProjectId, effectiveUserId);
+          }
         }
 
         syncService.stopMonitoring(currentProjectId);
@@ -5329,7 +5362,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
 
       console.log("[Dashboard] Saving prefix:", payload);
-      const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
+      const actor = resolveMutationActor(user?.userId, user?.username);
       await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/prefixes`), {
         ...payload,
         ...draftBodyFields(),
@@ -5358,7 +5391,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       const cleanedPrefix = prefix.endsWith(":") ? prefix.slice(0, -1) : prefix;
 
       console.log("[Dashboard] Deleting prefix:", cleanedPrefix);
-      const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
+      const actor = resolveMutationActor(user?.userId, user?.username);
       await apiClient.delete(
         withDraftAndUser(
           `/api/ontology/metadata/${projectId}/prefixes?prefix=${encodeURIComponent(cleanedPrefix)}` +
@@ -5415,7 +5448,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         subClass: axiomDefinition,
         superClass: axiomSuperClass || "",
         draft: ontologyMutationService.resolveUseDraft(),
-        userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+        userId: resolveMutationActor(user?.userId, user?.username).userId,
       });
 
       const newAxiom = {
@@ -5496,7 +5529,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         subClass,
         superClass: superClass || "",
         draft: ontologyMutationService.resolveUseDraft(),
-        userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+        userId: resolveMutationActor(user?.userId, user?.username).userId,
       });
 
       const updatedAxioms = [...generalClassAxioms];
@@ -5547,7 +5580,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         return;
       }
 
-      const gciDeleteActorId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      const gciDeleteActorId = resolveMutationActor(user?.userId, user?.username).userId;
       await apiClient.delete(
         `/api/ontology/metadata/${projectId}/gci?value=${encodeURIComponent(value)}` +
         `&draft=${ontologyMutationService.resolveUseDraft()}&userId=${encodeURIComponent(gciDeleteActorId)}`,
@@ -5580,6 +5613,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           definition: axiom.subClass || axiom.definition || "",
           superClassIri: axiom.superClass || axiom.superClassIri || "",
           subExpression: axiom.subClass || axiom.subExpression || "",
+          type: axiom.type,
         }))
         : [];
       setGeneralClassAxioms(mappedData);
@@ -5642,6 +5676,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (!projectId) return;
 
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
 
       if (message.type === "cursorUpdate" && message.userId !== user?.userId) {
@@ -5840,19 +5875,12 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const fetchProjects = useCallback(async (): Promise<{ myFiles: any[]; sharedFiles: any[] } | null> => {
     try {
-      const resolvedEmail = resolveUserEmail();
       const isWorkspaceMode = !!user?.workspaceId;
       const primaryEndpoint = isWorkspaceMode ? "/api/projects" : "/api/ontology/projects";
       const fallbackEndpoint = isWorkspaceMode ? "/api/ontology/projects" : "/api/projects";
-      const params = new URLSearchParams();
-      if (resolvedEmail) {
-        params.set("userEmail", resolvedEmail);
-      }
-      const projectsUrl = params.toString() ? `${primaryEndpoint}?${params.toString()}` : primaryEndpoint;
+      const projectsUrl = primaryEndpoint;
       console.log("[Dashboard] 📂 fetchProjects called");
-      console.log("[Dashboard] 📂 User:", { email: user?.email, workspaceId: user?.workspaceId, isWorkspaceMode });
       console.log("[Dashboard] 📂 Fetching from:", projectsUrl);
-      console.log("[Dashboard] 📂 resolvedEmail:", resolvedEmail);
 
       let response;
       try {
@@ -5863,9 +5891,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         const status = error?.status || error?.response?.status;
         const allowFallback = primaryEndpoint === "/api/projects";
         if (status === 404 && fallbackEndpoint !== primaryEndpoint && allowFallback) {
-          const fallbackUrl = resolvedEmail
-            ? `${fallbackEndpoint}?userEmail=${encodeURIComponent(resolvedEmail)}`
-            : fallbackEndpoint;
+          const fallbackUrl = fallbackEndpoint;
           console.warn("[Dashboard] ⚠️ Projects endpoint missing, falling back to:", fallbackUrl);
           response = await apiClient.get<any>(fallbackUrl);
           console.log("[Dashboard] 📥 Fallback endpoint response:", response);
@@ -6028,10 +6054,8 @@ const Dashboard: React.FC<DashboardProps> = ({
 
     try {
       const isWorkspaceMode = !!user?.workspaceId;
-      const resolvedEmail = resolveUserEmail();
-      const ownerEmail = !isWorkspaceMode && resolvedEmail ? `?ownerEmail=${encodeURIComponent(resolvedEmail)}` : "";
       const deleteEndpoint = isWorkspaceMode ? "/api/projects" : "/api/ontology/projects";
-      await apiClient.delete(`${deleteEndpoint}/${encodeURIComponent(targetProjectId)}${ownerEmail}`);
+      await apiClient.delete(`${deleteEndpoint}/${encodeURIComponent(targetProjectId)}`);
       notificationService.success("File Deleted", `"${targetFileName}" deleted successfully.`);
       await fetchProjects();
 
@@ -6225,26 +6249,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
 
     console.log("[Dashboard] Initial mount - fetching projects list");
-    const resolvedEmail = resolveUserEmail();
-    console.log("[Dashboard] User details:", {
-      email: resolvedEmail || user.email,
-      username: user.username,
-      isAdmin: user.isAdmin,
-      workspaceId: user.workspaceId,
-    });
     console.log("[Dashboard] Component props:", {
       initialProjectId,
       projectId,
       onBackToProjects: !!onBackToProjects,
     });
 
-    console.log(
-      "[Dashboard] 🔍 useEffect triggered - user.email:",
-      user?.email,
-      "user.workspaceId:",
-      user?.workspaceId,
-    );
-    console.log("[Dashboard] ✅ Fetching all projects for user email:", resolvedEmail || "(none)");
     fetchProjects();
 
 const hasUrlResolvedFile = Boolean(selectedFileId && selectedFileId !== "__editor__");
@@ -6561,6 +6571,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
+      if (!isTrustedMessage(event)) return;
       const message = event.data;
       console.log(message, "message");
       if (message.type === "uploadProgress") {
@@ -7336,7 +7347,7 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
         }
 
         const isOwlThing = nodeId === "http://www.w3.org/2002/07/owl#Thing";
-        const childrenUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const childrenUserId = resolveMutationActor(user?.userId, user?.username).userId;
         const childrenDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
         const endpoint = isOwlThing
           ? `/api/ontology/classes/top-level/${projectId}?limit=5000&scope=${hierarchyImportsScope}&userId=${encodeURIComponent(childrenUserId)}${childrenDraftScopeParam}`
@@ -7608,7 +7619,7 @@ const updateItemInState = useCallback(
     lastClassHierarchyRefreshAt.current = now;
     const requestedProjectId = projectId;
     try {
-      const refreshUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      const refreshUserId = resolveMutationActor(user?.userId, user?.username).userId;
       const refreshDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const topLevelRes = await apiClient.get<any>(`/api/ontology/classes/top-level/${encodeProjectId(projectId)}?scope=${hierarchyImportsScope}&userId=${encodeURIComponent(refreshUserId)}${refreshDraftScopeParam}&_t=${now}`);
 
@@ -8059,7 +8070,7 @@ const updateItemInState = useCallback(
       ]);
       if (!METADATA_EVENTS.has(edit.type)) {
         const editUserId = (edit as any).userId || (edit as any).user?.id || (edit as any).user;
-        const currentUserId = user?.email || user?.userId;
+        const currentUserId = user?.userId;
         if (editUserId && currentUserId && editUserId === currentUserId) {
           console.log("[Dashboard] ⏭️ Skipping refresh - edit was made by current user");
           return;
@@ -8321,6 +8332,7 @@ const updateItemInState = useCallback(
                   definition: axiom.subClass || axiom.definition || "",
                   superClassIri: axiom.superClass || axiom.superClassIri || "",
                   subExpression: axiom.subClass || axiom.subExpression || "",
+                  type: axiom.type,
                 }))
                 : [];
               setGeneralClassAxioms(gcis);
@@ -8332,7 +8344,7 @@ const updateItemInState = useCallback(
         default:
           console.log("[Dashboard] 🔄 Generic remote edit, refreshing metadata");
           apiClient
-            .get(`/api/ontology/metadata/${projectId}?userId=${encodeURIComponent(resolveMutationActor(user?.userId || user?.email, user?.username).userId)}${isDraftScopeActive() ? "&draft=true" : ""}`)
+            .get(`/api/ontology/metadata/${projectId}?userId=${encodeURIComponent(resolveMutationActor(user?.userId, user?.username).userId)}${isDraftScopeActive() ? "&draft=true" : ""}`)
             .then((response) => {
               setMetadata(response.data);
               console.log("[Dashboard] ✅ Metadata refreshed");
@@ -8662,6 +8674,20 @@ const updateItemInState = useCallback(
   }, []);
 
   useEffect(() => {
+    return notificationService.onToast((options) => {
+      collaboration.addNotification({
+        type: options.type,
+        message: `${options.title}: ${options.message}`,
+        userId: "system",
+        username: "System",
+        userColor: "#6366f1",
+        timestamp: Date.now(),
+        durationMs: options.duration,
+      });
+    });
+  }, [collaboration.addNotification]);
+
+  useEffect(() => {
     const loadInstalledPlugins = async () => {
       try {
         pluginLoader.loadFromStorage();
@@ -8848,7 +8874,7 @@ const updateItemInState = useCallback(
       const currentLoaded = classHierarchy[0]?.children?.filter(
         (c) => c.id !== "__load_more_top_level__"
       ).length ?? 0;
-      const loadMoreUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      const loadMoreUserId = resolveMutationActor(user?.userId, user?.username).userId;
       const loadMoreDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res: any = await apiClient.get(
         `/api/ontology/classes/top-level/${encoded}?limit=5000&offset=${currentLoaded}&userId=${encodeURIComponent(loadMoreUserId)}${loadMoreDraftScopeParam}`
@@ -8887,7 +8913,7 @@ const updateItemInState = useCallback(
   const updateDraftCount = useCallback(async () => {
     if (!projectId) return;
     try {
-      const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
       console.log("[Dashboard] Updating draft count for project:", projectId, "user:", effectiveUserId);
       const stats = await draftTrackingService.getDraftStats(projectId, effectiveUserId);
       console.log("[Dashboard] Draft stats received:", stats);
@@ -8916,7 +8942,7 @@ const updateItemInState = useCallback(
     if (!projectId) return;
     const requestId = ++metadataRequestSeqRef.current;
     try {
-      const metaUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      const metaUserId = resolveMutationActor(user?.userId, user?.username).userId;
       const metaDraftScopeParam = isDraftScopeActive() ? "&draft=true" : "";
       const res = await apiClient.get<any>(`/api/ontology/metadata/${encodeProjectId(projectId)}?userId=${encodeURIComponent(metaUserId)}${metaDraftScopeParam}`);
       void refreshPrefixes();
@@ -8955,7 +8981,7 @@ const updateItemInState = useCallback(
     setPublishConflictStatus('checking');
     conflictCheckTimerRef.current = setTimeout(async () => {
       if (!projectId) { setPublishConflictStatus('idle'); return; }
-      const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+      const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
       try {
         const preview = await draftTrackingService.getPublishPreview(projectId, effectiveUserId);
         const hasConflicts = Array.isArray((preview as any).conflicts) && (preview as any).conflicts.length > 0;
@@ -9006,7 +9032,7 @@ const updateItemInState = useCallback(
       return;
     }
 
-    const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+    const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
 
     const performSave = async (force: boolean, merge: boolean, resolutions?: Record<string, { action: string }>) => {
       setIsSaving(true);
@@ -9318,8 +9344,6 @@ const updateItemInState = useCallback(
         setHasUnsavedChanges(false);
         setDraftCount(0);
 
-        const resolvedEmail = resolveUserEmail();
-
         setProjectId(ontologyProjectId);
         pendingImportProjectIdRef.current = ontologyProjectId;
         setPendingImportProjectId(ontologyProjectId);
@@ -9337,7 +9361,6 @@ const updateItemInState = useCallback(
             params: {
               fileId,
               parentProjectId: initialProjectId,
-              ownerEmail: resolvedEmail || "",
               workspaceId: user?.workspaceId || "",
               importMode,
               partition: partitionStrategy,
@@ -9397,7 +9420,7 @@ const updateItemInState = useCallback(
 
   useEffect(() => {
     if (projectId) {
-      const draftKey = `draft_${projectId}`;
+      const draftKey = userScopedKey(`draft_${projectId}`);
       const savedDraft = localStorage.getItem(draftKey);
       if (savedDraft) {
         try {
@@ -9715,7 +9738,7 @@ const updateItemInState = useCallback(
     async (subClass: string, superClass: string) => {
       if (!projectId) return;
       try {
-        const gciActorId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const gciActorId = resolveMutationActor(user?.userId, user?.username).userId;
         const gciDraft = ontologyMutationService.resolveUseDraft();
         if (editGCIData) {
           await apiClient.put(withDraftScope(`/api/ontology/metadata/${projectId}/gci/${editGCIData.index}`), {
@@ -9764,7 +9787,7 @@ const updateItemInState = useCallback(
             await apiClient.delete(`/api/ontology/metadata/${projectId}/gci`, {
               value: axiom.id || axiom.value,
               draft: ontologyMutationService.resolveUseDraft(),
-              userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+              userId: resolveMutationActor(user?.userId, user?.username).userId,
             });
 
             const gciRes = await apiClient.get(withDraftScope(`/api/ontology/metadata/${projectId}/gci`));
@@ -11896,7 +11919,7 @@ const updateItemInState = useCallback(
         }
         setCodeViewPage(null);
 
-        const codeViewContentEffectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const codeViewContentEffectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
         const response = await apiClient.get<{
           success: boolean;
           content: string;
@@ -12026,7 +12049,7 @@ const updateItemInState = useCallback(
       onConfirm: () => {
         void runDraftDiscard({
           projectId,
-          userId: resolveMutationActor(user?.userId || user?.email, user?.username).userId,
+          userId: resolveMutationActor(user?.userId, user?.username).userId,
           discard: (id, actor) => draftTrackingService.discardDrafts(id, actor),
           onDiscarded: () => {
             setDraftCount(0);
@@ -12284,7 +12307,7 @@ const updateItemInState = useCallback(
           "size:",
           content.length,
         );
-        const codeViewEffectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+        const codeViewEffectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
         const codeViewSaveParams = new URLSearchParams({
           userId: codeViewEffectiveUserId,
           username: user?.username || "Anonymous",
@@ -14819,7 +14842,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          const graphActor = resolveMutationActor(user?.userId || user?.email, user?.username);
+          const graphActor = resolveMutationActor(user?.userId, user?.username);
           return (
             <PluginComponent
               projectId={projectId}
@@ -14935,7 +14958,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          const actor = resolveMutationActor(user?.userId || user?.email, user?.username);
+          const actor = resolveMutationActor(user?.userId, user?.username);
           return (
             <PluginComponent
               projectId={projectId}
@@ -15028,6 +15051,7 @@ const updateItemInState = useCallback(
                   apiBaseUrl={getBaseUrl()}
                   draftUserId={isDraftScopeActive() ? (resolveMutationActor().userId || undefined) : undefined}
                   selectedReasoner={selectedReasoner}
+                  reasonerAdvice={reasonerAdvice}
                   isReasonerRunning={isReasonerRunning}
                   isReasonerLoading={isReasonerLoading}
                   reasonerResults={reasonerResults}
@@ -15127,7 +15151,7 @@ const updateItemInState = useCallback(
                       <Globe size={14} className="flex-shrink-0" style={{ color: "var(--accent)" }} />
                       <a
                         data-testid="ontology-iri-value"
-                        href={(metadata as any)?.ontologyIRI || "#"}
+                        href={safeHref((metadata as any)?.ontologyIRI)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs break-all font-medium hover:underline"
@@ -15690,10 +15714,10 @@ const updateItemInState = useCallback(
                                 key={axiom.id || `${axiom.subExpression}-${idx}`}
                                 axiom={{
                                   id: axiom.id || `gci_${idx}`,
-                                  type: "SubClassOf",
-                                  definition: `${axiom.subExpression || axiom.definition || "Anonymous class expression"} SubClassOf ${axiom.superClassIri || axiom.superClass || ""}`,
+                                  type: axiom.type || "SubClassOf",
+                                  definition: axiom.value || `${axiom.subExpression || axiom.definition || "Anonymous class expression"} SubClassOf ${axiom.superClassIri || axiom.superClass || ""}`,
                                 } as any}
-                                onEditClick={isViewOnlyMember ? undefined : () => handleEditAxiom(idx)}
+                                onEditClick={isViewOnlyMember || (axiom.type && axiom.type !== "SubClassOf") ? undefined : () => handleEditAxiom(idx)}
                                 onDelete={isViewOnlyMember ? undefined : () => handleDeleteAxiom(idx)}
                                 isViewOnly={isViewOnlyMember}
                                 onViewOnlyAction={handleViewOnlyAction}
@@ -16566,7 +16590,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
   const editing = selectorEditingItem;
   const isDataProperty = (selectedItem as any)?.type === "DatatypeProperty";
   const relationType = target === "domain" ? "Domain" : "Range";
-  const userId = user?.email || "anonymous";
+  const userId = user?.userId || "anonymous";
   const username = user?.username || "Anonymous";
 
   try {
@@ -16640,7 +16664,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           relationshipType: target,
           oldTargetIri: editing,
           targetIri: expression,
-          userId: user?.email || "anonymous",
+          userId: user?.userId || "anonymous",
           username: user?.username || "Anonymous",
         });
         const replace = (arr: string[] | undefined) => (arr || []).map(v => v === editing ? expression : v);
@@ -16694,7 +16718,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           relationshipType: target,
           oldTargetIri: editing,
           targetIri: finalExpression,
-          userId: user?.email || "anonymous",
+          userId: user?.userId || "anonymous",
           username: user?.username || "Anonymous",
         });
         const replace = (arr: string[] | undefined) =>
@@ -17722,12 +17746,13 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           syncMode={syncMode}
           requireDraftForMembers={requireDraftForMembers}
           isProjectOwner={isProjectOwner}
+          isProjectShared={isCurrentFileShared || isProjectSharedBySettings}
           isDraftEditorRole={isProjectDraftEditorRole}
           autoDraftStatus={autoDraftStatus}
           onSwitchToDraftMode={handleSwitchToDraftMode}
           onToggleRequireDraftForMembers={() => {
             if (!projectId || !isProjectOwner) return;
-            const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+            const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
             const newValue = !requireDraftForMembers;
             draftTrackingService.setRequireDraftForMembers(projectId, effectiveUserId, newValue)
               .then(() => {
@@ -17744,7 +17769,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
               });
           }}
           onToggleSyncMode={() => {
-            const effectiveUserId = resolveMutationActor(user?.userId || user?.email, user?.username).userId;
+            const effectiveUserId = resolveMutationActor(user?.userId, user?.username).userId;
 
             if (syncMode === "public") {
               if (!projectId) return;
@@ -17754,7 +17779,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                 onReady: () => {
                   setSyncMode('private');
                   ontologyMutationService.setRealTimeSync(false);
-                  localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'private');
+                  localStorage.setItem(userScopedKey(`ontocode_sync_mode_${projectId}`), 'private');
                   userPreferencesService.saveSyncMode(projectId, 'private');
                   notificationService.info("Draft Mode Active", "Editing your private draft — changes won't affect others until you publish.");
                   fetchData(projectId, false);
@@ -17764,7 +17789,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
               setSyncMode('public');
               ontologyMutationService.setRealTimeSync(true);
               if (projectId) {
-                localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+                localStorage.setItem(userScopedKey(`ontocode_sync_mode_${projectId}`), 'public');
                 userPreferencesService.saveSyncMode(projectId, 'public');
                 fetchData(projectId, false);
               }
@@ -18510,7 +18535,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             setShareFileId(null);
           }}
           projectId={shareFileId}
-          userEmail={user?.email || ""}
         />
       )}
 
@@ -18711,7 +18735,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
             setSyncMode('public');
             ontologyMutationService.setRealTimeSync(true);
             if (projectId) {
-              localStorage.setItem(`ontocode_sync_mode_${projectId}`, 'public');
+              localStorage.setItem(userScopedKey(`ontocode_sync_mode_${projectId}`), 'public');
               userPreferencesService.saveSyncMode(projectId, 'public');
             }
             if (requireDraftForMembers && !isProjectOwner) {
@@ -18747,7 +18771,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           isOpen={showDraftPRPanel}
           onClose={() => setShowDraftPRPanel(false)}
           projectId={projectId}
-          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+          userId={resolveMutationActor(user?.userId, user?.username).userId}
           username={user?.username || user?.email || ""}
           canReview={canReviewPR}
           canRaisePR={canRaisePR}
@@ -18768,7 +18792,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           onClose={() => setShowPullPreview(false)}
           onConfirm={handlePullComplete}
           projectId={projectId}
-          userId={resolveMutationActor(user?.userId || user?.email, user?.username).userId}
+          userId={resolveMutationActor(user?.userId, user?.username).userId}
         />
       )}
 
@@ -18776,7 +18800,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         {collaboration.state.notifications.map((notification) => (
           <ToastNotification
             key={notification.id}
-            toasts={[{ id: notification.id, type: notification.type, message: notification.message, username: notification.username, color: notification.userColor }]}
+            toasts={[{ id: notification.id, type: notification.type, message: notification.message, username: notification.username, color: notification.userColor, duration: notification.durationMs }]}
             onDismiss={() => collaboration.removeNotification(notification.id)}
           />
         ))}
@@ -18803,7 +18827,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
       {projectId && (
         <PRsModal
           projectId={projectId}
-          currentUserId={user?.userId || user?.email || ""}
+          currentUserId={user?.userId || ""}
           currentUsername={user?.username || ""}
           isOwner={isProjectOwner}
           isOpen={showPRsModal}

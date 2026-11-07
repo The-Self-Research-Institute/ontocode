@@ -49,28 +49,30 @@ class ReasonerServiceWarmupTest {
 
     @Test
     void hierarchyReasonerSkipsClassAssertions() {
-        OWLReasoner reasoner = service.getClassHierarchyReasoner(ontology, ReasonerType.HERMIT);
+        try (ReasonerLease lease = service.leaseClassHierarchy(ontology, ReasonerType.HERMIT, false)) {
+            OWLReasoner reasoner = lease.reasoner();
 
-        assertTrue(reasoner.isPrecomputed(InferenceType.CLASS_HIERARCHY));
-        assertFalse(reasoner.isPrecomputed(InferenceType.CLASS_ASSERTIONS));
-        assertEquals(Set.of(dog), service.getInferredSubClasses(reasoner, animal, true));
+            assertTrue(reasoner.isPrecomputed(InferenceType.CLASS_HIERARCHY));
+            assertFalse(reasoner.isPrecomputed(InferenceType.CLASS_ASSERTIONS));
+            assertEquals(Set.of(dog), service.getInferredSubClasses(reasoner, animal, true));
+        }
     }
 
     @Test
     void callersThatNeedClassAssertionsStillGetThemOnTheSharedReasoner() {
-        OWLReasoner hierarchyOnly = service.getClassHierarchyReasoner(ontology, ReasonerType.HERMIT);
-
-        OWLReasoner full = service.getReasoner(ontology, ReasonerType.HERMIT);
-
-        assertSame(hierarchyOnly, full);
-        assertTrue(full.isPrecomputed(InferenceType.CLASS_ASSERTIONS));
+        try (ReasonerLease hierarchyOnly = service.leaseClassHierarchy(ontology, ReasonerType.HERMIT, false);
+                ReasonerLease full = service.lease(ontology, ReasonerType.HERMIT)) {
+            assertSame(hierarchyOnly.reasoner(), full.reasoner());
+            assertTrue(full.reasoner().isPrecomputed(InferenceType.CLASS_ASSERTIONS));
+        }
     }
 
     @Test
     void fullReasonerIsReusedForTheExpandPath() {
-        OWLReasoner full = service.getReasoner(ontology, ReasonerType.HERMIT);
-
-        assertSame(full, service.getClassHierarchyReasoner(ontology, ReasonerType.HERMIT));
-        assertTrue(full.isPrecomputed(InferenceType.CLASS_ASSERTIONS));
+        try (ReasonerLease full = service.lease(ontology, ReasonerType.HERMIT);
+                ReasonerLease again = service.leaseClassHierarchy(ontology, ReasonerType.HERMIT, false)) {
+            assertSame(full.reasoner(), again.reasoner());
+            assertTrue(full.reasoner().isPrecomputed(InferenceType.CLASS_ASSERTIONS));
+        }
     }
 }

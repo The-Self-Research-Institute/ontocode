@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 @Component
@@ -42,6 +43,10 @@ public class UploadStagingSweeper {
     }
 
     public static int sweep(Path root, long maxAgeMs) {
+        return sweep(root, maxAgeMs, child -> true);
+    }
+
+    public static int sweep(Path root, long maxAgeMs, Predicate<Path> eligible) {
         if (!Files.isDirectory(root)) {
             return 0;
         }
@@ -55,6 +60,9 @@ public class UploadStagingSweeper {
             return 0;
         }
         for (Path child : children) {
+            if (!eligible.test(child)) {
+                continue;
+            }
             try {
                 if (newestModified(child) > now - maxAgeMs) {
                     continue;

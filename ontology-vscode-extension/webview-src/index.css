@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* Semantic Theme Tokens - Professional Design System */
 :root {
   /* Surfaces (elevation levels) */

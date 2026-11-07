@@ -1,3 +1,5 @@
+import type { AxiomsPageResponse, InferredAxiom } from './types';
+
 export const COMPARISONS = [
   'greaterThan',
   'lessThan',
@@ -456,9 +458,13 @@ export function ruleWriteBody(form: RuleFormValues, label: string): {
   };
 }
 
+export const PUBLIC_EDIT_DISABLED_MESSAGE =
+  'The project owner turned off public editing. Switch to Draft Mode to make your changes.';
+
 export function friendlyRuleError(e: any, fallback: string): string {
   const status: number | undefined = e?.status;
   const data = e?.data;
+  if (status === 403 && data?.code === 'PUBLIC_EDIT_DISABLED') return PUBLIC_EDIT_DISABLED_MESSAGE;
   const errors: unknown[] = Array.isArray(data?.errors) ? data.errors : [];
   const suggestions: unknown[] = Array.isArray(data?.suggestions) ? data.suggestions : [];
   if (status === 400 || errors.length > 0) {
@@ -619,12 +625,22 @@ export function isImportFile(name: string): boolean {
   return /\.(xlsx|json)$/i.test(name);
 }
 
+export function needsValidation(text: string, savedText: string | null | undefined): boolean {
+  return text.trim().length > 0 && text.trim() !== (savedText ?? '').trim();
+}
+
+export function ruleFromResponse<T>(res: unknown): T {
+  const body = res as { rule?: unknown } | null | undefined;
+  return (body && typeof body === 'object' && body.rule && typeof body.rule === 'object' ? body.rule : res) as T;
+}
+
 export function applySavedRule<T extends { id: string; ruleName: string }>(
   rules: T[],
   selectedId: string | null,
-  res: Partial<T> | null | undefined,
+  response: Partial<T> | null | undefined,
   form: { ruleName: string; ruleText: string; comment?: string; category?: string; enabled: boolean }
 ): { rules: T[]; saved: T } {
+  const res = ruleFromResponse<Partial<T> | null | undefined>(response);
   const current = rules.find(r => r.id === (selectedId ?? res?.id));
   const merged = {
     ...(current || {}),
@@ -673,13 +689,16 @@ function pluralize(n: number, one: string, many: string): string {
 }
 
 export function derivedSummary(counts: RunCounts): string {
-  const total = counts.conclusions + counts.structure;
-  const base = `${formatCount(total)} derived: ${formatCount(counts.conclusions)} ${pluralize(counts.conclusions, 'rule conclusion', 'rule conclusions')}, ${formatCount(counts.structure)} structure`;
+  const facts = counts.conclusions;
+  const relations = counts.structure;
   const omitted = counts.omittedTrivial ?? 0;
-  if (omitted > 0) {
-    return `${base} (${formatCount(omitted)} trivial same-individual ${pluralize(omitted, 'fact', 'facts')} hidden)`;
-  }
-  return base;
+  const total = facts + relations + omitted;
+  if (total <= 0) return '';
+  const parts: string[] = [];
+  if (facts > 0) parts.push(`${formatCount(facts)} ${pluralize(facts, 'fact about an individual', 'facts about individuals')} from your rules`);
+  parts.push(relations > 0 ? `${formatCount(relations)} ${pluralize(relations, 'class relationship', 'class relationships')} from standard reasoning` : 'no class relationships');
+  if (omitted > 0) parts.push(`${formatCount(omitted)} trivial ${pluralize(omitted, 'one', 'ones')} hidden`);
+  return `${formatCount(total)} produced: ${parts.join(', ')}.`;
 }
 
 export function pageStart(offset: number, total: number, limit: number = RESULTS_PAGE_SIZE): number {
@@ -751,4 +770,568 @@ export function pageErrorMessage(e: any): string {
   if (isExpiredRunError(e)) return EXPIRED_RUN_MESSAGE;
   const detail = e?.data?.message || e?.message;
   return detail ? `Could not load this page: ${detail}` : 'Could not load this page. Try again.';
+}
+
+export function cloneRuleBody(rule: { ruleName: string; ruleText: string; comment?: string | null; category?: string | null; enabled: boolean }, takenNames: Iterable<string>): {
+  ruleName: string;
+  ruleText: string;
+  comment: string;
+  category: string;
+  enabled: boolean;
+} {
+  const taken = new Set(takenNames);
+  let name = `${rule.ruleName} (copy)`;
+  for (let n = 2; taken.has(name); n++) name = `${rule.ruleName} (copy ${n})`;
+  return {
+    ruleName: name,
+    ruleText: rule.ruleText,
+    comment: rule.comment || '',
+    category: rule.category || '',
+    enabled: rule.enabled,
+  };
+}
+
+export const ASSERTED_PAGE_SIZE = 50;
+export const ASSERTED_MAX_WINDOW = 20000;
+export const ASSERTED_TYPES = ['ClassAssertion', 'ObjectPropertyAssertion', 'DataPropertyAssertion', 'SubClassOf', 'SubObjectPropertyOf', 'ObjectPropertyDomain', 'ObjectPropertyRange', 'DataPropertyDomain', 'DataPropertyRange', 'DisjointClasses', 'EquivalentClasses', 'AnnotationAssertion'];
+
+export function assertedAxiomsPath(
+  projectId: string,
+  opts: { page: number; pageSize: number; search: string; type: string },
+  draftMode: boolean
+): string {
+  const params = new URLSearchParams();
+  params.set('page', String(opts.page));
+  params.set('pageSize', String(opts.pageSize));
+  const q = opts.search.trim();
+  if (q) params.set('search', q);
+  if (opts.type) params.set('type', opts.type);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/axioms/asserted?${params.toString()}`, draftMode);
+}
+
+export function canGoNextAssertedPage(page: number, pageSize: number, total: number): boolean {
+  return (page + 1) * pageSize < total && (page + 2) * pageSize <= ASSERTED_MAX_WINDOW;
+}
+
+export function retryAfterSeconds(e: any): number | null {
+  const fromBody = Number(e?.data?.retryAfterSeconds);
+  if (Number.isFinite(fromBody) && fromBody > 0) return Math.ceil(fromBody);
+  const fromHeader = Number(e?.retryAfter);
+  if (Number.isFinite(fromHeader) && fromHeader > 0) return Math.ceil(fromHeader);
+  return null;
+}
+
+export function busyMessage(e: any): string {
+  const secs = retryAfterSeconds(e);
+  return secs
+    ? `The server is busy with other work. Try again in about ${secs} second${secs === 1 ? '' : 's'}.`
+    : 'The server is busy with other work. Try again in a moment.';
+}
+
+export function axiomListErrorMessage(e: any): string {
+  const status = e?.status;
+  if (status === 429) return busyMessage(e);
+  if (status === 400) return e?.data?.message || e?.message || 'Narrow the search or type.';
+  if (status === 413) return 'This ontology is too large to list this way. Narrow the search or type.';
+  if (status === 504) return 'This took too long and was stopped. Narrow the search or type, then try again.';
+  const detail = e?.data?.message || e?.message;
+  return detail ? `Could not load the axioms: ${detail}` : 'Could not load the axioms. Try again.';
+}
+
+export const OWL2RL_PAGE_SIZE = 50;
+export const OWL2RL_EXPIRED_MESSAGE = 'These results have expired. Compute the closure again.';
+
+export function owl2rlStartPath(
+  projectId: string,
+  opts: { pageSize: number; type: string; filter: string },
+  draftMode: boolean
+): string {
+  const params = new URLSearchParams();
+  params.set('pageSize', String(opts.pageSize));
+  if (opts.type) params.set('type', opts.type);
+  const f = opts.filter.trim();
+  if (f) params.set('filter', f);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl?${params.toString()}`, draftMode);
+}
+
+export function owl2rlRunPath(
+  projectId: string,
+  runId: string,
+  opts: { page: number; pageSize: number; type: string; filter: string },
+  draftMode: boolean
+): string {
+  const params = new URLSearchParams();
+  params.set('page', String(opts.page));
+  params.set('pageSize', String(opts.pageSize));
+  if (opts.type) params.set('type', opts.type);
+  const f = opts.filter.trim();
+  if (f) params.set('filter', f);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl/runs/${encodeURIComponent(runId)}?${params.toString()}`, draftMode);
+}
+
+export function owl2rlErrorMessage(e: any): string {
+  const status = e?.status;
+  if (status === 410 || e?.data?.expired) return OWL2RL_EXPIRED_MESSAGE;
+  if (status === 429) return e?.data?.message || busyMessage(e);
+  if (status === 413) return 'This ontology is too large to compute the OWL 2 RL closure.';
+  if (status === 504) return 'The computation took too long and was stopped.';
+  const detail = e?.data?.message || e?.message;
+  return detail ? `Could not compute the closure: ${detail}` : 'Could not compute the closure. Try again.';
+}
+
+export function owl2rlTruncationNote(r: { truncated?: boolean; returnedCount?: number; derivedCount?: number }): string | null {
+  if (!r.truncated) return null;
+  return `Showing the first ${formatCount(r.returnedCount ?? 0)} of ${formatCount(r.derivedCount ?? 0)}.`;
+}
+
+export const OWL2RL_UNSUPPORTED_NOTE = 'This engine does not apply some standard rules, such as property chains. The closure may be missing some conclusions.';
+
+export const OWL2RL_CATEGORY_LABELS = { conclusion: 'Facts about individuals', structure: 'Class relationships' } as const;
+
+export const ASSERTED_NOTE = 'Asserted axioms are the statements typed into the ontology.';
+
+export const INFERRED_NOTE = 'Inferred axioms are worked out by the rules and are not saved in the ontology until you add them.';
+
+const UNSUPPORTED_RULE_NAMES: Record<string, string> = {
+  'prp-spo2': 'property chains',
+  'prp-key': 'keys',
+  'cax-adc': 'disjoint unions and groups of disjoint classes',
+  'prp-adp': 'groups of disjoint properties',
+  'prp-ap': 'built-in annotation properties',
+  'eq-diff2': 'groups of different individuals',
+  'eq-diff3': 'groups of different individuals',
+  'eq-rep-s': 'treating identical individuals as interchangeable',
+  'eq-rep-p': 'treating identical individuals as interchangeable',
+  'eq-rep-o': 'treating identical individuals as interchangeable',
+  'dt-not-type': 'datatype checks',
+  'dt-type1': 'datatype checks',
+  'dt-type2': 'datatype checks',
+  'dt-eq': 'datatype checks',
+  'dt-diff': 'datatype checks',
+};
+
+export function unsupportedRulesSummary(codes: string[]): { names: string[]; codes: string[] } {
+  const names: string[] = [];
+  let other = false;
+  for (const raw of codes) {
+    const code = raw.trim().toLowerCase();
+    if (!code) continue;
+    const name = UNSUPPORTED_RULE_NAMES[code];
+    if (!name) other = true;
+    else if (!names.includes(name)) names.push(name);
+  }
+  if (other) names.push('other standard rules');
+  return { names, codes: codes.map(c => c.trim()).filter(Boolean) };
+}
+
+export function unsupportedRulesSentence(names: string[]): string {
+  if (names.length === 0) return '';
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Not applied: ${list}.`;
+}
+
+export function shortenIris(text: string): string {
+  return text.replace(/<(?:https?|urn|file):[^>\s]*?[#/:]([^#/:>\s]+)>/g, '$1');
+}
+
+export interface AxiomRowSource {
+  axiomType: string;
+  readable?: string;
+  description?: string;
+}
+
+export function axiomSentence(item: AxiomRowSource): string {
+  const text = item.readable || item.description || '';
+  return shortenIris(text);
+}
+
+export function axiomHoverText(item: AxiomRowSource): string {
+  return item.description || item.readable || '';
+}
+
+const GENERATED_RULE_NAME = /^Rule [0-9a-f]{6,}$/i;
+
+export function ruleTitle(rule: { ruleName: string; ruleText?: string }): { title: string; tooltip: string } {
+  const text = (rule.ruleText || '').replace(/\s+/g, ' ').trim();
+  if (text && GENERATED_RULE_NAME.test(rule.ruleName.trim())) {
+    const short = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+    return { title: short, tooltip: `${rule.ruleName}: ${text}` };
+  }
+  return { title: rule.ruleName, tooltip: rule.ruleName };
+}
+
+export function isSqwrlRule(rule: { ruleText?: string }): boolean {
+  const text = rule.ruleText || '';
+  const arrow = text.indexOf('->');
+  return arrow >= 0 && /\bsqwrl:/i.test(text.slice(arrow));
+}
+
+export interface RunLike {
+  success?: boolean;
+  executionMode?: string;
+  executedRuleNames?: string[];
+  totalRulesExecuted?: number;
+  inferredAxiomsCount?: number;
+  conclusionCount?: number;
+  structureCount?: number;
+  counts?: { conclusions: number; structure: number };
+  status?: string;
+  skippedRules?: Array<string | { ruleName?: string; name?: string; ruleId?: string; reason?: string }>;
+}
+
+export function runScopeText(run: RunLike): string {
+  const n = run.executedRuleNames?.length ?? run.totalRulesExecuted ?? 0;
+  if (run.executionMode === 'selected') return `Ran ${formatCount(n)} selected rule${n === 1 ? '' : 's'}`;
+  if (run.executionMode === 'test') return 'Tested one rule';
+  if (run.executionMode === 'all') return 'Ran all enabled rules';
+  return 'Ran the rules';
+}
+
+export function ranAtText(ranAt: number | null | undefined, now: number): string {
+  if (!ranAt) return '';
+  if (now - ranAt < 60_000) return 'just now';
+  const d = new Date(ranAt);
+  return `at ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+export function inferredSplit(run: RunLike): { facts: number; relationships: number } | null {
+  const facts = run.conclusionCount ?? run.counts?.conclusions;
+  const relationships = run.structureCount ?? run.counts?.structure;
+  if (typeof facts !== 'number' || typeof relationships !== 'number') return null;
+  return { facts, relationships };
+}
+
+export function inferredTotal(run: RunLike): number {
+  const split = inferredSplit(run);
+  return split ? split.facts + split.relationships : run.inferredAxiomsCount ?? 0;
+}
+
+export function inferredSummaryText(run: RunLike): string {
+  const total = inferredTotal(run);
+  const split = inferredSplit(run);
+  const head = `${formatCount(total)} inferred fact${total === 1 ? '' : 's'}`;
+  if (!split) return head;
+  return `${head}: ${formatCount(split.facts)} fact${split.facts === 1 ? '' : 's'} about individuals, ${formatCount(split.relationships)} class relationship${split.relationships === 1 ? '' : 's'}`;
+}
+
+export interface SkippedInfo { name: string; reason: string; couldNotRun: boolean }
+
+export function skippedInfo(run: RunLike): SkippedInfo[] {
+  return (run.skippedRules ?? []).map(s => {
+    if (typeof s === 'string') return { name: s, reason: '', couldNotRun: false };
+    const name = s.ruleName || s.name || s.ruleId || 'A rule';
+    const reason = s.reason || '';
+    return { name, reason, couldNotRun: /could not run/i.test(reason) };
+  });
+}
+
+export function plainSkipReason(info: SkippedInfo): string {
+  if (!info.reason) return 'Skipped';
+  if (info.couldNotRun) return `Could not run: ${info.reason.replace(/^.*?could not run:\s*/i, '')}`;
+  return `Skipped: ${info.reason.replace(/\.$/, '')}`;
+}
+
+export type RuleRunOutcome = { kind: 'ran' | 'skipped' | 'failed'; text: string } | null;
+
+export function ruleRunOutcome(rule: { ruleName: string; id: string }, run: RunLike | null): RuleRunOutcome {
+  if (!run) return null;
+  const skipped = skippedInfo(run).find(s => s.name === rule.ruleName || s.name === rule.id);
+  if (skipped) return { kind: skipped.couldNotRun ? 'failed' : 'skipped', text: plainSkipReason(skipped) };
+  if (run.executedRuleNames?.includes(rule.ruleName)) return { kind: 'ran', text: 'Ran' };
+  return null;
+}
+
+export function skippedListText(info: SkippedInfo): string {
+  if (!info.reason) return info.name;
+  const reason = info.couldNotRun ? plainSkipReason(info) : info.reason.replace(/\.$/, '');
+  return `${info.name}: ${reason}`;
+}
+
+export const ADD_INFERRED_CAP = 5000;
+export const ADD_FETCH_PAGE = 500;
+
+export interface TransferSummary {
+  rulesExported: number;
+  classDeclarations: number;
+  individualDeclarations: number;
+  objectPropertyDeclarations: number;
+  dataPropertyDeclarations: number;
+  totalAxioms: number;
+  skippedRules?: Array<{ ruleName?: string; name?: string; reason?: string }>;
+  elapsedMs: number;
+}
+
+export function transferSummaryPath(projectId: string, draftMode: boolean): string {
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/transfer-summary`, draftMode);
+}
+
+function countLine(n: number, label: string): string {
+  return `${label}: ${formatCount(n)}`;
+}
+
+export const LOAD_STEP_NOTE = 'The rule engine is built fresh every time the rules run, so this step checks and counts what will be sent to it.';
+
+export function skippedLogLines(skipped: SkippedInfo[], limit = 10): string[] {
+  const lines = skipped.slice(0, limit).map(s => `Skipped rule ${skippedListText(s)}`);
+  if (skipped.length > limit) lines.push(`...and ${formatCount(skipped.length - limit)} more skipped rules.`);
+  return lines;
+}
+
+export function loadLogLines(summary: TransferSummary): string[] {
+  const skipped = skippedInfo({ skippedRules: summary.skippedRules });
+  return [
+    'Ontology and rules checked successfully.',
+    countLine(summary.rulesExported, 'Number of rules that will be sent to the rule engine'),
+    countLine(summary.classDeclarations, 'Number of classes that will be sent'),
+    countLine(summary.individualDeclarations, 'Number of individuals that will be sent'),
+    countLine(summary.objectPropertyDeclarations, 'Number of object properties that will be sent'),
+    countLine(summary.dataPropertyDeclarations, 'Number of data properties that will be sent'),
+    countLine(summary.totalAxioms, 'Total number of axioms that will be sent'),
+    ...skippedLogLines(skipped),
+    `The check took ${formatCount(summary.elapsedMs)} millisecond(s).`,
+    LOAD_STEP_NOTE,
+    'Press the Run rules button to run the rules.',
+  ];
+}
+
+function inferredLogLine(run: RunLike): string {
+  const split = inferredSplit(run);
+  const head = `Number of inferred facts: ${formatCount(inferredTotal(run))}`;
+  return split ? `${head} (${formatCount(split.facts)} about individuals, ${formatCount(split.relationships)} class relationships)` : head;
+}
+
+export function runLogLines(run: RunLike & { executionTimeMs?: number; errorMessage?: string | null }): string[] {
+  if (!run.success) {
+    return [`The rules could not be run: ${run.errorMessage || 'unknown problem'}`];
+  }
+  const ran = run.executedRuleNames?.length ?? run.totalRulesExecuted ?? 0;
+  return [
+    'Rules ran successfully.',
+    `Number of rules run: ${formatCount(ran)}`,
+    ...skippedLogLines(skippedInfo(run)),
+    inferredLogLine(run),
+    `The run took ${formatCount(run.executionTimeMs ?? 0)} millisecond(s).`,
+    'Look at the Inferred Axioms tab to see the inferred facts.',
+    'Press the Add inferred facts to ontology button to save them in the ontology.',
+  ];
+}
+
+export interface FactOp {
+  type: string;
+  iri: string;
+  classIri?: string;
+  property?: string;
+  target?: string;
+  value?: string;
+  datatype?: string;
+}
+
+const SUBCLASS_TEXT = /^SubClassOf\(<([^<>\s]+)> <([^<>\s]+)>\)$/;
+
+export type OpSource = {
+  description?: string;
+  axiomType?: string;
+  subjectIri?: string | null;
+  predicateIri?: string | null;
+  objectIri?: string | null;
+  objectLiteral?: string | null;
+  literalDatatypeIri?: string | null;
+};
+
+export function axiomToOp(ax: OpSource): FactOp | null {
+  if (ax.subjectIri && ax.predicateIri) {
+    if (ax.predicateIri === 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' && ax.objectIri) {
+      return { type: 'addClassAssertion', iri: ax.subjectIri, classIri: ax.objectIri };
+    }
+    if (ax.objectIri) {
+      return { type: 'addObjectPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, target: ax.objectIri };
+    }
+    if (ax.objectLiteral != null) {
+      return { type: 'addDataPropertyAssertion', iri: ax.subjectIri, property: ax.predicateIri, value: ax.objectLiteral, datatype: ax.literalDatatypeIri || undefined };
+    }
+    return null;
+  }
+  const sub = ax.axiomType === 'SubClassOf' ? SUBCLASS_TEXT.exec((ax.description || '').trim()) : null;
+  return sub ? { type: 'addSubClassOf', iri: sub[1], target: sub[2] } : null;
+}
+
+export function axiomsToOps(axioms: OpSource[]): { ops: FactOp[]; unsupported: number } {
+  const ops: FactOp[] = [];
+  let unsupported = 0;
+  for (const ax of axioms) {
+    const op = axiomToOp(ax);
+    if (op) ops.push(op);
+    else unsupported++;
+  }
+  return { ops, unsupported };
+}
+
+export interface InferredPlan {
+  facts: number;
+  relationships: number;
+  total: number;
+  willAdd: number;
+  overCap: boolean;
+}
+
+export function inferredPlan(run: RunLike, includeStructure: boolean, cap: number = ADD_INFERRED_CAP): InferredPlan {
+  const split = inferredSplit(run);
+  const facts = split ? split.facts : inferredTotal(run);
+  const relationships = split ? split.relationships : 0;
+  const total = facts + (includeStructure ? relationships : 0);
+  return { facts, relationships, total, willAdd: Math.min(total, cap), overCap: total > cap };
+}
+
+export function addConfirmText(plan: InferredPlan, cap: number = ADD_INFERRED_CAP): string {
+  const base = `This will add ${formatCount(plan.willAdd)} fact${plan.willAdd === 1 ? '' : 's'} to the ontology. They become ordinary asserted statements, and you can undo the change from the history.`;
+  return plan.overCap
+    ? `${base} Only the first ${formatCount(cap)} of ${formatCount(plan.total)} can be added in one go. Run the rules again afterwards to add the rest.`
+    : base;
+}
+
+export async function collectInferredAxioms(
+  get: <T>(url: string) => Promise<T>,
+  projectId: string,
+  run: { runId?: string; counts?: { conclusions: number; structure: number }; inferredAxioms?: InferredAxiom[] },
+  draftMode: boolean,
+  includeStructure: boolean,
+  cap: number = ADD_INFERRED_CAP
+): Promise<InferredAxiom[]> {
+  const kinds: AxiomKind[] = includeStructure ? ['conclusions', 'structure'] : ['conclusions'];
+  const out: InferredAxiom[] = [];
+  if (!isPagedRun(run)) {
+    for (const kind of kinds) {
+      const wanted = kind === 'structure' ? 'structure' : 'conclusion';
+      for (const ax of run.inferredAxioms ?? []) {
+        if (out.length >= cap) return out;
+        if ((ax.category ?? 'conclusion') === wanted) out.push(ax);
+      }
+    }
+    return out;
+  }
+  for (const kind of kinds) {
+    const total = kind === 'structure' ? run.counts!.structure : run.counts!.conclusions;
+    let offset = 0;
+    while (offset < total && out.length < cap) {
+      const page = await get<AxiomsPageResponse>(axiomsPagePath(projectId, run.runId!, { offset, limit: ADD_FETCH_PAGE, kind, query: '' }, draftMode));
+      const axioms = Array.isArray(page?.axioms) ? page.axioms : [];
+      if (axioms.length === 0) break;
+      for (const ax of axioms) {
+        if (out.length >= cap) break;
+        out.push(ax);
+      }
+      offset += axioms.length;
+    }
+  }
+  return out;
+}
+
+export type ResultFilter = 'conclusions' | 'structure' | 'all';
+
+export const RESULT_FILTER_NAMES: Record<ResultFilter, string> = {
+  conclusions: 'Facts about individuals',
+  structure: 'Class relationships',
+  all: 'Everything',
+};
+
+export interface ResultCountInput {
+  filter: ResultFilter;
+  paged: boolean;
+  totals: { conclusions: number; structure: number };
+  loaded: { conclusions: number; structure: number };
+  matched: number;
+  shown: number;
+  searching: boolean;
+}
+
+export interface ResultCounts {
+  filter: ResultFilter;
+  paged: boolean;
+  total: number;
+  loaded: number;
+  matched: number;
+  shown: number;
+  remaining: number;
+  searching: boolean;
+  partial: boolean;
+}
+
+function filterSum(filter: ResultFilter, v: { conclusions: number; structure: number }): number {
+  if (filter === 'conclusions') return v.conclusions;
+  if (filter === 'structure') return v.structure;
+  return v.conclusions + v.structure;
+}
+
+export function resultCounts(input: ResultCountInput): ResultCounts {
+  const total = Math.max(0, filterSum(input.filter, input.totals));
+  const loaded = input.paged ? total : Math.min(total, Math.max(0, filterSum(input.filter, input.loaded)));
+  const matched = input.searching ? Math.max(0, input.matched) : loaded;
+  const shown = Math.max(0, input.shown);
+  const reference = input.searching ? matched : total;
+  return {
+    filter: input.filter,
+    paged: input.paged,
+    total,
+    loaded,
+    matched,
+    shown,
+    remaining: Math.max(0, reference - shown),
+    searching: input.searching,
+    partial: !input.paged && total > loaded,
+  };
+}
+
+export function resultHeading(c: ResultCounts): string {
+  const base = `${RESULT_FILTER_NAMES[c.filter]} (${formatCount(c.total)} in total)`;
+  return c.shown < c.total ? `${base}, showing ${formatCount(c.shown)}` : base;
+}
+
+export function searchMatchText(c: ResultCounts, query: string): string {
+  if (c.paged) return `${formatCount(c.matched)} match "${query}"`;
+  return `${formatCount(c.matched)} match "${query}" in the loaded rows`;
+}
+
+export function cutoffNote(c: ResultCounts): string | null {
+  if (!c.partial) return null;
+  if (c.searching) return `Search covers only the ${formatCount(c.loaded)} loaded rows of ${formatCount(c.total)}.`;
+  if (c.shown >= c.loaded) return `Showing ${formatCount(c.shown)} of ${formatCount(c.total)} (the rest is not loaded for this run).`;
+  return `Showing ${formatCount(c.shown)} of ${formatCount(c.total)}. Search or filter to narrow, or show more.`;
+}
+
+export function showMoreStep(c: ResultCounts, step: number): number {
+  const reachable = c.searching ? c.matched : c.loaded;
+  return Math.max(0, Math.min(step, reachable - c.shown));
+}
+
+export function showMoreLabel(c: ResultCounts, step: number): string | null {
+  const n = showMoreStep(c, step);
+  return n > 0 ? `Show ${formatCount(n)} more (${formatCount(c.remaining)} remaining)` : null;
+}
+
+export function countLabel(title: string, total: number | null, shown: number, searching = false): string {
+  if (total === null) return `${title}: showing ${formatCount(shown)}`;
+  const head = `${title}: ${formatCount(total)} ${searching ? 'match in the loaded rows' : 'in total'}`;
+  return shown < total ? `${head}, showing ${formatCount(shown)}` : head;
+}
+
+export function sectionTotal(
+  key: 'rules' | 'standard' | 'structure',
+  c: ResultCounts,
+  totals: { conclusions: number; structure: number },
+  loaded: { conclusions: number; structure: number },
+  matchedInSection: number
+): number | null {
+  if (c.searching) return matchedInSection;
+  if (key === 'structure') return totals.structure;
+  return loaded.conclusions >= totals.conclusions ? matchedInSection : null;
+}
+
+export function groupTotal(sectionExact: boolean, matchedInGroup: number): number | null {
+  return sectionExact ? matchedInGroup : null;
+}
+
+export function groupLabel(total: number | null, shown: number, searching = false): string {
+  if (total === null) return `showing ${formatCount(shown)}`;
+  const head = `${formatCount(total)} ${searching ? 'match in the loaded rows' : 'in total'}`;
+  return shown < total ? `${head}, showing ${formatCount(shown)}` : head;
 }

@@ -76,6 +76,16 @@ class SparqlQueryContextInterceptorTest {
     }
 
     @Test
+    void desktopPrefersTheTokenOverNothingButNotOverTheParameter() {
+        MockHttpServletRequest request = draftRequest();
+        request.addHeader("Authorization", token(Map.of("userId", "user-b")));
+
+        interceptor(true).preHandle(request, new MockHttpServletResponse(), null);
+
+        assertEquals("user-b", SparqlQueryContext.getUserId());
+    }
+
+    @Test
     void desktopUsesParameterThenDefaultUser() {
         MockHttpServletRequest withParam = draftRequest();
         withParam.addParameter("userId", "desktop-user-local");

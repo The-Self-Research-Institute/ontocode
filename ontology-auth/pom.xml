@@ -13,7 +13,7 @@
 	<description>Auth service</description>
 	<url/>
 	<licenses>
-		<license/>
+		<license><name>MIT License</name><url>https://opensource.org/licenses/MIT</url></license>
 	</licenses>
 	<developers>
 		<developer/>
@@ -29,6 +29,17 @@
 		<git.commit>unknown</git.commit>
 	</properties>
 	<dependencies>
+		<dependency>
+			<groupId>self.research.ontology</groupId>
+			<artifactId>common-utils</artifactId>
+			<version>${project.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>net.sourceforge.owlapi</groupId>
+					<artifactId>owlapi-distribution</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
 		<dependency>
 			<groupId>com.bucket4j</groupId>
 			<artifactId>bucket4j-core</artifactId>

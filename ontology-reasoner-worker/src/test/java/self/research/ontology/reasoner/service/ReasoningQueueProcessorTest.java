@@ -138,6 +138,45 @@ class ReasoningQueueProcessorTest {
         assertTrue(waitUntil(() -> manager.activeJobCount() == 0, 5_000));
     }
 
+    @Test
+    void theTimeoutMessageNamesHermitAndSuggestsElk() {
+        String message = ReasoningQueueProcessor.timeoutMessage(12, "HERMIT");
+
+        assertTrue(message.startsWith("Reasoning timed out after 12 minutes."));
+        assertTrue(message.contains("HermiT can be very slow on large ontologies"));
+        assertTrue(message.contains("Switch to the ELK reasoner"));
+        assertTrue(ReasoningQueueProcessor.timeoutMessage(12, null).contains("HermiT can be very slow"));
+        assertTrue(ReasoningQueueProcessor.timeoutMessage(12, "FACTPLUSPLUS").contains("ELK"));
+    }
+
+    @Test
+    void theTimeoutMessageForOtherReasonersKeepsTheGeneralAdvice() {
+        String message = ReasoningQueueProcessor.timeoutMessage(12, "ELK");
+
+        assertFalse(message.contains("can be very slow"));
+        assertTrue(message.contains("too complex for the selected reasoner"));
+    }
+
+    @Test
+    void aHermitJobThatTimesOutIsReportedWithTheHermitAdvice() throws Exception {
+        ReasoningQueueManager manager = QueueTestSupport.queueManager();
+        ReasoningJobExecutor executor = mock(ReasoningJobExecutor.class);
+        when(executor.execute(any())).thenAnswer(invocation -> {
+            Thread.sleep(60_000);
+            return Map.of("success", true);
+        });
+        ReasoningQueueProcessor processor = new ReasoningQueueProcessor(manager, executor, pool,
+                new RunawayReasoningHealthIndicator(), 100, 2_000);
+
+        ReasoningJob job = QueueTestSupport.enqueue(manager, "P1");
+        job.setReasonerType("HERMIT");
+        processor.processNext();
+
+        assertTrue(waitUntil(() -> manager.getJob(job.getJobId()).getStatus() == ReasoningJob.Status.FAILED, 5_000));
+        assertTrue(manager.getJob(job.getJobId()).getError().contains("HermiT can be very slow on large ontologies"));
+        assertTrue(waitUntil(() -> manager.activeJobCount() == 0, 5_000));
+    }
+
     static boolean waitUntil(BooleanSupplier condition, long timeoutMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {

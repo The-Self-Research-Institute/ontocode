@@ -789,7 +789,6 @@ public class WorkspaceController {
             User user = userOpt.get();
             String username = user.getUsername();
 
-            // Verify workspace exists
             Optional<Workspace> workspaceOpt = workspaceService.getWorkspace(workspaceId);
             if (workspaceOpt.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Workspace not found"));
@@ -814,7 +813,6 @@ public class WorkspaceController {
                 }
             }
 
-            // Get caller's role in the workspace
             Workspace.WorkspaceRole callerRole = workspaceService.getMemberRole(workspaceId, user.getId());
             boolean isOwner = callerRole == Workspace.WorkspaceRole.OWNER || workspace.getOwnerId().equals(user.getId());
             boolean isAdmin = callerRole == Workspace.WorkspaceRole.ADMIN;
@@ -828,7 +826,7 @@ public class WorkspaceController {
             // Prevent workspace owner from removing themselves (must transfer ownership or delete)
             boolean isSelf = targetUserId.equals(user.getId())
                     || (targetEmail != null && targetEmail.equalsIgnoreCase(user.getEmail()));
-            if (isSelf && (user.getId().equals(workspace.getOwnerId()) || targetUserId.equals(workspace.getOwnerId()))) {
+            if (targetUserId.equals(workspace.getOwnerId())) {
                 return ResponseEntity.badRequest().body(Map.of(
                     "error", "Workspace owner cannot be removed. Please transfer ownership or delete the workspace."
                 ));
@@ -917,11 +915,9 @@ public class WorkspaceController {
             if (!callerIsOwner && !callerIsAdmin) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only workspace owners and admins can change member roles"));
             }
-            // Admins can't assign OWNER role — only owners can
             if (role == Workspace.WorkspaceRole.OWNER && !callerIsOwner) {
                 return ResponseEntity.status(403).body(Map.of("error", "Only the workspace owner can transfer ownership"));
             }
-            // Owner can't demote themselves via this endpoint
             if (userId.equals(caller.getId()) && callerIsOwner) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Use the transfer ownership flow to change the owner's role"));
             }
@@ -929,6 +925,9 @@ public class WorkspaceController {
             Workspace.WorkspaceMember target = workspace.getMember(userId);
             if (target == null) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Member not found in workspace"));
+            }
+            if (target.getRole() == Workspace.WorkspaceRole.OWNER && !callerIsOwner) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only the workspace owner can change the owner's role"));
             }
             if (role == Workspace.WorkspaceRole.OWNER) {
                 workspaceService.transferOwnership(workspaceId, workspace.getOwnerId(), userId);
@@ -974,7 +973,7 @@ public class WorkspaceController {
         dto.put("createdAt", workspace.getCreatedAt());
         dto.put("updatedAt", workspace.getUpdatedAt());
         
-        // Include member details
+        boolean showInvitationTokens = workspace.canManageInvitationsByEmail(getCurrentUserEmail());
         List<Map<String, Object>> members = workspace.getMembers().stream()
                 .map(m -> {
                     Map<String, Object> memberDTO = new HashMap<>();
@@ -984,7 +983,9 @@ public class WorkspaceController {
                     memberDTO.put("role", m.getRole().toString());
                     memberDTO.put("joinedAt", m.getJoinedAt());
                     memberDTO.put("status", m.getStatus() != null ? m.getStatus().toString() : "ACTIVE");
-                    memberDTO.put("invitationToken", m.getInvitationToken());
+                    if (showInvitationTokens) {
+                        memberDTO.put("invitationToken", m.getInvitationToken());
+                    }
                     return memberDTO;
                 })
                 .collect(Collectors.toList());
@@ -996,7 +997,6 @@ public class WorkspaceController {
     private String resolveBillingStatus(Workspace workspace) {
         String plan = workspace.getSubscriptionPlan() != null ? workspace.getSubscriptionPlan() : "FREE";
 
-        // FREE workspaces are always active
         if ("FREE".equalsIgnoreCase(plan)) {
             return "ACTIVE";
         }

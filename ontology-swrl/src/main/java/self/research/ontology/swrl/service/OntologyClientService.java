@@ -143,6 +143,30 @@ public class OntologyClientService {
                 executionWorkers, ontologyBytesPerAxiom);
     }
 
+    public String currentStamp(String projectId, String draftUserId) {
+        if (internalToken == null || internalToken.isBlank()) {
+            return null;
+        }
+        try {
+            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+            headers.set("X-Ontocode-Internal-Token", internalToken);
+            boolean draft = draftUserId != null && !draftUserId.isBlank();
+            ResponseEntity<Map> response = draft
+                    ? restTemplate.exchange("/internal/reasoning/{projectId}/draft-version?userId={userId}",
+                            org.springframework.http.HttpMethod.GET, new org.springframework.http.HttpEntity<>(headers),
+                            Map.class, projectId, draftUserId)
+                    : restTemplate.exchange("/internal/reasoning/{projectId}/revision",
+                            org.springframework.http.HttpMethod.GET, new org.springframework.http.HttpEntity<>(headers),
+                            Map.class, projectId);
+            Map<?, ?> body = response.getBody();
+            Object value = body == null ? null : (draft ? body.get("version") : body.get("revision"));
+            return value == null ? null : (draft ? "d:" : "r:") + value;
+        } catch (RestClientException e) {
+            logger.debug("Could not read the ontology stamp for project {}: {}", projectId, e.getMessage());
+            return null;
+        }
+    }
+
     public OWLOntology fetchOntology(String projectId) throws OWLOntologyCreationException {
         return fetchOntologyWithStamp(projectId, null).ontology();
     }

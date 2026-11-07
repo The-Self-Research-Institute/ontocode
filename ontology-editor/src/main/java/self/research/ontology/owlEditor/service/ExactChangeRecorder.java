@@ -167,7 +167,7 @@ public class ExactChangeRecorder {
                     entry.setCoveredBy(carrier.getId());
                 }
             }
-            history.saveAll(entries);
+            BulkWrites.saveAll(history, entries);
         } catch (RuntimeException e) {
             log.warn("[UNDO] Could not store the exact change data for {}: {}", changeSetId, e.getMessage());
         }
