@@ -6,11 +6,8 @@ import org.junit.jupiter.api.Test;
 import self.research.ontology.auth.repository.OntologyFileNameRepository;
 import self.research.ontology.common.db.BlobStore;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
 import self.research.ontology.auth.model.Project;
-import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.FileMetadataRepository;
 import self.research.ontology.auth.repository.UserRepository;
@@ -23,6 +20,8 @@ import self.research.ontology.auth.util.JwtUtil;
 import java.util.Map;
 import java.util.Optional;
 
+import static self.research.ontology.auth.controller.AuthTestSupport.signInAs;
+import static self.research.ontology.auth.controller.AuthTestSupport.stubUser;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -54,26 +53,13 @@ class ProjectVisibilityUpdateTest {
         workspace.setWorkspaceId("w1");
         when(projects.getProject("p1")).thenReturn(Optional.of(project));
         when(projects.getWorkspace("w1")).thenReturn(Optional.of(workspace));
-        user(users, "u-owner", "owner@x.org");
-        user(users, "u-other", "other@x.org");
+        stubUser(users, "u-owner", "owner@x.org");
+        stubUser(users, "u-other", "other@x.org");
     }
 
     @AfterEach
     void clear() {
         SecurityContextHolder.clearContext();
-    }
-
-    private static void user(UserRepository users, String id, String email) {
-        User user = new User();
-        user.setId(id);
-        user.setEmail(email);
-        user.setUsername(id);
-        when(users.findByEmail(email)).thenReturn(Optional.of(user));
-    }
-
-    private static void signInAs(String email) {
-        SecurityContextHolder.getContext().setAuthentication(
-                new UsernamePasswordAuthenticationToken(email, null, AuthorityUtils.createAuthorityList("ROLE_USER")));
     }
 
     @Test
