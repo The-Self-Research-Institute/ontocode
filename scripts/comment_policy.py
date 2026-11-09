@@ -37,10 +37,53 @@ def added_lines(repo, base, path):
     return lines
 
 
-def policy_comments(source, lang, allowed):
+CONTROL_START = re.compile(r"^\s*(?:return|throw|new|else|if|for|while|switch|case|try|catch|do|await|yield|typeof|delete|void)\b")
+DECLARATION = re.compile(
+    r"^\s*(?:(?:public|protected|private|static|final|abstract|synchronized|default|export|async|override)\s+)*"
+    r"(?:(?:class|interface|enum|record|function)\b|[\w<>\[\],.?& ]+\s+\w+\s*\()"
+)
+
+
+def documents_declaration(source, comment):
+    lines = source.split("\n")
+    index = comment.end_line
+    while index < len(lines):
+        text = lines[index].strip()
+        if not text or text.startswith("@"):
+            index += 1
+            continue
+        return not CONTROL_START.match(text) and bool(DECLARATION.match(lines[index]))
+    return False
+
+
+COMMENT_ROW = re.compile(r"^\s*(//|/\*|\*)|\s//\s|/\*")
+
+
+def reworded_lines(repo, base, path):
+    lines = set()
+    start = count = 0
+    removed_comment = False
+    for row in git(repo, "diff", "-U0", base, "--", path).splitlines() + ["@@ -0,0 +0,0 @@"]:
+        match = HUNK.match(row)
+        if match:
+            if removed_comment:
+                lines.update(range(start, start + count))
+            start = int(match.group(1))
+            count = int(match.group(2)) if match.group(2) is not None else 1
+            removed_comment = False
+        elif row.startswith("-") and not row.startswith("---") and COMMENT_ROW.search(row[1:]):
+            removed_comment = True
+    return lines
+
+
+def policy_comments(source, lang, allowed, reworded=frozenset()):
     found = []
     for comment in scan(source, lang):
         if comment.is_directive() or comment.is_license():
+            continue
+        if documents_declaration(source, comment):
+            continue
+        if any(n in reworded for n in range(comment.line, comment.end_line + 1)):
             continue
         if allowed is not None and not any(n in allowed for n in range(comment.line, comment.end_line + 1)):
             continue
@@ -113,7 +156,7 @@ def main():
         full = repo / path
         source = full.read_text(encoding="utf-8", errors="replace")
         lang = language_for(path)
-        comments = policy_comments(source, lang, added_lines(repo, base, path))
+        comments = policy_comments(source, lang, added_lines(repo, base, path), reworded_lines(repo, base, path))
         if not comments:
             continue
         files_with_comments += 1
