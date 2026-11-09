@@ -60,6 +60,9 @@ import {
   canEditProjectContent,
   canManageProjectSettings,
   parseProjectRole,
+  projectRoleSelectValue,
+  resolveIsWorkspaceOwner,
+  roleDisplayLabel,
 } from "../utils/roles";
 
 
@@ -358,7 +361,7 @@ const ShareWithSelector: React.FC<ShareWithSelectorProps> = ({
                 const isSelected =
                   privileged ||
                   selection.members.some((m) => shareNormalizeEmail(m.email) === shareNormalizeEmail(member.email));
-                const roleBadgeLabel = member.role?.toUpperCase() === "OWNER" ? "Owner" : "Admin";
+                const roleBadgeLabel = roleDisplayLabel(member.role?.toUpperCase() === "OWNER" ? "OWNER" : "EDITOR");
 
                 return (
                   <div
@@ -477,7 +480,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   console.log("[ProjectDashboard] switchWorkspace function:", typeof switchWorkspace);
 
   const subscription = useSubscription();
-  const isOwner = user?.workspaceRole === "OWNER";
   const [projects, setProjects] = useState<Project[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [workspaceOwnerId, setWorkspaceOwnerId] = useState<string | null>(null);
@@ -527,10 +529,14 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
 
   const currentUserInTeam = useMemo(() => teamMembers.find(m => m.id === user?.userId || m.email === user?.email || m.username === user?.username), [teamMembers, user]);
-  const isWorkspaceOwner =
-    user?.userId === workspaceOwnerId ||
-    user?.workspaceRole?.toUpperCase() === "OWNER" ||
-    currentUserInTeam?.roles?.some((r) => r.toUpperCase() === "OWNER");
+  const isWorkspaceOwner = resolveIsWorkspaceOwner({
+    userId: user?.userId,
+    workspaceOwnerId,
+    teamRoles: currentUserInTeam?.roles,
+    teamLoaded: teamMembers.length > 0,
+    tokenRole: user?.workspaceRole,
+  });
+  const isOwner = isWorkspaceOwner;
 
   const projectMemberRoleLocked = (member: ProjectMember) =>
     member.workspaceEditorLink === "WORKSPACE_OWNER" ||
@@ -987,7 +993,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     if (!user?.workspaceId) return;
     showConfirm({
       title: "Transfer Ownership",
-      message: `Make ${member.username} (${member.email}) the owner of this workspace? You will be demoted to Admin and will no longer be able to delete this workspace or transfer its ownership.`,
+      message: `Make ${member.username} (${member.email}) the owner of this workspace? You will no longer be the owner and will not be able to delete this workspace or transfer its ownership.`,
       type: "warning",
       confirmText: "Transfer Ownership",
       onConfirm: async () => {
@@ -1160,7 +1166,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
     if (newRole === "OWNER") {
       showConfirm({
         title: "Transfer Ownership",
-        message: `Make ${member.username} (${member.email}) the owner of "${project.name}"? You will be demoted to Admin and will no longer be able to delete this project or transfer its ownership.`,
+        message: `Make ${member.username} (${member.email}) the owner of "${project.name}"? You will no longer be the owner and will not be able to delete this project or transfer its ownership.`,
         type: "warning",
         confirmText: "Transfer Ownership",
         onConfirm: async () => {
@@ -1858,7 +1864,7 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                               const style = roleStyles[upperRole as keyof typeof roleStyles] || roleStyles.MEMBER;
                               return (
                                 <span key={role} className={`px-2 py-0.5 text-[10px] font-bold rounded border ${style}`}>
-                                  {upperRole}
+                                  {roleDisplayLabel(role).toUpperCase()}
                                 </span>
                               );
                             })}
@@ -2238,12 +2244,12 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                           <div className="flex items-center gap-2">
                             {!canManageOpenProject ? (
                               <span className="text-sm px-2 py-1 bg-gray-100 text-gray-700 rounded">
-                                {member.role}
+                                {roleDisplayLabel(member.role)}
                               </span>
                             ) : (
                               <>
                                 <select
-                                  value={member.role}
+                                  value={projectRoleSelectValue(member.role)}
                                   onChange={(e) =>
                                     handleUpdateProjectMemberRole(projectSettingsModal, member, e.target.value)
                                   }
@@ -2256,7 +2262,6 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
                                     projectRoleForUser(projectSettingsModal) === "OWNER" && (
                                       <option value="OWNER">Make Owner</option>
                                     )}
-                                  {member.role === "ADMIN" && <option value="ADMIN">Admin</option>}
                                   <option value="EDITOR">Editor</option>
                                   <option value="DRAFT_EDITOR">Draft Editor</option>
                                   <option value="VIEWER">Viewer</option>

@@ -13,6 +13,7 @@ import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.model.Workspace.WorkspaceRole;
 import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.service.OwnershipTransferBilling;
 import self.research.ontology.auth.service.SystemSettingsService;
 import self.research.ontology.auth.service.WorkspaceService;
 import self.research.ontology.auth.util.JwtUtil;
@@ -930,6 +931,19 @@ public class WorkspaceController {
                 return ResponseEntity.status(403).body(Map.of("error", "Only the workspace owner can change the owner's role"));
             }
             if (role == Workspace.WorkspaceRole.OWNER) {
+                Optional<String> billingBlock = userRepository.findById(userId).flatMap(targetUser ->
+                        OwnershipTransferBilling.blockedReason(
+                                workspace.getSubscriptionPlan(),
+                                systemSettingsService.isEnterpriseBypass(targetUser.getEmail()),
+                                targetUser.getUsername(),
+                                targetUser.getSubscriptionPlanName(),
+                                targetUser.getSubscriptionStatus(),
+                                targetUser.getSubscriptionCurrentPeriodEnd(),
+                                LocalDateTime.now()));
+                if (billingBlock.isPresent()) {
+                    log.warn("Ownership transfer of workspace {} to {} blocked: {}", workspaceId, userId, billingBlock.get());
+                    return ResponseEntity.status(409).body(Map.of("error", billingBlock.get(), "requiresPayment", true));
+                }
                 workspaceService.transferOwnership(workspaceId, workspace.getOwnerId(), userId);
             } else {
                 Workspace.WorkspaceRole previousRole = target.getRole();

@@ -245,6 +245,7 @@ branch_web_remote_build() {
     ontology-swrl/pom.xml ontology-swrl/src/ \
     ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
     ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
+    ontology-data-migrator/pom.xml \
     "${dockerfiles[@]}" docker-compose.remote-build.yml \
     docker-compose.de.ec2.yml docker-compose.production.yml docker-compose.r6i-xlarge.yml \
     fuseki-config.ttl)
@@ -260,7 +261,7 @@ branch_web_remote_build() {
     rsync_paths+=(ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ plugins/)
   fi
   if [[ " ${SERVICES[*]} " == *" plugin-init "* ]]; then
-    rsync_paths+=(plugins/ scripts/package.json scripts/manage-plugins.js)
+    rsync_paths+=(plugins/ scripts/package.json scripts/manage-plugins.js scripts/lib/)
   fi
 
   echo "[progress][$m-web] $(date '+%H:%M:%S') START remote build → ${HOST[$m]}:${DIR[$m]}"
@@ -669,6 +670,7 @@ branch_desktop_linux_remote_build() {
       ontology-gateway/pom.xml ontology-gateway/src/ \
       ontology-swrl/pom.xml ontology-swrl/src/ \
       ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
+      ontology-data-migrator/pom.xml \
       electron-app/ ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ \
       plugins/ \
       "${HOST[$m]}:$remote_dir/" || return 1

@@ -463,7 +463,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ isOpen, onClose
                         const isSelected = privileged || selectedMembers.some(
                           (value) => normalizeEmail(value) === normalizeEmail(member.email),
                         );
-                        const roleBadgeLabel = member.role?.toUpperCase() === "OWNER" ? "Owner" : "Admin";
+                        const roleBadgeLabel = member.role?.toUpperCase() === "OWNER" ? "Owner" : "Editor";
 
                         return (
                           <div
