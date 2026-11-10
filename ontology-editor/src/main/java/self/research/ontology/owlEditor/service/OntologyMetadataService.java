@@ -146,6 +146,7 @@ public class OntologyMetadataService {
             metadata.put("declarationAxiomCount", owlCounts.declarations());
 
             metrics.overlayLiveDesktopEntityCounts(projectId, metadata, ontologyCache);
+            LiveOntologyHeaderOverlay.apply(metadata, projectId, ontologyCache, desktopOwlApi);
             return metadata;
             }
             if (hasCounts) {
@@ -163,16 +164,13 @@ public class OntologyMetadataService {
             importService.syncProjectToFuseki(projectId);
         }
 
-        // Include filename and status from project metadata for UI context
         projectMetadataService.readStatus(projectId).ifPresent(status -> {
             metadata.put("filename", status.filename());
             metadata.put("projectStatus", status.status());
         });
         
-        // Merge with dynamic metrics from GraphDB
         metadata.putAll(getDynamicMetrics(projectId));
         
-        // Get ontology IRI and version IRI
         String ontologyIri = getOntologyIri(projectId);
         metadata.put("ontologyIRI", ontologyIri);
         
@@ -188,12 +186,14 @@ public class OntologyMetadataService {
             }
         }
         
-        // Add other metadata components
         metadata.put("prefixes", getPrefixes(projectId));
         metadata.put("annotations", getOntologyAnnotations(projectId));
         metadata.put("imports", getOntologyImports(projectId));
         metadata.put("axioms", getGeneralClassAxioms(projectId));
-        
+        if (!hasDraft) {
+            LiveOntologyHeaderOverlay.apply(metadata, projectId, ontologyCache, desktopOwlApi);
+        }
+
         // Save to cache for future fast loading — but never from a drafter's request, or their
         // draft-inclusive counts would leak into the shared cache and be served to everyone else.
         // Also never cache a "complete" zero-count payload when the graph has triples: that usually

@@ -245,7 +245,7 @@ branch_web_remote_build() {
     ontology-swrl/pom.xml ontology-swrl/src/ \
     ontology-plugin-service/pom.xml ontology-plugin-service/src/ \
     ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
-    ontology-data-migrator/pom.xml \
+    ontology-data-migrator/pom.xml licenses/ \
     "${dockerfiles[@]}" docker-compose.remote-build.yml \
     docker-compose.de.ec2.yml docker-compose.production.yml docker-compose.r6i-xlarge.yml \
     fuseki-config.ttl)
@@ -670,7 +670,7 @@ branch_desktop_linux_remote_build() {
       ontology-gateway/pom.xml ontology-gateway/src/ \
       ontology-swrl/pom.xml ontology-swrl/src/ \
       ontology-reasoner-worker/pom.xml ontology-reasoner-worker/src/ \
-      ontology-data-migrator/pom.xml \
+      ontology-data-migrator/pom.xml licenses/ \
       electron-app/ ontology-vscode-extension/package.json ontology-vscode-extension/webview-src/ \
       plugins/ \
       "${HOST[$m]}:$remote_dir/" || return 1
