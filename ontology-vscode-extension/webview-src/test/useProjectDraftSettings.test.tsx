@@ -85,7 +85,7 @@ describe("useProjectDraftSettings", () => {
   });
 
   it("ignores a late response for the old project after switching", async () => {
-    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean }>();
+    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean; shared: boolean }>();
     getSettings.mockReturnValueOnce(late.promise);
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     let pending!: Promise<unknown>;
@@ -109,7 +109,7 @@ describe("useProjectDraftSettings", () => {
   });
 
   it("ignores a late response for the old project even when the new project never loads", async () => {
-    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean }>();
+    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean; shared: boolean }>();
     getSettings.mockReturnValueOnce(late.promise);
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     let pending!: Promise<unknown>;
@@ -139,7 +139,7 @@ describe("useProjectDraftSettings", () => {
   });
 
   it("resetDraftSettings clears flags and cancels an in-flight load (shared or non-workspace)", async () => {
-    const pendingReq = deferred<{ requireDraftForMembers: boolean; isOwner: boolean }>();
+    const pendingReq = deferred<{ requireDraftForMembers: boolean; isOwner: boolean; shared: boolean }>();
     getSettings.mockReturnValueOnce(pendingReq.promise);
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     let pending!: Promise<unknown>;
