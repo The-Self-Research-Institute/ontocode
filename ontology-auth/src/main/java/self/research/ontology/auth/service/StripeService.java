@@ -70,6 +70,9 @@ public class StripeService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("MMMM d, yyyy");
 
+    @org.springframework.beans.factory.annotation.Autowired
+    NewSubscriptionCreator subscriptionCreator;
+
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceService workspaceService;
@@ -158,7 +161,7 @@ public class StripeService {
         return intent.getClientSecret();
     }
 
-    public String createSubscriptionAfterSetup(User user, String setupIntentId,
+    public SubscriptionResult createSubscriptionAfterSetup(User user, String setupIntentId,
             String planName, String interval, String workspaceId) throws StripeException {
 
         if (!tryClaimSubscriptionCreationLock(user.getId())) {
@@ -267,10 +270,7 @@ public class StripeService {
                             user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription, planName);
                 }
 
-                String createIdempotencyKey = "sub-create-" + user.getId() + "-" + setupIntentId;
-                subscription = com.stripe.model.Subscription.create(
-                        createParams.build(),
-                        com.stripe.net.RequestOptions.builder().setIdempotencyKey(createIdempotencyKey).build());
+                subscription = subscriptionCreator.create(user, createParams, setupIntentId);
 
                 user.setHasUsedFreeTrial(true);
                 if (user.getFirstSubscriptionAt() == null) {
@@ -285,7 +285,7 @@ public class StripeService {
 
             log.info("Subscription {} ({}) created for user {} / workspace {}",
                     subscription.getId(), subscription.getStatus(), user.getUsername(), workspaceId);
-            return subscription.getId();
+            return subscriptionCreator.resultFor(subscription);
         } finally {
             releaseSubscriptionCreationLock(user.getId());
         }

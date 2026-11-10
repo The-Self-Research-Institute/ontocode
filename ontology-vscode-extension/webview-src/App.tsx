@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from "react";
 import { useAuth } from "./custom-hook/useAuth";
 import apiClient, { updateBaseUrl, ApiError } from "./services/apiClient";
+import { resolveSubscriptionPayment, defaultStripeLoader, PAYMENT_PENDING_MESSAGE } from "./utils/subscriptionPayment";
 import { openOntologyFile, fileContentToBase64 } from "./utils/fileAccess";
 import { getGatewayUrl, getStoredDeploymentType } from "./config/deploymentConfig";
 import { CollaborationProvider } from "./contexts/CollaborationContext";
@@ -1386,20 +1387,12 @@ const AppContent = () => {
       throw new Error("Missing selected plan");
     }
 
-    try {
-      await apiClient.post("/api/billing/subscribe", {
-        setupIntentId,
-        planName: resolvedPlan,
-        interval: resolvedInterval,
-        workspaceId: "",
-      });
-
+    const goToBilling = async (plan: string) => {
       try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
-      setSubscriptionPaymentError(null);
       setSubscriptionCheckout(null);
-      setAccountPlanName(resolvedPlan.toUpperCase());
+      setAccountPlanName(plan.toUpperCase());
       setAccountBillingInterval(resolvedInterval === "annual" ? "annual" : "monthly");
-      await refreshPermissions();
+      await refreshPermissions().catch(() => {});
       await refreshAccountSubscription().catch(() => null);
       setShowSubscriptionPlan(false);
       setSubscriptionReturnRoute(null);
@@ -1414,6 +1407,27 @@ const AppContent = () => {
         fileName: "",
         replace: true,
       });
+    };
+
+    try {
+      const response = await apiClient.post("/api/billing/subscribe", {
+        setupIntentId,
+        planName: resolvedPlan,
+        interval: resolvedInterval,
+        workspaceId: "",
+      });
+      const result = await resolveSubscriptionPayment(
+        response?.data || response,
+        subscriptionCheckout?.publishableKey ?? "",
+        defaultStripeLoader,
+        async () => (await refreshAccountSubscription())?.status,
+      );
+      if (result.kind === "failed") {
+        setSubscriptionPaymentError(result.message);
+        throw new Error(result.message);
+      }
+      setSubscriptionPaymentError(result.kind === "pending" ? PAYMENT_PENDING_MESSAGE : null);
+      await goToBilling(resolvedPlan);
     } catch (error: any) {
       console.error("Failed to complete subscription:", error);
       const errMsg =
@@ -1424,27 +1438,7 @@ const AppContent = () => {
         error?.message ||
         "";
       if (errMsg.toLowerCase().includes("already") && errMsg.toLowerCase().includes("subscription")) {
-        try { localStorage.removeItem("pendingPaymentRecovery"); } catch {}
-        setSubscriptionCheckout(null);
-        if (resolvedPlan) {
-          setAccountPlanName(resolvedPlan.toUpperCase());
-        }
-        setAccountBillingInterval(resolvedInterval === "annual" ? "annual" : "monthly");
-        await refreshPermissions().catch(() => {});
-        await refreshAccountSubscription().catch(() => null);
-        setShowSubscriptionPlan(false);
-        setSubscriptionReturnRoute(null);
-        resetWorkspaceHubNavigation();
-        clearHistory();
-        navigateTo({
-          view: "billing",
-          showSubscriptionPlan: false,
-          projectId: null,
-          projectName: "",
-          fileId: null,
-          fileName: "",
-          replace: true,
-        });
+        await goToBilling(resolvedPlan);
         return;
       }
       const friendly =
@@ -2028,6 +2022,9 @@ const AppContent = () => {
           <Loader2 size={40} className="text-purple-500 animate-spin" />
         </div>
       }>
+        {subscriptionPaymentError && !["active", "trialing"].includes((accountSubscriptionStatus || "").toLowerCase()) && (
+          <div className="fixed top-0 inset-x-0 z-50 px-4 py-3 bg-amber-500/90 text-black text-sm text-center">{subscriptionPaymentError}</div>
+        )}
         <BillingManagement
           workspace={{
             workspaceId: "", // always account-level
