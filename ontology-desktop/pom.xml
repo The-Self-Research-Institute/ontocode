@@ -78,10 +78,49 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>ban-openllet-pellet</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.github.galigator.openllet</exclude>
+                                        <exclude>com.github.galigator.openllet:*</exclude>
+                                        <exclude>com.clarkparsia.pellet</exclude>
+                                        <exclude>com.clarkparsia.pellet:*</exclude>
+                                        <exclude>net.sourceforge.owlapi:*pellet*</exclude>
+                                        <exclude>*:*openllet*</exclude>
+                                    </excludes>
+                                    <message>Openllet and Pellet are not allowed</message>
+                                </bannedDependencies>
+                                <bannedPlugins>
+                                    <excludes>
+                                        <exclude>org.apache.maven.plugins:maven-shade-plugin</exclude>
+                                        <exclude>org.apache.maven.plugins:maven-assembly-plugin</exclude>
+                                    </excludes>
+                                    <message>LGPL libraries must stay separate jars</message>
+                                </bannedPlugins>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>self.research.ontology.desktop.DesktopApplication</mainClass>
+                    <layout>ZIP</layout>
                     <excludes>
                         <exclude>
                             <groupId>org.projectlombok</groupId>
@@ -90,6 +129,26 @@
                         <exclude>
                             <groupId>io.netty</groupId>
                             <artifactId>netty-resolver-dns-native-macos</artifactId>
+                        </exclude>
+                        <exclude>
+                            <groupId>net.sourceforge.owlapi</groupId>
+                            <artifactId>org.semanticweb.hermit</artifactId>
+                        </exclude>
+                        <exclude>
+                            <groupId>net.sourceforge.owlapi</groupId>
+                            <artifactId>jfact</artifactId>
+                        </exclude>
+                        <exclude>
+                            <groupId>net.sourceforge.owlapi</groupId>
+                            <artifactId>owlexplanation</artifactId>
+                        </exclude>
+                        <exclude>
+                            <groupId>net.sourceforge.owlapi</groupId>
+                            <artifactId>telemetry</artifactId>
+                        </exclude>
+                        <exclude>
+                            <groupId>net.sf.trove4j</groupId>
+                            <artifactId>trove4j</artifactId>
                         </exclude>
                     </excludes>
                 </configuration>
@@ -103,6 +162,26 @@
                             <additionalProperties>
                                 <git.commit>${git.commit}</git.commit>
                             </additionalProperties>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.8.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-lgpl-libs</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                            <includeGroupIds>net.sourceforge.owlapi,net.sf.trove4j</includeGroupIds>
+                            <includeArtifactIds>org.semanticweb.hermit,jfact,owlexplanation,telemetry,trove4j</includeArtifactIds>
+                            <overWriteSnapshots>true</overWriteSnapshots>
                         </configuration>
                     </execution>
                 </executions>

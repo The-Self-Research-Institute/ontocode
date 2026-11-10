@@ -1,0 +1,57 @@
+name: Licence check
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  licences:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Scanner self-test
+        run: python scripts/licences/scan_artifacts.py --self-test
+      - name: Resolve dependencies
+        run: |
+          mvn -B -q dependency:go-offline -DskipTests || true
+      - name: Maven licences
+        run: python scripts/licences/check_maven.py
+        env:
+          LICENCE_OFFLINE: "0"
+      - name: npm licences
+        run: python scripts/licences/check_npm.py
+      - name: Build jars
+        run: |
+          mvn -B -q -DskipTests package
+          mvn -B -q -DskipTests -f ontology-desktop/pom.xml package
+      - name: Shipped jars
+        run: |
+          python scripts/licences/scan_artifacts.py \
+            ontology-auth/target/*-exec.jar \
+            ontology-editor/target/*-exec.jar \
+            ontology-plugin-service/target/*-exec.jar \
+            ontology-reasoner-worker/target/*-exec.jar \
+            ontology-data-migrator/target/*-exec.jar \
+            ontology-gateway/target/gateway-1.0.0.jar \
+            ontology-desktop/target/ontology-desktop-1.0.0.jar \
+            --report licence-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: licence-report
+          path: licence-report.json

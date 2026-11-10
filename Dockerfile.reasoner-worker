@@ -29,6 +29,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /build/ontology-reasoner-worker/target/*-exec.jar app.jar
+COPY licenses/ /licenses/
 
 EXPOSE 8088
 

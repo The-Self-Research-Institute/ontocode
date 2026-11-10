@@ -692,13 +692,28 @@ function discardPartialArchive(archiveFile) {
     } catch (_) {}
 }
 
+const LGPL_LIB_DIR = path.join(RESOURCES_DIR, 'lib');
+const DESKTOP_MAIN_CLASS = 'self.research.ontology.desktop.DesktopApplication';
+
+function lgplLibFingerprint() {
+    try {
+        return fs.readdirSync(LGPL_LIB_DIR).sort()
+            .map((f) => `${f}:${fs.statSync(path.join(LGPL_LIB_DIR, f)).size}`).join(',');
+    } catch { return ''; }
+}
+
+function desktopJarArgs(jar, originalJar) {
+    if (jar === originalJar) return [`-Dloader.path=${LGPL_LIB_DIR}`, '-jar', jar];
+    return ['-cp', [jar, path.join(LGPL_LIB_DIR, '*')].join(path.delimiter), DESKTOP_MAIN_CLASS];
+}
+
 async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPath) {
     const extractedJar = path.join(cdsDir, 'extracted', path.basename(originalJar));
     const archiveFile  = path.join(cdsDir, `${name.toLowerCase()}.jsa`);
     const markerFile   = path.join(cdsDir, '.java-bin');
 
     const jarStat = fs.statSync(originalJar);
-    const jarFingerprint = `${jarStat.mtimeMs}:${jarStat.size}`;
+    const jarFingerprint = `${jarStat.mtimeMs}:${jarStat.size}` + (name === 'Desktop' ? `:${lgplLibFingerprint()}` : '');
     let recorded = null;
     if (fs.existsSync(markerFile)) {
         try { recorded = JSON.parse(fs.readFileSync(markerFile, 'utf8')); } catch {  }
@@ -851,7 +866,7 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
             `-XX:ArchiveClassesAtExit=${tempArchive}`,
             '-Dspring.context.exit=onRefresh',
             ...PLATFORM_JVM_FLAGS,
-            '-jar', extractedJar,
+            ...(name === 'Desktop' ? desktopJarArgs(extractedJar, originalJar) : ['-jar', extractedJar]),
             ...isolatedArgs,
         ], {
             ...env,
@@ -1027,7 +1042,7 @@ async function startDesktop() {
         ...PLATFORM_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
-        '-jar', launchJar,
+        ...desktopJarArgs(launchJar, jar),
         ...springArgs,
     ];
 

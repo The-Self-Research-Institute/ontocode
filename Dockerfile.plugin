@@ -40,6 +40,7 @@ RUN mkdir -p /app/storage && \
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
 COPY --from=build /build/ontology-plugin-service/target/*-exec.jar app.jar
+COPY licenses/ /licenses/
 
 USER 1000
 

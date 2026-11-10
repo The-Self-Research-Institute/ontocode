@@ -44,6 +44,10 @@ extraResources:
       - "!temurin-jre.tar.gz"
       - "!fuseki-6.1.0.tar.gz"
       - "!**/*.gitkeep"
+  - from: ../licenses
+    to: licenses
+    filter:
+      - "**/*"
 
 # ── Windows ────────────────────────────────────────────────────────────────────
 win:

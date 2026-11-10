@@ -24,6 +24,8 @@ const WEBVIEW = path.join(REPO_ROOT, 'ontology-vscode-extension', 'webview-src')
 const DESKTOP_JAVA = path.join(REPO_ROOT, 'ontology-desktop');
 const DESKTOP_JAR_SRC = path.join(DESKTOP_JAVA, 'target', 'ontology-desktop-1.0.0.jar');
 const DESKTOP_JAR_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'jars', 'desktop.jar');
+const DESKTOP_LIB_SRC = path.join(DESKTOP_JAVA, 'target', 'lib');
+const DESKTOP_LIB_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'lib');
 const SWRL_JAR_SRC = path.join(REPO_ROOT, 'ontology-swrl', 'target', 'ontology-swrl-1.0.0.jar');
 const SWRL_JAR_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'jars', 'swrl.jar');
 const RENDERER_DIST = path.join(ELECTRON_APP, 'renderer', 'dist');
@@ -241,6 +243,7 @@ function buildJava(quick) {
     ensureDir(path.dirname(DESKTOP_JAR_DEST));
     fs.copyFileSync(DESKTOP_JAR_SRC, DESKTOP_JAR_DEST);
     console.log(`  ✓  desktop.jar → ${DESKTOP_JAR_DEST}`);
+    copyDesktopLibs(DESKTOP_LIB_SRC, DESKTOP_LIB_DEST);
     run(`mvn ${quick ? '' : 'clean '}package -pl ontology-swrl -DskipTests -q`, REPO_ROOT, 'Maven: ontology-swrl (SWRL reasoner)');
     if (!fs.existsSync(SWRL_JAR_SRC)) {
         throw new Error(`Missing ${SWRL_JAR_SRC} after Maven build`);
@@ -263,6 +266,7 @@ function buildJavaPatch() {
     ensureDir(path.dirname(DESKTOP_JAR_DEST));
     fs.copyFileSync(DESKTOP_JAR_SRC, DESKTOP_JAR_DEST);
     console.log(`  ✓  desktop.jar → ${DESKTOP_JAR_DEST}`);
+    copyDesktopLibs(DESKTOP_LIB_SRC, DESKTOP_LIB_DEST);
 }
 
 function patchPortableJarOnly(opts) {
@@ -276,9 +280,22 @@ function patchPortableJarOnly(opts) {
     }
     ensureDir(path.dirname(jarDest));
     fs.copyFileSync(DESKTOP_JAR_DEST, jarDest);
+    copyDesktopLibs(DESKTOP_LIB_DEST, path.join(portable, 'resources', 'backend', 'lib'));
     console.log(`\n→ Patch desktop.jar only`);
     console.log(`  ✓  ${jarDest}`);
     console.log('\n  Quit OntoCode Studio completely (Task Manager: end java.exe), then restart the portable exe.');
+}
+
+function copyDesktopLibs(srcDir, destDir) {
+    fs.rmSync(destDir, { recursive: true, force: true });
+    if (!fs.existsSync(srcDir)) {
+        throw new Error(`Missing LGPL lib folder ${srcDir}. Run the ontology-desktop Maven package first.`);
+    }
+    ensureDir(destDir);
+    for (const name of fs.readdirSync(srcDir).filter((f) => f.endsWith('.jar'))) {
+        fs.copyFileSync(path.join(srcDir, name), path.join(destDir, name));
+    }
+    console.log(`  ✓  lib/ → ${destDir}`);
 }
 
 function buildPlugins() {
@@ -474,6 +491,7 @@ function packPortable(opts) {
         ensureDir(path.dirname(portableJar));
         fs.copyFileSync(DESKTOP_JAR_DEST, portableJar);
         console.log(`  ✓  desktop.jar → portable`);
+        copyDesktopLibs(DESKTOP_LIB_DEST, path.join(backendDest, 'lib'));
     }
 
     const pluginBundles = path.join(backendDest, 'plugin-bundles');

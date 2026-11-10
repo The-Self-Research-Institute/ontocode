@@ -9,6 +9,28 @@ Date generated | Revision ID
 
 ---
 
+## Programs we ship and licence choices (maintained by hand)
+
+The scan below lists libraries only. This section covers separate programs and a few licence notes. Keep it when the list is regenerated.
+
+### Separate programs
+
+Program | Version | Licence | Where it is used
+:--- | :---: | :---: | :---
+[PostgreSQL](https://www.postgresql.org/) | 17 | PostgreSQL License (BSD-style, copyright notice must stay) | Database for all services. The desktop app bundles the server; the Docker setup uses the unmodified `postgres:17` image.
+[PostgreSQL binaries repackaged by zonky](https://github.com/zonkyio/embedded-postgres-binaries) | see `POSTGRES_VERSION` in `electron-app/scripts/prepare-resources.js` | Apache-2.0 (packaging); contents are PostgreSQL | Desktop app only, unmodified.
+[Apache Jena Fuseki](https://jena.apache.org/documentation/fuseki2/) | 6.1.0 | Apache-2.0 | Ontology triple store (TDB2). Bundled in the desktop app and built into the `ontocode-fuseki` Docker image.
+[Apache Jena](https://jena.apache.org/) (`jena-arq`) | 6.1.0 | Apache-2.0 | Library used by the editor service for SPARQL.
+
+### Notes
+
+- **OWL API** can be used under LGPL-3.0 or Apache-2.0. We use it under Apache-2.0.
+- **SWRLAPI 2.1.3** is BSD-2-Clause. The scan below also lists GPL-2.0-only for it. We found no GPL text in the SWRLAPI source jar from Maven Central, so we treat that entry as a scanner mistake (details in `docs/licences/licence-decisions.md`). The licence text (Stanford University, BSD-2-Clause) is in `licenses/swrlapi/LICENSE.txt`. One file in it, `NaturalOrderComparator.java`, has its own BSD-style and zlib-style notices, which stay with the file.
+- **LGPL libraries:** HermiT, JFact, owlexplanation, trove4j and OWL API telemetry are shipped unmodified as separate jar files. Licence texts, source links and how to swap them are in `licenses/lgpl/`. The reasoner once labelled "FaCT++" in the interface is JFact.
+- **Openllet and Pellet** are not shipped, and the build rejects them.
+
+---
+
 ## Dependencies
 
 Package|Licenses

@@ -4,6 +4,7 @@ dist-electron/
 # Bundled JARs and binaries — populated by: npm run prepare-resources
 # Do NOT commit these; they are large binary files built from the Maven project
 resources/backend/jars/*.jar
+resources/backend/lib/
 resources/backend/jre/
 resources/backend/jre17/
 resources/backend/.jre-cache/

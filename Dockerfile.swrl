@@ -57,6 +57,8 @@ RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /app/logs && \
     chown -R 1000:1000 /app
 
+COPY licenses/ /licenses/
+
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
 COPY --from=build /build/ontology-swrl/target/*.jar app.jar
 

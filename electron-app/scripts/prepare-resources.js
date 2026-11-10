@@ -151,11 +151,27 @@ function copyIfExists(src, dest, label) {
     return false;
 }
 
+function copyLgplLibs() {
+    const srcDir = path.join(REPO_ROOT, 'ontology-desktop', 'target', 'lib');
+    const destDir = path.join(RESOURCES, 'lib');
+    removeDir(destDir);
+    if (!fs.existsSync(srcDir)) {
+        console.warn(`  ⚠  NOT FOUND: LGPL lib folder  (expected: ${srcDir})`);
+        return;
+    }
+    ensureDir(destDir);
+    for (const name of fs.readdirSync(srcDir).filter((f) => f.endsWith('.jar'))) {
+        fs.copyFileSync(path.join(srcDir, name), path.join(destDir, name));
+        console.log(`  ✓  Copied lib/${name}`);
+    }
+}
+
 function copyDesktopJar() {
     console.log('\n[1/4] Desktop JAR (ontology-desktop)');
     const src = path.join(REPO_ROOT, 'ontology-desktop', 'target', 'ontology-desktop-1.0.0.jar');
     const dest = path.join(JARS_DIR, 'desktop.jar');
     const ok = copyIfExists(src, dest, 'desktop.jar');
+    copyLgplLibs();
     if (!ok) {
         console.log('       Build:  mvn -pl ontology-desktop package -DskipTests');
         console.log('       Or:     node scripts/build-desktop.js --java');

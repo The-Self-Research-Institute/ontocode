@@ -205,6 +205,44 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>ban-openllet-pellet</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.github.galigator.openllet</exclude>
+                                        <exclude>com.github.galigator.openllet:*</exclude>
+                                        <exclude>com.clarkparsia.pellet</exclude>
+                                        <exclude>com.clarkparsia.pellet:*</exclude>
+                                        <exclude>net.sourceforge.owlapi:*pellet*</exclude>
+                                        <exclude>*:*openllet*</exclude>
+                                    </excludes>
+                                    <message>Openllet and Pellet are not allowed</message>
+                                </bannedDependencies>
+                                <bannedPlugins>
+                                    <excludes>
+                                        <exclude>org.apache.maven.plugins:maven-shade-plugin</exclude>
+                                        <exclude>org.apache.maven.plugins:maven-assembly-plugin</exclude>
+                                    </excludes>
+                                    <message>LGPL libraries must stay separate jars</message>
+                                </bannedPlugins>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
