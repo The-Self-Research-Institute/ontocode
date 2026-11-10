@@ -480,6 +480,7 @@ export function friendlyRuleError(e: any, fallback: string): string {
     return 'The rules changed since you opened them. Refresh the list, then try again.';
   }
   if (status === 404) return 'This rule no longer exists. Refresh the list.';
+  if (status === 413) return String(data?.error || data?.message || 'This ontology is too large for the rule engine on this server.');
   if (status === 503) return 'The rule service is not available right now. Try again in a moment.';
   return data?.message || e?.message || fallback;
 }

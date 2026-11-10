@@ -42,6 +42,12 @@ public class SwrlRuleClient {
         }
     }
 
+    public static class TooLargeException extends UnavailableException {
+        public TooLargeException(String message) {
+            super(message);
+        }
+    }
+
     private final Transport transport;
     private final String baseUrl;
     private final String internalToken;
@@ -162,14 +168,30 @@ public class SwrlRuleClient {
         if (baseUrl.isEmpty()) {
             throw new UnavailableException("The rule service is not configured");
         }
+        Answer answer;
         try {
-            return transport.send(method, url, body, internalToken);
+            answer = transport.send(method, url, body, internalToken);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new UnavailableException("The rule service call was interrupted");
         } catch (Exception e) {
             throw new UnavailableException("The rule service could not be reached");
         }
+        if (answer.status() == 413) {
+            throw new TooLargeException(tooLargeMessage(answer.body()));
+        }
+        return answer;
+    }
+
+    private static String tooLargeMessage(String body) {
+        try {
+            String message = MAPPER.readTree(body == null ? "{}" : body).path("message").asText("");
+            if (!message.isBlank()) {
+                return message;
+            }
+        } catch (Exception ignored) {
+        }
+        return "This ontology is too large for the rule engine on this server.";
     }
 
     private static final class JdkTransport implements Transport {
