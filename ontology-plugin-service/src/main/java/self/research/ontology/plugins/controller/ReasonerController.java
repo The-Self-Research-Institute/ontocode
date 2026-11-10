@@ -355,7 +355,7 @@ public class ReasonerController {
                 "errorType", "INVALID_REASONER_TYPE",
                 "projectId", projectId,
                 "technicalDetail", technicalDetail,
-                "suggestion", "Select a supported reasoner (HermiT, ELK, FaCT++, or Structural) and try again."
+                "suggestion", "Select a supported reasoner (HermiT, ELK, JFact, or Structural) and try again."
             ));
         }
         if (e instanceof ClassNotFoundException
