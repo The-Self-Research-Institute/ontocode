@@ -36,6 +36,10 @@ public interface ProjectRepository {
 
     void upsertMetadata(String id, Map<String, Object> metadata, String statusOnInsert, Instant now);
 
+    void setRequireDraftForMembers(String projectId, String parentProjectId, boolean value, Instant now);
+
+    boolean isRequireDraftForMembers(String parentProjectId);
+
     void upsertImportProgress(String id, Map<String, Object> progress, String statusMessage, Instant now);
 
     void upsertOwnerEmail(String id, String ownerEmail, Instant now);

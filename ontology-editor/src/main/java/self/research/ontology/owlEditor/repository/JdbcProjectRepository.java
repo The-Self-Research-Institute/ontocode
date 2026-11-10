@@ -138,9 +138,35 @@ public class JdbcProjectRepository implements ProjectRepository {
     @Override
     public void upsertMetadata(String id, Map<String, Object> metadata, String statusOnInsert, Instant now) {
         EditorSql.update(jdbc, "insert into ontology_file (id, name, created_at, status, metadata, updated_at) "
-                        + "values (?, ?, ?, ?, ?, ?) on conflict (id) do update set metadata = excluded.metadata, "
+                        + "values (?, ?, ?, ?, ?::jsonb - 'requireDraftForMembers', ?) on conflict (id) do update set "
+                        + "metadata = case when jsonb_exists(ontology_file.metadata, 'requireDraftForMembers') then "
+                        + "excluded.metadata || jsonb_build_object('requireDraftForMembers', "
+                        + "ontology_file.metadata -> 'requireDraftForMembers') else excluded.metadata end, "
                         + "updated_at = excluded.updated_at",
                 id, id, Instants.toDb(now), statusOnInsert, EditorSql.json(metadata), Instants.toDb(now));
+    }
+
+    @Override
+    public void setRequireDraftForMembers(String projectId, String parentProjectId, boolean value, Instant now) {
+        int updated = EditorSql.update(jdbc, "update ontology_file set metadata = jsonb_set("
+                        + "coalesce(metadata, '{}'::jsonb), '{requireDraftForMembers}', to_jsonb(?::boolean), true) "
+                        + "where project_id = ? or id = ? or starts_with(id, ? || '--')",
+                value, parentProjectId, parentProjectId, parentProjectId);
+        if (updated == 0) {
+            EditorSql.update(jdbc, "insert into ontology_file (id, name, created_at, status, metadata, updated_at) "
+                            + "values (?, ?, ?, 'UPLOADED', jsonb_build_object('requireDraftForMembers', ?::boolean), ?) "
+                            + "on conflict (id) do update set metadata = jsonb_set(coalesce(ontology_file.metadata, "
+                            + "'{}'::jsonb), '{requireDraftForMembers}', to_jsonb(?::boolean), true)",
+                    projectId, projectId, Instants.toDb(now), value, Instants.toDb(now), value);
+        }
+    }
+
+    @Override
+    public boolean isRequireDraftForMembers(String parentProjectId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject("select exists (select 1 from ontology_file where "
+                + "(project_id = ? or id = ? or starts_with(id, ? || '--')) "
+                + "and metadata @> '{\"requireDraftForMembers\": true}'::jsonb)", Boolean.class,
+                parentProjectId, parentProjectId, parentProjectId));
     }
 
     @Override

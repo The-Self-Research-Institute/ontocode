@@ -136,15 +136,12 @@ public class ProjectMetadataService {
     }
 
     public boolean isRequireDraftForMembers(String projectId) {
-        return readMeta(projectId)
-                .map(m -> Boolean.TRUE.equals(m.get("requireDraftForMembers")))
-                .orElse(false);
+        return projectId != null && !projectId.isBlank()
+                && projectRepository.isRequireDraftForMembers(ProjectAccessService.parentOf(projectId));
     }
 
     public void setRequireDraftForMembers(String projectId, boolean value) {
-        Map<String, Object> meta = readMeta(projectId).map(HashMap::new).orElseGet(HashMap::new);
-        meta.put("requireDraftForMembers", value);
-        writeMeta(projectId, meta);
+        projectRepository.setRequireDraftForMembers(projectId, ProjectAccessService.parentOf(projectId), value, Instant.now());
     }
 
     /**

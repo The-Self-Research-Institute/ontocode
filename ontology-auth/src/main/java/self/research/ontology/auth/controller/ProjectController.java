@@ -21,6 +21,7 @@ import self.research.ontology.auth.repository.OntologyFileNameRepository;
 import self.research.ontology.common.db.BlobStore;
 import self.research.ontology.common.db.StoredFile;
 import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.service.ProjectRoleResolver;
 import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -1129,32 +1130,12 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
             
-            // Determine user's project role
-            String userProjectRole = "VIEWER"; // default
-            if (project.getOwnerId().equals(user.getId())) {
-                userProjectRole = "OWNER";
-            } else {
-                // Workspace owners/admins always get ADMIN role in projects
-                Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
-                boolean isWsOwnerOrAdmin = false;
-                if (wsOpt.isPresent()) {
-                    Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
-                    if (wsMember != null) {
-                        Workspace.WorkspaceRole wsRole = wsMember.getRole();
-                        if (wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN) {
-                            userProjectRole = "ADMIN";
-                            isWsOwnerOrAdmin = true;
-                        }
-                    }
-                }
-                if (!isWsOwnerOrAdmin) {
-                    Project.ProjectMember pm = project.getMember(user.getId());
-                    if (pm != null) {
-                        userProjectRole = pm.getRole();
-                    }
-                }
-            }
-            
+            Workspace.WorkspaceMember wsMember = workspaceService.getWorkspace(project.getWorkspaceId())
+                    .map(ws -> ws.getMember(user.getId())).orElse(null);
+            Project.ProjectMember pm = project.getMember(user.getId());
+            String userProjectRole = ProjectRoleResolver.resolve(project.getOwnerId().equals(user.getId()),
+                    wsMember != null ? wsMember.getRole() : null, pm != null ? pm.getRole() : null);
+
             // Get files from project metadata (primary source)
             List<Map<String, Object>> files = new ArrayList<>();
             for (Project.FileMetadataInfo fileInfo : project.getActiveFiles()) {
