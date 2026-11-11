@@ -103,3 +103,58 @@ test('waiting for a server that is already dead fails at once', async () => {
 test('passwords that are not plain URL-safe text are rejected before they reach SQL', async () => {
     await assert.rejects(rt.applyPassword(tempDir(), tempDir(), "x'; drop table y; --"), /unsupported format/);
 });
+
+function bundleWithTemplate(major) {
+    const root = tempDir();
+    fs.mkdirSync(path.join(root, 'cluster-template', 'base'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'cluster-template', 'PG_VERSION'), `${major}\n`);
+    fs.writeFileSync(path.join(root, 'PG_MAJOR'), `${major}\n`);
+    return root;
+}
+
+function assertAllEmptyDirsExist(dataDir) {
+    for (const dir of rt.EMPTY_CLUSTER_DIRS) {
+        assert.ok(fs.statSync(path.join(dataDir, dir)).isDirectory(), `${dir} should exist`);
+    }
+}
+
+test('a new database copied from a template that lost its empty folders gets them back', async () => {
+    const root = bundleWithTemplate('17');
+    const dataDir = path.join(tempDir(), 'postgres');
+
+    const result = await rt.prepareCluster(root, dataDir, 'unused-password-0000');
+
+    assert.equal(result.created, true);
+    assertAllEmptyDirsExist(dataDir);
+    assert.ok(fs.existsSync(path.join(dataDir, 'pg_notify')));
+});
+
+test('an existing database that is missing its empty folders is repaired on the next start', async () => {
+    const root = bundleWithTemplate('17');
+    const dataDir = tempDir();
+    fs.writeFileSync(path.join(dataDir, 'PG_VERSION'), '17\n');
+
+    const result = await rt.prepareCluster(root, dataDir, 'unused-password-0000');
+
+    assert.equal(result.created, false);
+    assertAllEmptyDirsExist(dataDir);
+});
+
+test('a database from another PostgreSQL major version is left untouched', async () => {
+    const root = bundleWithTemplate('17');
+    const dataDir = tempDir();
+    fs.writeFileSync(path.join(dataDir, 'PG_VERSION'), '16\n');
+
+    await rt.prepareCluster(root, dataDir, 'unused-password-0000');
+
+    assert.equal(fs.existsSync(path.join(dataDir, 'pg_notify')), false);
+});
+
+test('the list of restored folders matches the empty folders of a freshly built cluster', () => {
+    const expected = [
+        'pg_commit_ts', 'pg_dynshmem', 'pg_logical/mappings', 'pg_logical/snapshots', 'pg_notify',
+        'pg_replslot', 'pg_serial', 'pg_snapshots', 'pg_stat_tmp', 'pg_tblspc', 'pg_twophase',
+        'pg_wal/archive_status', 'pg_wal/summaries',
+    ];
+    assert.deepEqual([...rt.EMPTY_CLUSTER_DIRS].sort(), expected.sort());
+});

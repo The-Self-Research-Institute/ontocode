@@ -112,9 +112,32 @@ async function buildCluster(root, dataDir, password, { log = () => {} } = {}) {
     if (created.code !== 0) throw failure('create database', created);
 }
 
+const EMPTY_CLUSTER_DIRS = [
+    'pg_commit_ts',
+    'pg_dynshmem',
+    'pg_logical/mappings',
+    'pg_logical/snapshots',
+    'pg_notify',
+    'pg_replslot',
+    'pg_serial',
+    'pg_snapshots',
+    'pg_stat_tmp',
+    'pg_tblspc',
+    'pg_twophase',
+    'pg_wal/archive_status',
+    'pg_wal/summaries',
+];
+
+function restoreEmptyClusterDirs(dataDir) {
+    for (const dir of EMPTY_CLUSTER_DIRS) fs.mkdirSync(path.join(dataDir, dir), { recursive: true });
+}
+
 async function prepareCluster(root, dataDir, password, { log = () => {} } = {}) {
     const state = clusterState(dataDir);
-    if (state === 'present') return { created: false };
+    if (state === 'present') {
+        if (checkVersion(root, dataDir).ok) restoreEmptyClusterDirs(dataDir);
+        return { created: false };
+    }
     if (state === 'incomplete') {
         const aside = `${dataDir}.incomplete-${Date.now()}`;
         fs.renameSync(dataDir, aside);
@@ -124,6 +147,7 @@ async function prepareCluster(root, dataDir, password, { log = () => {} } = {}) 
     if (fs.existsSync(path.join(template, 'PG_VERSION'))) {
         fs.mkdirSync(path.dirname(dataDir), { recursive: true });
         fs.cpSync(template, dataDir, { recursive: true });
+        restoreEmptyClusterDirs(dataDir);
         return { created: true, fromTemplate: true };
     }
     await buildCluster(root, dataDir, password, { log });
@@ -218,6 +242,7 @@ module.exports = {
     checkVersion,
     buildCluster,
     prepareCluster,
+    EMPTY_CLUSTER_DIRS,
     applyPassword,
     serverArgs,
     probe,
