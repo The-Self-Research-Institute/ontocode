@@ -170,4 +170,12 @@ public class JdbcUserRepository implements UserRepository {
     public void releaseSubscriptionCreationLock(String userId) {
         jdbc.update("update app_user set subscription_creation_locked_at = null where id = ?", userId);
     }
+
+    @Override
+    public boolean markPastDueIfCurrentSubscription(String userId, String subscriptionId) {
+        return AuthSql.update(jdbc,
+                "update app_user set subscription_status = 'past_due' where id = ? "
+                        + "and stripe_subscription_id = ? and subscription_status is distinct from 'canceled'",
+                userId, subscriptionId) > 0;
+    }
 }

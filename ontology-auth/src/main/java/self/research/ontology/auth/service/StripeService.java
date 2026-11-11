@@ -864,9 +864,7 @@ public class StripeService {
             return;
         }
 
-        findUserForInvoice(invoice).ifPresent(user -> {
-            user.setSubscriptionStatus("past_due");
-            userRepository.save(user);
+        findUserForInvoice(invoice).flatMap(found -> PastDueMarker.apply(userRepository, found, invoice)).ifPresent(user -> {
             log.warn("[InvoicePaymentFailed] user={} invoice={} billingReason={} — status set to past_due",
                     user.getUsername(), invoice.getId(), billingReason);
 

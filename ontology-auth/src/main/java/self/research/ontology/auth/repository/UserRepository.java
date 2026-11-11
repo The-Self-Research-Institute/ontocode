@@ -35,4 +35,6 @@ public interface UserRepository {
     boolean tryClaimSubscriptionCreationLock(String userId, LocalDateTime now, LocalDateTime staleBefore);
 
     void releaseSubscriptionCreationLock(String userId);
+
+    boolean markPastDueIfCurrentSubscription(String userId, String subscriptionId);
 }
