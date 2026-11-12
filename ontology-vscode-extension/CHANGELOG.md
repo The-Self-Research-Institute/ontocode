@@ -8,33 +8,9 @@ All notable changes to OntoCode Studio are listed here, newest first. The same n
 
 - Database — OntoCode now uses PostgreSQL as its database instead of MongoDB. The desktop app includes it, so there is nothing to install, and the first start takes a little longer.
 
-**SWRL**
-
-- SWRL — Results are grouped by the rule that produced them. Facts from standard reasoning and class relationships stay in their own sections.
-- SWRL — New Control, Asserted Axioms and OWL 2 RL tabs, a Clone button while editing a rule, a loading state with Retry for the rule list, and a Why? button that is always visible and explains facts no rule produced.
-- SWRL — When an ontology is too large for the rule engine, you now see that reason instead of "try again".
-- SWRL — Execute All and Execute Selected skip disabled rules and SQWRL queries. Rules that another tool saved as disabled count as disabled, and every rule stored in the ontology is listed.
-- SWRL functions — Date, time, duration, number, text and SQWRL functions were checked against the engine and corrected.
-- SWRL on desktop — The Rules tab calls the rule service at the right address, waits for it to finish starting and allows up to 120 seconds.
-- Export — Manchester files now keep general class axioms in a form the reader accepts. Manchester and OBO export warn that rule names, comments and the disabled flag are lost, and suggest ELK when HermiT is slow on a large ontology.
-
-**Editor, graph and Change Assistant**
-
-- Classes — All Entities search, class ancestors shown properly, and search that works while the tree is collapsed.
-- Graph — The VOWL view no longer stays blank until Refresh. Network blobs, the 0.0x zoom, the cut-off settings panel, Expand All being reset by the reasoner, datatypes shown as classes and the grey-out after a selection were fixed.
-- Change Assistant — The Activity tab is hidden in Draft mode, and draft cards are readable in dark mode.
-
-**VS Code and desktop**
-
-- VS Code — The panel stays signed in and logs out correctly, and login and the workspace list no longer hang.
-- Desktop — An uploaded file keeps its ontology IRI, version IRI and annotations.
-- Desktop — The signing secret and admin password are created on first launch and kept in the system keychain, instead of being fixed values.
-- Desktop — The app no longer fails to start for want of its startup data settings, and the Fuseki download unpacks on macOS.
-
-**Licences and security**
+**Licences**
 
 - Licences — LGPL libraries such as HermiT and JFact ship as separate files with their licence texts, and a check covers every shipped library.
-- Security — POI, follow-redirects and qs were updated to versions without the reported vulnerabilities.
 
 ## [1.2.8] - 2026-10-29
 
