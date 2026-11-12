@@ -21,6 +21,7 @@ import type { SqwrlSort } from './sqwrlModel';
 import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, InferredAxiom, AxiomsPageResponse } from './types';
 import { RuleHeads, headNameSet, parseRuleHeads, ruleGroupLabel, rulesProducing } from './ruleGroups';
 import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle, INFERRED_NOTE, ADD_INFERRED_CAP, axiomsToOps, collectInferredAxioms, inferredPlan, resultCounts, resultHeading, searchMatchText, cutoffNote, showMoreLabel, countLabel, sectionTotal, groupLabel, groupTotal, ResultFilter } from './ruleModel';
+import { announceViewOnlyBlocked, isEditRefused } from './ruleModel';
 import type { AxiomKind, FactOp } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
@@ -2253,6 +2254,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       window.dispatchEvent(new CustomEvent('ontocode:committed-change', { detail: { projectId, direction: 'APPLY', changeSetId: res?.changeSetId } }));
       return { ok: true, message: '' };
     } catch (e: any) {
+      if (isEditRefused(e)) {
+        announceViewOnlyBlocked();
+        return { ok: false, message: friendlyRuleError(e, 'Could not add the facts.') };
+      }
       if (/stale|out of date|\(409\)|changed since/i.test(String(e?.message || ''))) {
         return { ok: false, message: 'The ontology or the rules changed since you ran this. Run the rules again, then add.' };
       }
@@ -2436,7 +2441,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       console.error('Execution failed:', e);
       const failed = {
         success: false,
-        errorMessage: 'Execution failed',
+        errorMessage: friendlyRuleError(e, 'Execution failed'),
         executionTimeMs: 0,
         totalRulesExecuted: 0,
         inferredAxiomsCount: 0,

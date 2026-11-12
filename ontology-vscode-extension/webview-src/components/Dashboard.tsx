@@ -235,6 +235,7 @@ import { buildEntityIri, isBulkChangeIri, labelForNewEntity } from "../utils/ent
 import { requestChangeAssistantTab } from "../utils/changeAssistantNav";
 import { keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
+import { useViewOnlyBlockedPrompt } from "../hooks/useViewOnlyBlockedPrompt";
 import { DRAFT_COPY_MAX_MISSING, DRAFT_COPY_MAX_WAIT_MS, ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
 import { useLastCallTimer } from "../hooks/useLastCallTimer";
 import { PluginMarketplace } from "./PluginMarketplace";
@@ -1143,6 +1144,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     : "You have view-only access. Upgrade your plan to edit.";
   const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | 'viewer' | 'draftRequired' | null>(null);
   const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
+  useViewOnlyBlockedPrompt(setShowProPromptType, isProjectViewerRole);
   const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const [metricViewMode, setMetricViewMode] = useState<Record<string, "used" | "available">>({});

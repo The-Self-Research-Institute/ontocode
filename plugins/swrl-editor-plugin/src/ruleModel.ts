@@ -461,10 +461,21 @@ export function ruleWriteBody(form: RuleFormValues, label: string): {
 export const PUBLIC_EDIT_DISABLED_MESSAGE =
   'The project owner turned off public editing. Switch to Draft Mode to make your changes.';
 
+export const VIEW_ONLY_BLOCKED_EVENT = 'ontocode:view-only-blocked';
+
+export function isEditRefused(e: any): boolean {
+  return e?.status === 403 && Boolean(e?.data?.requiresUpgrade || e?.data?.viewOnly);
+}
+
+export function announceViewOnlyBlocked(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(VIEW_ONLY_BLOCKED_EVENT));
+}
+
 export function friendlyRuleError(e: any, fallback: string): string {
   const status: number | undefined = e?.status;
   const data = e?.data;
   if (status === 403 && data?.code === 'PUBLIC_EDIT_DISABLED') return PUBLIC_EDIT_DISABLED_MESSAGE;
+  if (isEditRefused(e)) return 'Your account can run rules but cannot change this ontology. Ask the workspace owner to upgrade, or switch to Draft Mode.';
   const errors: unknown[] = Array.isArray(data?.errors) ? data.errors : [];
   const suggestions: unknown[] = Array.isArray(data?.suggestions) ? data.suggestions : [];
   if (status === 400 || errors.length > 0) {
