@@ -140,6 +140,33 @@ test('an existing database that is missing its empty folders is repaired on the 
     assertAllEmptyDirsExist(dataDir);
 });
 
+const posixOnly = { skip: process.platform === 'win32' && 'file modes do not apply on Windows' };
+
+test('a database copied from the template is private to its owner, as PostgreSQL requires', posixOnly, async () => {
+    const root = bundleWithTemplate('17');
+    fs.chmodSync(path.join(root, 'cluster-template'), 0o755);
+    fs.chmodSync(path.join(root, 'cluster-template', 'PG_VERSION'), 0o644);
+    const dataDir = path.join(tempDir(), 'postgres');
+
+    await rt.prepareCluster(root, dataDir, 'unused-password-0000');
+
+    assert.equal(fs.statSync(dataDir).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(dataDir, 'base')).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(dataDir, 'pg_notify')).mode & 0o777, 0o700);
+    assert.equal(fs.statSync(path.join(dataDir, 'PG_VERSION')).mode & 0o777, 0o600);
+});
+
+test('an existing database folder with open permissions is tightened on the next start', posixOnly, async () => {
+    const root = bundleWithTemplate('17');
+    const dataDir = tempDir();
+    fs.writeFileSync(path.join(dataDir, 'PG_VERSION'), '17\n');
+    fs.chmodSync(dataDir, 0o755);
+
+    await rt.prepareCluster(root, dataDir, 'unused-password-0000');
+
+    assert.equal(fs.statSync(dataDir).mode & 0o777, 0o700);
+});
+
 test('a database from another PostgreSQL major version is left untouched', async () => {
     const root = bundleWithTemplate('17');
     const dataDir = tempDir();

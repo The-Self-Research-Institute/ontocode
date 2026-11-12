@@ -1,7 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import self.research.ontology.owlEditor.util.StandardVocabulary;
-import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.io.FileDocumentSource;
 import org.semanticweb.owlapi.io.StringDocumentSource;
@@ -116,7 +116,7 @@ public class OntologyMergeService {
         log.info("[MERGE] Analyzing ontologies for conflicts");
         log.info("[MERGE] Source: {}, Target project: {}", sourceFile, targetProjectId);
 
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         
         // Configure to ignore missing imports (don't try to download from web)
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
@@ -325,7 +325,7 @@ public class OntologyMergeService {
         log.info("[MERGE] Source: {}, Target: {}", sourceFile, targetProjectId);
         log.info("[MERGE] Strategy: {}", options.getStrategy());
 
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         
         // Configure to ignore missing imports (don't try to download from web)
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
@@ -1809,7 +1809,7 @@ public class OntologyMergeService {
     // ── Draft publish three-way merge (baseline / ours / theirs) ─────────────
 
     public OWLOntology loadOntologyFromRdf(String rdfXml) throws OWLOntologyCreationException {
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
         OWLOntology loaded = manager.loadOntologyFromOntologyDocument(

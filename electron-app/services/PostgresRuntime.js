@@ -132,10 +132,27 @@ function restoreEmptyClusterDirs(dataDir) {
     for (const dir of EMPTY_CLUSTER_DIRS) fs.mkdirSync(path.join(dataDir, dir), { recursive: true });
 }
 
+function secureClusterPermissions(dir, top = true) {
+    if (process.platform === 'win32') return;
+    fs.chmodSync(dir, 0o700);
+    if (!top) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            secureClusterPermissions(full);
+        } else if (entry.isFile()) {
+            fs.chmodSync(full, 0o600);
+        }
+    }
+}
+
 async function prepareCluster(root, dataDir, password, { log = () => {} } = {}) {
     const state = clusterState(dataDir);
     if (state === 'present') {
-        if (checkVersion(root, dataDir).ok) restoreEmptyClusterDirs(dataDir);
+        if (checkVersion(root, dataDir).ok) {
+            restoreEmptyClusterDirs(dataDir);
+            secureClusterPermissions(dataDir, false);
+        }
         return { created: false };
     }
     if (state === 'incomplete') {
@@ -148,6 +165,7 @@ async function prepareCluster(root, dataDir, password, { log = () => {} } = {}) 
         fs.mkdirSync(path.dirname(dataDir), { recursive: true });
         fs.cpSync(template, dataDir, { recursive: true });
         restoreEmptyClusterDirs(dataDir);
+        secureClusterPermissions(dataDir);
         return { created: true, fromTemplate: true };
     }
     await buildCluster(root, dataDir, password, { log });

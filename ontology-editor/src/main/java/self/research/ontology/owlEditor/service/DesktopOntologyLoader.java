@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
@@ -540,6 +541,7 @@ public class DesktopOntologyLoader {
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                     .setLoadAnnotationAxioms(true)
             );
+            OWLFormatConverter.blockRemoteImports(manager);
 
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(owlFilePath.toFile());
             long parseMs = System.currentTimeMillis() - start;
