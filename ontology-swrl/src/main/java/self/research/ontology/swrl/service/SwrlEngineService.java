@@ -889,7 +889,7 @@ public class SwrlEngineService {
     }
 
     private String inferOntologyRulesAdmitted(String ontologyText) throws Exception {
-        OWLOntologyManager manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = TolerantOntologyLoading.manager();
         OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
                 new org.semanticweb.owlapi.io.StringDocumentSource(ontologyText));
         PlainLiteralNormalizer.apply(ontology);

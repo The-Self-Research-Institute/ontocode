@@ -30,3 +30,4 @@ images/gifs/**
 images/screenshots/**
 .env
 .env.*
+e2e/**

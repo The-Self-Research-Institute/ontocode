@@ -71,6 +71,20 @@ describe("shareSelectionForVisibility", () => {
     expect(shareSelectionForVisibility("PRIVATE").shareWith).toBe("none");
     expect(shareSelectionForVisibility(undefined)).toEqual(EMPTY_SHARE_SELECTION);
   });
+
+  it("shows specific members when a project saved as private or unset already has other members", () => {
+    expect(shareSelectionForVisibility("PRIVATE", true).shareWith).toBe("specific");
+    expect(shareSelectionForVisibility(undefined, true).shareWith).toBe("specific");
+  });
+
+  it("keeps only me for a project with no other members", () => {
+    expect(shareSelectionForVisibility("PRIVATE", false)).toEqual(EMPTY_SHARE_SELECTION);
+    expect(shareSelectionForVisibility(undefined, false)).toEqual(EMPTY_SHARE_SELECTION);
+  });
+
+  it("lets the workspace-wide setting win over the member count", () => {
+    expect(shareSelectionForVisibility("WORKSPACE", true).shareWith).toBe("all");
+  });
 });
 
 describe("prepareShareableMembers exclusions", () => {

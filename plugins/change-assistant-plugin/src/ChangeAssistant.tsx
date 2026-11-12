@@ -51,6 +51,9 @@ const ChangeAssistant: React.FC<ChangeAssistantProps> = ({ projectId, draftMode 
     if (!draftActive && feed.stats.draftChanges === 0 && activeTab === 'drafts') {
       setActiveTab('live');
     }
+    if (draftActive && activeTab === 'live') {
+      setActiveTab('drafts');
+    }
   }, [draftActive, feed.stats.draftChanges, activeTab]);
 
   const openChangeDetails = (changeId: string) => {

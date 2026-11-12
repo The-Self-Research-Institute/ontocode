@@ -2,6 +2,59 @@
 
 All notable changes to OntoCode Studio are listed here, newest first. The same notes appear in the app under What's new.
 
+## [1.2.9] - 2026-11-12
+
+**Database**
+
+- Database — OntoCode now uses PostgreSQL as its database instead of MongoDB. The desktop app includes it, so there is nothing to install, and the first start takes a little longer.
+
+**SWRL**
+
+- SWRL — Results are grouped by the rule that produced them. Facts from standard reasoning and class relationships stay in their own sections.
+- SWRL — New Control, Asserted Axioms and OWL 2 RL tabs, a Clone button while editing a rule, a loading state with Retry for the rule list, and a Why? button that is always visible and explains facts no rule produced.
+- SWRL — When an ontology is too large for the rule engine, you now see that reason instead of "try again".
+- SWRL — Execute All and Execute Selected skip disabled rules and SQWRL queries. Rules that another tool saved as disabled count as disabled, and every rule stored in the ontology is listed.
+- SWRL functions — Date, time, duration, number, text and SQWRL functions were checked against the engine and corrected.
+- SWRL on desktop — The Rules tab calls the rule service at the right address, waits for it to finish starting and allows up to 120 seconds.
+- Export — Manchester files now keep general class axioms in a form the reader accepts. Manchester and OBO export warn that rule names, comments and the disabled flag are lost, and suggest ELK when HermiT is slow on a large ontology.
+
+**Editor, graph and Change Assistant**
+
+- Classes — All Entities search, class ancestors shown properly, and search that works while the tree is collapsed.
+- Graph — The VOWL view no longer stays blank until Refresh. Network blobs, the 0.0x zoom, the cut-off settings panel, Expand All being reset by the reasoner, datatypes shown as classes and the grey-out after a selection were fixed.
+- Change Assistant — The Activity tab is hidden in Draft mode, and draft cards are readable in dark mode.
+
+**VS Code and desktop**
+
+- VS Code — The panel stays signed in and logs out correctly, and login and the workspace list no longer hang.
+- Desktop — An uploaded file keeps its ontology IRI, version IRI and annotations.
+- Desktop — The signing secret and admin password are created on first launch and kept in the system keychain, instead of being fixed values.
+- Desktop — The app no longer fails to start for want of its startup data settings, and the Fuseki download unpacks on macOS.
+
+**Licences and security**
+
+- Licences — LGPL libraries such as HermiT and JFact ship as separate files with their licence texts, and a check covers every shipped library.
+- Security — POI, follow-redirects and qs were updated to versions without the reported vulnerabilities.
+
+## [1.2.8] - 2026-10-29
+
+**SPARQL and SWRL**
+
+- SPARQL — Include inferred now works on a new project. The first use computes the inferred facts, and later queries use them straight away. CONSTRUCT returns graphs, and results are paged with a filter and sort.
+- SPARQL — The results panel fills the tab, and its drag handle resizes in the natural direction.
+- SWRL — Execute lists what the rules conclude first. The Test button shows only what that rule adds, saved rules keep their id after the first save, and checking a rule while typing is faster.
+- SQWRL — Results are paged with a filter and sort, and very large results are cut with a notice.
+- SWRL functions — Date, time and duration functions, integer division, rounding and a few text and SQWRL functions now give correct results, following the SWRL standard. Other tools that use the same library can still return the old results for these, so a rule that depended on an old result can behave differently. The Function help tab lists what works and what does not.
+
+**Plugins and desktop**
+
+- Plugins — The plugin tabs load again in the web app.
+- Desktop — The app keeps within half of the computer's memory, cleans up leftover processes, rotates its logs and checks free disk space. The Description panel shows the full ancestor chain, and the add class dialog says Local Mode.
+
+**License**
+
+- License — OntoCode is released under the MIT License.
+
 ## [1.2.7] - 2026-10-26
 
 **macOS desktop app**
@@ -12,7 +65,7 @@ All notable changes to OntoCode Studio are listed here, newest first. The same n
 
 **Undo and Redo**
 
-- ONTOCODE-194: Undo and Redo — Edit > Undo and Edit > Redo now work, with Ctrl+Z and Ctrl+Shift+Z. They reverse creating and deleting entities, adding and removing axioms, drag-and-drop in the class hierarchy, annotation and axiom-annotation edits, characteristic changes, prefix changes, renames, and ontology IRI changes.
+- ONTOCODE-194: Undo and Redo — Edit > Undo and Edit > Redo now work, with Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z (Cmd+Z and Cmd+Shift+Z on a Mac). They reverse creating and deleting entities, adding and removing axioms, drag-and-drop in the class hierarchy, annotation and axiom-annotation edits, characteristic changes, prefix changes, renames, and ontology IRI changes.
 - ONTOCODE-194: Undo and Redo — An operation that changes several things at once, such as Change IRI or an AI edit, is undone as a single unit. Undo restores the exact previous triples.
 - ONTOCODE-194: Undo and Redo — In shared projects, Undo only reverses your own changes. If someone else has since changed or built on the same item, Undo tells you why it can't proceed instead of silently reverting their work.
 - ONTOCODE-194: Undo and Redo — Every undo and redo is recorded in the Change Assistant and is safe if the connection drops or the server restarts partway through. Repeating the same request never applies it twice.

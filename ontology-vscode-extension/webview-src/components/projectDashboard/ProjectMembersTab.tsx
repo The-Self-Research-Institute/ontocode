@@ -38,7 +38,10 @@ const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({
         <button
           onClick={() => {
             add.setAddMemberSelection(
-              add.showAddMemberForm ? EMPTY_SHARE_SELECTION : shareSelectionForVisibility(project.visibility),
+              add.showAddMemberForm ? EMPTY_SHARE_SELECTION : shareSelectionForVisibility(
+                project.visibility,
+                (project.members ?? []).some((m) => m.userId !== project.ownerId),
+              ),
             );
             add.setShowAddMemberForm(!add.showAddMemberForm);
           }}

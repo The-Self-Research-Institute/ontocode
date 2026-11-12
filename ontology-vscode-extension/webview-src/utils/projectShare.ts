@@ -23,9 +23,9 @@ export interface ShareSelection {
 
 export const EMPTY_SHARE_SELECTION: ShareSelection = { shareWith: "none", members: [] };
 
-export const shareSelectionForVisibility = (visibility?: string): ShareSelection => {
+export const shareSelectionForVisibility = (visibility?: string, hasOtherMembers = false): ShareSelection => {
   if (visibility === "WORKSPACE") return { shareWith: "all", members: [] };
-  if (visibility === "SPECIFIC") return { shareWith: "specific", members: [] };
+  if (visibility === "SPECIFIC" || hasOtherMembers) return { shareWith: "specific", members: [] };
   return EMPTY_SHARE_SELECTION;
 };
 
