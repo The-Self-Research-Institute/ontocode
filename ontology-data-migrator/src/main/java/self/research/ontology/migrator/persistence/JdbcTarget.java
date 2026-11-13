@@ -2,6 +2,7 @@ package self.research.ontology.migrator.persistence;
 
 import org.postgresql.util.PGobject;
 import self.research.ontology.migrator.core.Checkpoint;
+import self.research.ontology.migrator.core.NulSanitizer;
 import self.research.ontology.migrator.core.Target;
 import self.research.ontology.migrator.core.Write;
 
@@ -119,12 +120,15 @@ public final class JdbcTarget implements Target {
         if (value instanceof Write.Json json) {
             PGobject o = new PGobject();
             o.setType("jsonb");
-            o.setValue(json.text());
+            o.setValue(NulSanitizer.json(json.text()));
             ps.setObject(index, o);
         } else if (value instanceof Collection<?> list) {
-            ps.setArray(index, c.createArrayOf("text", list.toArray()));
+            ps.setArray(index, c.createArrayOf("text", list.stream()
+                    .map(item -> item instanceof String s ? NulSanitizer.text(s) : item).toArray()));
         } else if (value == null) {
             ps.setObject(index, null);
+        } else if (value instanceof String s) {
+            ps.setObject(index, NulSanitizer.text(s));
         } else {
             ps.setObject(index, value);
         }

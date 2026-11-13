@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.util.Date;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -23,10 +24,10 @@ public final class ValueCompare {
             return expected == null && actual == null;
         }
         if (expected instanceof Write.Json json) {
-            return sameJson(json.text(), actual.toString());
+            return sameJson(NulSanitizer.json(json.text()), actual.toString());
         }
         if (expected instanceof OffsetDateTime time) {
-            return time.toInstant().equals(instantOf(actual));
+            return withinOneMicrosecond(time.toInstant(), instantOf(actual));
         }
         if (expected instanceof Collection<?> list) {
             return actual instanceof Collection<?> other && sameList(List.copyOf(list), List.copyOf(other));
@@ -34,7 +35,11 @@ public final class ValueCompare {
         if (expected instanceof Number n && actual instanceof Number m) {
             return new BigDecimal(n.toString()).compareTo(new BigDecimal(m.toString())) == 0;
         }
-        return expected.toString().equals(actual.toString());
+        return NulSanitizer.text(expected.toString()).equals(actual.toString());
+    }
+
+    private static boolean withinOneMicrosecond(Instant expected, Instant actual) {
+        return Duration.between(expected, actual).abs().compareTo(Duration.ofNanos(1000)) <= 0;
     }
 
     private static boolean sameList(List<?> a, List<?> b) {

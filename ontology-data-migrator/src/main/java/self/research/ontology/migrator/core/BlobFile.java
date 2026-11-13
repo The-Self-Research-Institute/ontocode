@@ -3,11 +3,22 @@ package self.research.ontology.migrator.core;
 import org.bson.Document;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 public record BlobFile(String bucket, Object rawId, String id, String filename, long length, String contentType,
                        Instant uploadDate, Map<String, Object> metadata) {
+
+    private static final Set<String> TAGGED_BUCKETS = Set.of("desktop-installers");
+
+    public String targetBucket() {
+        if ("fs".equals(bucket) && metadata != null && metadata.get("bucket") instanceof String tagged
+                && TAGGED_BUCKETS.contains(tagged)) {
+            return tagged;
+        }
+        return bucket;
+    }
 
     public static BlobFile fromFilesDocument(String bucket, Document d) {
         Object raw = d.get("_id");
