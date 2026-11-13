@@ -1,5 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
+import org.slf4j.LoggerFactory;
+
 import java.util.Locale;
 
 public enum ReasonerType {
@@ -21,6 +23,8 @@ public enum ReasonerType {
     public static ReasonerType parse(String raw) {
         String name = raw.trim().toUpperCase(Locale.ROOT);
         if (name.equals("OPENLLET") || name.equals("PELLET")) {
+            LoggerFactory.getLogger(ReasonerType.class)
+                    .warn("Openllet and Pellet are no longer available; using HermiT");
             return HERMIT;
         }
         return valueOf(name);

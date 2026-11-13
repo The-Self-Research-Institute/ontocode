@@ -147,7 +147,7 @@ public class DraftTrackingService {
             .peek(draft -> draft.setSessionId(sessionId))
             .collect(Collectors.toList());
 
-        return BulkWrites.saveAll(draftRepository, drafts);
+        return draftRepository.saveAll(drafts);
     }
 
     private static Map<String, Object> operationData(MutationOp op) {
@@ -240,7 +240,7 @@ public class DraftTrackingService {
                 : stash.stream().filter(d -> describedBy(d, changeSetId)).toList();
         if (!matching.isEmpty()) {
             matching.forEach(d -> d.setApplied(false));
-            BulkWrites.saveAll(draftRepository, matching);
+            draftRepository.saveAll(matching);
             stash.removeAll(matching);
             return true;
         }
@@ -583,7 +583,7 @@ public class DraftTrackingService {
                 projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
         int recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
         unappliedDrafts.forEach(draft -> draft.setApplied(true));
-        BulkWrites.saveAll(draftRepository, unappliedDrafts);
+        draftRepository.saveAll(unappliedDrafts);
         CompletableFuture.runAsync(() -> {
             Map<String, Object> meta = indexService.computeMetadata(projectId);
             metadataService.writeMeta(projectId, meta);
@@ -644,7 +644,7 @@ public class DraftTrackingService {
                         projectId, draftToMutationOp(draft), draft.getUserId(), draft.getUsername()));
                 recordingFailures = draftChangeHistory.record(projectId, unappliedDrafts);
                 unappliedDrafts.forEach(draft -> draft.setApplied(true));
-                BulkWrites.saveAll(draftRepository, unappliedDrafts);
+                draftRepository.saveAll(unappliedDrafts);
             }
 
             CompletableFuture.runAsync(() -> {
@@ -652,7 +652,7 @@ public class DraftTrackingService {
                 metadataService.writeMeta(projectId, meta);
             }, metadataExecutor);
 
-            log.info("[DRAFT] MOVE GRAPH publish complete for project {} user {} ({} Mongo ops)",
+            log.info("[DRAFT] MOVE GRAPH publish complete for project {} user {} ({} database ops)",
                     projectId, userId, unappliedDrafts.size());
             return new ApplyDraftsResult(true, unappliedDrafts.size(),
                     "Published draft successfully" + recordingFailureSuffix(recordingFailures), false, null);

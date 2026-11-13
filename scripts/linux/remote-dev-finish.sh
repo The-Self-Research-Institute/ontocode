@@ -21,21 +21,6 @@ ssh "${ssh_opts[@]}" "$HOST" \
 set -euo pipefail
 cd "$DIR"
 
-echo "[remote] diagnosing :27017..."
-sudo ss -ltnp | grep 27017 || true
-docker ps -a --filter publish=27017 --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Ports}}' || true
-# Stop anything holding 27017 (stale mongo / leftover container)
-docker ps -aq --filter publish=27017 | xargs -r docker rm -f
-# Also common name
-docker rm -f ontocode-mongo 2>/dev/null || true
-# Host mongod if any
-if command -v systemctl >/dev/null 2>&1; then
-  sudo systemctl stop mongod 2>/dev/null || true
-fi
-sudo fuser -k 27017/tcp 2>/dev/null || true
-sleep 2
-sudo ss -ltnp | grep 27017 || echo "[remote] :27017 free"
-
 echo "[remote] compose up"
 if [[ -f docker-compose.de.ec2.yml ]]; then
   DOCKER_REGISTRY="$REG" VERSION="$VER" docker compose -f docker-compose.yml -f docker-compose.de.ec2.yml up -d --pull always

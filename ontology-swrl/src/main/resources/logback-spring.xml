@@ -100,7 +100,7 @@
         <appender-ref ref="ERROR_FILE" />
     </logger>
 
-    <logger name="org.springframework.data.mongodb" level="WARN" additivity="false">
+    <logger name="org.flywaydb" level="INFO" additivity="false">
         <appender-ref ref="APP_FILE" />
         <appender-ref ref="ERROR_FILE" />
     </logger>

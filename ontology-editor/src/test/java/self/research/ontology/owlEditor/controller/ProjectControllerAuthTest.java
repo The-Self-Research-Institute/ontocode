@@ -9,7 +9,7 @@ import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.ChangeTrackingService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.ProjectAccessService;
 import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.service.ProjectShareService;
@@ -46,7 +46,7 @@ class ProjectControllerAuthTest {
     }
 
     private ProjectController controllerFor(boolean desktop) {
-        return new ProjectController(repository, shares, mock(StorageManager.class), mock(GridFSFileService.class),
+        return new ProjectController(repository, shares, mock(StorageManager.class), mock(BlobFileService.class),
                 mock(SparqlDatasetService.class), mock(DraftTrackingService.class), mock(ChangeTrackingService.class),
                 new ProjectAuthorization(access, desktop));
     }

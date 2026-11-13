@@ -3,16 +3,13 @@ package self.research.ontology.owlEditor.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.document.WorkspaceDocument;
-import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.repository.ProjectAccessRepository;
 import self.research.ontology.owlEditor.repository.WorkspaceRepository;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -20,16 +17,12 @@ public class WorkspaceOwnershipService {
 
     private static final Logger log = LoggerFactory.getLogger(WorkspaceOwnershipService.class);
 
-    private final ProjectRepository projectRepository;
+    private final ProjectAccessRepository access;
     private final WorkspaceRepository workspaceRepository;
-    private final MongoTemplate mongoTemplate;
 
-    public WorkspaceOwnershipService(ProjectRepository projectRepository,
-                                     WorkspaceRepository workspaceRepository,
-                                     MongoTemplate mongoTemplate) {
-        this.projectRepository = projectRepository;
+    public WorkspaceOwnershipService(ProjectAccessRepository access, WorkspaceRepository workspaceRepository) {
+        this.access = access;
         this.workspaceRepository = workspaceRepository;
-        this.mongoTemplate = mongoTemplate;
     }
 
     public Optional<String> resolveWorkspaceIdForProject(String projectId) {
@@ -37,29 +30,7 @@ public class WorkspaceOwnershipService {
             return Optional.empty();
         }
         try {
-            Optional<ProjectDocument> doc = projectRepository.findById(projectId);
-            if (doc.isPresent()) {
-                String ws = doc.get().getWorkspaceId();
-                if (ws != null && !ws.isBlank()) {
-                    return Optional.of(ws.trim());
-                }
-            }
-            if (!projectId.contains("--")) {
-                return Optional.empty();
-            }
-            int sep = projectId.indexOf("--");
-            String parentId = sep > 0 ? projectId.substring(0, sep) : "";
-
-            if (parentId.isBlank() || parentId.equals(projectId)) {
-                return Optional.empty();
-            }
-            doc = projectRepository.findById(parentId);
-            if (doc.isPresent()) {
-                String ws = doc.get().getWorkspaceId();
-                if (ws != null && !ws.isBlank()) {
-                    return Optional.of(ws.trim());
-                }
-            }
+            return access.findWorkspaceIdOfProject(projectId, ProjectAccessService.parentOf(projectId));
         } catch (Exception e) {
             log.debug("resolveWorkspaceIdForProject failed for projectId={}: {}", projectId, e.getMessage());
         }
@@ -102,10 +73,7 @@ public class WorkspaceOwnershipService {
             return false;
         }
         try {
-            Query q = new Query(Criteria.where("workspaceId").is(workspaceId.trim())
-                    .and("members").elemMatch(
-                            Criteria.where("userId").is(userId).and("role").regex("^ADMIN$", "i")));
-            return mongoTemplate.exists(q, "workspaces");
+            return access.isWorkspaceAdmin(workspaceId.trim(), userId);
         } catch (Exception e) {
             log.debug("isUserAdminOfWorkspace failed userId={} workspaceId={}: {}", userId, workspaceId, e.getMessage());
             return false;
@@ -159,10 +127,7 @@ public class WorkspaceOwnershipService {
                 ? projectId.substring(0, projectId.indexOf("--"))
                 : projectId;
         try {
-            Query q = new Query(Criteria.where("projectId").is(parentProjectId)
-                    .and("members").elemMatch(
-                            Criteria.where("userId").is(userId).and("role").regex("^VIEWER$", "i")));
-            return mongoTemplate.exists(q, "projects");
+            return access.hasMemberRole(parentProjectId, userId, List.of("VIEWER"));
         } catch (Exception e) {
             log.debug("isViewerInProject failed userId={} projectId={}: {}", userId, projectId, e.getMessage());
             return false;
@@ -175,10 +140,7 @@ public class WorkspaceOwnershipService {
                 ? projectId.substring(0, projectId.indexOf("--"))
                 : projectId;
         try {
-            Query q = new Query(Criteria.where("projectId").is(parentProjectId)
-                    .and("members").elemMatch(
-                            Criteria.where("userId").is(userId).and("role").regex("^DRAFT_EDITOR$", "i")));
-            return mongoTemplate.exists(q, "projects");
+            return access.hasMemberRole(parentProjectId, userId, List.of("DRAFT_EDITOR"));
         } catch (Exception e) {
             log.debug("isDraftEditorInProject failed userId={} projectId={}: {}", userId, projectId, e.getMessage());
             return false;
@@ -194,11 +156,7 @@ public class WorkspaceOwnershipService {
                 ? projectId.substring(0, projectId.indexOf("--"))
                 : projectId;
         try {
-            Query q = new Query(Criteria.where("projectId").is(parentProjectId)
-                    .and("members").elemMatch(
-                            Criteria.where("userId").is(userId)
-                                    .and("role").regex("^(ADMIN|EDITOR)$", "i")));
-            return mongoTemplate.exists(q, "projects");
+            return access.hasMemberRole(parentProjectId, userId, List.of("ADMIN", "EDITOR"));
         } catch (Exception e) {
             log.debug("canPublishToProject failed userId={} projectId={}: {}", userId, projectId, e.getMessage());
             return false;

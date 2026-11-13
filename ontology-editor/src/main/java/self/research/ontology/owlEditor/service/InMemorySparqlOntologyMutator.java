@@ -8,6 +8,7 @@ import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.sail.memory.MemoryStore;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.model.MissingImportHandlingStrategy;
 import org.semanticweb.owlapi.model.OWLOntology;
@@ -106,6 +107,7 @@ public class InMemorySparqlOntologyMutator {
                     new OWLOntologyLoaderConfiguration()
                             .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                             .setLoadAnnotationAxioms(true));
+            OWLFormatConverter.blockRemoteImports(manager);
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(temp.toFile());
 
             OWLReasoner reasoner = null;

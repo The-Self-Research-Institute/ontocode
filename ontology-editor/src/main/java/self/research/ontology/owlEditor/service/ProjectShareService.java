@@ -1,11 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.RequiredArgsConstructor;
-import org.bson.Document;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.MongoOperations;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.dao.DuplicateKeyException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -13,8 +9,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.client.HttpClientErrorException;
 import self.research.ontology.owlEditor.document.ProjectShare;
+import self.research.ontology.owlEditor.repository.ProjectAccessRepository;
 import self.research.ontology.owlEditor.repository.ProjectShareRepository;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -31,15 +29,13 @@ public class ProjectShareService {
     private final EmailNotificationService emailNotificationService;
     private final ProjectMetadataService metadataService;
     private final SimpMessagingTemplate messagingTemplate;
+    private final ProjectAccessRepository accessRepository;
     
     @Value("${auth.service.url:http://localhost:8086}")
     private String authServiceUrl;
 
     @Value("${ontocode.internal.token:ontocode-internal}")
     private String internalToken;
-
-    @Autowired(required = false)
-    private MongoOperations mongo;
 
     private static final String SHARE_QUEUE = "/queue/shares";
 
@@ -52,12 +48,12 @@ public class ProjectShareService {
     }
 
     private Optional<String> findUserId(String email, String normalized) {
-        if (mongo == null) {
+        try {
+            return accessRepository.findUserIdByEmail(email);
+        } catch (RuntimeException e) {
+            log.warn("Could not look up the user id for a share notification: {}", e.getMessage());
             return Optional.empty();
         }
-        Document user = mongo.findOne(Query.query(Criteria.where("email").in(email, normalized)), Document.class, "users");
-        Object id = user == null ? null : user.get("_id");
-        return id == null ? Optional.empty() : Optional.of(id.toString());
     }
     
     /**
@@ -102,7 +98,11 @@ public class ProjectShareService {
         }
         
         ProjectShare share = new ProjectShare(projectId, ownerEmail, permission);
-        return shareRepository.save(share);
+        try {
+            return shareRepository.save(share);
+        } catch (DuplicateKeyException raced) {
+            return shareRepository.findByProjectId(projectId).orElseThrow(() -> raced);
+        }
     }
     
     public Optional<ProjectShare> getShareByProjectId(String projectId) {
@@ -114,15 +114,9 @@ public class ProjectShareService {
     }
     
     public ProjectShare addEmailAccess(String projectId, String email, String permission) {
-        ProjectShare share = shareRepository.findByProjectId(projectId)
+        ProjectShare share = shareRepository.addSharedEmail(projectId, email, permission, Instant.now())
                 .orElseThrow(() -> new RuntimeException("Share not found for project: " + projectId));
-        
-        share.addSharedEmail(email);
-        // Update the default permission if provided
-        if (permission != null && !permission.isEmpty()) {
-            share.setPermission(permission);
-        }
-        ProjectShare savedShare = shareRepository.save(share);
+        ProjectShare savedShare = share;
         
         // Get file name and owner info
         String fileName = metadataService.readStatus(projectId)
@@ -177,11 +171,8 @@ public class ProjectShareService {
     }
     
     public ProjectShare removeEmailAccess(String projectId, String email) {
-        ProjectShare share = shareRepository.findByProjectId(projectId)
+        return shareRepository.removeSharedEmail(projectId, email, Instant.now())
                 .orElseThrow(() -> new RuntimeException("Share not found for project: " + projectId));
-        
-        share.removeSharedEmail(email);
-        return shareRepository.save(share);
     }
     
     public List<ProjectShare> getMyShares(String ownerEmail) {

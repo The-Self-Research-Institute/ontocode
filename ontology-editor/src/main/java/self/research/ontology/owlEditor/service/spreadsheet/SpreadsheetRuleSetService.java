@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service.spreadsheet;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.SpreadsheetRuleSetEntity;
 import self.research.ontology.owlEditor.repository.SpreadsheetRuleSetRepository;
@@ -36,6 +37,18 @@ public class SpreadsheetRuleSetService {
     }
 
     public SpreadsheetRuleSetEntity create(String projectId, String name, String description, List<RuleSpec> rules, String user) {
+        return create(projectId, name, description, rules, user, null);
+    }
+
+    public boolean isCreatedBy(SpreadsheetRuleSetEntity ruleSet, String userId, String username) {
+        if (ruleSet.getCreatedByUserId() != null && userId != null) {
+            return ruleSet.getCreatedByUserId().equals(userId);
+        }
+        return ruleSet.getCreatedBy() != null && username != null && ruleSet.getCreatedBy().equalsIgnoreCase(username);
+    }
+
+    public SpreadsheetRuleSetEntity create(String projectId, String name, String description, List<RuleSpec> rules,
+                                           String user, String userId) {
         String clean = validate(name, rules);
         if (repository.findByProjectIdAndName(projectId, clean).isPresent()) {
             throw new DuplicateNameException(clean);
@@ -46,8 +59,13 @@ public class SpreadsheetRuleSetService {
         e.setDescription(description);
         e.setRules(List.copyOf(rules));
         e.setCreatedBy(user);
+        e.setCreatedByUserId(userId);
         e.setUpdatedBy(user);
-        return repository.save(e);
+        try {
+            return repository.save(e);
+        } catch (DuplicateKeyException ex) {
+            throw new DuplicateNameException(clean);
+        }
     }
 
     public Optional<SpreadsheetRuleSetEntity> update(String projectId, String id, String name, String description,
@@ -68,7 +86,11 @@ public class SpreadsheetRuleSetService {
         e.setRules(List.copyOf(rules));
         e.setUpdatedBy(user);
         e.setUpdatedAt(new Date());
-        return Optional.of(repository.save(e));
+        try {
+            return Optional.of(repository.save(e));
+        } catch (DuplicateKeyException ex) {
+            throw new DuplicateNameException(clean);
+        }
     }
 
     public boolean delete(String projectId, String id) {

@@ -132,7 +132,7 @@ class DraftPullBaselineTest {
     @Test
     void aFailingDurableCopyDoesNotStopTheDraftFromStarting() throws Exception {
         when(datasetService.exportNamedGraph("p1", MAIN_GRAPH, RDFFormat.RDFXML)).thenReturn(rdf(CLASS_A));
-        doThrow(new RuntimeException("mongo down")).when(baselineStore).save(anyString(), anyString(), anyString());
+        doThrow(new RuntimeException("database down")).when(baselineStore).save(anyString(), anyString(), anyString());
 
         String relative = service.captureBaselineSnapshot("p1", "u1");
 

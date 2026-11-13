@@ -1,10 +1,15 @@
 package self.research.ontology.auth.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
 import self.research.ontology.auth.model.PlanFeatureConfig;
 
+import java.util.List;
 import java.util.Optional;
 
-public interface PlanFeatureConfigRepository extends MongoRepository<PlanFeatureConfig, String> {
+public interface PlanFeatureConfigRepository {
+
     Optional<PlanFeatureConfig> findByPlanId(String planId);
+
+    List<PlanFeatureConfig> findAll();
+
+    PlanFeatureConfig save(PlanFeatureConfig config);
 }

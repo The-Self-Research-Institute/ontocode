@@ -1,46 +1,43 @@
 
 
-const MongoClient = require('mongodb').MongoClient;
+const { newPool } = require('./lib/db');
 const axios = require('axios');
 
-const MONGODB_URI = 'mongodb://localhost:27017';
-const MONGODB_DB = 'ontocode';
 const GRAPHDB_URL = 'http://localhost:7200';
 const GRAPHDB_REPO = 'ontocode';
 
-async function clearMongoDB() {
-    console.log('\n=== Clearing MongoDB ===');
-    console.log(`Connecting to: ${MONGODB_URI}/${MONGODB_DB}`);
+async function clearPostgres() {
+    console.log('\n=== Clearing PostgreSQL ===');
 
-    const client = new MongoClient(MONGODB_URI);
+    const pool = newPool();
 
     try {
-        await client.connect();
-        console.log('✓ Connected to MongoDB');
+        const tables = (await pool.query(
+            "select table_name from information_schema.tables where table_schema = 'public' " +
+            "and table_type = 'BASE TABLE' and table_name not like 'flyway%' order by table_name"
+        )).rows.map(r => r.table_name);
+        console.log('✓ Connected to PostgreSQL');
 
-        const db = client.db(MONGODB_DB);
-        const collections = await db.listCollections().toArray();
+        console.log(`\nFound ${tables.length} tables:`);
 
-        console.log(`\nFound ${collections.length} collections:`);
-
-        for (const collection of collections) {
-            const count = await db.collection(collection.name).countDocuments();
-            console.log(`  - ${collection.name}: ${count} documents`);
+        for (const table of tables) {
+            const count = (await pool.query('select count(*)::bigint as n from "' + table + '"')).rows[0].n;
+            console.log(`  - ${table}: ${count} rows`);
         }
 
-        console.log('\nDropping collections...');
-        for (const collection of collections) {
-            await db.collection(collection.name).drop();
-            console.log(`  ✓ Dropped: ${collection.name}`);
+        if (tables.length > 0) {
+            console.log('\nEmptying tables...');
+            await pool.query('truncate table ' + tables.map(t => '"' + t + '"').join(', ') + ' restart identity cascade');
+            console.log('  ✓ Emptied all tables (schema kept)');
         }
 
-        console.log('\n✓ MongoDB cleanup complete!');
+        console.log('\n✓ PostgreSQL cleanup complete! Files in the blob folder are not removed.');
 
     } catch (error) {
-        console.error('✗ MongoDB cleanup failed:', error.message);
+        console.error('✗ PostgreSQL cleanup failed:', error.message);
         throw error;
     } finally {
-        await client.close();
+        await pool.end();
     }
 }
 
@@ -118,7 +115,7 @@ async function main() {
     console.log('╚════════════════════════════════════════╝');
 
     try {
-        await clearMongoDB();
+        await clearPostgres();
         await clearGraphDB();
 
         console.log('\n╔════════════════════════════════════════╗');

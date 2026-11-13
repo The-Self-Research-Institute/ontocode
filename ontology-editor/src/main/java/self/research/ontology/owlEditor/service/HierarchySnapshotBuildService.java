@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
@@ -85,14 +86,7 @@ public class HierarchySnapshotBuildService {
                             .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                             .setLoadAnnotationAxioms(true));
 
-            manager.addIRIMapper(iri -> {
-                String s = iri.toString();
-                if (s.startsWith("http://") || s.startsWith("https://")) {
-                    return org.semanticweb.owlapi.model.IRI.create(
-                            "file:///intentionally-missing-import-" + Math.abs(s.hashCode()));
-                }
-                return null;
-            });
+            OWLFormatConverter.blockRemoteImports(manager);
             ontology = manager.loadOntologyFromOntologyDocument(path.toFile());
             reasoner = new StructuralReasonerFactory().createNonBufferingReasoner(ontology);
             reasoner.precomputeInferences();

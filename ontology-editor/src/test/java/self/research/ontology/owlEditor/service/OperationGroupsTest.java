@@ -2,29 +2,26 @@ package self.research.ontology.owlEditor.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
 import self.research.ontology.owlEditor.model.HistoryChange;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class OperationGroupsTest {
 
-    private MongoTemplate mongo;
+    private HistoryChangeRepository history;
     private OperationGroups groups;
 
     @BeforeEach
     void setUp() {
-        mongo = mock(MongoTemplate.class);
-        groups = new OperationGroups(mongo);
+        history = mock(HistoryChangeRepository.class);
+        groups = new OperationGroups(history);
     }
 
     private static HistoryChange entry(String id, String projectId, String group) {
@@ -43,7 +40,7 @@ class OperationGroupsTest {
     @Test
     void anEntryWhoseGroupHasOtherProjectsStillChangedNamesThem() {
         HistoryChange source = entry("a", "source", "g1");
-        when(mongo.find(any(Query.class), eq(HistoryChange.class)))
+        when(history.findOpenByOperationGroupId("g1"))
                 .thenReturn(List.of(source, entry("b", "restaurant", "g1")));
 
         String warning = groups.warning(List.of(source));
@@ -55,7 +52,7 @@ class OperationGroupsTest {
     @Test
     void siblingsInTheSameProjectAreNotReported() {
         HistoryChange source = entry("a", "source", "g1");
-        when(mongo.find(any(Query.class), eq(HistoryChange.class)))
+        when(history.findOpenByOperationGroupId("g1"))
                 .thenReturn(List.of(source, entry("c", "source", "g1")));
 
         assertNull(groups.warning(List.of(source)));

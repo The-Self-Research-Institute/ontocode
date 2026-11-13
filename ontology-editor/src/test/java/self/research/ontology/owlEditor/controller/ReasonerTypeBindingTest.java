@@ -71,6 +71,12 @@ class ReasonerTypeBindingTest {
     }
 
     @Test
+    void openlletAndPelletStillMapToHermit() {
+        assertEquals(ReasonerType.HERMIT, ReasonerType.parse("Openllet"));
+        assertEquals(ReasonerType.HERMIT, ReasonerType.parse(" pellet "));
+    }
+
+    @Test
     void endpointStillRejectsUnknownReasoner() throws Exception {
         MvcResult result = mvc().perform(get(CLASS_DETAILS_URL)
                 .param("classIri", "http://example.org/onto#A")

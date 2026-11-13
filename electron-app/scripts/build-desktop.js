@@ -24,6 +24,8 @@ const WEBVIEW = path.join(REPO_ROOT, 'ontology-vscode-extension', 'webview-src')
 const DESKTOP_JAVA = path.join(REPO_ROOT, 'ontology-desktop');
 const DESKTOP_JAR_SRC = path.join(DESKTOP_JAVA, 'target', 'ontology-desktop-1.0.0.jar');
 const DESKTOP_JAR_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'jars', 'desktop.jar');
+const DESKTOP_LIB_SRC = path.join(DESKTOP_JAVA, 'target', 'lib');
+const DESKTOP_LIB_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'lib');
 const SWRL_JAR_SRC = path.join(REPO_ROOT, 'ontology-swrl', 'target', 'ontology-swrl-1.0.0.jar');
 const SWRL_JAR_DEST = path.join(ELECTRON_APP, 'resources', 'backend', 'jars', 'swrl.jar');
 const RENDERER_DIST = path.join(ELECTRON_APP, 'renderer', 'dist');
@@ -45,7 +47,7 @@ Flags (combine as needed):
   --patch-web         Patch only app.asar (UI fix, ~1–2 min). No Maven.
   --java              mvn package ontology-desktop → desktop.jar
   --web               npm run build:electron in webview-src
-  --resources         prepare-resources (Fuseki, Mongo, JRE, copy desktop.jar)
+  --resources         prepare-resources (Fuseki, PostgreSQL, JRE, copy desktop.jar)
   --resources --build-java   Same as --resources but run Maven if desktop.jar missing
   --renderer          Copy webview dist → electron-app/renderer/dist
   --win | --mac | --linux   Run electron-builder for that platform (implies --full steps)
@@ -54,7 +56,7 @@ Flags (combine as needed):
   --staging-dir=PATH  ASAR staging dir (default: E:\\tmp\\ontocode-asar-staging)
   --skip-jre          Pass through to prepare-resources (skip JRE download/jlink)
   --plugins           Build JS plugin bundles + copy to resources/backend/plugin-bundles
-                      (seeded into local Mongo on first desktop run)
+                      (seeded into the local database on first desktop run)
 
 Examples:
   node scripts/build-desktop.js --full --resources --plugins --portable
@@ -217,7 +219,7 @@ function portableLockHint(portableDir) {
     return (
         `\nPortable folder is locked: ${portableDir}\n` +
         '  • Quit OntoCode Studio if it was started from that folder\n' +
-        '  • End stray java.exe / mongod.exe from an old portable run (Task Manager)\n' +
+        '  • End stray java.exe / postgres.exe from an old portable run (Task Manager)\n' +
         '  • Or use a fresh output path: --portable-dir=E:\\tmp\\ontocode-portable-2\n' +
         'Then retry packaging only:\n' +
         '  node scripts/build-desktop.js --portable --renderer\n'
@@ -241,6 +243,7 @@ function buildJava(quick) {
     ensureDir(path.dirname(DESKTOP_JAR_DEST));
     fs.copyFileSync(DESKTOP_JAR_SRC, DESKTOP_JAR_DEST);
     console.log(`  ✓  desktop.jar → ${DESKTOP_JAR_DEST}`);
+    copyDesktopLibs(DESKTOP_LIB_SRC, DESKTOP_LIB_DEST);
     run(`mvn ${quick ? '' : 'clean '}package -pl ontology-swrl -DskipTests -q`, REPO_ROOT, 'Maven: ontology-swrl (SWRL reasoner)');
     if (!fs.existsSync(SWRL_JAR_SRC)) {
         throw new Error(`Missing ${SWRL_JAR_SRC} after Maven build`);
@@ -263,6 +266,7 @@ function buildJavaPatch() {
     ensureDir(path.dirname(DESKTOP_JAR_DEST));
     fs.copyFileSync(DESKTOP_JAR_SRC, DESKTOP_JAR_DEST);
     console.log(`  ✓  desktop.jar → ${DESKTOP_JAR_DEST}`);
+    copyDesktopLibs(DESKTOP_LIB_SRC, DESKTOP_LIB_DEST);
 }
 
 function patchPortableJarOnly(opts) {
@@ -276,9 +280,22 @@ function patchPortableJarOnly(opts) {
     }
     ensureDir(path.dirname(jarDest));
     fs.copyFileSync(DESKTOP_JAR_DEST, jarDest);
+    copyDesktopLibs(DESKTOP_LIB_DEST, path.join(portable, 'resources', 'backend', 'lib'));
     console.log(`\n→ Patch desktop.jar only`);
     console.log(`  ✓  ${jarDest}`);
     console.log('\n  Quit OntoCode Studio completely (Task Manager: end java.exe), then restart the portable exe.');
+}
+
+function copyDesktopLibs(srcDir, destDir) {
+    fs.rmSync(destDir, { recursive: true, force: true });
+    if (!fs.existsSync(srcDir)) {
+        throw new Error(`Missing LGPL lib folder ${srcDir}. Run the ontology-desktop Maven package first.`);
+    }
+    ensureDir(destDir);
+    for (const name of fs.readdirSync(srcDir).filter((f) => f.endsWith('.jar'))) {
+        fs.copyFileSync(path.join(srcDir, name), path.join(destDir, name));
+    }
+    console.log(`  ✓  lib/ → ${destDir}`);
 }
 
 function buildPlugins() {
@@ -474,6 +491,7 @@ function packPortable(opts) {
         ensureDir(path.dirname(portableJar));
         fs.copyFileSync(DESKTOP_JAR_DEST, portableJar);
         console.log(`  ✓  desktop.jar → portable`);
+        copyDesktopLibs(DESKTOP_LIB_DEST, path.join(backendDest, 'lib'));
     }
 
     const pluginBundles = path.join(backendDest, 'plugin-bundles');

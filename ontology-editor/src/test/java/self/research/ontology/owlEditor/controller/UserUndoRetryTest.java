@@ -90,7 +90,7 @@ class UserUndoRetryTest {
     }
 
     private HistoryChange copyOf(String id) {
-        HistoryChange entry = new HistoryChange.Builder(P, "edit-" + id, "mongo-1", EMAIL).operationType("ontologyMerge")
+        HistoryChange entry = new HistoryChange.Builder(P, "edit-" + id, "user-1", EMAIL).operationType("ontologyMerge")
                 .entityIRI("urn:ontocode:merge:" + id).build();
         entry.setId(id);
         entry.setDraft(true);

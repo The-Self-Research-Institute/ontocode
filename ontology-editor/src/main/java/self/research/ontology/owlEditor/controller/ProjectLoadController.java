@@ -41,11 +41,14 @@ import self.research.ontology.owlEditor.model.merge.ConflictResolution;
 import self.research.ontology.owlEditor.model.merge.ResolutionAction;
 import self.research.ontology.owlEditor.model.ProjectStatus;
 import self.research.ontology.owlEditor.repository.DraftChangeRepository;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository.FileMetadataRecord;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.service.BlobResource;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.OntologyPreparseService;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.ProjectImportService;
@@ -74,9 +77,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import org.bson.Document;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
 
 @RestController
 @RequestMapping("/api/ontology")
@@ -144,7 +144,7 @@ public class ProjectLoadController {
     private final StorageManager storageManager;
     private final ProjectMetadataService metadataService;
     private final ProjectImportService importService;
-    private final GridFSFileService gridFSFileService;
+    private final BlobFileService blobFileService;
     private final ProjectShareService shareService;
     private final DraftTrackingService draftTrackingService;
 
@@ -243,7 +243,7 @@ public class ProjectLoadController {
 
     private final OntologyPreparseService preparseService;
     private final ImportWorkerDispatcher importWorkerDispatcher;
-    private final MongoTemplate mongoTemplate;
+    private final FileMetadataRepository fileMetadataRepository;
     private final CodeViewReimportPipeline codeViewReimportPipeline;
     private final ProjectWriteLockRegistry lockRegistry;
     private final ProjectAuthorization authorization;
@@ -251,7 +251,7 @@ public class ProjectLoadController {
     public ProjectLoadController(StorageManager storageManager,
                                  ProjectMetadataService metadataService,
                                  ProjectImportService importService,
-                                 GridFSFileService gridFSFileService,
+                                 BlobFileService blobFileService,
                                  ProjectShareService shareService,
                                  DraftTrackingService draftTrackingService,
                                  DraftCopyService draftCopyService,
@@ -262,7 +262,7 @@ public class ProjectLoadController {
                                  ProjectRepository projectRepository,
                                  OntologyPreparseService preparseService,
                                  ImportWorkerDispatcher importWorkerDispatcher,
-                                 MongoTemplate mongoTemplate,
+                                 FileMetadataRepository fileMetadataRepository,
                                  self.research.ontology.owlEditor.service.OntologyExportJobService exportJobService,
                                  CodeViewReimportPipeline codeViewReimportPipeline,
                                  ProjectWriteLockRegistry lockRegistry,
@@ -270,7 +270,7 @@ public class ProjectLoadController {
         this.storageManager = storageManager;
         this.metadataService = metadataService;
         this.importService = importService;
-        this.gridFSFileService = gridFSFileService;
+        this.blobFileService = blobFileService;
         this.shareService = shareService;
         this.draftTrackingService = draftTrackingService;
         this.draftCopyService = draftCopyService;
@@ -281,7 +281,7 @@ public class ProjectLoadController {
         this.projectRepository = projectRepository;
         this.preparseService = preparseService;
         this.importWorkerDispatcher = importWorkerDispatcher;
-        this.mongoTemplate = mongoTemplate;
+        this.fileMetadataRepository = fileMetadataRepository;
         this.exportJobService = exportJobService;
         this.codeViewReimportPipeline = codeViewReimportPipeline;
         this.lockRegistry = lockRegistry;
@@ -439,7 +439,7 @@ public class ProjectLoadController {
                              StandardOpenOption.TRUNCATE_EXISTING,
                              StandardOpenOption.WRITE);
                      TeeInputStream tee = new TeeInputStream(in, out, true)) {
-                    gridfsFileId = gridFSFileService.storeFile(
+                    gridfsFileId = blobFileService.storeFile(
                         actualProjectId,
                         filename,
                         contentType,
@@ -492,7 +492,7 @@ public class ProjectLoadController {
                         log.info("[ProjectLoadController] Decompressing gzipped file before processing");
                     }
 
-                    gridfsFileId = gridFSFileService.storeFile(
+                    gridfsFileId = blobFileService.storeFile(
                         actualProjectId,
                         filename,
                         contentType,
@@ -505,10 +505,10 @@ public class ProjectLoadController {
                 }
             }
 
-            log.info("[ProjectLoadController] [TIMING] File save (disk + GridFS): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
+            log.info("[ProjectLoadController] [TIMING] File save (disk + file store): {} ms", (System.nanoTime() - stepStart) / 1_000_000);
 
             if (gridfsFileId == null || gridfsFileId.isEmpty()) {
-                throw new RuntimeException("Failed to store file in GridFS - no file ID returned");
+                throw new RuntimeException("Failed to store file in file store - no file ID returned");
             }
 
             log.info("Stored file in GridFS for project {}: fileId={}", actualProjectId, gridfsFileId);
@@ -720,7 +720,7 @@ public class ProjectLoadController {
             ));
         }
         try {
-            var mongoStatus = metadataService.readStatus(projectId);
+            var databaseStatus = metadataService.readStatus(projectId);
             if (importService.isImportActiveOrQueued(projectId)) {
                 log.info("[ProjectLoadController] Import already active for project {}, returning ALREADY_LOADING", projectId);
                 return ResponseEntity.ok(Map.of(
@@ -734,32 +734,32 @@ public class ProjectLoadController {
             if (ontologyCache != null) {
                 boolean owlapiReady = ontologyCache.has(projectId);
 
-                boolean mongoCompleted = mongoStatus
+                boolean databaseCompleted = databaseStatus
                     .map(s -> "COMPLETED".equals(s.status()) || "UPDATED".equals(s.status()))
                     .orElse(false);
 
                 boolean fileExists = storageManager.findCurrentOntology(projectId).isPresent();
 
-                boolean importFailed = mongoStatus
+                boolean importFailed = databaseStatus
                     .map(s -> "PROCESSING".equals(s.status()) || "ERROR".equals(s.status()))
                     .orElse(false);
                 if (importFailed && fileExists) {
-                    log.info("[ProjectLoadController] MongoDB status is PROCESSING/ERROR — forcing re-import for {}", projectId);
+                    log.info("[ProjectLoadController] database status is PROCESSING/ERROR — forcing re-import for {}", projectId);
                 }
 
                 boolean fusekiHasData = false;
                 if (importFailed) {
-                    mongoCompleted = false;
-                } else if (mongoCompleted && !fileExists) {
-                    mongoCompleted = false;
-                    log.info("[ProjectLoadController] MongoDB says COMPLETED but file missing — forcing re-import for {}", projectId);
-                } else if (!mongoCompleted && fileExists) {
+                    databaseCompleted = false;
+                } else if (databaseCompleted && !fileExists) {
+                    databaseCompleted = false;
+                    log.info("[ProjectLoadController] database says COMPLETED but file missing — forcing re-import for {}", projectId);
+                } else if (!databaseCompleted && fileExists) {
                     fusekiHasData = datasetService.hasGraphData(projectId);
                 }
 
-                boolean shouldSkip = owlapiReady || mongoCompleted || fusekiHasData;
-                log.info("[ProjectLoadController] Desktop skip check: owlapi={} mongoDone={} fileExists={} fuseki={} → skip={}",
-                    owlapiReady, mongoCompleted, fileExists, fusekiHasData, shouldSkip);
+                boolean shouldSkip = owlapiReady || databaseCompleted || fusekiHasData;
+                log.info("[ProjectLoadController] Desktop skip check: owlapi={} databaseDone={} fileExists={} fuseki={} → skip={}",
+                    owlapiReady, databaseCompleted, fileExists, fusekiHasData, shouldSkip);
 
                 if (shouldSkip) {
                     log.info("[ProjectLoadController] Desktop shortcut — skipping re-import for {}", projectId);
@@ -784,7 +784,7 @@ public class ProjectLoadController {
                 }
             }
 
-            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
+            FileMetadataRecord fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
 
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] file_metadata not found for fileId: {}", fileId);
@@ -792,13 +792,13 @@ public class ProjectLoadController {
                         .body(Map.of("success", false, "error", "File not found: " + fileId));
             }
 
-            String gridfsId = fileMeta.getString("gridfsId");
-            String fileName = fileMeta.getString("fileName");
-            log.info("[ProjectLoadController] Resolved file: fileName={}, gridfsId={}", fileName, gridfsId);
+            String blobId = fileMeta.blobId();
+            String fileName = fileMeta.fileName();
+            log.info("[ProjectLoadController] Resolved file: fileName={}, blobId={}", fileName, blobId);
 
-            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            Optional<BlobResource> resourceOpt = blobFileService.getFileById(blobId);
             if (resourceOpt.isEmpty()) {
-                log.error("[ProjectLoadController] GridFS content missing for gridfsId: {}", gridfsId);
+                log.error("[ProjectLoadController] file store content missing for blobId: {}", blobId);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("success", false, "error", "File content not found in storage"));
             }
@@ -823,15 +823,15 @@ public class ProjectLoadController {
                          StandardOpenOption.WRITE)) {
                 in.transferTo(out);
             }
-            log.info("[ProjectLoadController] [TIMING] GridFS read + disk write: {} ms",
+            log.info("[ProjectLoadController] [TIMING] file store read + disk write: {} ms",
                     (System.nanoTime() - startTime) / 1_000_000);
 
             storageManager.extractCitationMappingsFromFile(original, projectId);
             ProjectStatus status = ProjectStatus.uploaded(fileName);
-            metadataService.updateProjectMetadata(projectId, status, gridfsId, ownerEmail, caller.userId(), workspaceId, parentProjectId);
+            metadataService.updateProjectMetadata(projectId, status, blobId, ownerEmail, caller.userId(), workspaceId, parentProjectId);
 
             ImportOptions options = UploadFileSupport.resolveImportOptions(importMode, partition);
-            importWorkerDispatcher.dispatch(projectId, original, ownerEmail, fileName, gridfsId, options);
+            importWorkerDispatcher.dispatch(projectId, original, ownerEmail, fileName, blobId, options);
 
             RDFFormat format = UploadFileSupport.detectFormat(original);
             if (Files.size(original) <= 50L * 1024 * 1024) {
@@ -846,7 +846,7 @@ public class ProjectLoadController {
             return ResponseEntity.ok(Map.of(
                     "success", true,
                     "projectId", projectId,
-                    "gridfsFileId", gridfsId,
+                    "gridfsFileId", blobId,
                     "filename", fileName,
                     "message", "Import from file reference scheduled"));
         } catch (IOException e) {
@@ -863,14 +863,10 @@ public class ProjectLoadController {
         }
     }
 
-    private Optional<Document> findFileMetadata(String fileId, String projectId, String parentProjectId) {
-        Document fileMeta = mongoTemplate.getDb()
-                .getCollection("file_metadata")
-                .find(new Document("fileId", fileId).append("isDeleted", new Document("$ne", true)))
-                .first();
-        return Optional.ofNullable(fileMeta)
+    private Optional<FileMetadataRecord> findFileMetadata(String fileId, String projectId, String parentProjectId) {
+        return fileMetadataRepository.findActiveByFileId(fileId)
                 .filter(meta -> projectId.startsWith(parentProjectId + "--")
-                        && parentProjectId.equals(meta.getString("projectId")));
+                        && parentProjectId.equals(meta.projectId()));
     }
 
     private String generateCopyFilename(String originalFilename, String ownerEmail) {
@@ -1253,7 +1249,7 @@ public class ProjectLoadController {
             }
 
             try (InputStream in = Files.newInputStream(exportPath)) {
-                String gridfsFileId = gridFSFileService.storeFile(
+                String gridfsFileId = blobFileService.storeFile(
                     projectId,
                     "ontology.owl",
                     "application/rdf+xml",
@@ -2152,10 +2148,10 @@ public class ProjectLoadController {
             }
 
             try {
-                log.info("[ProjectLoadController] Deleting GridFS file for project: {}", projectId);
-                gridFSFileService.deleteFileByProjectId(projectId);
+                log.info("[ProjectLoadController] Deleting stored file for project: {}", projectId);
+                blobFileService.deleteFileByProjectId(projectId);
             } catch (Exception e) {
-                log.warn("[ProjectLoadController] Failed to delete GridFS file for {}: {}", projectId, e.getMessage());
+                log.warn("[ProjectLoadController] Failed to delete stored file for {}: {}", projectId, e.getMessage());
             }
 
             try {
@@ -2216,15 +2212,15 @@ public class ProjectLoadController {
 
     private void materializeOntologyFromFileRef(String projectId, String fileId, String parentProjectId) {
         try {
-            Document fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
+            FileMetadataRecord fileMeta = findFileMetadata(fileId, projectId, parentProjectId).orElse(null);
             if (fileMeta == null) {
                 log.warn("[ProjectLoadController] Cannot materialize {} — file_metadata missing for fileId {}", projectId, fileId);
                 return;
             }
-            String gridfsId = fileMeta.getString("gridfsId");
-            Optional<GridFsResource> resourceOpt = gridFSFileService.getFileById(gridfsId);
+            String blobId = fileMeta.blobId();
+            Optional<BlobResource> resourceOpt = blobFileService.getFileById(blobId);
             if (resourceOpt.isEmpty()) {
-                log.warn("[ProjectLoadController] Cannot materialize {} — GridFS missing for {}", projectId, gridfsId);
+                log.warn("[ProjectLoadController] Cannot materialize {} — file store missing for {}", projectId, blobId);
                 return;
             }
             Path projectDir = storageManager.prepareProjectDir(projectId);

@@ -1,12 +1,8 @@
 package self.research.ontology.auth.service;
 
-import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.FileMetadata;
@@ -15,6 +11,7 @@ import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.FileMetadataRepository;
 import self.research.ontology.auth.repository.ProjectRepository;
 import self.research.ontology.auth.repository.WorkspaceRepository;
+import self.research.ontology.common.db.BlobStore;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -27,7 +24,7 @@ public class DataRetentionScheduler {
     private final FileMetadataRepository fileMetadataRepository;
     private final ProjectRepository projectRepository;
     private final WorkspaceRepository workspaceRepository;
-    private final GridFsTemplate gridFsTemplate;
+    private final BlobStore blobStore;
     private final ProjectService projectService;
     private final WorkspaceService workspaceService;
 
@@ -40,13 +37,13 @@ public class DataRetentionScheduler {
     public DataRetentionScheduler(FileMetadataRepository fileMetadataRepository,
                                    ProjectRepository projectRepository,
                                    WorkspaceRepository workspaceRepository,
-                                   GridFsTemplate gridFsTemplate,
+                                   BlobStore blobStore,
                                    ProjectService projectService,
                                    WorkspaceService workspaceService) {
         this.fileMetadataRepository = fileMetadataRepository;
         this.projectRepository = projectRepository;
         this.workspaceRepository = workspaceRepository;
-        this.gridFsTemplate = gridFsTemplate;
+        this.blobStore = blobStore;
         this.projectService = projectService;
         this.workspaceService = workspaceService;
     }
@@ -61,11 +58,11 @@ public class DataRetentionScheduler {
 
         List<FileMetadata> filesToPurge = fileMetadataRepository.findAllByIsDeletedTrueAndDeletedAtBefore(cutoff);
         for (FileMetadata file : filesToPurge) {
-            if (file.getGridfsId() != null) {
+            if (file.getBlobId() != null) {
                 try {
-                    gridFsTemplate.delete(Query.query(Criteria.where("_id").is(new ObjectId(file.getGridfsId()))));
+                    blobStore.delete(file.getBlobId());
                 } catch (Exception e) {
-                    log.warn("Could not delete GridFS object {} during retention purge: {}", file.getGridfsId(), e.getMessage());
+                    log.warn("Could not delete stored file {} during retention purge: {}", file.getBlobId(), e.getMessage());
                 }
             }
         }

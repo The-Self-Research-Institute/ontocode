@@ -1,17 +1,10 @@
 package self.research.ontology.auth.controller;
-import org.springframework.data.mongodb.core.query.Update;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
-import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -24,7 +17,11 @@ import self.research.ontology.auth.model.Project;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.FileMetadataRepository;
+import self.research.ontology.auth.repository.OntologyFileNameRepository;
+import self.research.ontology.common.db.BlobStore;
+import self.research.ontology.common.db.StoredFile;
 import self.research.ontology.auth.repository.UserRepository;
+import self.research.ontology.auth.service.ProjectRoleResolver;
 import self.research.ontology.auth.service.ProjectService;
 import self.research.ontology.auth.util.JwtUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -65,24 +62,24 @@ public class ProjectController {
     private final JwtUtil jwtUtil;
     private final self.research.ontology.auth.service.WorkspaceService workspaceService;
     private final self.research.ontology.auth.repository.ProjectRepository projectRepository;
-    private final GridFsTemplate gridFsTemplate;
-    private final MongoTemplate mongoTemplate;
+    private final BlobStore blobStore;
+    private final OntologyFileNameRepository ontologyFileNames;
     private final org.springframework.web.client.RestTemplate restTemplate;
     private final self.research.ontology.auth.service.EmailService emailService;
     private final self.research.ontology.auth.service.SystemSettingsService systemSettingsService;
 
-    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, GridFsTemplate gridFsTemplate, self.research.ontology.auth.service.EmailService emailService, self.research.ontology.auth.service.SystemSettingsService systemSettingsService,MongoTemplate mongoTemplate) {
+    public ProjectController(ProjectService projectService, UserRepository userRepository, FileMetadataRepository fileMetadataRepository, JwtUtil jwtUtil, self.research.ontology.auth.service.WorkspaceService workspaceService, self.research.ontology.auth.repository.ProjectRepository projectRepository, BlobStore blobStore, self.research.ontology.auth.service.EmailService emailService, self.research.ontology.auth.service.SystemSettingsService systemSettingsService, OntologyFileNameRepository ontologyFileNames) {
         this.projectService = projectService;
         this.userRepository = userRepository;
         this.fileMetadataRepository = fileMetadataRepository;
         this.jwtUtil = jwtUtil;
         this.workspaceService = workspaceService;
         this.projectRepository = projectRepository;
-        this.gridFsTemplate = gridFsTemplate;
+        this.blobStore = blobStore;
         this.restTemplate = new org.springframework.web.client.RestTemplate();
         this.emailService = emailService;
         this.systemSettingsService = systemSettingsService;
-        this.mongoTemplate = mongoTemplate;
+        this.ontologyFileNames = ontologyFileNames;
     }
 
     /**
@@ -1133,32 +1130,12 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "Access denied"));
             }
             
-            // Determine user's project role
-            String userProjectRole = "VIEWER"; // default
-            if (project.getOwnerId().equals(user.getId())) {
-                userProjectRole = "OWNER";
-            } else {
-                // Workspace owners/admins always get ADMIN role in projects
-                Optional<Workspace> wsOpt = workspaceService.getWorkspace(project.getWorkspaceId());
-                boolean isWsOwnerOrAdmin = false;
-                if (wsOpt.isPresent()) {
-                    Workspace.WorkspaceMember wsMember = wsOpt.get().getMember(user.getId());
-                    if (wsMember != null) {
-                        Workspace.WorkspaceRole wsRole = wsMember.getRole();
-                        if (wsRole == Workspace.WorkspaceRole.OWNER || wsRole == Workspace.WorkspaceRole.ADMIN) {
-                            userProjectRole = "ADMIN";
-                            isWsOwnerOrAdmin = true;
-                        }
-                    }
-                }
-                if (!isWsOwnerOrAdmin) {
-                    Project.ProjectMember pm = project.getMember(user.getId());
-                    if (pm != null) {
-                        userProjectRole = pm.getRole();
-                    }
-                }
-            }
-            
+            Workspace.WorkspaceMember wsMember = workspaceService.getWorkspace(project.getWorkspaceId())
+                    .map(ws -> ws.getMember(user.getId())).orElse(null);
+            Project.ProjectMember pm = project.getMember(user.getId());
+            String userProjectRole = ProjectRoleResolver.resolve(project.getOwnerId().equals(user.getId()),
+                    wsMember != null ? wsMember.getRole() : null, pm != null ? pm.getRole() : null);
+
             // Get files from project metadata (primary source)
             List<Map<String, Object>> files = new ArrayList<>();
             for (Project.FileMetadataInfo fileInfo : project.getActiveFiles()) {
@@ -1205,7 +1182,7 @@ public class ProjectController {
 
     /**
      * Get file content by file ID.
-     * Uses streaming for GridFS files to avoid loading entire file into memory (OOM for large files).
+     * Uses streaming for stored files to avoid loading entire file into memory (OOM for large files).
      */
     @GetMapping("/{projectId}/files/{fileId}/content")
     public ResponseEntity<?> getFileContent(
@@ -1240,12 +1217,9 @@ public class ProjectController {
                 return ResponseEntity.status(403).body(Map.of("error", "File does not belong to this project"));
             }
 
-            // Retrieve content from GridFS using streaming to avoid OOM on large files
-            if (fileMeta.getGridfsId() != null && !fileMeta.getGridfsId().isEmpty()) {
+            // Retrieve content from the file store using streaming to avoid OOM on large files
+            if (fileMeta.getBlobId() != null && !fileMeta.getBlobId().isEmpty()) {
                 try {
-                    GridFsResource resource = gridFsTemplate.getResource(
-                            gridFsTemplate.findOne(Query.query(Criteria.where("_id").is(new ObjectId(fileMeta.getGridfsId())))));
-
                     String fileType = fileMeta.getFileType() != null ? fileMeta.getFileType() : "application/rdf+xml";
                     long fileSize = fileMeta.getFileSize() != null ? fileMeta.getFileSize() : 0;
 
@@ -1257,7 +1231,7 @@ public class ProjectController {
                     httpResponse.setCharacterEncoding("UTF-8");
                     httpResponse.setStatus(HttpServletResponse.SC_OK);
 
-                    try (InputStream inputStream = resource.getInputStream();
+                    try (InputStream inputStream = blobStore.open(fileMeta.getBlobId());
                          OutputStream outputStream = httpResponse.getOutputStream()) {
                         // Write JSON opening with metadata
                         String prefix = "{\"id\":\"" + escapeJson(fileMeta.getFileId())
@@ -1289,8 +1263,8 @@ public class ProjectController {
                     }
 
                     return null; // Response already written directly
-                } catch (Exception gridfsEx) {
-                    log.error("Error reading file from GridFS (id={}): {}", fileMeta.getGridfsId(), gridfsEx.getMessage());
+                } catch (Exception storageEx) {
+                    log.error("Error reading file from storage (id={}): {}", fileMeta.getBlobId(), storageEx.getMessage());
                     if (!httpResponse.isCommitted()) {
                         return ResponseEntity.internalServerError().body(Map.of("error", "Could not read file content from storage"));
                     }
@@ -1315,6 +1289,11 @@ public class ProjectController {
             log.error("Error getting file content", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Failed to get file content"));
         }
+    }
+
+    private Optional<FileMetadata> findReplaceTarget(String replaceFileId) {
+        Optional<FileMetadata> byFileId = fileMetadataRepository.findByFileId(replaceFileId);
+        return byFileId.isPresent() ? byFileId : fileMetadataRepository.findById(replaceFileId);
     }
 
     private static String escapeJson(String value) {
@@ -1544,7 +1523,7 @@ public class ProjectController {
 
             // If replacing, subtract old file size
             if (replaceFileId != null && !replaceFileId.isEmpty()) {
-                Optional<FileMetadata> oldFile = fileMetadataRepository.findById(replaceFileId);
+                Optional<FileMetadata> oldFile = findReplaceTarget(replaceFileId);
                 if (oldFile.isPresent() && oldFile.get().getFileSize() != null) {
                     currentStorageBytes -= oldFile.get().getFileSize();
                 }
@@ -1574,43 +1553,14 @@ public class ProjectController {
                 ));
             }
             
-            // If replaceFileId is provided, delete the old file first.
-            // The GridFS blob delete and the metadata removal are intentionally in SEPARATE
-            // try/catch blocks: if the GridFS delete throws, the old file's metadata must
-            // still be marked removed, or it keeps counting toward the user's storage quota
-            // forever (a leaked GridFS blob just wastes disk space — far less harmful than
-            // silently double-billing a user's quota against a file that's no longer active).
-            if (replaceFileId != null && !replaceFileId.isEmpty()) {
-                Optional<FileMetadata> oldFileMeta = fileMetadataRepository.findById(replaceFileId);
-                if (oldFileMeta.isPresent() && oldFileMeta.get().getGridfsId() != null) {
-                    try {
-                        gridFsTemplate.delete(Query.query(Criteria.where("_id").is(new ObjectId(oldFileMeta.get().getGridfsId()))));
-                        log.info("Deleted old GridFS object during replace: {}", oldFileMeta.get().getGridfsId());
-                    } catch (Exception e) {
-                        log.warn("Failed to delete old GridFS object {} during replace — continuing so the " +
-                                "metadata is still marked removed: {}", oldFileMeta.get().getGridfsId(), e.getMessage());
-                    }
-                }
-                try {
-                    projectService.removeFile(projectId, user.getId(), replaceFileId);
-                    fileMetadataRepository.deleteById(replaceFileId);
-                    log.info("Replaced existing file: {} with ID: {}", fileName, replaceFileId);
-                } catch (Exception e) {
-                    log.warn("Error removing old file metadata during replacement: {}", e.getMessage());
-                    // Continue with upload even if this fails
-                }
-            }
-            
             // Generate file ID and save metadata
             String fileId = UUID.randomUUID().toString();
             
-            // Stream file directly to GridFS — no base64, no full byte[] in memory
             String contentType = fileType;
-            String gridfsId;
+            String blobId;
             try (InputStream inputStream = file.getInputStream()) {
-                ObjectId gridfsObjectId = gridFsTemplate.store(inputStream, fileName, contentType);
-                gridfsId = gridfsObjectId.toString();
-                log.info("Stored file in GridFS: {} (objectId={}, size={})", fileName, gridfsId, newFileSize);
+                blobId = blobStore.store("fs", fileName, contentType, Map.of("projectId", projectId), inputStream).id();
+                log.info("Stored file: {} (id={}, size={})", fileName, blobId, newFileSize);
             }
             
             // Save file metadata
@@ -1618,7 +1568,7 @@ public class ProjectController {
             fileMetadata.setFileSize(newFileSize);
             fileMetadata.setFileType(contentType);
             fileMetadata.setExtension(extension);
-            fileMetadata.setGridfsId(gridfsId);
+            fileMetadata.setBlobId(blobId);
             fileMetadata.setUploadedBy(user.getId());
             fileMetadata.setUploaderEmail(user.getEmail());
             fileMetadata.setUploaderUsername(user.getUsername());
@@ -1634,6 +1584,26 @@ public class ProjectController {
             projectFileInfo.setUploaderEmail(user.getEmail());
             
             projectService.addFileMetadata(projectId, user.getId(), projectFileInfo);
+
+            if (replaceFileId != null && !replaceFileId.isEmpty()) {
+                Optional<FileMetadata> oldFileMeta = findReplaceTarget(replaceFileId);
+                try {
+                    projectService.removeFile(projectId, user.getId(), replaceFileId);
+                    oldFileMeta.ifPresent(old -> fileMetadataRepository.deleteById(old.getId()));
+                    log.info("Replaced existing file: {} with ID: {}", fileName, replaceFileId);
+                } catch (Exception e) {
+                    log.warn("Error removing old file metadata during replacement: {}", e.getMessage());
+                }
+                if (oldFileMeta.isPresent() && oldFileMeta.get().getBlobId() != null) {
+                    try {
+                        blobStore.delete(oldFileMeta.get().getBlobId());
+                        log.info("Deleted old stored file during replace: {}", oldFileMeta.get().getBlobId());
+                    } catch (Exception e) {
+                        log.warn("Failed to delete old stored file {} during replace: {}",
+                                oldFileMeta.get().getBlobId(), e.getMessage());
+                    }
+                }
+            }
 
             // Check if user is admin/owner of the project
             boolean isAdmin = project.getOwnerId().equals(user.getId());
@@ -1695,11 +1665,11 @@ public class ProjectController {
                 restTemplate.delete(graphDbDeleteUrl);
                 log.info("✅ Successfully deleted file from GraphDB: {}", graphDbProjectId);
             } catch (Exception graphDbEx) {
-                log.warn("⚠️ Failed to delete from GraphDB (continuing with MongoDB cleanup): {}", graphDbEx.getMessage());
-                // Continue with MongoDB deletion even if GraphDB fails
+                log.warn("⚠️ Failed to delete from GraphDB (continuing with database cleanup): {}", graphDbEx.getMessage());
+                // Continue with database deletion even if GraphDB fails
             }
             
-            // THEN DELETE FROM MONGODB (soft delete file metadata)
+            // THEN DELETE FROM THE DATABASE (soft delete file metadata)
             Optional<FileMetadata> fileMetaOpt = fileMetadataRepository.findByFileId(fileId);
             if (fileMetaOpt.isPresent()) {
                 FileMetadata fileMeta = fileMetaOpt.get();
@@ -1709,13 +1679,13 @@ public class ProjectController {
                 fileMeta.setStatus("DELETED");
                 fileMetadataRepository.save(fileMeta);
                 
-                // Remove binary from GridFS to free storage space
-                if (fileMeta.getGridfsId() != null && !fileMeta.getGridfsId().isEmpty()) {
+                // Remove binary from storage to free storage space
+                if (fileMeta.getBlobId() != null && !fileMeta.getBlobId().isEmpty()) {
                     try {
-                        gridFsTemplate.delete(Query.query(Criteria.where("_id").is(new ObjectId(fileMeta.getGridfsId()))));
-                        log.info("Deleted GridFS object: {}", fileMeta.getGridfsId());
-                    } catch (Exception gridfsEx) {
-                        log.warn("Could not delete GridFS object {}: {}", fileMeta.getGridfsId(), gridfsEx.getMessage());
+                        blobStore.delete(fileMeta.getBlobId());
+                        log.info("Deleted stored file: {}", fileMeta.getBlobId());
+                    } catch (Exception storageEx) {
+                        log.warn("Could not delete stored file {}: {}", fileMeta.getBlobId(), storageEx.getMessage());
                     }
                 }
             }
@@ -1724,7 +1694,7 @@ public class ProjectController {
             Project project = projectService.removeFile(projectId, user.getId(), fileId);
 
             return ResponseEntity.ok(Map.of(
-                "message", "File deleted successfully from both GraphDB and MongoDB"
+                "message", "File deleted successfully from both GraphDB and the database"
             ));
         } catch (SecurityException e) {
             log.error("Security error deleting file", e);
@@ -1765,11 +1735,7 @@ public ResponseEntity<?> renameFile(
         if (renamedInfo != null) {
             try {
                 String compositeProjectId = projectId + "--" + fileId;
-                Query q = Query.query(Criteria.where("_id").is(compositeProjectId));
-                Update u = new Update()
-                        .set("filename", renamedInfo.getFileName())
-                        .set("updatedAt", java.time.Instant.now());
-                long matched = mongoTemplate.updateFirst(q, u, "projects").getMatchedCount();
+                long matched = ontologyFileNames.updateFileName(compositeProjectId, renamedInfo.getFileName());
                 if (matched == 0) {
                     log.debug("No ontology status record yet for {} — nothing to sync on rename", compositeProjectId);
                 }

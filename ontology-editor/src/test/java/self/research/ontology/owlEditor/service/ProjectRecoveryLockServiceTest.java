@@ -2,39 +2,31 @@ package self.research.ontology.owlEditor.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import self.research.ontology.owlEditor.TestDatabase;
 import self.research.ontology.owlEditor.document.ProjectRecoveryLockDocument;
+import self.research.ontology.owlEditor.repository.JdbcProjectRecoveryLockRepository;
 import self.research.ontology.owlEditor.repository.ProjectRecoveryLockRepository;
 
-import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class ProjectRecoveryLockServiceTest {
 
-    private final Map<String, ProjectRecoveryLockDocument> store = new ConcurrentHashMap<>();
-    private ProjectRecoveryLockRepository repository;
-    private ProjectRecoveryLockService service;
+    private final JdbcTemplate jdbc = TestDatabase.jdbc();
+    private final ProjectRecoveryLockRepository repository = new JdbcProjectRecoveryLockRepository(jdbc);
+    private final ProjectRecoveryLockService service = new ProjectRecoveryLockService(repository);
 
     @BeforeEach
-    void setUp() {
-        repository = mock(ProjectRecoveryLockRepository.class);
-        when(repository.save(any())).thenAnswer(invocation -> {
-            ProjectRecoveryLockDocument doc = invocation.getArgument(0);
-            store.put(doc.getId(), doc);
-            return doc;
-        });
-        when(repository.findById(anyString())).thenAnswer(invocation ->
-                Optional.ofNullable(store.get(invocation.<String>getArgument(0))));
-        service = new ProjectRecoveryLockService(repository);
+    void clean() {
+        jdbc.update("delete from project_recovery_lock");
     }
 
     @Test
@@ -55,15 +47,17 @@ class ProjectRecoveryLockServiceTest {
 
         assertFalse(service.isLocked("proj-1"));
         assertTrue(service.findActiveLock("proj-1").isEmpty());
-        assertEquals("owner@x.com", store.get("proj-1").getReleasedBy());
-        assertEquals("CLEARED", store.get("proj-1").getReleaseAction());
+        ProjectRecoveryLockDocument stored = repository.findById("proj-1").orElseThrow();
+        assertEquals("owner@x.com", stored.getReleasedBy());
+        assertEquals("CLEARED", stored.getReleaseAction());
+        assertNotNull(stored.getReleasedAt());
     }
 
     @Test
     void releasingAnUnlockedProjectIsANoOp() {
         service.release("proj-9", "owner@x.com", "CLEARED");
 
-        assertTrue(store.isEmpty());
+        assertTrue(repository.findById("proj-9").isEmpty());
     }
 
     @Test
@@ -74,8 +68,19 @@ class ProjectRecoveryLockServiceTest {
 
     @Test
     void storageFailureOnTheHotPathReadsAsUnlocked() {
-        when(repository.findById(anyString())).thenThrow(new IllegalStateException("mongo down"));
+        ProjectRecoveryLockRepository broken = mock(ProjectRecoveryLockRepository.class);
+        when(broken.findById(anyString())).thenThrow(new IllegalStateException("database down"));
 
-        assertFalse(service.isLocked("proj-1"));
+        assertFalse(new ProjectRecoveryLockService(broken).isLocked("proj-1"));
+    }
+
+    @Test
+    void lockingAgainAfterARelease() {
+        service.lock("proj-1", "first", "op-1", false);
+        service.release("proj-1", "a", "CLEARED");
+        service.lock("proj-1", "second", "op-2", true);
+
+        Optional<ProjectRecoveryLockDocument> active = service.findActiveLock("proj-1");
+        assertEquals("second", active.orElseThrow().getReason());
     }
 }

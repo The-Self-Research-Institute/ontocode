@@ -222,8 +222,8 @@ public class SubscriptionController {
                     return ResponseEntity.status(403).body(Map.of("error", "You don't have access to this workspace"));
                 }
             }
-            String subscriptionId = stripeService.createSubscriptionAfterSetup(user, setupIntentId, planName, normalizedInterval, workspaceId);
-            return ResponseEntity.ok(Map.of("subscriptionId", subscriptionId));
+            var result = stripeService.createSubscriptionAfterSetup(user, setupIntentId, planName, normalizedInterval, workspaceId);
+            return ResponseEntity.ok(result.toResponse());
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {

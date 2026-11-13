@@ -1,17 +1,11 @@
 package self.research.ontology.auth.controller;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.bson.types.ObjectId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpRange;
 import org.springframework.http.HttpStatus;
@@ -21,6 +15,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import self.research.ontology.auth.service.DesktopDownloadService;
+import self.research.ontology.common.db.StoredFile;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -42,17 +37,8 @@ public class DesktopDownloadController {
 
     private static final Logger log = LoggerFactory.getLogger(DesktopDownloadController.class);
 
-    // Serializes delete-then-insert per platform. Without this, two uploads to the same
-    // platform close together (e.g. a version-fix re-upload fired right after the original)
-    // can interleave: A deletes, B deletes (no-op, A hasn't inserted yet), A inserts, B
-    // inserts — leaving two documents — or worse orderings can leave the platform's delete
-    // running after the only insert, leaving none at all. Reproduced live: a platform's
-    // GridFS document vanished entirely after two of our own upload scripts raced this way.
     private final java.util.concurrent.ConcurrentHashMap<String, Object> uploadLocks =
         new java.util.concurrent.ConcurrentHashMap<>();
-
-    @Autowired
-    private GridFsTemplate gridFsTemplate;
 
     @Autowired
     private DesktopDownloadService downloadService;
@@ -79,7 +65,7 @@ public class DesktopDownloadController {
             @RequestParam(defaultValue = "page_view") String event,
             @RequestParam(required = false) String clientOs,
             HttpServletRequest request) {
-        GridFSFile file = downloadService.findInstaller(platform);
+        StoredFile file = downloadService.findInstaller(platform);
         downloadService.recordEvent(platform, event, request, file, clientOs);
         return ResponseEntity.ok(Map.of("recorded", true));
     }
@@ -87,12 +73,12 @@ public class DesktopDownloadController {
     @GetMapping
     public ResponseEntity<?> listAvailable() {
         List<Map<String, String>> files = new ArrayList<>();
-        gridFsTemplate.find(new Query(Criteria.where("metadata.bucket").is(DesktopDownloadService.BUCKET))).forEach(f -> {
+        downloadService.listInstallers().forEach(f -> {
             Map<String, String> entry = new LinkedHashMap<>();
-            var meta = f.getMetadata();
+            var meta = f.metadata();
             entry.put("platform", meta != null ? String.valueOf(meta.get("platform")) : "");
-            entry.put("filename", f.getFilename());
-            entry.put("size", String.valueOf(f.getLength()));
+            entry.put("filename", f.filename());
+            entry.put("size", String.valueOf(f.length()));
             if (meta != null && meta.get("version") != null) {
                 entry.put("version", String.valueOf(meta.get("version")));
             }
@@ -111,7 +97,7 @@ public class DesktopDownloadController {
             return ResponseEntity.notFound().build();
         }
         try {
-            GridFSFile file = downloadService.findInstaller(platform);
+            StoredFile file = downloadService.findInstaller(platform);
             if (file == null) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("error", "Installer for platform '" + platform + "' not yet available",
@@ -120,10 +106,9 @@ public class DesktopDownloadController {
 
             downloadService.recordEvent(platform, "download", request, file, clientOs);
 
-            GridFsResource resource = gridFsTemplate.getResource(file);
-            String filename = file.getFilename();
+            String filename = file.filename();
             String contentType = detectContentType(filename);
-            long contentLength = file.getLength();
+            long contentLength = file.length();
 
             String rangeHeader = request.getHeader(HttpHeaders.RANGE);
             if (rangeHeader == null) {
@@ -132,7 +117,7 @@ public class DesktopDownloadController {
                     .header(HttpHeaders.ACCEPT_RANGES, "bytes")
                     .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(contentLength))
                     .contentType(MediaType.parseMediaType(contentType))
-                    .body(new InputStreamResource(resource.getInputStream()));
+                    .body(new InputStreamResource(downloadService.openInstaller(file)));
             }
 
             List<HttpRange> ranges;
@@ -166,7 +151,7 @@ public class DesktopDownloadController {
             response.setContentLengthLong(rangeLength);
             response.setContentType(contentType);
 
-            try (InputStream in = resource.getInputStream()) {
+            try (InputStream in = downloadService.openInstaller(file)) {
                 skipFully(in, start);
                 OutputStream out = response.getOutputStream();
                 byte[] buffer = new byte[8192];
@@ -215,7 +200,7 @@ public class DesktopDownloadController {
         try {
             MessageDigest sha512 = MessageDigest.getInstance("SHA-512");
             String resolvedVersion = version != null && !version.isBlank() ? version.trim() : "1.0.0";
-            org.bson.Document metadata = new org.bson.Document();
+            Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("platform", platform);
             metadata.put("bucket", DesktopDownloadService.BUCKET);
             metadata.put("originalName", file.getOriginalFilename());
@@ -223,8 +208,6 @@ public class DesktopDownloadController {
             metadata.put("releaseNotes", releaseNotes != null ? releaseNotes : "");
             metadata.put("publishedAt", Instant.now().toString());
 
-            // Read/hash outside the lock — only the delete-then-insert swap below needs to be
-            // serialized per platform to close the race described above.
             Path tempFile = Files.createTempFile("ontocode-installer-", "-" + filename);
             String sha512Base64;
             try (InputStream raw = file.getInputStream();
@@ -234,16 +217,12 @@ public class DesktopDownloadController {
             }
             metadata.put("sha512", sha512Base64);
 
-            ObjectId id;
+            String id;
             Object lock = uploadLocks.computeIfAbsent(platform, k -> new Object());
             synchronized (lock) {
-                gridFsTemplate.delete(new Query(
-                    Criteria.where("metadata.platform").is(platform)
-                            .and("metadata.bucket").is(DesktopDownloadService.BUCKET)
-                ));
                 try (InputStream raw = Files.newInputStream(tempFile)) {
-                    id = gridFsTemplate.store(raw, filename,
-                        detectContentType(filename), metadata);
+                    id = downloadService.replaceInstaller(platform, filename,
+                        detectContentType(filename), metadata, raw).id();
                 } finally {
                     Files.deleteIfExists(tempFile);
                 }
@@ -256,7 +235,7 @@ public class DesktopDownloadController {
                 "filename", filename,
                 "version", metadata.get("version"),
                 "sha512", sha512Base64,
-                "id", id.toHexString(),
+                "id", id,
                 "downloadUrl", "/api/downloads/" + platform
             ));
         } catch (Exception e) {
@@ -271,10 +250,7 @@ public class DesktopDownloadController {
     public ResponseEntity<?> delete(@PathVariable String platform) {
         Object lock = uploadLocks.computeIfAbsent(platform, k -> new Object());
         synchronized (lock) {
-            gridFsTemplate.delete(new Query(
-                Criteria.where("metadata.platform").is(platform)
-                        .and("metadata.bucket").is(DesktopDownloadService.BUCKET)
-            ));
+            downloadService.deleteInstallers(platform);
         }
         return ResponseEntity.ok(Map.of("success", true, "deleted", platform));
     }

@@ -1,14 +1,16 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.IssueReport;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
-@Repository
-public interface IssueReportRepository extends MongoRepository<IssueReport, String> {
+public interface IssueReportRepository {
+
+    IssueReport save(IssueReport report);
+
+    Optional<IssueReport> findById(String id);
 
     List<IssueReport> findByUserEmailOrderByCreatedAtDesc(String userEmail);
 

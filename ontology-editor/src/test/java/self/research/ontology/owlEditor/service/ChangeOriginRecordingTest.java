@@ -9,7 +9,6 @@ import org.eclipse.rdf4j.model.vocabulary.RDF;
 import org.eclipse.rdf4j.model.vocabulary.RDFS;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.data.mongodb.core.MongoTemplate;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
@@ -34,7 +33,7 @@ class ChangeOriginRecordingTest {
     void syncedEntriesKeepTheirChangeSetSourceAndAiDetails() {
         HistoryChangeRepository repository = mock(HistoryChangeRepository.class);
         when(repository.existsByProjectIdAndEditId(anyString(), anyString())).thenReturn(false);
-        HistorySyncService sync = new HistorySyncService(repository, mock(MongoTemplate.class), mock(OntologyHistoryService.class));
+        HistorySyncService sync = new HistorySyncService(repository, mock(OntologyHistoryService.class));
         ChangeOrigin origin = ChangeOrigin.ai("group-7", "claude", "claude-sonnet-5", "session-2",
                 "  Add a   PizzaOrder class\nwith a label  ");
         Map<String, Object> data = new HashMap<>();
@@ -62,7 +61,7 @@ class ChangeOriginRecordingTest {
     void syncedEntriesKeepTheToolSourceAndLabel() {
         HistoryChangeRepository repository = mock(HistoryChangeRepository.class);
         when(repository.existsByProjectIdAndEditId(anyString(), anyString())).thenReturn(false);
-        HistorySyncService sync = new HistorySyncService(repository, mock(MongoTemplate.class), mock(OntologyHistoryService.class));
+        HistorySyncService sync = new HistorySyncService(repository, mock(OntologyHistoryService.class));
         ChangeOrigin origin = ChangeOrigin.fromTool("swrl-rules", "Added from rule results: Age under 18");
         Map<String, Object> data = new HashMap<>();
         data.put("userId", "u@x.com");
@@ -86,7 +85,7 @@ class ChangeOriginRecordingTest {
     void syncedTimestampsAreStoredAsUtcRegardlessOfServerTimezone() {
         HistoryChangeRepository repository = mock(HistoryChangeRepository.class);
         when(repository.existsByProjectIdAndEditId(anyString(), anyString())).thenReturn(false);
-        HistorySyncService sync = new HistorySyncService(repository, mock(MongoTemplate.class), mock(OntologyHistoryService.class));
+        HistorySyncService sync = new HistorySyncService(repository, mock(OntologyHistoryService.class));
         Instant instant = Instant.parse("2026-10-08T15:20:32Z");
         Map<String, Object> data = new HashMap<>();
         data.put("userId", "u@x.com");

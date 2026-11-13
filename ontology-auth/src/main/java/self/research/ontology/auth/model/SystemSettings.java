@@ -1,7 +1,5 @@
 package self.research.ontology.auth.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -14,12 +12,10 @@ import java.util.List;
  * Singleton document (id = "global") storing runtime-configurable system settings.
  * All fields default to safe/open values so a missing document means "no restrictions".
  */
-@Document(collection = "system_settings")
 public class SystemSettings {
 
     public static final String GLOBAL_ID = "global";
 
-    @Id
     private String id = GLOBAL_ID;
 
     // ── Maintenance mode ──────────────────────────────────────────────────────

@@ -1,7 +1,5 @@
 package self.research.ontology.auth.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -11,7 +9,6 @@ import java.util.List;
  * Project entity - represents a project within a workspace
  * Hierarchy: Workspace -> Project -> Files
  */
-@Document(collection = "projects")
 public class Project {
 
     /**
@@ -26,7 +23,6 @@ public class Project {
      */
     public static final String WS_EDITOR_LINK_ADMIN = "WORKSPACE_ADMIN";
 
-    @Id
     private String id;
     
     private String projectId; // Human-readable ID

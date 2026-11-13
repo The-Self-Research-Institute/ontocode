@@ -214,7 +214,7 @@ public class AssistantContextToolService {
 
     private static Map<String, String> buildGuidanceTopics() {
         Map<String, String> topics = new LinkedHashMap<>();
-        topics.put("prefixes", "Prefixes are stored in Mongo per project and tracked separately for the draft graph and the " +
+        topics.put("prefixes", "Prefixes are stored per project and tracked separately for the draft graph and the " +
                 "public graph — editing a prefix in draft mode never changes what public viewers see until the draft is " +
                 "published, and the Active Ontology panel and Code View always reflect the scope (draft or public) the " +
                 "session is currently in, not a mix of both.");

@@ -1,7 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.model.*;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.util.OwlAxiomSparqlWriter;
@@ -186,7 +186,7 @@ public class AxiomAnnotationService {
             String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
             String rdf = datasetService.exportNamedGraph(
                     projectId, draftGraph, org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
-            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+            OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
             OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
             return manager.loadOntologyFromOntologyDocument(
@@ -195,7 +195,7 @@ public class AxiomAnnotationService {
 
         importService.syncProjectToFuseki(projectId);
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
     }
 }

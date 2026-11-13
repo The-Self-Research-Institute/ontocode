@@ -1,26 +1,21 @@
 package self.research.ontology.plugins.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.plugins.model.PluginUserInstall;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface PluginUserInstallRepository extends MongoRepository<PluginUserInstall, String> {
-
-    List<PluginUserInstall> findByPluginId(String pluginId);
+public interface PluginUserInstallRepository {
 
     Optional<PluginUserInstall> findByPluginIdAndUserId(String pluginId, String userId);
 
     List<PluginUserInstall> findByUserId(String userId);
 
-    List<PluginUserInstall> findByPluginIdAndIsActive(String pluginId, Boolean isActive);
+    Long countByPluginId(String pluginId);
 
     Long countByPluginIdAndIsActive(String pluginId, Boolean isActive);
 
-    Long countByPluginId(String pluginId);
+    void recordInstall(String pluginId, String userId, String username, String version);
 
-    List<PluginUserInstall> findByIsActive(Boolean isActive);
+    boolean recordUninstall(String pluginId, String userId);
 }

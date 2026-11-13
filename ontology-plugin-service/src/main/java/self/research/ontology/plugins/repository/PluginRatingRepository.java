@@ -1,24 +1,21 @@
 package self.research.ontology.plugins.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.plugins.model.PluginRating;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface PluginRatingRepository extends MongoRepository<PluginRating, String> {
+public interface PluginRatingRepository {
 
     List<PluginRating> findByPluginId(String pluginId);
 
     Optional<PluginRating> findByPluginIdAndUserId(String pluginId, String userId);
 
-    List<PluginRating> findByUserId(String userId);
+    Optional<PluginRating> findById(String id);
 
-    Long countByPluginId(String pluginId);
+    PluginRating save(PluginRating rating);
 
-    List<PluginRating> findByPluginIdAndStars(String pluginId, Integer stars);
+    void delete(PluginRating rating);
 
-    void deleteByPluginId(String pluginId);
+    void incrementHelpful(String id);
 }

@@ -1,33 +1,27 @@
 #!/usr/bin/env node
 
-const nodeCrypto = require("crypto");
-
-if (!globalThis.crypto && nodeCrypto.webcrypto) {
-  globalThis.crypto = nodeCrypto.webcrypto;
-}
-
-const { MongoClient, ObjectId } = require("mongodb");
 const http = require("http");
 const https = require("https");
 const readline = require("readline/promises");
 const fs = require("fs/promises");
 const path = require("path");
+const { newPool, blobsRoot, blobPath } = require("./lib/db");
 
-const DEFAULT_MONGODB_URI =
-  "mongodb://admin:changeme123@localhost:27017/ontocode?authSource=admin";
-
-const PROJECT_SCOPED_COLLECTIONS = [
-  "ontology_annotation_properties",
-  "ontology_axioms",
-  "ontology_classes",
-  "ontology_datatypes",
-  "ontology_individuals",
-  "ontology_properties",
-  "ontology_search_index",
-  "ontologies",
-  "sparql_queries",
-  "swrl_rules",
-  "datatype_definitions",
+const PROJECT_SCOPED_TABLES = [
+  "ontology_file",
+  "project_share",
+  "user_project_preference",
+  "project_public_graph_version",
+  "project_write_lease",
+  "project_recovery_lock",
+  "draft_change",
+  "draft_change_parked",
+  "draft_session",
+  "draft_pull_request",
+  "draft_pr_change",
+  "swrl_rule",
+  "reasoning_job",
+  "reasoning_snapshot",
 ];
 
 function printUsage() {
@@ -40,12 +34,12 @@ Options:
   --yes                  Skip interactive confirmation when using --execute.
   --skip-fuseki          Do not clear Fuseki project graphs.
   --delete-project-dirs  Delete DATA_DIR/projects/<projectId> directories for deleted projects.
-  --mongodb-uri=<uri>    Override MONGODB_URI for this run.
-  --mongo-db=<name>      Override Mongo database name for this run.
   --fuseki-url=<url>     Override FUSEKI_URL for this run.
   --fuseki-dataset=<name> Override FUSEKI_DATASET for this run.
   --help                 Show this help.
 
+The database connection comes from ONTOCODE_DB_URL, ONTOCODE_DB_USER and ONTOCODE_DB_PASSWORD.
+Stored files are removed from ONTOCODE_BLOBS_DIR.
 Dry-run is the default. Use --execute --yes only after the plan looks correct.
 `);
 }
@@ -56,8 +50,6 @@ function parseArgs(argv) {
     yes: false,
     skipFuseki: false,
     deleteProjectDirs: false,
-    mongodbUri: process.env.MONGODB_URI || DEFAULT_MONGODB_URI,
-    mongoDb: process.env.MONGODB_DATABASE || "",
     fusekiUrl: process.env.FUSEKI_URL || "http://localhost:3030",
     fusekiDataset: process.env.FUSEKI_DATASET || "ontocode",
     dataDir: process.env.DATA_DIR || "./data",
@@ -75,10 +67,6 @@ function parseArgs(argv) {
       options.skipFuseki = true;
     } else if (arg === "--delete-project-dirs") {
       options.deleteProjectDirs = true;
-    } else if (arg.startsWith("--mongodb-uri=")) {
-      options.mongodbUri = arg.slice("--mongodb-uri=".length);
-    } else if (arg.startsWith("--mongo-db=")) {
-      options.mongoDb = arg.slice("--mongo-db=".length);
     } else if (arg.startsWith("--fuseki-url=")) {
       options.fusekiUrl = arg.slice("--fuseki-url=".length).replace(/\/+$/, "");
     } else if (arg.startsWith("--fuseki-dataset=")) {
@@ -91,290 +79,111 @@ function parseArgs(argv) {
   }
 
   options.identifier = identifier;
-  options.mongoDb = options.mongoDb || databaseNameFromUri(options.mongodbUri) || "ontocode";
   options.fusekiUrl = options.fusekiUrl.replace(/\/+$/, "");
   return options;
 }
 
-function databaseNameFromUri(uri) {
-  try {
-    const parsed = new URL(uri);
-    const db = parsed.pathname.replace(/^\/+/, "");
-    return db || "";
-  } catch {
-    return "";
-  }
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function exactRegex(value) {
-  return new RegExp(`^${escapeRegExp(value)}$`, "i");
-}
-
 function unique(values) {
-  const seen = new Set();
-  const out = [];
-  for (const value of values) {
-    if (value === undefined || value === null) continue;
-    const normalized = String(value).trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
-}
-
-function objectIdIfValid(value) {
-  if (typeof value !== "string" || !ObjectId.isValid(value)) {
-    return null;
-  }
-  try {
-    return new ObjectId(value);
-  } catch {
-    return null;
-  }
-}
-
-function mongoIdValues(value) {
-  const values = [];
-  if (value !== undefined && value !== null) {
-    values.push(value);
-    const asString = String(value);
-    if (asString !== value) {
-      values.push(asString);
-    }
-    const objectId = objectIdIfValid(asString);
-    if (objectId) {
-      values.push(objectId);
-    }
-  }
-  return values;
-}
-
-function docIdToString(value) {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value;
-  if (value instanceof ObjectId) return value.toHexString();
-  return String(value);
-}
-
-function getProjectIdsFromDoc(doc) {
-  const ids = [doc.projectId];
-  if (!doc.projectId && typeof doc._id === "string") {
-    ids.push(doc._id);
-  }
-  return unique(ids);
-}
-
-function getWorkspaceIdsFromDoc(doc) {
-  const ids = [doc.workspaceId];
-  if (!doc.workspaceId && typeof doc._id === "string") {
-    ids.push(doc._id);
-  }
-  return unique(ids);
-}
-
-function orQuery(clauses) {
-  const filtered = clauses.filter(Boolean);
-  if (filtered.length === 0) return null;
-  return filtered.length === 1 ? filtered[0] : { $or: filtered };
-}
-
-function inClause(field, values) {
-  return values.length > 0 ? { [field]: { $in: values } } : null;
-}
-
-function notInClause(field, values) {
-  return values.length > 0 ? { [field]: { $nin: values } } : {};
-}
-
-async function collectionExists(db, name) {
-  const matches = await db.listCollections({ name }).toArray();
-  return matches.length > 0;
+  return [...new Set(values.filter((v) => v !== undefined && v !== null && v !== ""))];
 }
 
 async function findUsers(db, identifier) {
-  const userQuery = {
-    $or: [
-      { email: exactRegex(identifier) },
-      { username: identifier },
-      { _id: identifier },
-    ],
-  };
-
-  const objectId = objectIdIfValid(identifier);
-  if (objectId) {
-    userQuery.$or.push({ _id: objectId });
-  }
-
-  return db.collection("users").find(userQuery).toArray();
+  const result = await db.query(
+    "select id, username, email from app_user where lower(email) = lower($1) or username = $1 or id = $1",
+    [identifier]
+  );
+  return result.rows;
 }
 
 async function buildUserPlan(db, user) {
-  const userIdString = docIdToString(user._id || user.id);
-  const userRefIds = unique([userIdString, user.id]);
-  const userMongoIds = mongoIdValues(user._id || userIdString);
+  const userId = user.id;
   const email = user.email || "";
-  const emailRegex = email ? exactRegex(email) : /^$/i;
 
-  const workspaces = db.collection("workspaces");
-  const projects = db.collection("projects");
-  const invitations = db.collection("invitations");
-  const files = db.collection("file_metadata");
-  const projectShares = db.collection("project_shares");
+  const ownedWorkspaces = (await db.query(
+    "select id, workspace_id, name from workspace where owner_id = $1", [userId]
+  )).rows;
+  const workspaceIdsToDelete = unique(ownedWorkspaces.flatMap((w) => [w.workspace_id, w.id]));
+  const ownedWorkspaceRowIds = ownedWorkspaces.map((w) => w.id);
 
-  const ownedWorkspaceQuery = inClause("ownerId", userRefIds) || { _id: "__never__" };
-  const ownedWorkspaces = await workspaces.find(ownedWorkspaceQuery).toArray();
-  const ownedWorkspaceMongoIds = ownedWorkspaces.map((w) => w._id);
-  const workspaceIdsToDelete = unique(ownedWorkspaces.flatMap(getWorkspaceIdsFromDoc));
+  const otherWorkspaceMemberships = (await db.query(
+    "select count(*)::int as n from workspace_member m join workspace w on w.id = m.workspace_row_id " +
+    "where w.owner_id <> $1 and (m.user_id = $1 or lower(m.email) = lower($2))",
+    [userId, email]
+  )).rows[0].n;
 
-  const otherWorkspaceMemberQuery = {
-    ...notInClause("ownerId", userRefIds),
-    ...(orQuery([
-      inClause("members.userId", userRefIds),
-      email ? { "members.email": emailRegex } : null,
-    ]) || { _id: "__never__" }),
-  };
-  const otherWorkspaceMemberships = await workspaces.find(otherWorkspaceMemberQuery).toArray();
+  const projectsToDelete = (await db.query(
+    "select id, project_id, name from project where owner_id = $1 or workspace_id = any($2::text[])",
+    [userId, workspaceIdsToDelete]
+  )).rows;
+  const projectRowIdsToDelete = projectsToDelete.map((p) => p.id);
+  const projectIdsToDelete = unique(projectsToDelete.flatMap((p) => [p.project_id]));
 
-  const projectDeleteQuery = orQuery([
-    inClause("ownerId", userRefIds),
-    inClause("workspaceId", workspaceIdsToDelete),
-    email ? { ownerEmail: emailRegex } : null,
-  ]) || { _id: "__never__" };
-  let projectsToDelete = await projects.find(projectDeleteQuery).toArray();
-  let projectMongoIdsToDelete = projectsToDelete.map((p) => p._id);
-  let projectIdsToDelete = unique(projectsToDelete.flatMap(getProjectIdsFromDoc));
+  const otherProjectMemberships = (await db.query(
+    "select count(*)::int as n from project_member where not (project_row_id = any($3::text[])) " +
+    "and (user_id = $1 or lower(email) = lower($2))",
+    [userId, email, projectRowIdsToDelete]
+  )).rows[0].n;
 
-  if (projectIdsToDelete.length > 0) {
-    const relatedProjectDocs = await projects.find(orQuery([
-      inClause("projectId", projectIdsToDelete),
-      { _id: { $in: projectIdsToDelete } },
-    ])).toArray();
-    const byId = new Map();
-    for (const doc of [...projectsToDelete, ...relatedProjectDocs]) {
-      byId.set(docIdToString(doc._id), doc);
-    }
-    projectsToDelete = [...byId.values()];
-    projectMongoIdsToDelete = projectsToDelete.map((p) => p._id);
-    projectIdsToDelete = unique(projectsToDelete.flatMap(getProjectIdsFromDoc));
-  }
+  const invitationCount = (await db.query(
+    "select count(*)::int as n from invitation where lower(invitee_email) = lower($2) or invited_by = $1 " +
+    "or lower(invited_by_email) = lower($2) or workspace_id = any($3::text[])",
+    [userId, email, workspaceIdsToDelete]
+  )).rows[0].n;
 
-  const otherProjectMemberQuery = {
-    ...notInClause("_id", projectMongoIdsToDelete),
-    ...(orQuery([
-      inClause("members.userId", userRefIds),
-      email ? { "members.email": emailRegex } : null,
-    ]) || { _id: "__never__" }),
-  };
-  const otherProjectMemberships = await projects.find(otherProjectMemberQuery).toArray();
+  const fileRows = (await db.query(
+    "select id, blob_id from file_metadata where project_id = any($1::text[]) or workspace_id = any($2::text[])",
+    [projectIdsToDelete, workspaceIdsToDelete]
+  )).rows;
+  const blobIdsFromMetadata = unique(fileRows.map((f) => f.blob_id));
 
-  const invitationDeleteQuery = orQuery([
-    email ? { inviteeEmail: emailRegex } : null,
-    inClause("invitedBy", userRefIds),
-    email ? { invitedByEmail: emailRegex } : null,
-    inClause("workspaceId", workspaceIdsToDelete),
-  ]) || { _id: "__never__" };
+  const storedFilesToDelete = (await db.query(
+    "select id, bucket, storage from stored_file where id = any($1::text[]) or metadata ->> 'projectId' = any($2::text[])",
+    [blobIdsFromMetadata, projectIdsToDelete]
+  )).rows;
 
-  const fileDeleteQuery = orQuery([
-    inClause("projectId", projectIdsToDelete),
-    inClause("workspaceId", workspaceIdsToDelete),
-  ]) || { _id: "__never__" };
-  const fileMetadataToDelete = await files.find(fileDeleteQuery).toArray();
-  const gridFsIdsFromMetadata = unique(fileMetadataToDelete.map((f) => f.gridfsId));
-
-  const gridFsFileObjectIds = gridFsIdsFromMetadata
-    .map(objectIdIfValid)
-    .filter(Boolean);
-
-  const gridFsFileQuery = orQuery([
-    gridFsFileObjectIds.length ? { _id: { $in: gridFsFileObjectIds } } : null,
-    inClause("metadata.projectId", projectIdsToDelete),
-  ]) || { _id: "__never__" };
-
-  const gridFsFilesToDelete = await db.collection("fs.files")
-    .find(gridFsFileQuery, { projection: { _id: 1, filename: 1 } })
-    .toArray()
-    .catch(() => []);
-
-  const projectShareDeleteQuery = orQuery([
-    inClause("projectId", projectIdsToDelete),
-    email ? { ownerEmail: emailRegex } : null,
-  ]) || { _id: "__never__" };
-  const projectSharePullQuery = {
-    ...notInClause("projectId", projectIdsToDelete),
-    ...(email ? { sharedWithEmails: emailRegex } : { _id: "__never__" }),
-  };
-
-  const issueReportDeleteQuery = orQuery([
-    inClause("projectId", projectIdsToDelete),
-    email ? { userEmail: emailRegex } : null,
-    email ? { reporterEmail: emailRegex } : null,
-  ]) || { _id: "__never__" };
-
-  const userChangeQuery = orQuery([
-    inClause("projectId", projectIdsToDelete),
-    inClause("userId", userRefIds),
-    inClause("approvedBy", userRefIds),
-    inClause("rejectedBy", userRefIds),
-    inClause("resolvedBy", userRefIds),
-    inClause("revertedBy", userRefIds),
-  ]) || { _id: "__never__" };
+  const shareDelete = (await db.query(
+    "select count(*)::int as n from project_share where project_id = any($1::text[]) or lower(owner_email) = lower($2)",
+    [projectIdsToDelete, email]
+  )).rows[0].n;
+  const sharePull = (await db.query(
+    "select count(*)::int as n from project_share where not (project_id = any($1::text[])) " +
+    "and exists (select 1 from unnest(shared_with_emails) e where lower(e) = lower($2))",
+    [projectIdsToDelete, email]
+  )).rows[0].n;
 
   const counts = {
-    invitations: await invitations.countDocuments(invitationDeleteQuery),
-    projectSharesDelete: await projectShares.countDocuments(projectShareDeleteQuery).catch(() => 0),
-    projectSharesPull: await projectShares.countDocuments(projectSharePullQuery).catch(() => 0),
-    issueReports: await db.collection("issue_reports").countDocuments(issueReportDeleteQuery).catch(() => 0),
-    fileMetadata: fileMetadataToDelete.length,
-    gridFsFiles: gridFsFilesToDelete.length,
+    invitations: invitationCount,
+    projectSharesDelete: shareDelete,
+    projectSharesPull: sharePull,
+    fileMetadata: fileRows.length,
+    storedFiles: storedFilesToDelete.length,
   };
 
-  for (const name of PROJECT_SCOPED_COLLECTIONS) {
-    counts[name] = projectIdsToDelete.length
-      ? await db.collection(name).countDocuments({ projectId: { $in: projectIdsToDelete } }).catch(() => 0)
+  for (const table of PROJECT_SCOPED_TABLES) {
+    counts[table] = projectIdsToDelete.length
+      ? (await db.query(`select count(*)::int as n from ${table} where project_id = any($1::text[])`, [projectIdsToDelete])).rows[0].n
       : 0;
   }
-
-  for (const name of ["ontology_changes", "history_changes", "draft_changes", "draft_sessions"]) {
-    counts[name] = await db.collection(name).countDocuments(userChangeQuery).catch(() => 0);
-  }
-
-  const draftPRDeleteQuery = orQuery([
-    inClause("projectId", projectIdsToDelete),
-    inClause("authorId", userRefIds),
-  ]) || { _id: "__never__" };
-  counts["draft_pull_requests"] = await db.collection("draft_pull_requests")
-    .countDocuments(draftPRDeleteQuery).catch(() => 0);
+  counts.draftChangesByUser = (await db.query(
+    "select (select count(*) from draft_change where user_id = $1) + (select count(*) from draft_change_parked where user_id = $1) " +
+    "+ (select count(*) from draft_session where user_id = $1) + (select count(*) from draft_pull_request where author_id = $1) as n",
+    [userId]
+  )).rows[0].n;
 
   return {
     user,
-    userIdString,
-    userRefIds,
-    userMongoIds,
+    userId,
     email,
-    emailRegex,
     username: user.username || "",
     ownedWorkspaces,
-    ownedWorkspaceMongoIds,
+    ownedWorkspaceRowIds,
     workspaceIdsToDelete,
     otherWorkspaceMemberships,
     projectsToDelete,
-    projectMongoIdsToDelete,
+    projectRowIdsToDelete,
     projectIdsToDelete,
     otherProjectMemberships,
-    invitationDeleteQuery,
-    fileDeleteQuery,
-    gridFsFilesToDelete,
-    gridFsFileQuery,
-    projectShareDeleteQuery,
-    projectSharePullQuery,
-    issueReportDeleteQuery,
-    userChangeQuery,
-    draftPRDeleteQuery,
+    storedFilesToDelete,
     counts,
   };
 }
@@ -383,41 +192,32 @@ function printPlan(plan, options) {
   console.log("\nUser cleanup plan");
   console.log("-----------------");
   console.log(`Mode: ${options.execute ? "EXECUTE" : "DRY RUN"}`);
-  console.log(`MongoDB database: ${options.mongoDb}`);
   console.log(`User: ${plan.email || "(no email)"} (${plan.username || "no username"})`);
-  console.log(`User ID: ${plan.userIdString}`);
+  console.log(`User ID: ${plan.userId}`);
   console.log("");
   console.log(`Owned workspaces to delete: ${plan.ownedWorkspaces.length}`);
   for (const workspace of plan.ownedWorkspaces) {
-    console.log(`  - ${workspace.workspaceId || docIdToString(workspace._id)} ${workspace.name ? `(${workspace.name})` : ""}`);
+    console.log(`  - ${workspace.workspace_id || workspace.id} ${workspace.name ? `(${workspace.name})` : ""}`);
   }
-  console.log(`Other workspaces to remove this user from: ${plan.otherWorkspaceMemberships.length}`);
+  console.log(`Other workspaces to remove this user from: ${plan.otherWorkspaceMemberships}`);
   console.log(`Projects to delete: ${plan.projectsToDelete.length}`);
   for (const project of plan.projectsToDelete) {
-    const ids = getProjectIdsFromDoc(project).join(", ") || docIdToString(project._id);
-    console.log(`  - ${ids} ${project.name ? `(${project.name})` : ""}`);
+    console.log(`  - ${project.project_id} ${project.name ? `(${project.name})` : ""}`);
   }
-  console.log(`Other projects to remove this user from: ${plan.otherProjectMemberships.length}`);
+  console.log(`Other projects to remove this user from: ${plan.otherProjectMemberships}`);
   console.log(`Invitations to delete: ${plan.counts.invitations}`);
   console.log(`File metadata records to delete: ${plan.counts.fileMetadata}`);
-  console.log(`GridFS files to delete: ${plan.counts.gridFsFiles}`);
+  console.log(`Stored files to delete: ${plan.counts.storedFiles}`);
   console.log(`Project shares to delete: ${plan.counts.projectSharesDelete}`);
   console.log(`Project shares to update: ${plan.counts.projectSharesPull}`);
-  console.log(`Issue reports to delete: ${plan.counts.issueReports}`);
   console.log(`Fuseki project graphs to clear: ${options.skipFuseki ? "skipped" : plan.projectIdsToDelete.length}`);
   console.log(`Project directories to delete: ${options.deleteProjectDirs ? plan.projectIdsToDelete.length : "skipped"}`);
 
-  const scopedTotal = PROJECT_SCOPED_COLLECTIONS
+  const scopedTotal = PROJECT_SCOPED_TABLES
     .map((name) => plan.counts[name] || 0)
     .reduce((sum, count) => sum + count, 0);
-  const changeTotal =
-    (plan.counts.ontology_changes || 0) +
-    (plan.counts.history_changes || 0) +
-    (plan.counts.draft_changes || 0) +
-    (plan.counts.draft_sessions || 0) +
-    (plan.counts.draft_pull_requests || 0);
-  console.log(`Project-scoped editor/index docs to delete: ${scopedTotal}`);
-  console.log(`Change/draft/session/PR docs to delete: ${changeTotal}`);
+  console.log(`Project-scoped rows to delete: ${scopedTotal}`);
+  console.log(`Draft rows owned by the user to delete: ${plan.counts.draftChangesByUser}`);
 }
 
 async function confirmExecution(plan) {
@@ -427,125 +227,93 @@ async function confirmExecution(plan) {
   });
   try {
     const answer = await rl.question(
-      `\nType DELETE ${plan.email || plan.userIdString} to permanently delete this user: `
+      `\nType DELETE ${plan.email || plan.userId} to permanently delete this user: `
     );
-    return answer === `DELETE ${plan.email || plan.userIdString}`;
+    return answer === `DELETE ${plan.email || plan.userId}`;
   } finally {
     rl.close();
   }
 }
 
-async function deleteMany(db, name, query, label) {
-  const result = await db.collection(name).deleteMany(query);
-  console.log(`  ${label}: deleted ${result.deletedCount}`);
-  return result.deletedCount;
-}
+async function applyDatabaseCleanup(pool, plan) {
+  console.log("\nApplying PostgreSQL cleanup...");
+  const client = await pool.connect();
+  const report = (label, result) => console.log(`  ${label}: ${result.rowCount}`);
+  try {
+    await client.query("begin");
+    const { userId, email, projectIdsToDelete, workspaceIdsToDelete, projectRowIdsToDelete, ownedWorkspaceRowIds } = plan;
 
-async function updateMany(db, name, filter, update, label) {
-  const result = await db.collection(name).updateMany(filter, update);
-  console.log(`  ${label}: matched ${result.matchedCount}, modified ${result.modifiedCount}`);
-  return result.modifiedCount;
-}
+    report("invitations", await client.query(
+      "delete from invitation where lower(invitee_email) = lower($2) or invited_by = $1 " +
+      "or lower(invited_by_email) = lower($2) or workspace_id = any($3::text[])",
+      [userId, email, workspaceIdsToDelete]
+    ));
+    report("workspace memberships", await client.query(
+      "delete from workspace_member where not (workspace_row_id = any($3::text[])) and (user_id = $1 or lower(email) = lower($2))",
+      [userId, email, ownedWorkspaceRowIds]
+    ));
+    report("project memberships", await client.query(
+      "delete from project_member where not (project_row_id = any($3::text[])) and (user_id = $1 or lower(email) = lower($2))",
+      [userId, email, projectRowIdsToDelete]
+    ));
+    report("project shares", await client.query(
+      "delete from project_share where project_id = any($1::text[]) or lower(owner_email) = lower($2)",
+      [projectIdsToDelete, email]
+    ));
+    report("project share recipients", await client.query(
+      "update project_share set shared_with_emails = array(select e from unnest(shared_with_emails) e where lower(e) <> lower($1)) " +
+      "where exists (select 1 from unnest(shared_with_emails) e where lower(e) = lower($1))",
+      [email]
+    ));
+    report("draft changes", await client.query("delete from draft_change where user_id = $1", [userId]));
+    report("parked draft changes", await client.query("delete from draft_change_parked where user_id = $1", [userId]));
+    report("draft sessions", await client.query("delete from draft_session where user_id = $1", [userId]));
+    report("draft pull request changes", await client.query(
+      "delete from draft_pr_change where pr_id in (select id from draft_pull_request where author_id = $1)", [userId]
+    ));
+    report("draft pull requests", await client.query("delete from draft_pull_request where author_id = $1", [userId]));
+    report("project preferences", await client.query(
+      "delete from user_project_preference where lower(user_email) = lower($1)", [email]
+    ));
 
-async function applyMongoCleanup(db, plan) {
-  console.log("\nApplying MongoDB cleanup...");
+    if (projectIdsToDelete.length > 0) {
+      for (const table of PROJECT_SCOPED_TABLES) {
+        report(table, await client.query(`delete from ${table} where project_id = any($1::text[])`, [projectIdsToDelete]));
+      }
+    }
 
-  await deleteMany(db, "invitations", plan.invitationDeleteQuery, "invitations");
-
-  if (plan.email) {
-    await updateMany(
-      db,
-      "workspaces",
-      notInClause("_id", plan.ownedWorkspaceMongoIds),
-      { $pull: { members: { email: plan.emailRegex } } },
-      "workspace member email removals"
-    );
+    const storedIds = plan.storedFilesToDelete.map((f) => f.id);
+    if (storedIds.length > 0) {
+      report("stored files", await client.query("delete from stored_file where id = any($1::text[])", [storedIds]));
+    }
+    report("file metadata", await client.query(
+      "delete from file_metadata where project_id = any($1::text[]) or workspace_id = any($2::text[])",
+      [projectIdsToDelete, workspaceIdsToDelete]
+    ));
+    if (projectRowIdsToDelete.length > 0) {
+      report("projects", await client.query("delete from project where id = any($1::text[])", [projectRowIdsToDelete]));
+    }
+    if (ownedWorkspaceRowIds.length > 0) {
+      report("owned workspaces", await client.query("delete from workspace where id = any($1::text[])", [ownedWorkspaceRowIds]));
+    }
+    report("user account", await client.query("delete from app_user where id = $1", [userId]));
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
   }
-  await updateMany(
-    db,
-    "workspaces",
-    notInClause("_id", plan.ownedWorkspaceMongoIds),
-    { $pull: { members: { userId: { $in: plan.userRefIds } } } },
-    "workspace member userId removals"
-  );
 
-  if (plan.email) {
-    await updateMany(
-      db,
-      "projects",
-      notInClause("_id", plan.projectMongoIdsToDelete),
-      { $pull: { members: { email: plan.emailRegex } } },
-      "project member email removals"
-    );
-  }
-  await updateMany(
-    db,
-    "projects",
-    notInClause("_id", plan.projectMongoIdsToDelete),
-    { $pull: { members: { userId: { $in: plan.userRefIds } } } },
-    "project member userId removals"
-  );
-
-  await deleteMany(db, "project_shares", plan.projectShareDeleteQuery, "project shares");
-  if (plan.email) {
-    await updateMany(
-      db,
-      "project_shares",
-      plan.projectSharePullQuery,
-      { $pull: { sharedWithEmails: plan.emailRegex } },
-      "project share recipient removals"
-    );
-  }
-
-  await deleteMany(db, "issue_reports", plan.issueReportDeleteQuery, "issue reports");
-
-  for (const name of ["ontology_changes", "history_changes", "draft_changes", "draft_sessions"]) {
-    await deleteMany(db, name, plan.userChangeQuery, name);
-  }
-  await deleteMany(db, "draft_pull_requests", plan.draftPRDeleteQuery, "draft_pull_requests");
-
-  if (plan.projectIdsToDelete.length > 0) {
-    for (const name of PROJECT_SCOPED_COLLECTIONS) {
-      await deleteMany(
-        db,
-        name,
-        { projectId: { $in: plan.projectIdsToDelete } },
-        name
-      );
+  const root = blobsRoot();
+  let removed = 0;
+  for (const file of plan.storedFilesToDelete) {
+    if (file.storage === "disk") {
+      await fs.rm(blobPath(root, file.bucket, file.id), { force: true });
+      removed++;
     }
   }
-
-  const gridFileIds = plan.gridFsFilesToDelete.map((file) => file._id);
-  if (gridFileIds.length > 0) {
-    await deleteMany(db, "fs.chunks", { files_id: { $in: gridFileIds } }, "GridFS chunks");
-    await deleteMany(db, "fs.files", { _id: { $in: gridFileIds } }, "GridFS files");
-  }
-
-  await deleteMany(db, "file_metadata", plan.fileDeleteQuery, "file metadata");
-
-  if (plan.projectMongoIdsToDelete.length > 0 || plan.projectIdsToDelete.length > 0) {
-    await deleteMany(
-      db,
-      "projects",
-      orQuery([
-        plan.projectMongoIdsToDelete.length ? { _id: { $in: plan.projectMongoIdsToDelete } } : null,
-        inClause("projectId", plan.projectIdsToDelete),
-        plan.projectIdsToDelete.length ? { _id: { $in: plan.projectIdsToDelete } } : null,
-      ]),
-      "owned/workspace projects"
-    );
-  }
-
-  if (plan.ownedWorkspaceMongoIds.length > 0) {
-    await deleteMany(
-      db,
-      "workspaces",
-      { _id: { $in: plan.ownedWorkspaceMongoIds } },
-      "owned workspaces"
-    );
-  }
-
-  await deleteMany(db, "users", { _id: { $in: plan.userMongoIds } }, "user account");
+  console.log(`  files removed from disk: ${removed}`);
 }
 
 function javaUrlEncode(value) {
@@ -670,28 +438,22 @@ async function main() {
     return;
   }
 
-  const client = new MongoClient(options.mongodbUri);
-  await client.connect();
+  const pool = newPool();
   try {
-    const db = client.db(options.mongoDb);
-    if (!(await collectionExists(db, "users"))) {
-      throw new Error(`MongoDB collection not found: ${options.mongoDb}.users`);
-    }
-
-    const users = await findUsers(db, options.identifier);
+    const users = await findUsers(pool, options.identifier);
     if (users.length === 0) {
       throw new Error(`No user found for identifier: ${options.identifier}`);
     }
     if (users.length > 1) {
       console.log("Multiple users matched. Use a unique email, username, or user ID.");
       for (const user of users) {
-        console.log(`  - ${user.email || "(no email)"} ${user.username || ""} ${docIdToString(user._id)}`);
+        console.log(`  - ${user.email || "(no email)"} ${user.username || ""} ${user.id}`);
       }
       process.exitCode = 1;
       return;
     }
 
-    const plan = await buildUserPlan(db, users[0]);
+    const plan = await buildUserPlan(pool, users[0]);
     printPlan(plan, options);
 
     if (!options.execute) {
@@ -708,13 +470,13 @@ async function main() {
       }
     }
 
-    await applyMongoCleanup(db, plan);
+    await applyDatabaseCleanup(pool, plan);
     await applyFusekiCleanup(plan, options);
     await removeProjectDirectories(plan, options);
 
     console.log("\nUser cleanup complete.");
   } finally {
-    await client.close();
+    await pool.end();
   }
 }
 

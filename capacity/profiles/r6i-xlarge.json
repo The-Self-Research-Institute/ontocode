@@ -1,0 +1,43 @@
+{
+  "name": "r6i-xlarge",
+  "description": "Production host: AWS r6i.xlarge, 4 vCPU, about 31 GB RAM. Values are what the compose files set today.",
+  "host": { "ramMb": 31555, "cpus": 4, "diskGb": 242, "swapMb": 4095 },
+  "rules": {
+    "maxLimitSumFraction": 0.85,
+    "jvmNativeBaseMb": 384,
+    "jvmNativeHeapFraction": 0.05,
+    "maxDbConnectionFraction": 0.8,
+    "maxFixedDiskFraction": 0.5
+  },
+  "composeFiles": ["docker-compose.production.yml", "docker-compose.r6i-xlarge.yml"],
+  "services": {
+    "postgres": { "limitMb": 1024, "heapMb": null, "note": "shared_buffers 384 MB, max_connections 100, effective_cache_size 768 MB. Measure before relying on it." },
+    "fuseki": { "limitMb": 8192, "heapMb": 7168, "extraNativeMb": 0, "note": "TDB2 index files are memory-mapped outside the heap." },
+    "auth": { "limitMb": 1024, "heapMb": 896 },
+    "gateway": { "limitMb": 1024, "heapMb": 640 },
+    "owl-editor": { "limitMb": 5120, "heapMb": 4096 },
+    "swrl-service": { "limitMb": 1536, "heapMb": 1024 },
+    "reasoner-worker": { "limitMb": 11264, "heapMb": 10240 },
+    "plugin-service": { "limitMb": 1536, "heapMb": 1024 },
+    "webapp": { "limitMb": 256, "heapMb": null }
+  },
+  "database": {
+    "limitMb": 1024,
+    "sharedBuffersMb": 384,
+    "maxConnections": 100,
+    "reservedConnections": 10,
+    "pools": { "owl-editor": 30, "auth": 10, "swrl-service": 5, "reasoner-worker": 5, "plugin-service": 5 }
+  },
+  "disk": {
+    "items": [
+      { "name": "logs (editor, auth, gateway, swrl rotation caps)", "capGb": 19.5 },
+      { "name": "heap dumps (worker keeps up to 3 x 10 GB, editor 4, swrl 1)", "capGb": 35 },
+      { "name": "merge checkpoints (200 MB per project)", "capGb": null, "note": "per project, no total cap" },
+      { "name": "fuseki-data (TDB2)", "capGb": null, "note": "no quota, no compaction" },
+      { "name": "editor-data projects folder", "capGb": null, "note": "no quota, no orphan sweep" },
+      { "name": "editor chunk-uploads", "capGb": null, "note": "swept only at startup" },
+      { "name": "docker container logs (json-file)", "capGb": null, "note": "no max-size in any compose file" },
+      { "name": "database volume", "capGb": null, "note": "bounded only by the per-account upload quota" }
+    ]
+  }
+}

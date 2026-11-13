@@ -3,11 +3,6 @@ package self.research.ontology.owlEditor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -58,7 +53,6 @@ public class AssistantConsistencyCheckService {
     private final LineRangeSpliceWriter spliceWriter;
     private final CodeViewReimportPipeline reimportPipeline;
     private final AssistantEditGroupRepository groupRepository;
-    private final MongoTemplate mongoTemplate;
     private final SimpMessagingTemplate messagingTemplate;
     private final RestTemplate restTemplate;
     private final ThreadPoolExecutor checkExecutor;
@@ -101,14 +95,13 @@ public class AssistantConsistencyCheckService {
 
     public AssistantConsistencyCheckService(SparqlDatasetService datasetService, StorageManager storageManager,
                                             LineRangeSpliceWriter spliceWriter, CodeViewReimportPipeline reimportPipeline,
-                                            AssistantEditGroupRepository groupRepository, MongoTemplate mongoTemplate,
+                                            AssistantEditGroupRepository groupRepository,
                                             SimpMessagingTemplate messagingTemplate) {
         this.datasetService = datasetService;
         this.storageManager = storageManager;
         this.spliceWriter = spliceWriter;
         this.reimportPipeline = reimportPipeline;
         this.groupRepository = groupRepository;
-        this.mongoTemplate = mongoTemplate;
         this.messagingTemplate = messagingTemplate;
         this.restTemplate = buildRestTemplate();
         this.checkExecutor = new ThreadPoolExecutor(1, 2, 60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(20),
@@ -459,19 +452,9 @@ public class AssistantConsistencyCheckService {
     }
 
     private void resolve(String serverGroupId, ConsistencyCheckState state, String detail) {
-        Query query = Query.query(new Criteria().andOperator(
-                Criteria.where("id").is(serverGroupId),
-                new Criteria().orOperator(
-                        Criteria.where("consistencyCheck.state").is(null),
-                        Criteria.where("consistencyCheck.state").is(ConsistencyCheckState.PENDING))));
-        Update update = new Update()
-                .set("consistencyCheck.jobId", "whatif-" + serverGroupId)
-                .set("consistencyCheck.state", state)
-                .set("consistencyCheck.detail", detail)
-                .set("consistencyCheck.resolvedAt", Instant.now());
-        AssistantEditGroupDocument updated = mongoTemplate.findAndModify(query, update,
-                FindAndModifyOptions.options().returnNew(true), AssistantEditGroupDocument.class);
-        if (updated != null) {
+        boolean updated = groupRepository.resolveConsistencyCheck(serverGroupId, "whatif-" + serverGroupId, state,
+                detail, Instant.now());
+        if (updated) {
             publish(serverGroupId, state, detail);
         }
     }

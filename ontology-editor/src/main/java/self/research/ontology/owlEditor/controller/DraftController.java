@@ -759,7 +759,7 @@ public class DraftController {
             return;
         }
         prChanges.deleteByPrIdAndSnapshotKey(prId, snapshotKey);
-        self.research.ontology.owlEditor.service.BulkWrites.saveAll(prChanges, changes.stream()
+        prChanges.saveAll(changes.stream()
                 .map(change -> new self.research.ontology.owlEditor.model.DraftPrChange(projectId, prId, snapshotKey, change)).toList());
     }
 

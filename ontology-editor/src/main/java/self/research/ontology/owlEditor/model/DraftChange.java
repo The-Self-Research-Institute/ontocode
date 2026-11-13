@@ -1,10 +1,6 @@
 package self.research.ontology.owlEditor.model;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.CompoundIndexes;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -14,14 +10,8 @@ import java.util.Map;
  * Represents a draft change in the ontology that hasn't been saved yet.
  * Draft changes are tracked separately from committed changes.
  */
-@Document(collection = "draft_changes")
-@CompoundIndexes({
-    @CompoundIndex(name = "project_timestamp_idx", def = "{'projectId': 1, 'timestamp': -1}"),
-    @CompoundIndex(name = "project_user_idx", def = "{'projectId': 1, 'userId': 1}")
-})
 public class DraftChange {
     
-    @Id
     private String id;
     
     private String projectId;

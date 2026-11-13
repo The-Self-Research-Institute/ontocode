@@ -1,20 +1,11 @@
 package self.research.ontology.swrl.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
-
 import java.time.LocalDateTime;
 
-@Document(collection = "swrl_rules")
-@CompoundIndex(def = "{'projectId': 1, 'ruleName': 1}", unique = true)
 public class SwrlRule {
 
-    @Id
     private String id;
 
-    @Indexed
     private String projectId;
 
     private String ruleName;
@@ -23,7 +14,6 @@ public class SwrlRule {
     private String category;
     private boolean enabled = true;
 
-    @Indexed
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

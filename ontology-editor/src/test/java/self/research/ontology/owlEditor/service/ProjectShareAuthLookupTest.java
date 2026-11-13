@@ -9,6 +9,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 import self.research.ontology.owlEditor.document.ProjectShare;
+import self.research.ontology.owlEditor.repository.ProjectAccessRepository;
 import self.research.ontology.owlEditor.repository.ProjectShareRepository;
 
 import java.util.Optional;
@@ -35,7 +36,8 @@ class ProjectShareAuthLookupTest {
         when(repository.findByProjectId("p1")).thenReturn(Optional.empty());
         when(repository.save(any(ProjectShare.class))).thenAnswer(call -> call.getArgument(0));
         service = new ProjectShareService(repository, restTemplate, mock(EmailNotificationService.class),
-                mock(ProjectMetadataService.class), mock(SimpMessagingTemplate.class));
+                mock(ProjectMetadataService.class), mock(SimpMessagingTemplate.class),
+                mock(ProjectAccessRepository.class));
         ReflectionTestUtils.setField(service, "authServiceUrl", "http://auth:8086");
         ReflectionTestUtils.setField(service, "internalToken", "s3cret");
     }

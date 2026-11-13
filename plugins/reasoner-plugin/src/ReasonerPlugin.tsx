@@ -441,7 +441,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                   disabled={status.isRunning}
                 >
                   <option value="hermit">HermiT (Hypertableau)</option>
-                  <option value="fact++">FaCT++</option>
+                  <option value="fact++">JFact (FaCT++ port)</option>
                   {/* <option value="elk">ELK</option> */}
                 </select>
               </div>
@@ -544,7 +544,7 @@ export const ReasonerPlugin: React.FC<ReasonerPluginProps> = ({
                     <span style={styles.helpValue}>Best for complex ontologies, OWL 2 DL compliant</span>
                   </div>
                   <div style={styles.helpRow}>
-                    <span style={styles.helpLabel}>FaCT++</span>
+                    <span style={styles.helpLabel}>JFact (FaCT++ port)</span>
                     <span style={styles.helpValue}>Fast for large TBoxes, optimized for classification</span>
                   </div>
                   {/* <div style={styles.helpRow}>

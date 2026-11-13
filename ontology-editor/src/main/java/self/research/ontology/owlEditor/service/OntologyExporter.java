@@ -1,18 +1,16 @@
 package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.rio.RDFFormat;
-import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.OBODocumentFormat;
 import org.semanticweb.owlapi.formats.OWLXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
-import org.semanticweb.owlapi.model.MissingImportHandlingStrategy;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
-import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.slf4j.Logger;
@@ -182,10 +180,7 @@ final class OntologyExporter {
         }
         log.info("Exported {} bytes of RDF/XML from GraphDB for OWL API conversion to {}", rdfXmlContent.length(), format);
 
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        OWLOntologyLoaderConfiguration loaderConfig = new OWLOntologyLoaderConfiguration()
-                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
-        manager.setOntologyLoaderConfiguration(loaderConfig);
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         OWLOntology ontology;
         try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
             ontology = manager.loadOntologyFromOntologyDocument(input);
@@ -222,9 +217,7 @@ final class OntologyExporter {
         if (rdfXmlContent == null || rdfXmlContent.isBlank()) {
             throw new IOException("No RDF/XML content to convert");
         }
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-        manager.setOntologyLoaderConfiguration(new OWLOntologyLoaderConfiguration()
-                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT));
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         OWLOntology ontology;
         try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
             ontology = manager.loadOntologyFromOntologyDocument(input);

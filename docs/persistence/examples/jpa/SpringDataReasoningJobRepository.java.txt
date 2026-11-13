@@ -1,0 +1,21 @@
+package self.research.ontology.reasoner.repository.jpa;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
+
+public interface SpringDataReasoningJobRepository extends JpaRepository<ReasoningJobEntity, String> {
+
+    List<ReasoningJobEntity> findByStatusIn(Collection<String> statuses);
+
+    @Transactional
+    @Modifying
+    @Query("delete from ReasoningJobEntity e where e.updatedAt < :cutoff")
+    int deleteOlderThan(@Param("cutoff") Instant cutoff);
+}

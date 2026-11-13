@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(inputs.arch == 'arm64' && format('[{{"arch":"arm64","runner":"{0}","mongo":"macos-arm64"}}]', inputs.arm64_runner) || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}]' || format('[{{"arch":"arm64","runner":"{0}","mongo":"macos-arm64"}},{{"arch":"x64","runner":"macos-15-intel","mongo":"macos-x86_64"}}]', inputs.arm64_runner)) }}
+        include: ${{ fromJSON(inputs.arch == 'arm64' && format('[{{"arch":"arm64","runner":"{0}"}}]', inputs.arm64_runner) || inputs.arch == 'x64' && '[{"arch":"x64","runner":"macos-15-intel"}]' || format('[{{"arch":"arm64","runner":"{0}"}},{{"arch":"x64","runner":"macos-15-intel"}}]', inputs.arm64_runner)) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:
@@ -56,21 +56,11 @@ jobs:
             ontology-vscode-extension/package-lock.json
             ontology-vscode-extension/webview-src/package-lock.json
             plugins/*/package-lock.json
-      - name: Cache MongoDB 6.0.29
-        id: mongo
-        uses: actions/cache@v4
-        with:
-          path: data/mongodb/bin/darwin
-          key: mongod-6.0.29-${{ matrix.arch }}
-      - if: steps.mongo.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p data/mongodb/bin/darwin /tmp/mongo
-          curl -fsSL "https://fastdl.mongodb.org/osx/mongodb-${{ matrix.mongo }}-6.0.29.tgz" | tar -xz -C /tmp/mongo --strip-components=1
-          cp /tmp/mongo/bin/mongod data/mongodb/bin/darwin/mongod
-          chmod +x data/mongodb/bin/darwin/mongod
       - name: Build backend jars
         run: |
-          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -pl ontology-swrl -am package -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q -N install -DskipTests
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean install -pl shared/common-models,shared/common-utils,shared/common-db -DskipTests -Djava.version=17 -Dmaven.compiler.source=17 -Dmaven.compiler.target=17 -Dmaven.compiler.release=17
+          JAVA_HOME="${{ steps.j17.outputs.path }}" mvn -q clean package -pl ontology-swrl -DskipTests
           JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q -pl ontology-editor,ontology-auth,ontology-plugin-service -am clean install -DskipTests -Dgit.commit="$GITHUB_SHA"
           (cd ontology-desktop && JAVA_HOME="${{ steps.j21.outputs.path }}" mvn -q clean package -DskipTests -Dgit.commit="$GITHUB_SHA")
       - name: Install web dependencies
@@ -182,7 +172,8 @@ jobs:
           hdiutil attach "$dmg" -mountpoint "$mnt" -nobrowse -readonly
           app=$(ls -d "$mnt"/*.app | head -1)
           codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -dv "$app" 2>&1 | grep -E "Signature|Identifier"
+          codesign -dv "$app" 2>&1 | grep -E "Signature|Authority|TeamIdentifier|Identifier"
+          xcrun stapler validate "$app" || echo "Not notarized"
           hdiutil detach "$mnt"
       - name: Pack the sandboxed test app
         if: inputs.target == 'mas-dev'

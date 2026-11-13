@@ -1,0 +1,22 @@
+package self.research.ontology.reasoner.repository.jpa;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+
+public interface SpringDataReasoningSnapshotRepository extends JpaRepository<ReasoningSnapshotEntity, String> {
+
+    @Transactional
+    @Modifying
+    @Query("delete from ReasoningSnapshotEntity e where e.updatedAt < :cutoff")
+    int deleteOlderThan(@Param("cutoff") Instant cutoff);
+
+    @Transactional
+    @Modifying
+    @Query("delete from ReasoningSnapshotEntity e where e.projectId = :projectId and e.revision < :revision")
+    int deleteOlderRevisions(@Param("projectId") String projectId, @Param("revision") long revision);
+}

@@ -23,12 +23,14 @@
     <modules>
         <module>shared/common-models</module>
         <module>shared/common-utils</module>
+        <module>shared/common-db</module>
         <module>ontology-gateway</module>
         <module>ontology-editor</module>
         <module>ontology-auth</module>
         <module>ontology-swrl</module>
         <module>ontology-plugin-service</module>
         <module>ontology-reasoner-worker</module>
+        <module>ontology-data-migrator</module>
     </modules>
 
     <properties>
@@ -202,6 +204,25 @@
                                     </excludes>
                                     <message>Openllet and Pellet are not allowed</message>
                                 </bannedDependencies>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>no-shaded-lgpl</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedPlugins>
+                                    <excludes>
+                                        <exclude>org.apache.maven.plugins:maven-shade-plugin</exclude>
+                                        <exclude>org.apache.maven.plugins:maven-assembly-plugin</exclude>
+                                    </excludes>
+                                    <message>LGPL libraries must stay separate jars</message>
+                                </bannedPlugins>
                             </rules>
                             <fail>true</fail>
                         </configuration>

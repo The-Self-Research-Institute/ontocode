@@ -39,7 +39,7 @@ const okStatus = { available: true, stale: false, reasoner: "HermiT", layers: ["
 
 describe("Include inferred switch", () => {
   it("defaults to asserted only and sends no inference fields", async () => {
-    const post = vi.fn(async () => ({ results: [], head: { vars: [] } }));
+    const post = vi.fn(async (..._a: any[]) => ({ results: [], head: { vars: [] } }));
     await mount(okStatus, post);
     expect(button("Asserted only")!.getAttribute("aria-pressed")).toBe("true");
     await click("Execute");
@@ -90,7 +90,7 @@ describe("Include inferred switch", () => {
   });
 
   it("remembers the choice per project and sends includeInferred", async () => {
-    const post = vi.fn(async () => ({
+    const post = vi.fn(async (..._a: any[]) => ({
       head: { vars: ["s"] },
       results: [{ s: "http://ex.org/a" }],
       inferred: {

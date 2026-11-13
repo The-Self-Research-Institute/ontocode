@@ -5,6 +5,7 @@ import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.db.sql.SqlLists;
 import self.research.ontology.owlEditor.document.EntityUsageDocument;
 import self.research.ontology.owlEditor.repository.EntityUsageRepository;
 
@@ -77,7 +78,7 @@ public class EntityUsageIndexService {
             for (Map.Entry<String, List<Map<String, String>>> entry : byEntity.entrySet()) {
                 docs.add(new EntityUsageDocument(projectId, entry.getKey(), revision, entry.getValue()));
             }
-            BulkWrites.saveAll(repo, docs);
+            SqlLists.inChunks(docs, 10_000, repo::saveAll);
 
             log.info("[UsageIndex] Built {} entity usage entries for project {} in {}ms",
                     docs.size(), projectId, System.currentTimeMillis() - start);

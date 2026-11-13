@@ -26,7 +26,7 @@ class SwrlControllerAccessTest {
         ReflectionTestUtils.setField(controller, "internalToken", "secret");
     }
 
-    private Map<String, Supplier<ResponseEntity<?>>> mongoWrites() {
+    private Map<String, Supplier<ResponseEntity<?>>> databaseWrites() {
         return Map.of(
                 "create", () -> controller.createRule("p1", Map.of()),
                 "update", () -> controller.updateRule("p1", "r1", Map.of()),
@@ -39,7 +39,7 @@ class SwrlControllerAccessTest {
 
     @Test
     void everyOldRuleWritingEndpointAnswers410AndPointsToTheEditorAndTouchesNothing() {
-        mongoWrites().forEach((name, call) -> {
+        databaseWrites().forEach((name, call) -> {
             ResponseEntity<?> response = call.get();
             assertEquals(410, response.getStatusCode().value(), name);
             assertTrue(String.valueOf(response.getBody()).contains("/api/ontology/p1/rules"), name);

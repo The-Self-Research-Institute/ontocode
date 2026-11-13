@@ -1,7 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.io.OWLParser;
 import org.semanticweb.owlapi.io.OWLParserException;
 import org.semanticweb.owlapi.io.UnparsableOntologyException;
@@ -68,7 +68,7 @@ public class CodeViewSaveValidator {
 
     private static OWLOntology parse(byte[] content) throws Exception {
         try (InputStream input = new ByteArrayInputStream(content)) {
-            return OWLManager.createOWLOntologyManager().loadOntologyFromOntologyDocument(input);
+            return OWLFormatConverter.createManagerWithSilentImports().loadOntologyFromOntologyDocument(input);
         }
     }
 

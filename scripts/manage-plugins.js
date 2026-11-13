@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-const { MongoClient, GridFSBucket } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { newPool, waitForSchema, newObjectId, blobsRoot, storeFile, deleteStoredFile } = require('./lib/db');
 
 try {
   const dotenvPath = path.resolve(__dirname, '..', '.env');
@@ -16,24 +16,7 @@ try {
   console.warn('⚠ Could not load .env file:', error.message);
 }
 
-const MONGO_URL = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017';
-
-function credentialsFromMongoUri(uri) {
-  if (!uri || typeof uri !== 'string') return {};
-  const match = uri.match(/^mongodb:\/\/([^:@/]+):([^@/]+)@/);
-  if (!match) return {};
-  return {
-    username: decodeURIComponent(match[1]),
-    password: decodeURIComponent(match[2]),
-  };
-}
-
-const uriCreds = credentialsFromMongoUri(MONGO_URL);
-const MONGO_USERNAME = process.env.MONGODB_USERNAME || process.env.MONGO_USERNAME || process.env.MONGO_USER || uriCreds.username || '';
-const MONGO_PASSWORD = process.env.MONGODB_PASSWORD || process.env.MONGO_PASSWORD || process.env.MONGO_PASS || uriCreds.password || '';
-const MONGO_AUTH_SOURCE = process.env.MONGODB_AUTH_SOURCE || process.env.MONGO_AUTH_SOURCE || 'admin';
-const DB_NAME = process.env.MONGODB_DATABASE || process.env.MONGO_DB_NAME || 'ontology';
-
+const BLOBS_DIR = blobsRoot();
 const PLUGINS_DIR = fs.existsSync('/app/plugins') ? '/app/plugins' : path.resolve(__dirname, '..', 'plugins');
 
 const PLUGINS = [
@@ -213,184 +196,86 @@ async function buildAllPlugins(plugins) {
   return failed === 0;
 }
 
-async function connectToMongo() {
-  const options = {};
-
-  if (MONGO_USERNAME && MONGO_PASSWORD) {
-    options.auth = {
-      username: MONGO_USERNAME,
-      password: MONGO_PASSWORD
-    };
-    options.authSource = MONGO_AUTH_SOURCE;
-  }
-
-  const client = new MongoClient(MONGO_URL, options);
-  await client.connect();
-
-  if (MONGO_USERNAME) {
-    log.info(`Authenticated as ${MONGO_USERNAME} (authSource: ${options.authSource})`);
-  } else {
-    log.warn('Proceeding without MongoDB credentials');
-  }
-
-  return client;
-}
-
-async function insertPluginMetadata(db, plugin, force = false) {
-  const collection = db.collection('plugins');
-
-  const existing = await collection.findOne({ pluginId: plugin.pluginId });
-
-  const doc = {
-    pluginId: plugin.pluginId,
-    name: plugin.name,
-    shortDescription: plugin.shortDescription,
-    description: plugin.description,
-    latestVersion: plugin.version,
-    category: plugin.category,
-    author: 'OntoCode Team',
-    authorEmail: 'admin@ontocode.com',
-    keywords: plugin.keywords,
-    icon: null,
-    screenshots: [],
-    verified: true,
-    active: true,
-    featured: plugin.featured || false,
-    totalDownloads: existing?.totalDownloads || 0,
-    totalInstalls: existing?.totalInstalls || 0,
-    averageRating: existing?.averageRating || 0.0,
-    totalRatings: existing?.totalRatings || 0,
-    updatedAt: new Date()
-  };
-
-  if (existing) {
-    if (!force) {
-      log.info(`  Updating metadata for ${plugin.pluginId}`);
-    }
-    await collection.updateOne(
-      { pluginId: plugin.pluginId },
-      { $set: doc }
+async function insertPluginMetadata(pool, plugin) {
+  const existing = await pool.query('select id from plugin where plugin_id = $1', [plugin.pluginId]);
+  if (existing.rowCount > 0) {
+    await pool.query(
+      'update plugin set name = $2, description = $3, latest_version = $4, category = $5, author = $6, author_email = $7, ' +
+      'keywords = $8, verified = true, deprecated = false, updated_at = now() where plugin_id = $1',
+      [plugin.pluginId, plugin.name, plugin.description, plugin.version, plugin.category, 'OntoCode Team', 'admin@ontocode.com', plugin.keywords]
     );
-  } else {
-    doc.createdAt = new Date();
-    await collection.insertOne(doc);
-    log.info(`  Inserted metadata for ${plugin.pluginId}`);
+    log.info(`  Updated metadata for ${plugin.pluginId}`);
+    return;
   }
-
-  return true;
+  await pool.query(
+    'insert into plugin(id, plugin_id, name, description, author, author_email, latest_version, category, keywords, screenshots, ' +
+    'total_downloads, average_rating, review_count, verified, deprecated, created_at, updated_at) ' +
+    "values ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}', 0, 0, 0, true, false, now(), now())",
+    [newObjectId(), plugin.pluginId, plugin.name, plugin.description, 'OntoCode Team', 'admin@ontocode.com', plugin.version, plugin.category, plugin.keywords]
+  );
+  log.info(`  Inserted metadata for ${plugin.pluginId}`);
 }
 
-async function uploadBundleToGridFS(db, bucket, plugin) {
-  log.warn(`\n[BUNDLE PATH DEBUG] PLUGINS_DIR = "${PLUGINS_DIR}"`);
-  log.warn(`[BUNDLE PATH DEBUG] plugin.pluginId = "${plugin.pluginId}"`);
+async function uploadBundle(pool, plugin) {
   const bundlePath = path.join(PLUGINS_DIR, plugin.pluginId, 'dist', 'index.js');
-  log.warn(`[BUNDLE PATH DEBUG] bundlePath = "${bundlePath}"`);
-  log.warn(`[BUNDLE PATH DEBUG] exists = ${fs.existsSync(bundlePath)}`);
-
-  const altPath1 = path.join('/app/plugins', plugin.pluginId, 'dist', 'index.js');
-  const altPath2 = path.join('plugins', plugin.pluginId, 'dist', 'index.js');
-  log.warn(`[BUNDLE PATH DEBUG] altPath1 (/app/plugins) = "${altPath1}" exists = ${fs.existsSync(altPath1)}`);
-  log.warn(`[BUNDLE PATH DEBUG] altPath2 (plugins) = "${altPath2}" exists = ${fs.existsSync(altPath2)}\n`);
-
   if (!fs.existsSync(bundlePath)) {
     log.error(`  Bundle not found: ${bundlePath}`);
     return null;
   }
 
   const fileName = `${plugin.pluginId}-${plugin.version}.js`;
-
-  const existingFiles = await bucket.find({ filename: fileName }).toArray();
-  for (const file of existingFiles) {
-    await bucket.delete(file._id);
+  const old = await pool.query("select id from stored_file where bucket = 'plugins' and filename = $1", [fileName]);
+  for (const row of old.rows) {
+    await deleteStoredFile(pool, BLOBS_DIR, row.id);
   }
 
-  return new Promise((resolve, reject) => {
-    const uploadStream = bucket.openUploadStream(fileName, {
-      contentType: 'application/javascript',
-      metadata: {
-        pluginId: plugin.pluginId,
-        version: plugin.version,
-        uploadedAt: new Date()
-      }
-    });
-
-    const readStream = fs.createReadStream(bundlePath);
-    readStream.pipe(uploadStream)
-      .on('error', reject)
-      .on('finish', () => {
-        log.success(`  Uploaded bundle: ${fileName}`);
-        resolve(uploadStream.id);
-      });
+  const stored = await storeFile(pool, BLOBS_DIR, {
+    bucket: 'plugins',
+    filename: fileName,
+    contentType: 'application/javascript',
+    metadata: {
+      pluginId: plugin.pluginId,
+      version: plugin.version,
+      uploadedAt: new Date().toISOString()
+    },
+    sourcePath: bundlePath
   });
+  log.success(`  Stored bundle: ${fileName}`);
+  return stored;
 }
 
-async function createVersionRecord(db, plugin, fileId, bundlePath) {
-  const collection = db.collection('plugin_versions');
-  const stats = fs.statSync(bundlePath);
-
-  const existing = await collection.findOne({
-    pluginId: plugin.pluginId,
-    version: plugin.version
-  });
-
-  const doc = {
-    pluginId: plugin.pluginId,
-    version: plugin.version,
-    vsixFileId: fileId.toString(),  // Spring expects vsixFileId as string
-    bundleSize: stats.size,
-    changelog: `Version ${plugin.version}`,
-    minExtensionVersion: '1.0.0',
-    downloadCount: existing?.downloadCount || 0,
-    downloads: existing?.downloads || 0,
-    active: true,
-    releaseDate: new Date(),
-    publishedAt: new Date(),
-    updatedAt: new Date()
-  };
-
-  if (existing) {
-    await collection.updateOne(
-      { pluginId: plugin.pluginId, version: plugin.version },
-      { $set: doc }
+async function createVersionRecord(pool, plugin, stored) {
+  const existing = await pool.query('select id from plugin_version where plugin_id = $1 and version = $2', [plugin.pluginId, plugin.version]);
+  if (existing.rowCount > 0) {
+    await pool.query(
+      'update plugin_version set vsix_file_id = $3, file_size = $4, changelog = $5, deprecated = false, published_at = now() ' +
+      'where plugin_id = $1 and version = $2',
+      [plugin.pluginId, plugin.version, stored.id, stored.length, `Version ${plugin.version}`]
     );
-  } else {
-    doc.createdAt = new Date();
-    await collection.insertOne(doc);
+    return;
   }
+  await pool.query(
+    'insert into plugin_version(id, plugin_id, version, changelog, vsix_file_id, file_size, deprecated, downloads, published_at) ' +
+    'values ($1, $2, $3, $4, $5, $6, false, 0, now())',
+    [newObjectId(), plugin.pluginId, plugin.version, `Version ${plugin.version}`, stored.id, stored.length]
+  );
+}
 
+async function installPlugin(pool, plugin) {
+  log.info(`Installing ${plugin.pluginId} v${plugin.version}...`);
+  await insertPluginMetadata(pool, plugin);
+  const stored = await uploadBundle(pool, plugin);
+  if (!stored) {
+    return false;
+  }
+  await createVersionRecord(pool, plugin, stored);
   return true;
 }
 
-async function installPlugin(db, bucket, plugin, force = false) {
-  log.info(`Installing ${plugin.pluginId} v${plugin.version}...`);
-
-  try {
-
-    await insertPluginMetadata(db, plugin, force);
-
-    const fileId = await uploadBundleToGridFS(db, bucket, plugin);
-    if (!fileId) {
-      return false;
-    }
-
-    const bundlePath = path.join(PLUGINS_DIR, plugin.pluginId, 'dist', 'index.js');
-    await createVersionRecord(db, plugin, fileId, bundlePath);
-
-    return true;
-  } catch (error) {
-    log.error(`Fatal error: ${error.message}`);
-    if (typeof error.message === 'string' && error.message.toLowerCase().includes('requires authentication')) {
-      log.error('MongoDB rejected the request. Provide MONGO_USERNAME/MONGO_PASSWORD (or MONGODB_USERNAME/MONGODB_PASSWORD).');
-      log.error('Optional: MONGO_AUTH_SOURCE (default "admin"), MONGO_DB_NAME, MONGO_URL');
-    }
-    throw error;
-  }
-}
-
-async function listPlugins(db) {
+async function listPlugins(pool) {
   log.header('Installed Plugins');
 
-  const plugins = await db.collection('plugins').find({}).toArray();
+  const plugins = (await pool.query('select plugin_id, name, latest_version, category, verified from plugin order by plugin_id')).rows;
 
   if (plugins.length === 0) {
     log.info('No plugins installed');
@@ -399,48 +284,32 @@ async function listPlugins(db) {
 
   console.log('');
   for (const p of plugins) {
-    const status = p.active ? `${colors.green}●${colors.reset}` : `${colors.red}○${colors.reset}`;
-    console.log(`  ${status} ${colors.bright}${p.name}${colors.reset} (${p.pluginId})`);
-    console.log(`    Version: ${p.latestVersion} | Category: ${p.category}`);
-    console.log(`    ${p.shortDescription}`);
+    const status = p.verified ? `${colors.green}●${colors.reset}` : `${colors.red}○${colors.reset}`;
+    console.log(`  ${status} ${colors.bright}${p.name}${colors.reset} (${p.plugin_id})`);
+    console.log(`    Version: ${p.latest_version} | Category: ${p.category}`);
     console.log('');
   }
 
   log.info(`Total: ${plugins.length} plugins`);
 }
 
-async function cleanPlugins(db) {
+async function cleanPlugins(pool) {
   log.header('Cleaning Plugins');
 
-  const pluginsResult = await db.collection('plugins').deleteMany({});
-  const versionsResult = await db.collection('plugin_versions').deleteMany({});
-
-  const bucket = new GridFSBucket(db, { bucketName: 'plugins' });
-  const files = await bucket.find({}).toArray();
+  const files = (await pool.query("select id from stored_file where bucket = 'plugins'")).rows;
   for (const file of files) {
-    await bucket.delete(file._id);
+    await deleteStoredFile(pool, BLOBS_DIR, file.id);
   }
+  const versions = await pool.query('delete from plugin_version');
+  const plugins = await pool.query('delete from plugin');
 
-  log.success(`Deleted ${pluginsResult.deletedCount} plugins`);
-  log.success(`Deleted ${versionsResult.deletedCount} versions`);
-  log.success(`Deleted ${files.length} bundle files from GridFS`);
+  log.success(`Deleted ${plugins.rowCount} plugins`);
+  log.success(`Deleted ${versions.rowCount} versions`);
+  log.success(`Deleted ${files.length} bundle files`);
 }
 
 async function main() {
   const args = parseArgs();
-
-  console.log('=====================================');
-  console.log('[DEBUG] __dirname =', __dirname);
-  console.log('[DEBUG] PLUGINS_DIR =', PLUGINS_DIR);
-  console.log('[DEBUG] PLUGINS_DIR exists =', fs.existsSync(PLUGINS_DIR));
-  if (fs.existsSync(PLUGINS_DIR)) {
-    console.log('[DEBUG] PLUGINS_DIR contents =', fs.readdirSync(PLUGINS_DIR).join(', '));
-
-    const testPath = path.join(PLUGINS_DIR, 'sparql-query-plugin', 'dist', 'index.js');
-    console.log('[DEBUG] Test path =', testPath);
-    console.log('[DEBUG] Test path exists =', fs.existsSync(testPath));
-  }
-  console.log('=====================================');
 
   console.log(`
 ${colors.bright}${colors.magenta}╔═══════════════════════════════════════════════════════════╗
@@ -458,23 +327,16 @@ ${colors.bright}${colors.magenta}╔══════════════�
     }
   }
 
-  let client = null;
-  let db = null;
-  let bucket = null;
+  let pool = null;
 
   if (args.command !== 'build') {
     try {
-      log.info(`Connecting to MongoDB at ${MONGO_URL}...`);
-      client = await connectToMongo();
-      db = client.db(DB_NAME);
-      bucket = new GridFSBucket(db, { bucketName: 'plugins' });
-      log.success('Connected to MongoDB');
+      pool = newPool();
+      log.info('Waiting for PostgreSQL and the plugin tables...');
+      await waitForSchema(pool, 'plugin_version', { log: msg => log.info(msg) });
+      log.success('Connected to PostgreSQL');
     } catch (error) {
-      log.error(`Failed to connect to MongoDB: ${error.message}`);
-      if (error.message && error.message.toLowerCase().includes('authentication')) {
-        log.error('Authentication required. Set MONGO_USERNAME and MONGO_PASSWORD (or MONGODB_USERNAME / MONGODB_PASSWORD).');
-        log.error('Optional: MONGO_AUTH_SOURCE (defaults to "admin"), MONGO_DB_NAME, MONGO_URL');
-      }
+      log.error(`Failed to connect to PostgreSQL: ${error.message}`);
       process.exit(1);
     }
   }
@@ -482,13 +344,12 @@ ${colors.bright}${colors.magenta}╔══════════════�
   try {
     switch (args.command) {
       case 'all':
-
         if (!args.skipBuild) {
           await buildAllPlugins(plugins);
         }
         log.header('Installing Plugins');
         for (const plugin of plugins) {
-          await installPlugin(db, bucket, plugin, args.force);
+          await installPlugin(pool, plugin);
         }
         log.header('Complete');
         log.success(`Successfully processed ${plugins.length} plugin(s)`);
@@ -501,17 +362,17 @@ ${colors.bright}${colors.magenta}╔══════════════�
       case 'install':
         log.header('Installing Plugins');
         for (const plugin of plugins) {
-          await installPlugin(db, bucket, plugin, args.force);
+          await installPlugin(pool, plugin);
         }
         log.success(`Installed ${plugins.length} plugin(s)`);
         break;
 
       case 'list':
-        await listPlugins(db);
+        await listPlugins(pool);
         break;
 
       case 'clean':
-        await cleanPlugins(db);
+        await cleanPlugins(pool);
         break;
 
       default:
@@ -520,22 +381,22 @@ ${colors.bright}${colors.magenta}╔══════════════�
 Usage: node manage-plugins.js [command] [options]
 
 Commands:
-  all       Build, insert metadata, and upload bundles (default)
+  all       Build, insert metadata, and store bundles (default)
   build     Build all plugins
-  install   Insert metadata and upload bundles (no build)
+  install   Insert metadata and store bundles (no build)
   list      List installed plugins
   clean     Remove all plugins from database
 
 Options:
   --plugin <id>   Process only specified plugin
-  --force         Force overwrite existing data
+  --force         Accepted for compatibility, existing rows are always updated
   --skip-build    Skip building plugins
 `);
         process.exit(1);
     }
   } finally {
-    if (client) {
-      await client.close();
+    if (pool) {
+      await pool.end();
     }
   }
 }

@@ -180,7 +180,7 @@ class SpreadsheetImportServiceTest {
 
     @Test
     void whenTheImportCannotBeRecordedItsDataIsTakenBack() {
-        org.mockito.Mockito.doThrow(new RuntimeException("mongo down")).when(history).recordEdit(anyString(), anyString(),
+        org.mockito.Mockito.doThrow(new RuntimeException("database down")).when(history).recordEdit(anyString(), anyString(),
             anyString(), anyString(), anyString(), anyString(), any(), any(), anyString(), any(), any(), anyBoolean());
 
         IllegalStateException e = assertThrows(IllegalStateException.class,

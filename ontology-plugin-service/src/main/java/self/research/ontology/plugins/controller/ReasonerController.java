@@ -1,19 +1,15 @@
 package self.research.ontology.plugins.controller;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.http.HttpStatus;
+import self.research.ontology.common.db.BlobStore;
+import self.research.ontology.common.db.StoredFile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
@@ -53,8 +49,7 @@ public class ReasonerController {
     private static final Logger log = LoggerFactory.getLogger(ReasonerController.class);
 
     @Autowired
-    @Qualifier("ontologyGridFsTemplate")
-    private GridFsTemplate gridfs;
+    private BlobStore blobs;
 
     @Autowired
     private ReasonerService reasonerService;
@@ -261,7 +256,7 @@ public class ReasonerController {
     /**
      * Load ontology from multiple sources in priority order:
      * 1. Editor service (for ontologies being edited)
-     * 2. GridFS (for uploaded ontologies)
+     * 2. File store (for uploaded ontologies)
      * 3. Local filesystem (development fallback)
      *
      * Tries the full {@code projectId} first (e.g. {@code proj-abc--uuid}), then the parent
@@ -295,7 +290,7 @@ public class ReasonerController {
             if (projectId != null && projectId.contains("--")) {
                 triedIds = projectId + " and " + extractBaseProjectId(projectId);
             }
-            log.error("Ontology file not found for project: {} (tried: editor service, GridFS, filesystem)", triedIds);
+            log.error("Ontology file not found for project: {} (tried: editor service, file store, filesystem)", triedIds);
             throw new OntologyNotFoundException("Ontology file not found for project: " + triedIds +
                 ". Make sure the ontology is either being edited in the IDE or has been uploaded to the system.",
                 lastLoadFailure.get());
@@ -304,7 +299,7 @@ public class ReasonerController {
         }
     }
 
-    /** No source (editor service, GridFS, filesystem) yielded an ontology for the project. */
+    /** No source (editor service, file store, filesystem) yielded an ontology for the project. */
     static class OntologyNotFoundException extends RuntimeException {
         OntologyNotFoundException(String message) {
             super(message);
@@ -360,7 +355,7 @@ public class ReasonerController {
                 "errorType", "INVALID_REASONER_TYPE",
                 "projectId", projectId,
                 "technicalDetail", technicalDetail,
-                "suggestion", "Select a supported reasoner (HermiT, ELK, FaCT++, or Structural) and try again."
+                "suggestion", "Select a supported reasoner (HermiT, ELK, JFact, or Structural) and try again."
             ));
         }
         if (e instanceof ClassNotFoundException
@@ -464,17 +459,17 @@ public class ReasonerController {
                 return editorOntology;
             }
 
-            GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(lookupId)));
-            if (file == null) {
+            Optional<StoredFile> stored = blobs.findLatest("fs", null, Map.of("projectId", lookupId));
+            if (stored.isEmpty()) {
                 log.warn("File not found with metadata.projectId={}, trying filename", lookupId);
-                file = gridfs.findOne(new Query(Criteria.where("filename").is(lookupId + ".owl")));
+                stored = blobs.findLatest("fs", lookupId + ".owl", null);
             }
 
-            if (file != null) {
-                log.info("Found ontology file in GridFS: {}", file.getFilename());
-                GridFsResource resource = gridfs.getResource(file);
-                try (InputStream inputStream = resource.getInputStream()) {
-                    OWLOntology ontology = loadOntologyFromStream(lookupId, inputStream, "GridFS file " + file.getFilename());
+            if (stored.isPresent()) {
+                StoredFile file = stored.get();
+                log.info("Found ontology file in the file store: {}", file.filename());
+                try (InputStream inputStream = blobs.open(file.id())) {
+                    OWLOntology ontology = loadOntologyFromStream(lookupId, inputStream, "stored file " + file.filename());
                     if (ontology != null) {
                         ontologyCache.put(lookupId, ontology);
                         return ontology;
@@ -1535,7 +1530,7 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
     }
 
     /**
-     * Diagnostic endpoint to check GridFS file storage status
+     * Diagnostic endpoint to check file storage status
      * GET /api/reasoner/diagnose/{projectId}
      */
     @GetMapping("/diagnose/{projectId}")
@@ -1575,32 +1570,34 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             }
             diagnosis.put("editorService", editorChecks);
             
-            // Check GridFS by metadata.projectId
-            GridFSFile fileByMetadata = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-            if (fileByMetadata != null) {
+            // Check the file store by metadata.projectId
+            Optional<StoredFile> fileByMetadata = blobs.findLatest("fs", null, Map.of("projectId", projectId));
+            if (fileByMetadata.isPresent()) {
+                StoredFile found = fileByMetadata.get();
                 diagnosis.put("foundInGridFS", true);
                 diagnosis.put("searchMethod", "metadata.projectId");
-                diagnosis.put("gridfsFileId", fileByMetadata.getObjectId().toString());
-                diagnosis.put("filename", fileByMetadata.getFilename());
-                diagnosis.put("uploadDate", fileByMetadata.getUploadDate());
-                diagnosis.put("length", fileByMetadata.getLength());
-                diagnosis.put("metadata", fileByMetadata.getMetadata());
-                diagnosis.put("status", "OK - File found in GridFS");
+                diagnosis.put("gridfsFileId", found.id());
+                diagnosis.put("filename", found.filename());
+                diagnosis.put("uploadDate", found.uploadDate());
+                diagnosis.put("length", found.length());
+                diagnosis.put("metadata", found.metadata());
+                diagnosis.put("status", "OK - File found in the file store");
             } else {
                 // Try by filename
-                GridFSFile fileByFilename = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
-                if (fileByFilename != null) {
+                Optional<StoredFile> fileByFilename = blobs.findLatest("fs", projectId + ".owl", null);
+                if (fileByFilename.isPresent()) {
+                    StoredFile found = fileByFilename.get();
                     diagnosis.put("foundInGridFS", true);
                     diagnosis.put("searchMethod", "filename");
-                    diagnosis.put("gridfsFileId", fileByFilename.getObjectId().toString());
-                    diagnosis.put("filename", fileByFilename.getFilename());
-                    diagnosis.put("uploadDate", fileByFilename.getUploadDate());
-                    diagnosis.put("length", fileByFilename.getLength());
-                    diagnosis.put("metadata", fileByFilename.getMetadata());
+                    diagnosis.put("gridfsFileId", found.id());
+                    diagnosis.put("filename", found.filename());
+                    diagnosis.put("uploadDate", found.uploadDate());
+                    diagnosis.put("length", found.length());
+                    diagnosis.put("metadata", found.metadata());
                     diagnosis.put("warning", "File found by filename only, not by metadata.projectId");
                 } else {
                     diagnosis.put("foundInGridFS", false);
-                    diagnosis.put("status", "ERROR - File not found in GridFS");
+                    diagnosis.put("status", "ERROR - File not found in the file store");
                 }
             }
             
@@ -1629,29 +1626,27 @@ public ResponseEntity<Map<String, Object>> explainInconsistency(
             // Check if cached
             diagnosis.put("cachedInMemory", ontologyCache.containsKey(projectId));
             
-            // List recent GridFS files for reference
+            // List recent stored files for reference
             List<Map<String, Object>> recentFiles = new ArrayList<>();
-            gridfs.find(new Query().limit(10))
-                .sort(new org.bson.Document("uploadDate", -1))
-                .forEach(file -> {
-                    Map<String, Object> fileInfo = new HashMap<>();
-                    fileInfo.put("filename", file.getFilename());
-                    fileInfo.put("uploadDate", file.getUploadDate());
-                    fileInfo.put("fileId", file.getObjectId().toString());
-                    if (file.getMetadata() != null) {
-                        fileInfo.put("metadata", file.getMetadata());
-                    }
-                    recentFiles.add(fileInfo);
-                });
+            blobs.recent("fs", 10).forEach(file -> {
+                Map<String, Object> fileInfo = new HashMap<>();
+                fileInfo.put("filename", file.filename());
+                fileInfo.put("uploadDate", file.uploadDate());
+                fileInfo.put("fileId", file.id());
+                if (file.metadata() != null && !file.metadata().isEmpty()) {
+                    fileInfo.put("metadata", file.metadata());
+                }
+                recentFiles.add(fileInfo);
+            });
             diagnosis.put("recentGridFSFiles", recentFiles);
             
             // Provide suggestions
             List<String> suggestions = new ArrayList<>();
             if (!diagnosis.containsKey("foundInGridFS") || !(Boolean) diagnosis.get("foundInGridFS")) {
-                suggestions.add("File not found in GridFS - the upload may have failed or the file was deleted");
+                suggestions.add("File not found in the file store - the upload may have failed or the file was deleted");
                 suggestions.add("Check if the project was copied without copying the ontology file");
                 suggestions.add("Try re-uploading the ontology file or copying from the original project");
-                suggestions.add("Check MongoDB GridFS collections: db.fs.files and db.fs.chunks");
+                suggestions.add("Check the stored_file table (bucket 'fs') and the blob folder on disk");
             }
             diagnosis.put("suggestions", suggestions);
             

@@ -17,8 +17,8 @@ cd ../..
 echo "🔨 Building all services..."
 mvn clean package -DskipTests
 
-echo "🐳 Starting MongoDB..."
-docker-compose up -d mongodb
+echo "🐳 Starting PostgreSQL..."
+docker compose up -d postgres
 
 echo ""
 echo "✅ Setup complete!"

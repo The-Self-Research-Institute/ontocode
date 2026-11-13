@@ -434,8 +434,8 @@ class RuleRealPathUndoTest {
     @Test
     void anOldSavedRuleDocumentIsRefusedWithAClearMessage() {
         RollbackAction action = RollbackAction.restoreDocument(DocumentStore.SWRL_RULE.key(), "r1", "{\"_id\":\"r1\",\"projectId\":\"p\"}", null);
-        DocumentRollbackActions actions = new DocumentRollbackActions(mock(org.springframework.data.mongodb.core.MongoTemplate.class),
-                "http://localhost:1");
+        DocumentRollbackActions actions = new DocumentRollbackActions(mock(self.research.ontology.owlEditor.repository.DatatypeDefinitionRepository.class),
+                mock(self.research.ontology.owlEditor.repository.FuzzyRuleRepository.class));
 
         assertFalse(actions.holds("p", action, false, null));
         IllegalStateException refused = assertThrows(IllegalStateException.class, () -> actions.run("p", action, false, null));

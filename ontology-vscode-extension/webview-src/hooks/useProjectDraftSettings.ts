@@ -29,7 +29,6 @@ export function useProjectDraftSettings(projectId: string | null | undefined) {
     async (targetProjectId: string, userId: string): Promise<ProjectDraftSettings | null> => {
       requestTokenRef.current += 1;
       const token = requestTokenRef.current;
-      setRequireDraftForMembers(false);
       setIsProjectOwner(false);
       setIsProjectShared(false);
       const isCurrent = () =>
@@ -43,7 +42,6 @@ export function useProjectDraftSettings(projectId: string | null | undefined) {
         return settings;
       } catch {
         if (isCurrent()) {
-          setRequireDraftForMembers(false);
           setIsProjectOwner(false);
           setIsProjectShared(false);
         }

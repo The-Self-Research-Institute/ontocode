@@ -5,8 +5,8 @@
 #   docker compose -f docker-compose.production.yml -f docker-compose.t3-2xlarge.yml up -d
 
 services:
-  mongo:
-    command: ["mongod", "--wiredTigerCacheSizeGB", "0.5", "--auth"]
+  postgres:
+    command: ["postgres", "-c", "shared_buffers=384MB", "-c", "max_connections=100", "-c", "effective_cache_size=768MB"]
     deploy:
       resources:
         limits:

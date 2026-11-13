@@ -2,7 +2,7 @@
 REM OntoCode Electron — Dev Hot-Reload Script
 REM
 REM What this does:
-REM   1. Starts Docker services (MongoDB, Fuseki, Spring Boot) via docker-compose.dev.yml
+REM   1. Starts Docker services (PostgreSQL, Fuseki, Spring Boot) via docker-compose.dev.yml
 REM   2. Starts the Vite dev server for the React UI (port 5173)
 REM   3. Starts Electron pointing at Docker + Vite (no bundled JARs needed)
 REM

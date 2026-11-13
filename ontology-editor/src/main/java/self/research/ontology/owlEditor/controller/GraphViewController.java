@@ -15,11 +15,8 @@ import self.research.ontology.owlEditor.service.collaboration.CollaborativeEditS
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.apibinding.OWLManager;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Criteria;
-import com.mongodb.client.gridfs.model.GridFSFile;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
+import self.research.ontology.owlEditor.service.BlobResource;
+import self.research.ontology.owlEditor.service.BlobFileService;
 
 import java.io.InputStream;
 import java.util.List;
@@ -42,7 +39,7 @@ import java.util.Map;
 public class GraphViewController {
 
     private final GraphGeneratingService graphGeneratingService;
-    private final GridFsTemplate gridfs;
+    private final BlobFileService blobFiles;
     private final CollaborativeEditService collaborativeEditService;
     private final self.research.ontology.owlEditor.service.SparqlDatasetService datasetService;
     private final self.research.ontology.owlEditor.cache.BoundedOntologyLru ontologyCache =
@@ -59,7 +56,7 @@ public class GraphViewController {
     private boolean desktopOwlApiFirst;
 
     /**
-     * Load ontology from GridFS with caching
+     * Load ontology from file store with caching
      * Pass forceReload=true to bypass cache and get fresh data
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
@@ -68,20 +65,16 @@ public class GraphViewController {
 
     private OWLOntology loadOntology(String projectId, boolean forceReload) throws Exception {
         if (!forceReload) {
-            return ontologyCache.getOrLoad(projectId, () -> readOntologyFromGridFs(projectId));
+            return ontologyCache.getOrLoad(projectId, () -> readOntologyFromBlobStore(projectId));
         }
-        OWLOntology fresh = readOntologyFromGridFs(projectId);
+        OWLOntology fresh = readOntologyFromBlobStore(projectId);
         ontologyCache.put(projectId, fresh);
         return fresh;
     }
 
-    private OWLOntology readOntologyFromGridFs(String projectId) throws Exception {
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-        if (file == null) {
-            throw new RuntimeException("Ontology file not found for project: " + projectId);
-        }
-
-        GridFsResource resource = gridfs.getResource(file);
+    private OWLOntology readOntologyFromBlobStore(String projectId) throws Exception {
+        BlobResource resource = blobFiles.getFileByProjectId(projectId)
+                .orElseThrow(() -> new RuntimeException("Ontology file not found for project: " + projectId));
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             return manager.loadOntologyFromOntologyDocument(inputStream);
@@ -90,7 +83,7 @@ public class GraphViewController {
 
     /**
      * Generate graph data directly from GraphDB (live data)
-     * This fetches the current state from GraphDB, not from GridFS snapshot
+     * This fetches the current state from GraphDB, not from file store snapshot
      * Includes all OWL relationships: subClassOf, domain, range, equivalentClass, etc.
      */
     private Map<String, Object> generateGraphFromGraphDB(String projectId, int maxNodes) {
@@ -236,7 +229,7 @@ public class GraphViewController {
     /**
      * Get initial graph structure for a project.
      * Returns root-level nodes only for large ontologies.
-     * Now fetches from GraphDB (live data) instead of GridFS (snapshot)
+     * Now fetches from GraphDB (live data) instead of file store (snapshot)
      *
      * GET /api/collab-graph/{projectId}/initial
      */

@@ -90,10 +90,7 @@ public class PluginRatingService {
 
     @Transactional
     public void markReviewHelpful(String ratingId) {
-        ratingRepository.findById(ratingId).ifPresent(rating -> {
-            rating.setHelpfulCount(rating.getHelpfulCount() + 1);
-            ratingRepository.save(rating);
-        });
+        ratingRepository.incrementHelpful(ratingId);
     }
 
     public Map<String, Object> getRatingStats(String pluginId) {
@@ -131,24 +128,7 @@ public class PluginRatingService {
     }
 
     private void updatePluginRating(String pluginId) {
-        pluginRepository.findByPluginId(pluginId).ifPresent(plugin -> {
-            List<PluginRating> ratings = ratingRepository.findByPluginId(pluginId);
-
-            if (ratings.isEmpty()) {
-                plugin.setAverageRating(0.0);
-                plugin.setReviewCount(0);
-            } else {
-                double average = ratings.stream()
-                        .mapToInt(PluginRating::getStars)
-                        .average()
-                        .orElse(0.0);
-                plugin.setAverageRating(Math.round(average * 10.0) / 10.0);
-                plugin.setReviewCount(ratings.size());
-            }
-
-            plugin.setUpdatedAt(LocalDateTime.now());
-            pluginRepository.save(plugin);
-        });
+        pluginRepository.recomputeRating(pluginId);
     }
 
     private RatingResponse toRatingResponse(PluginRating rating) {

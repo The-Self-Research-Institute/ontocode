@@ -48,7 +48,7 @@ class PluginPublishRollbackTest {
         Plugin saved = Plugin.builder().id("pid").pluginId("p1").build();
         when(plugins.findByPluginId("p1")).thenReturn(Optional.empty()).thenReturn(Optional.empty()).thenReturn(Optional.of(saved));
         when(versions.findByPluginIdAndVersion("p1", "2.0.0")).thenReturn(Optional.empty());
-        doThrow(new RuntimeException("mongo down")).when(versions).save(any());
+        doThrow(new RuntimeException("database down")).when(versions).save(any());
 
         assertThrows(PluginPublishException.class, () -> service.publishPlugin(request, bundle, "a@x.org", false));
 
@@ -63,7 +63,7 @@ class PluginPublishRollbackTest {
         when(plugins.findByPluginId("p1")).thenReturn(Optional.of(existing));
         when(versions.findByPluginIdAndVersion("p1", "2.0.0")).thenReturn(Optional.of(oldVersion));
         when(plugins.save(any())).thenReturn(existing);
-        doThrow(new RuntimeException("mongo down")).when(versions).save(argThat(v -> "file-new".equals(v.getVsixFileId())));
+        doThrow(new RuntimeException("database down")).when(versions).save(argThat(v -> "file-new".equals(v.getVsixFileId())));
 
         assertThrows(PluginPublishException.class, () -> service.publishPlugin(request, bundle, "a@x.org", false));
 

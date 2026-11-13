@@ -40,7 +40,7 @@ import static org.mockito.Mockito.when;
 class DraftUndoTrackingTest {
 
     private static final String P = "proj";
-    private static final String USER = "mongo-1";
+    private static final String USER = "user-1";
     private static final String NAME = "real@x.org";
     private static final String A = "http://ex.org/A";
     private static final String B = "http://ex.org/B";

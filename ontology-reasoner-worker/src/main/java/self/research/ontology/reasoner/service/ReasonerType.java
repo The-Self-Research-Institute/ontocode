@@ -26,6 +26,8 @@ public enum ReasonerType {
         }
         String name = raw.trim().toUpperCase(Locale.ROOT);
         if (name.equals("OPENLLET") || name.equals("PELLET")) {
+            LoggerFactory.getLogger(ReasonerType.class)
+                    .warn("Openllet and Pellet are no longer available; using HermiT");
             return HERMIT;
         }
         try {

@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import self.research.ontology.auth.repository.EmailLogRepository;
+import self.research.ontology.auth.repository.StripeEventRepository;
+import self.research.ontology.auth.repository.StripeUnmatchedInvoiceRepository;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -36,7 +38,9 @@ class BillingReplayAdminOnlyTest {
         AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
         context.register(Wiring.class);
         context.getBeanFactory().registerSingleton("stripeService", mock(StripeService.class));
-        context.getBeanFactory().registerSingleton("mongoTemplate", mock(MongoTemplate.class));
+        context.getBeanFactory().registerSingleton("emailLogs", mock(EmailLogRepository.class));
+        context.getBeanFactory().registerSingleton("stripeEvents", mock(StripeEventRepository.class));
+        context.getBeanFactory().registerSingleton("unmatchedInvoices", mock(StripeUnmatchedInvoiceRepository.class));
         context.refresh();
         return context.getBean(BillingReplayController.class);
     }

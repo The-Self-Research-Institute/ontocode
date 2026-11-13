@@ -342,7 +342,7 @@ class OntologyMetadataServiceTest {
     @Test
     void aFailureWritingTheHistoryNeverFailsThePrefixEdit() {
         givenPublicPrefixes(Map.of());
-        doThrow(new RuntimeException("mongo down")).when(historyService).recordEdit(anyString(), anyString(),
+        doThrow(new RuntimeException("database down")).when(historyService).recordEdit(anyString(), anyString(),
                 anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(),
                 org.mockito.ArgumentMatchers.anyBoolean(), any());
 

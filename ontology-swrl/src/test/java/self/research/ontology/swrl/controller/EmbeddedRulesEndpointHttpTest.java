@@ -60,6 +60,16 @@ class EmbeddedRulesEndpointHttpTest {
     }
 
     @Test
+    void anOntologyTooLargeForTheEngineAnswers413WithTheReason() throws Exception {
+        Mockito.when(engine.listEmbeddedRules("p1", null))
+                .thenThrow(new self.research.ontology.swrl.service.OntologyTooLargeException(44739));
+
+        mvc.perform(get("/api/swrl/p1/rules/embedded"))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("too large for the rule engine")));
+    }
+
+    @Test
     void theParseEndpointAnswersValidAxiomErrorsAndSuggestions() throws Exception {
         Mockito.when(engine.parseRule("p1", "A(?x) -> B(?x)", null))
                 .thenReturn(new SwrlEngineService.RuleParse(true, "Ontology()", List.of(), List.of()));

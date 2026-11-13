@@ -24,7 +24,7 @@ class EndpointActorTest {
     private static MockHttpServletRequest signedIn(String email) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("{\"email\":\"" + email + "\",\"userId\":\"mongo-1\"}").getBytes(StandardCharsets.UTF_8));
+                ("{\"email\":\"" + email + "\",\"userId\":\"user-1\"}").getBytes(StandardCharsets.UTF_8));
         request.addHeader("Authorization", "Bearer h." + payload + ".s");
         return request;
     }
@@ -46,8 +46,8 @@ class EndpointActorTest {
     @Test
     void aDraftBelongsToTheSignedInUserWhateverIdWasSent() {
         MockHttpServletRequest request = signedIn("real@x.org");
-        assertEquals("mongo-1", RequestActor.forScope(request, "owner-id", true));
-        assertEquals("mongo-1", RequestActor.forScope(request, "anonymous", true));
+        assertEquals("user-1", RequestActor.forScope(request, "owner-id", true));
+        assertEquals("user-1", RequestActor.forScope(request, "anonymous", true));
         assertEquals("real@x.org", RequestActor.forScope(request, "owner-id", false));
         assertEquals("u1", RequestActor.forScope(new MockHttpServletRequest(), "u1", false));
         assertEquals("anonymous", RequestActor.forScope(null, "anonymous", true));

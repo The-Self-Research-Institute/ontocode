@@ -2,6 +2,16 @@
 
 All notable changes to OntoCode Studio are listed here, newest first. The same notes appear in the app under What's new.
 
+## [1.2.9] - 2026-11-12
+
+**Database**
+
+- Database — OntoCode now uses PostgreSQL as its database instead of MongoDB. The desktop app includes it, so there is nothing to install, and the first start takes a little longer.
+
+**Licences**
+
+- Licences — LGPL libraries such as HermiT and JFact ship as separate files with their licence texts, and a check covers every shipped library.
+
 ## [1.2.8] - 2026-10-29
 
 **SPARQL and SWRL**

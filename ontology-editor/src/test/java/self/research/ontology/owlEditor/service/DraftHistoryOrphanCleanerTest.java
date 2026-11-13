@@ -1,21 +1,16 @@
 package self.research.ontology.owlEditor.service;
 
-import org.bson.Document;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.aggregation.Aggregation;
-import org.springframework.data.mongodb.core.aggregation.AggregationResults;
 import self.research.ontology.owlEditor.model.DraftSession;
-import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.DraftSessionRepository;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository.DraftGroup;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -23,20 +18,18 @@ import static org.mockito.Mockito.when;
 
 class DraftHistoryOrphanCleanerTest {
 
-    private final MongoTemplate mongo = mock(MongoTemplate.class);
+    private final HistoryChangeRepository history = mock(HistoryChangeRepository.class);
     private final DraftSessionRepository sessions = mock(DraftSessionRepository.class);
     private final DraftTrackingService drafts = mock(DraftTrackingService.class);
     private final HistorySyncService sync = mock(HistorySyncService.class);
-    private final DraftHistoryOrphanCleaner cleaner = new DraftHistoryOrphanCleaner(mongo, sessions, drafts, sync);
+    private final DraftHistoryOrphanCleaner cleaner = new DraftHistoryOrphanCleaner(history, sessions, drafts, sync);
 
-    private void groups(Document... rows) {
-        when(mongo.aggregate(any(Aggregation.class), eq(HistoryChange.class), eq(Document.class)))
-                .thenReturn(new AggregationResults<>(List.of(rows), new Document()))
-                .thenReturn(new AggregationResults<>(List.of(), new Document()));
+    private void groups(DraftGroup... rows) {
+        when(history.countLiveDraftGroups()).thenReturn(List.of(rows));
     }
 
-    private static Document group(String project, String user, int rows) {
-        return new Document("_id", new Document("projectId", project).append("userId", user)).append("rows", rows);
+    private static DraftGroup group(String project, String user, int rows) {
+        return new DraftGroup(project, user, rows);
     }
 
     @Test
