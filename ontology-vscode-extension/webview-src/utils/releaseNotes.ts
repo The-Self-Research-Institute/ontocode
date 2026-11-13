@@ -18,6 +18,25 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.9-beta.1",
+    webVersion: "1.2.9",
+    date: "November 12, 2026",
+    title: "PostgreSQL replaces MongoDB, Global search and Graph View fixes",
+    highlights: [
+      "Database — OntoCode now uses PostgreSQL as its database instead of MongoDB. The desktop app includes it, so there is nothing to install, and the first start takes a little longer.",
+      "Licences — LGPL libraries such as HermiT and JFact ship as separate files with their licence texts, and a check covers every shipped library.",
+      "ONTOCODE-217: Global ontology search — Press Ctrl+F or use the new top-bar field to search classes, properties, datatypes and individuals at once. Results are grouped by type, with filters for case, whole words, regex, IRIs, annotations, deprecated and built-ins. The per-tab search box is now a simple name search.",
+      "ONTOCODE-202: Classes — Searching in the Classes tab now finds classes in branches you haven't expanded yet.",
+      "ONTOCODE-204: Graph View — VOWL now shows the graph as soon as you switch to it, without needing Refresh.",
+      "ONTOCODE-204: Graph View — Switching from Tree back to Network no longer leaves overlapping blobs, and the zoom no longer shows 0.0x.",
+      "ONTOCODE-204: Graph View — The settings panel now fits on screen. The Relations row wraps with All and None first, and the toolbar stays on one row.",
+      "ONTOCODE-204: Graph View — VOWL now shows datatypes as yellow rectangles and data properties in their own style, instead of as classes and object properties.",
+      "ONTOCODE-204: Graph View — Selecting a node in VOWL no longer greys out the whole graph unless \"Isolate on click\" is on, and Refresh clears the selection.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.8-beta.1",
     webVersion: "1.2.8",
     date: "October 29, 2026",
@@ -50,7 +69,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     version: "1.2.6-beta.1",
     webVersion: "1.2.6",
     date: "October 16, 2026",
-    title: "Undo and Redo",
+    title: "Undo and Redo, Spreadsheet Import and Reasoner explanation workbench for Inferred axioms.",
     highlights: [
       "ONTOCODE-194: Undo and Redo — Edit > Undo and Edit > Redo now work, with Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z (Cmd+Z and Cmd+Shift+Z on a Mac). They reverse creating and deleting entities, adding and removing axioms, drag-and-drop in the class hierarchy, annotation and axiom-annotation edits, characteristic changes, prefix changes, renames, and ontology IRI changes.",
       "ONTOCODE-194: Undo and Redo — An operation that changes several things at once, such as Change IRI or an AI edit, is undone as a single unit. Undo restores the exact previous triples.",
@@ -58,6 +77,14 @@ export const RELEASE_NOTES: ReleaseNote[] = [
       "ONTOCODE-194: Undo and Redo — Every undo and redo is recorded in the Change Assistant and is safe if the connection drops or the server restarts partway through. Repeating the same request never applies it twice.",
       "ONTOCODE-194: Undo and Redo — Also covers datatype definitions, fuzzy and SWRL rules, citations, and, on desktop, ontologies edited offline.",
       "ONTOCODE-194: Change Assistant — The number of changes on a card, on the Undo all button, and in the undo preview now always agree, and times are shown in your local time zone so an undo appears after the edit it undid.",
+      "ONTOCODE-91: Reasoner — Added a \"?\" next to every inferred axiom and unsatisfiable class in the Reasoner tab. Clicking it shows the minimal set of axioms responsible, with Regular and Laconic explanation styles and a configurable number of justifications.",
+      "ONTOCODE-91: Reasoner — Each axiom in an explanation is clickable and jumps straight to the entity it belongs to.",
+      "ONTOCODE-91: Reasoner — Explanations now cover class subsumption, class assertions, and property assertions, not just whole-ontology inconsistency.",
+      "ONTOCODE-91: Reasoner — Inferred Axioms now shows how many axioms actually exist and lets you load more, instead of silently stopping at 100.",
+      "ONTOCODE-91: Fixed the Reasoner panel's object property count including data properties by mistake, so it now matches the Entities and Metrics tabs.",
+      "ONTOCODE-94: Spreadsheet Import — Turn spreadsheet rows into classes, individuals, property values and annotations. Upload an .xlsx, .xls or .csv file and write Cellfie-style transformation rules that map columns to OWL.",
+      "ONTOCODE-94: Spreadsheet Import — Rules are checked as you type. Generate axioms shows a preview of everything that would be added, by row or by type, with counts, problems, and which axioms are already in the ontology, before anything is saved.",
+      "ONTOCODE-94: Spreadsheet Import — Add to ontology records the whole import as a single Change Assistant entry, so one undo removes it. Unsaved import work is kept if you refresh the page.",
     ],
     videoUrl: "",
   },
