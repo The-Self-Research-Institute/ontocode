@@ -226,7 +226,7 @@ class AssistantRecoveryServiceTest {
 
     @Test
     void unexpectedErrorDuringRestoreReturnsRecoveryRequired() throws Exception {
-        when(recoveryLockService.findActiveLock("proj-1")).thenThrow(new IllegalStateException("mongo down"));
+        when(recoveryLockService.findActiveLock("proj-1")).thenThrow(new IllegalStateException("database down"));
 
         RecoveryOutcome outcome = service.restore("proj-1", "u@x.com");
 
@@ -288,7 +288,7 @@ class AssistantRecoveryServiceTest {
     @Test
     void clearFailureReturnsClearFailedAndIsAudited() {
         when(recoveryLockService.findActiveLock("proj-1")).thenReturn(Optional.of(lock(true)));
-        doThrow(new IllegalStateException("mongo down")).when(recoveryLockService)
+        doThrow(new IllegalStateException("database down")).when(recoveryLockService)
                 .release(eq("proj-1"), anyString(), anyString());
 
         RecoveryOutcome outcome = service.clear("proj-1", "u@x.com");

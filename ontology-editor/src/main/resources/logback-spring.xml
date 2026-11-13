@@ -136,12 +136,6 @@
         <appender-ref ref="CONSOLE" />
     </logger>
 
-    <!-- MongoDB -->
-    <logger name="org.springframework.data.mongodb" level="WARN" additivity="false">
-        <appender-ref ref="APP_FILE" />
-        <appender-ref ref="ERROR_FILE" />
-    </logger>
-
     <!-- HTTP Client -->
     <logger name="org.springframework.web.reactive.function.client" level="INFO" additivity="false">
         <appender-ref ref="APP_FILE" />

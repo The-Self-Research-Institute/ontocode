@@ -262,7 +262,7 @@
       <span class="step-detail"></span>
     </span>
   </div>
-  <div class="step" data-key="mongo">
+  <div class="step" data-key="database">
     <span class="step-icon"><span class="dot"></span><span class="spinner"></span><span class="check">&#10003;</span></span>
     <span class="step-body">
       <span class="step-label">Preparing workspace</span>
@@ -308,8 +308,8 @@
   const stepEls = {};
   document.querySelectorAll('.step').forEach(el => { stepEls[el.dataset.key] = el; });
 
-  const ORDER = ['java', 'mongo', 'backend', 'ready'];
-  const BASE_PCT = { java: 5, mongo: 15, backend: 30, ready: 100 };
+  const ORDER = ['java', 'database', 'backend', 'ready'];
+  const BASE_PCT = { java: 5, database: 15, backend: 30, ready: 100 };
 
   let currentIndex = -1;
   let backendTicks = 0;
@@ -389,13 +389,13 @@
 
     if (m.includes('dev mode') || m.includes('skipping bundled service startup')) {
       // Dev mode: services run under Docker already — skip straight to ready.
-      completeStep('java'); completeStep('mongo'); completeStep('backend');
+      completeStep('java'); completeStep('database'); completeStep('backend');
       activateStep('ready');
       return;
     }
 
-    if (m.includes('starting mongodb')) { activateStep('mongo'); return; }
-    if (m.includes('mongodb ready on port')) { completeStep('mongo'); return; }
+    if (m.includes('starting postgresql')) { activateStep('database'); return; }
+    if (m.includes('postgresql ready on port')) { completeStep('database'); return; }
 
     if (m.includes('starting desktop service')) { activateStep('backend'); setDetail('backend', BACKEND_MESSAGES[0]); return; }
     if (m.includes('[desktop] still starting')) { nudgeBackend(); return; }

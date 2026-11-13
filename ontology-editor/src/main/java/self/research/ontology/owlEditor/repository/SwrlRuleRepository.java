@@ -1,12 +1,17 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.SwrlRuleEntity;
 
 import java.util.List;
+import java.util.Optional;
 
-@Repository
-public interface SwrlRuleRepository extends MongoRepository<SwrlRuleEntity, String> {
+public interface SwrlRuleRepository {
+
     List<SwrlRuleEntity> findByProjectIdOrderByCreatedAtDesc(String projectId);
+
+    Optional<SwrlRuleEntity> findById(String id);
+
+    SwrlRuleEntity save(SwrlRuleEntity entity);
+
+    void deleteById(String id);
 }

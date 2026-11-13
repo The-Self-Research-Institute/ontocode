@@ -1,137 +1,100 @@
 package self.research.ontology.owlEditor.service;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import self.research.ontology.owlEditor.document.ProjectDocument;
-import self.research.ontology.owlEditor.repository.ProjectRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
+import self.research.ontology.owlEditor.TestDatabase;
+import self.research.ontology.owlEditor.repository.JdbcProjectAccessRepository;
 
-import java.util.Optional;
-
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 class ProjectAccessServiceTest {
 
+    private final JdbcTemplate jdbc = TestDatabase.jdbc();
+    private final ProjectAccessService service = new ProjectAccessService(new JdbcProjectAccessRepository(jdbc));
+
+    @BeforeEach
+    void clean() {
+        jdbc.update("delete from project_member");
+        jdbc.update("delete from project");
+        jdbc.update("delete from ontology_file");
+        jdbc.update("delete from app_user");
+    }
+
+    private void project(String businessId, String ownerId) {
+        jdbc.update("insert into project (id, project_id, workspace_id, owner_id) values (?, ?, 'ws-1', ?)",
+                "row-" + businessId, businessId, ownerId);
+    }
+
+    private void member(String businessId, int position, String userId, String email, String role) {
+        jdbc.update("insert into project_member (project_row_id, position, user_id, email, role) values (?, ?, ?, ?, ?)",
+                "row-" + businessId, position, userId, email, role);
+    }
+
+    private void file(String id, String parent, String ownerId, String ownerEmail) {
+        jdbc.update("insert into ontology_file (id, project_id, owner_id, owner_email) values (?, ?, ?, ?)",
+                id, parent, ownerId, ownerEmail);
+    }
+
     @Test
-    void aFileLevelRecordWithoutMembersFallsBackToTheParentProjectAndIgnoresEmailCase() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        MongoTemplate mongo = mock(MongoTemplate.class);
-        when(repository.findById("proj-1--file-9")).thenReturn(Optional.of(new ProjectDocument("proj-1--file-9", "f", "f.owl")));
-        when(mongo.exists(any(Query.class), eq(ProjectDocument.class), eq("projects"))).thenReturn(true);
+    void aFileOfAProjectIsAccessibleThroughTheParentMembersAndIgnoresEmailCase() {
+        project("proj-1", "u-owner");
+        member("proj-1", 0, null, "barkat@x.org", "EDITOR");
+        file("proj-1--file-9", "proj-1", "u-owner", "owner@x.org");
 
-        assertTrue(new ProjectAccessService(repository, mongo).hasProjectAccess("proj-1--file-9", "Barkat@x.org"));
-
-        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
-        verify(mongo).exists(query.capture(), eq(ProjectDocument.class), eq("projects"));
-        String sent = query.getValue().getQueryObject().toJson();
-        assertTrue(sent.contains("proj-1"));
-        assertTrue(sent.contains("Barkat@x.org") && sent.contains("\"i\""), sent);
+        assertTrue(service.hasProjectAccess("proj-1--file-9", "Barkat@x.org"));
+        assertFalse(service.hasProjectAccess("proj-1--file-9", "stranger@x.org"));
     }
 
     @Test
     void anUnknownEmailIsStillRefused() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        MongoTemplate mongo = mock(MongoTemplate.class);
-        assertFalse(new ProjectAccessService(repository, mongo).hasProjectAccess("proj-1", " "));
-    }
+        project("proj-1", "u-owner");
 
-    private static ProjectDocument ownedBy(String ownerId, String ownerEmail) {
-        ProjectDocument doc = new ProjectDocument("proj-1", "p", "p.owl");
-        doc.setOwnerId(ownerId);
-        doc.setOwnerEmail(ownerEmail);
-        return doc;
+        assertFalse(service.hasProjectAccess("proj-1", " "));
+        assertFalse(service.hasProjectAccess("proj-1", "nobody@x.org"));
+        assertFalse(service.hasProjectAccess(null, "a@x.org"));
+        assertFalse(service.hasProjectAccess(" ", "a@x.org"));
     }
 
     @Test
     void theOwnerIsRecognisedByUserIdEvenWhenTheEmailHasChanged() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        when(repository.findById("proj-1")).thenReturn(Optional.of(ownedBy("u-1", "old@x.org")));
+        project("proj-1", "u-1");
 
-        assertTrue(new ProjectAccessService(repository, mock(MongoTemplate.class))
-                .hasProjectAccess("proj-1", "u-1", "new@x.org"));
+        assertTrue(service.hasProjectAccess("proj-1", "u-1", "new@x.org"));
     }
 
     @Test
     void aMemberIsRecognisedByUserId() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        ProjectDocument doc = ownedBy("u-owner", "owner@x.org");
-        ProjectDocument.MemberRef member = new ProjectDocument.MemberRef();
-        member.setUserId("u-2");
-        doc.setMembers(java.util.List.of(member));
-        when(repository.findById("proj-1")).thenReturn(Optional.of(doc));
+        project("proj-1", "u-owner");
+        member("proj-1", 0, "u-2", "other@x.org", "VIEWER");
 
-        assertTrue(new ProjectAccessService(repository, mock(MongoTemplate.class))
-                .hasProjectAccess("proj-1", "u-2", "someone@x.org"));
+        assertTrue(service.hasProjectAccess("proj-1", "u-2", "someone@x.org"));
     }
 
     @Test
     void aDifferentUserIdWithAnotherEmailIsRefused() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        when(repository.findById("proj-1")).thenReturn(Optional.of(ownedBy("u-1", "owner@x.org")));
+        project("proj-1", "u-1");
+        member("proj-1", 0, "u-1", "owner@x.org", "OWNER");
 
-        assertFalse(new ProjectAccessService(repository, mock(MongoTemplate.class))
-                .hasProjectAccess("proj-1", "u-9", "intruder@x.org"));
+        assertFalse(service.hasProjectAccess("proj-1", "u-9", "intruder@x.org"));
     }
 
     @Test
-    void anOlderProjectWithoutIdsStillWorksByEmail() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        when(repository.findById("proj-1")).thenReturn(Optional.of(ownedBy(null, "owner@x.org")));
+    void aLegacyFileWithoutAContainerStillWorksByOwnerEmail() {
+        file("legacy-1", null, null, "owner@x.org");
 
-        assertTrue(new ProjectAccessService(repository, mock(MongoTemplate.class))
-                .hasProjectAccess("proj-1", "u-1", "OWNER@x.org"));
-    }
-
-    @Test
-    void theParentProjectLookupAlsoMatchesTheUserId() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        MongoTemplate mongo = mock(MongoTemplate.class);
-        when(repository.findById("proj-1--file-9")).thenReturn(Optional.empty());
-        when(mongo.exists(any(Query.class), eq(ProjectDocument.class), eq("projects"))).thenReturn(true);
-
-        assertTrue(new ProjectAccessService(repository, mongo).hasProjectAccess("proj-1--file-9", "u-1", "a@x.org"));
-
-        ArgumentCaptor<Query> query = ArgumentCaptor.forClass(Query.class);
-        verify(mongo).exists(query.capture(), eq(ProjectDocument.class), eq("projects"));
-        String sent = query.getValue().getQueryObject().toJson();
-        assertTrue(sent.contains("ownerId") && sent.contains("members.userId") || sent.contains("\"userId\""), sent);
-        assertTrue(sent.contains("u-1"), sent);
-    }
-
-    private static ProjectDocument workspaceProject(String ownerId, String ownerEmail) {
-        ProjectDocument record = new ProjectDocument();
-        record.setOwnerId(ownerId);
-        ProjectDocument.MemberRef owner = new ProjectDocument.MemberRef();
-        owner.setUserId(ownerId);
-        owner.setEmail(ownerEmail);
-        owner.setRole("OWNER");
-        ProjectDocument.MemberRef editor = new ProjectDocument.MemberRef();
-        editor.setUserId("u-editor");
-        editor.setEmail("editor@x.org");
-        editor.setRole("EDITOR");
-        record.setMembers(java.util.List.of(owner, editor));
-        return record;
-    }
-
-    private static ProjectAccessService withWorkspaceProject(ProjectDocument fileRecord, ProjectDocument workspaceRecord) {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        MongoTemplate mongo = mock(MongoTemplate.class);
-        when(repository.findById("proj-1")).thenReturn(Optional.ofNullable(fileRecord));
-        when(mongo.findOne(any(Query.class), eq(ProjectDocument.class), eq("projects"))).thenReturn(workspaceRecord);
-        return new ProjectAccessService(repository, mongo);
+        assertTrue(service.hasProjectAccess("legacy-1", "u-1", "OWNER@x.org"));
+        assertFalse(service.hasProjectAccess("legacy-1", "u-1", "other@x.org"));
     }
 
     @Test
     void aMemberWhoUploadedTheFileIsNotTheOwner() {
-        ProjectAccessService service = withWorkspaceProject(
-                ownedBy("u-editor", "editor@x.org"), workspaceProject("u-owner", "owner@x.org"));
+        project("proj-1", "u-owner");
+        member("proj-1", 0, "u-owner", "owner@x.org", "OWNER");
+        member("proj-1", 1, "u-editor", "editor@x.org", "EDITOR");
+        file("proj-1", "proj-1", "u-editor", "editor@x.org");
 
         assertFalse(service.isOwner("proj-1", "u-editor", "editor@x.org"));
         assertFalse(service.isProjectOwner("proj-1", "editor@x.org"));
@@ -139,59 +102,84 @@ class ProjectAccessServiceTest {
 
     @Test
     void theRealOwnerStaysTheOwnerEvenAfterAMemberUploaded() {
-        ProjectAccessService service = withWorkspaceProject(
-                ownedBy("u-editor", "editor@x.org"), workspaceProject("u-owner", "owner@x.org"));
+        project("proj-1", "u-owner");
+        member("proj-1", 0, "u-owner", "owner@x.org", "OWNER");
+        member("proj-1", 1, "u-editor", "editor@x.org", "EDITOR");
+        file("proj-1", "proj-1", "u-editor", "editor@x.org");
 
         assertTrue(service.isOwner("proj-1", "u-owner", "owner@x.org"));
         assertTrue(service.isProjectOwner("proj-1", "OWNER@x.org"));
     }
 
     @Test
+    void theOwnerEmailOfAProjectComesFromTheOwnerAccountWhenTheMemberRowHasADifferentOne() {
+        jdbc.update("insert into app_user (id, username, email) values ('u-owner', 'owner', 'owner@x.org')");
+        project("proj-1", "u-owner");
+        member("proj-1", 0, "u-owner", "old-owner@x.org", "OWNER");
+
+        assertTrue(service.isProjectOwner("proj-1--file-3", "owner@x.org"));
+    }
+
+    @Test
     void withoutAWorkspaceProjectTheFileRecordOwnerStillCounts() {
-        ProjectAccessService service = withWorkspaceProject(ownedBy("u-solo", "solo@x.org"), null);
+        file("proj-1", null, "u-solo", "solo@x.org");
 
         assertTrue(service.isOwner("proj-1", "u-solo", "solo@x.org"));
         assertFalse(service.isOwner("proj-1", "u-other", "other@x.org"));
-    }
-
-    private static ProjectDocument withMembers(String id, String... emails) {
-        ProjectDocument doc = new ProjectDocument(id, "p", "p.owl");
-        java.util.List<ProjectDocument.MemberRef> members = new java.util.ArrayList<>();
-        for (String email : emails) {
-            ProjectDocument.MemberRef ref = new ProjectDocument.MemberRef();
-            ref.setEmail(email);
-            members.add(ref);
-        }
-        doc.setMembers(members);
-        return doc;
+        assertFalse(service.isOwner("proj-1", " ", null));
     }
 
     @Test
     void aProjectWithMoreThanOneMemberIsShared() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        MongoTemplate mongo = mock(MongoTemplate.class);
-        when(mongo.findOne(any(Query.class), eq(ProjectDocument.class), eq("projects")))
-                .thenReturn(withMembers("proj-1", "owner@x.org", "editor@x.org"));
+        project("proj-1", "u-owner");
+        member("proj-1", 0, "u-owner", "owner@x.org", "OWNER");
+        member("proj-1", 1, "u-editor", "editor@x.org", "EDITOR");
 
-        assertTrue(new ProjectAccessService(repository, mongo).isShared("proj-1--file-9"));
+        assertTrue(service.isShared("proj-1--file-9"));
     }
 
     @Test
     void aProjectWithOnlyItsOwnerIsNotShared() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        MongoTemplate mongo = mock(MongoTemplate.class);
-        when(mongo.findOne(any(Query.class), eq(ProjectDocument.class), eq("projects")))
-                .thenReturn(withMembers("proj-1", "owner@x.org"));
+        project("proj-1", "u-owner");
+        member("proj-1", 0, "u-owner", "owner@x.org", "OWNER");
 
-        assertFalse(new ProjectAccessService(repository, mongo).isShared("proj-1"));
+        assertFalse(service.isShared("proj-1"));
     }
 
     @Test
     void anUnknownOrBlankProjectIsNotShared() {
-        ProjectAccessService service = new ProjectAccessService(mock(ProjectRepository.class), mock(MongoTemplate.class));
-
         assertFalse(service.isShared("missing"));
         assertFalse(service.isShared(" "));
         assertFalse(service.isShared(null));
+    }
+
+    @Test
+    void projectExistsForContainersFilesAndFilesOfAContainer() {
+        project("proj-1", "u-owner");
+        file("legacy-1", null, "u", "u@x.org");
+
+        assertTrue(service.projectExists("proj-1"));
+        assertTrue(service.projectExists("proj-1--anything"));
+        assertTrue(service.projectExists("legacy-1"));
+        assertFalse(service.projectExists("proj-2--f"));
+        assertFalse(service.projectExists(null));
+    }
+
+    @Test
+    void visibleProjectsCoverOwnedMemberAndLegacyFiles() {
+        project("proj-1", "u-1");
+        project("proj-2", "u-9");
+        member("proj-2", 0, "u-1", "u1@x.org", "VIEWER");
+        project("proj-3", "u-9");
+        file("legacy-1", null, "u-1", null);
+
+        ProjectAccessService.Visibility visibility = service.visibleProjects("u-1", "u1@x.org");
+
+        assertTrue(visibility.allows("proj-1--f"));
+        assertTrue(visibility.allows("proj-2"));
+        assertTrue(visibility.allows("legacy-1"));
+        assertFalse(visibility.allows("proj-3--f"));
+        assertFalse(visibility.allows(" "));
+        assertEquals(0, service.visibleProjects(null, " ").projectIds().size());
     }
 }

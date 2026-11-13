@@ -79,6 +79,30 @@ class FreeViewOnlyInterceptorTest {
     }
 
     @Test
+    void freePlanUserCanRunAllRulesButNotAddFactsOrEditRules() throws Exception {
+        String project = "/api/ontology/proj-9";
+        assertTrue(interceptor.preHandle(postRequest(project + "/rules/execute", "FREE"), new MockHttpServletResponse(), new Object()));
+
+        MockHttpServletResponse addFacts = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(postRequest("/api/ontology/mutations/proj-9", "FREE"), addFacts, new Object()));
+        assertEquals(403, addFacts.getStatus());
+        assertTrue(addFacts.getContentAsString().contains("requiresUpgrade"));
+
+        MockHttpServletResponse createRule = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(postRequest(project + "/rules", "FREE"), createRule, new Object()));
+        assertEquals(403, createRule.getStatus());
+    }
+
+    @Test
+    void viewerCanRunAllRules() throws Exception {
+        when(workspaceOwnershipService.resolveProjectIdFromRequestPath(org.mockito.ArgumentMatchers.startsWith("/api/ontology/proj-9")))
+                .thenReturn(Optional.of("proj-9"));
+        when(workspaceOwnershipService.isViewerInProject("u1", "proj-9")).thenReturn(true);
+
+        assertTrue(interceptor.preHandle(postRequest("/api/ontology/proj-9/rules/execute", "PRO"), new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
     void draftEditorCanUploadAndPreviewASpreadsheet() throws Exception {
         inProject(false, true);
         assertTrue(interceptor.preHandle(postRequest(IMPORT + "/parse", "PRO"), new MockHttpServletResponse(), new Object()));

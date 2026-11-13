@@ -90,5 +90,5 @@ test('the launcher uses the rotating writer for service logs and Syncthing', () 
     const sync = fs.readFileSync(path.join(__dirname, '..', 'services', 'SyncManager.js'), 'utf8');
     assert.ok(sm.includes('createRotatingStream(logFile)'));
     assert.ok(sync.includes('createRotatingStream(logFile)'));
-    assert.ok(sm.includes("'--logRotate', 'rename'"));
+    assert.ok(sm.includes("'postgres.log'"));
 });

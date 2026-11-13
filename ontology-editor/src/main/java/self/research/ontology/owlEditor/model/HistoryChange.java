@@ -1,10 +1,5 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.CompoundIndexes;
-import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -13,32 +8,23 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Represents a change synced from GraphDB history to MongoDB.
- * This enables full feature support (approve, reject, comments) for GraphDB changes.
- */
-@Document(collection = "history_changes")
-@CompoundIndexes({
-    @CompoundIndex(name = "project_draft_user_ts", def = "{'projectId': 1, 'draft': 1, 'userId': 1, 'timestamp': -1}"),
-    @CompoundIndex(name = "project_entity_ts", def = "{'projectId': 1, 'entityIRI': 1, 'timestamp': -1}")
-})
 public class HistoryChange {
 
-    @Id
+    public static final String FORMAT_JSON = "json";
+    public static final String FORMAT_MONGO = "mongo";
+    public static final String LEGACY_DOCUMENT_REASON =
+            "This change was recorded before the move to PostgreSQL and its saved copy cannot be restored";
+
     private String id;
 
-    @Indexed
     private String projectId;
 
-    @Indexed
     private String editId; // The GraphDB edit IRI for deduplication
 
-    @Indexed
     private String userId;
     
     private String username;
 
-    @Indexed
     private LocalDateTime timestamp;
 
     private String operationType; // ADD, REMOVE, MODIFY
@@ -86,7 +72,6 @@ public class HistoryChange {
     private boolean reverted = false;
     private String revertedAuditId;
 
-    @Indexed
     private String changeSetId;
     private String exactDeleted;
     private String exactInserted;
@@ -103,6 +88,8 @@ public class HistoryChange {
 
     // Sync tracking
     private LocalDateTime syncedAt;
+
+    private String format = FORMAT_JSON;
 
     public static class SubChange {
         private String id;
@@ -796,7 +783,24 @@ public class HistoryChange {
     }
 
     public String getUndoBlockedReason() {
+        if (undoBlockedReason == null && FORMAT_MONGO.equals(format) && carriesDocument()) {
+            return LEGACY_DOCUMENT_REASON;
+        }
         return undoBlockedReason;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String storedUndoBlockedReason() {
+        return undoBlockedReason;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getFormat() {
+        return format;
+    }
+
+    public void setFormat(String format) {
+        this.format = format == null ? FORMAT_JSON : format;
     }
 
     public void setUndoBlockedReason(String undoBlockedReason) {

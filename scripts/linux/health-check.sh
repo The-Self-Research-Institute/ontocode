@@ -19,7 +19,11 @@ check_service() {
     fi
 }
 
-check_service "MongoDB        " "http://localhost:27017"
+if docker exec ontocode-postgres pg_isready -U ontocode -d ontocode > /dev/null 2>&1; then
+    echo -e "${GREEN}✓${NC} PostgreSQL     - UP"
+else
+    echo -e "${RED}✗${NC} PostgreSQL     - DOWN"
+fi
 
 GRAPHDB_REPO="${GRAPHDB_REPOSITORY:-ontocode}"
 if curl -s http://localhost:7200/rest/repositories > /dev/null 2>&1; then

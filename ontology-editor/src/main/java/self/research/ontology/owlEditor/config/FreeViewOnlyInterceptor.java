@@ -30,6 +30,7 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
     private static final List<String> READ_ONLY_POST_PATTERNS = List.of(
         "/**/dl-query",
         "/api/ontology/*/explain-inference",
+        "/api/ontology/*/rules/execute",
         "/api/sparql/query/**",
         "/api/sparql/*/queries",
         "/api/v1/issues/report",

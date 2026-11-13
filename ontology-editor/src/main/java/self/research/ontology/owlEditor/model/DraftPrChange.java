@@ -1,16 +1,9 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
-
-@Document(collection = "draft_pr_changes")
 public class DraftPrChange {
 
-    @Id
     private String id;
 
-    @Indexed
     private String prId;
 
     private String projectId;
@@ -28,6 +21,7 @@ public class DraftPrChange {
     }
 
     public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
     public String getPrId() { return prId; }
     public String getProjectId() { return projectId; }
     public String getSnapshotKey() { return snapshotKey; }

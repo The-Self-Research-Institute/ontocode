@@ -1,0 +1,74 @@
+package self.research.ontology.reasoner.repository.jpa;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Repository;
+import self.research.ontology.reasoner.model.ReasoningSnapshotRecord;
+import self.research.ontology.reasoner.repository.ReasoningSnapshotRecordRepository;
+
+import java.time.Instant;
+import java.util.Optional;
+
+@Repository
+@ConditionalOnProperty(name = "ontocode.db.impl", havingValue = "jpa")
+public class JpaReasoningSnapshotRecordRepository implements ReasoningSnapshotRecordRepository {
+
+    private final SpringDataReasoningSnapshotRepository delegate;
+
+    public JpaReasoningSnapshotRecordRepository(SpringDataReasoningSnapshotRepository delegate) {
+        this.delegate = delegate;
+    }
+
+    @Override
+    public ReasoningSnapshotRecord save(ReasoningSnapshotRecord record) {
+        try {
+            delegate.save(toEntity(record));
+        } catch (DataIntegrityViolationException e) {
+            delegate.save(toEntity(record));
+        }
+        return record;
+    }
+
+    @Override
+    public Optional<ReasoningSnapshotRecord> findById(String id) {
+        return delegate.findById(id).map(JpaReasoningSnapshotRecordRepository::toRecord);
+    }
+
+    @Override
+    public long deleteByUpdatedAtBefore(Instant cutoff) {
+        return delegate.deleteOlderThan(cutoff);
+    }
+
+    @Override
+    public long deleteByProjectIdAndRevisionLessThan(String projectId, long revision) {
+        return delegate.deleteOlderRevisions(projectId, revision);
+    }
+
+    private static ReasoningSnapshotEntity toEntity(ReasoningSnapshotRecord r) {
+        ReasoningSnapshotEntity e = new ReasoningSnapshotEntity();
+        e.setId(r.getId());
+        e.setProjectId(r.getProjectId());
+        e.setRevision(r.getRevision());
+        e.setTripleCount(r.getTripleCount());
+        e.setReasoner(r.getReasoner());
+        e.setRulesFingerprint(r.getRulesFingerprint());
+        e.setResultJson(r.getResultJson());
+        e.setCreatedAt(r.getCreatedAt());
+        e.setUpdatedAt(r.getUpdatedAt() != null ? r.getUpdatedAt() : Instant.now());
+        return e;
+    }
+
+    private static ReasoningSnapshotRecord toRecord(ReasoningSnapshotEntity e) {
+        return ReasoningSnapshotRecord.builder()
+                .id(e.getId())
+                .projectId(e.getProjectId())
+                .revision(e.getRevision())
+                .tripleCount(e.getTripleCount())
+                .reasoner(e.getReasoner())
+                .rulesFingerprint(e.getRulesFingerprint())
+                .resultJson(e.getResultJson())
+                .createdAt(e.getCreatedAt())
+                .updatedAt(e.getUpdatedAt())
+                .build();
+    }
+}

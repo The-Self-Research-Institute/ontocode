@@ -44,7 +44,7 @@ public class MergeCheckpointRollbackActions implements RollbackActionRunner {
         }
         metadataService.readStatus(projectId).map(status -> status.filename())
                 .filter(name -> name != null && !name.isBlank())
-                .ifPresent(name -> mergeService.updateGridFsFile(projectId, name, current));
+                .ifPresent(name -> mergeService.updateStoredFile(projectId, name, current));
         importService.submitImport(projectId, current);
     }
 

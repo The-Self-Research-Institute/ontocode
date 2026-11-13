@@ -1,6 +1,5 @@
 package self.research.ontology.owlEditor.service;
 
-import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -8,10 +7,6 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -59,8 +54,6 @@ class AssistantConsistencyCheckServiceTest {
     @Mock
     private AssistantEditGroupRepository groupRepository;
     @Mock
-    private MongoTemplate mongoTemplate;
-    @Mock
     private SimpMessagingTemplate messagingTemplate;
     @Mock
     private RestTemplate restTemplate;
@@ -71,7 +64,7 @@ class AssistantConsistencyCheckServiceTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         service = new AssistantConsistencyCheckService(datasetService, storageManager, spliceWriter,
-                reimportPipeline, groupRepository, mongoTemplate, messagingTemplate);
+                reimportPipeline, groupRepository, messagingTemplate);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "pluginServiceUrl", "http://localhost:8087");
         ReflectionTestUtils.setField(service, "maxDatasetSizeForCheck", 150000L);
@@ -80,8 +73,7 @@ class AssistantConsistencyCheckServiceTest {
         ReflectionTestUtils.setField(service, "debounceQuietMs", 600L);
         ReflectionTestUtils.setField(service, "debounceMaxWaitMs", 2500L);
         ReflectionTestUtils.setField(service, "debounceMaxBatchSize", 10);
-        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class), any(FindAndModifyOptions.class),
-                eq(AssistantEditGroupDocument.class))).thenReturn(pendingGroup());
+        when(groupRepository.resolveConsistencyCheck(anyString(), anyString(), any(), any(), any())).thenReturn(true);
         when(groupRepository.findById(anyString())).thenReturn(Optional.of(pendingGroup()));
         service.rememberCaller("s1", "Bearer user-jwt");
     }
@@ -128,11 +120,9 @@ class AssistantConsistencyCheckServiceTest {
     }
 
     private ConsistencyCheckState capturedState() {
-        ArgumentCaptor<Update> updateCaptor = ArgumentCaptor.forClass(Update.class);
-        verify(mongoTemplate).findAndModify(any(Query.class), updateCaptor.capture(), any(FindAndModifyOptions.class),
-                eq(AssistantEditGroupDocument.class));
-        return (ConsistencyCheckState) updateCaptor.getValue().getUpdateObject()
-                .get("$set", Document.class).get("consistencyCheck.state");
+        ArgumentCaptor<ConsistencyCheckState> stateCaptor = ArgumentCaptor.forClass(ConsistencyCheckState.class);
+        verify(groupRepository).resolveConsistencyCheck(anyString(), anyString(), stateCaptor.capture(), any(), any());
+        return stateCaptor.getValue();
     }
 
     @Test
@@ -212,8 +202,7 @@ class AssistantConsistencyCheckServiceTest {
 
     @Test
     void resolveDoesNotPublishWhenTheConditionalUpdateDidNotMatch() {
-        when(mongoTemplate.findAndModify(any(Query.class), any(Update.class), any(FindAndModifyOptions.class),
-                eq(AssistantEditGroupDocument.class))).thenReturn(null);
+        when(groupRepository.resolveConsistencyCheck(anyString(), anyString(), any(), any(), any())).thenReturn(false);
 
         ReflectionTestUtils.invokeMethod(service, "resolve", "g1", ConsistencyCheckState.PASSED, "arrived too late");
 
@@ -351,8 +340,7 @@ class AssistantConsistencyCheckServiceTest {
 
         ReflectionTestUtils.invokeMethod(service, "processBatch", "proj-1", List.of("g1", "g2"));
 
-        verify(mongoTemplate, timeout(5000).times(2)).findAndModify(any(Query.class), any(Update.class),
-                any(FindAndModifyOptions.class), eq(AssistantEditGroupDocument.class));
+        verify(groupRepository, timeout(5000).times(2)).resolveConsistencyCheck(anyString(), anyString(), any(), any(), any());
         verify(datasetService, times(1)).copyMainGraphToDraft(eq("proj-1"), anyString());
         verify(restTemplate, times(1)).exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(Map.class));
     }
@@ -372,8 +360,7 @@ class AssistantConsistencyCheckServiceTest {
 
         ReflectionTestUtils.invokeMethod(service, "processBatch", "proj-1", List.of("g1", "g2"));
 
-        verify(mongoTemplate, timeout(5000).times(2)).findAndModify(any(Query.class), any(Update.class),
-                any(FindAndModifyOptions.class), eq(AssistantEditGroupDocument.class));
+        verify(groupRepository, timeout(5000).times(2)).resolveConsistencyCheck(anyString(), anyString(), any(), any(), any());
         verify(datasetService, times(2)).copyMainGraphToDraft(eq("proj-1"), anyString());
     }
 
@@ -389,12 +376,10 @@ class AssistantConsistencyCheckServiceTest {
 
         ReflectionTestUtils.invokeMethod(service, "processBatch", "proj-1", List.of("g1", "g2"));
 
-        ArgumentCaptor<Update> updateCaptor = ArgumentCaptor.forClass(Update.class);
-        verify(mongoTemplate, timeout(5000).times(2)).findAndModify(any(Query.class), updateCaptor.capture(),
-                any(FindAndModifyOptions.class), eq(AssistantEditGroupDocument.class));
-        for (Update update : updateCaptor.getAllValues()) {
-            ConsistencyCheckState state = (ConsistencyCheckState) update.getUpdateObject()
-                    .get("$set", Document.class).get("consistencyCheck.state");
+        ArgumentCaptor<ConsistencyCheckState> stateCaptor = ArgumentCaptor.forClass(ConsistencyCheckState.class);
+        verify(groupRepository, timeout(5000).times(2)).resolveConsistencyCheck(anyString(), anyString(),
+                stateCaptor.capture(), any(), any());
+        for (ConsistencyCheckState state : stateCaptor.getAllValues()) {
             assertEquals(ConsistencyCheckState.ERROR, state);
         }
         verify(datasetService).clearDraftGraph(eq("proj-1"), anyString());

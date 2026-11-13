@@ -1,7 +1,6 @@
 package self.research.ontology.owlEditor.controller;
 
 import self.research.ontology.owlEditor.service.Limit;
-import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.reasoner.Node;
@@ -11,10 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import self.research.ontology.owlEditor.service.BlobResource;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.common.rules.DisabledRules;
@@ -72,7 +69,7 @@ public class ReasonerController {
     private long INFERRED_INDIVIDUALS_BUDGET_MS;
 
     @Autowired
-    private GridFsTemplate gridfs;
+    private BlobFileService blobFiles;
 
     @Autowired
     private ReasonerService reasonerService;
@@ -183,7 +180,7 @@ public class ReasonerController {
             }, new ThreadPoolExecutor.AbortPolicy());
 
     /**
-     * Load ontology from Fuseki/TDB2 (via temp-file stream) or GridFS fallback.
+     * Load ontology from Fuseki/TDB2 (via temp-file stream) or file store fallback.
      * Rejects oversized ontologies before attempting in-memory OWL API parsing.
      */
     private OWLOntology loadOntology(String projectId) throws Exception {
@@ -230,7 +227,7 @@ public class ReasonerController {
                     editorReasonerCache.putOntology(projectId, snapshot, loadedVersion);
                     return snapshot;
                 } catch (Exception e) {
-                    log.warn("Failed to snapshot in-memory OWLAPI model for {}, falling back to Fuseki/GridFS: {}",
+                    log.warn("Failed to snapshot in-memory OWLAPI model for {}, falling back to Fuseki/file store: {}",
                             projectId, e.getMessage());
                 }
             }
@@ -294,28 +291,27 @@ public class ReasonerController {
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to load ontology from Fuseki, falling back to GridFS: {}", e.getMessage());
+            log.warn("Failed to load ontology from Fuseki, falling back to file store: {}", e.getMessage());
         } finally {
             if (tempFile != null) {
                 try { Files.deleteIfExists(tempFile); } catch (IOException ignored) {}
             }
         }
 
-        // Fallback to GridFS
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-        
-        if (file == null) {
+        // Fallback to file store
+        Optional<BlobResource> found = blobFiles.getFileByProjectId(projectId);
+        if (found.isEmpty()) {
             log.warn("File not found with metadata.projectId={}, trying filename", projectId);
-            file = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
+            found = blobFiles.getFileByName(projectId + ".owl");
         }
-        
-        if (file == null) {
+
+        if (found.isEmpty()) {
             log.error("Ontology file not found for project: {}", projectId);
             throw new RuntimeException("Ontology file not found for project: " + projectId);
         }
 
-        log.info("Found ontology file: {}", file.getFilename());
-        GridFsResource resource = gridfs.getResource(file);
+        BlobResource resource = found.get();
+        log.info("Found ontology file: {}", resource.getFilename());
         
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
@@ -329,7 +325,7 @@ public class ReasonerController {
             editorReasonerCache.putOntology(projectId, ontology, loadedVersion);
             return ontology;
         } catch (Exception e) {
-            log.error("Error loading ontology from GridFS", e);
+            log.error("Error loading ontology from the file store", e);
             throw e;
         }
     }

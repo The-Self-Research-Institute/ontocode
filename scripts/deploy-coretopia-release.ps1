@@ -201,6 +201,11 @@ function Invoke-Ec2Deploy {
     $up   = ($compose | ForEach-Object { "docker compose -f $ComposeFile up -d $_" }) -join " && "
     $remote = "cd $Ec2Dir && $pull && $up && docker compose -f $ComposeFile ps"
     Write-Host ">> SSH deploy: $Ec2Host"
+    ssh $Ec2Host "cd $Ec2Dir && grep -Eq '^POSTGRES_PASSWORD=.+' .env"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: POSTGRES_PASSWORD is not set in $Ec2Dir/.env on $Ec2Host. Add it (openssl rand -base64 24) before deploying."
+        return
+    }
     ssh $Ec2Host $remote
 }
 

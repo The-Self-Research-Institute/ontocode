@@ -1,0 +1,22 @@
+package self.research.ontology.reasoner.repository.springjdbc;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.jdbc.core.dialect.JdbcPostgresDialect;
+import org.springframework.data.jdbc.repository.config.AbstractJdbcConfiguration;
+import org.springframework.data.jdbc.repository.config.EnableJdbcRepositories;
+import org.springframework.data.relational.core.dialect.Dialect;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
+
+@Configuration
+@ConditionalOnProperty(name = "ontocode.db.impl", havingValue = "springjdbc")
+@EnableJdbcRepositories(basePackageClasses = SpringDataJdbcJobRepository.class)
+public class SpringDataJdbcConfiguration extends AbstractJdbcConfiguration {
+
+    @Override
+    @Bean
+    public Dialect jdbcDialect(NamedParameterJdbcOperations operations) {
+        return JdbcPostgresDialect.INSTANCE;
+    }
+}

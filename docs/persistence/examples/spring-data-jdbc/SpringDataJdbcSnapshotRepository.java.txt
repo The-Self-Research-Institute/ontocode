@@ -1,0 +1,19 @@
+package self.research.ontology.reasoner.repository.springjdbc;
+
+import org.springframework.data.jdbc.repository.query.Modifying;
+import org.springframework.data.jdbc.repository.query.Query;
+import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
+
+import java.time.Instant;
+
+public interface SpringDataJdbcSnapshotRepository extends CrudRepository<SnapshotRow, String> {
+
+    @Modifying
+    @Query("delete from reasoning_snapshot where updated_at < :cutoff")
+    int deleteOlderThan(@Param("cutoff") Instant cutoff);
+
+    @Modifying
+    @Query("delete from reasoning_snapshot where project_id = :projectId and revision < :revision")
+    int deleteOlderRevisions(@Param("projectId") String projectId, @Param("revision") long revision);
+}

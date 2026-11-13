@@ -1,9 +1,12 @@
 package self.research.ontology.auth.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.auth.model.SystemSettings;
 
-@Repository
-public interface SystemSettingsRepository extends MongoRepository<SystemSettings, String> {
+import java.util.Optional;
+
+public interface SystemSettingsRepository {
+
+    Optional<SystemSettings> findById(String id);
+
+    SystemSettings save(SystemSettings settings);
 }

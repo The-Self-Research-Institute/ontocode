@@ -1,42 +1,31 @@
 package self.research.ontology.owlEditor.service;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.List;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
-import self.research.ontology.owlEditor.document.ProjectDocument;
-import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.repository.ProjectAccessRepository;
 
-import java.util.Optional;
+import java.util.Set;
 
 @Service
 public class ProjectAccessService {
 
     private static final String COMPOSITE_PROJECT_SEPARATOR = "--";
 
-    private final ProjectRepository projectRepository;
-    private final MongoTemplate mongoTemplate;
+    private final ProjectAccessRepository access;
 
-    public ProjectAccessService(ProjectRepository projectRepository, MongoTemplate mongoTemplate) {
-        this.projectRepository = projectRepository;
-        this.mongoTemplate = mongoTemplate;
+    public ProjectAccessService(ProjectAccessRepository access) {
+        this.access = access;
+    }
+
+    static String parentOf(String projectId) {
+        int sep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
+        return sep > 0 ? projectId.substring(0, sep) : projectId;
     }
 
     public boolean projectExists(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return false;
         }
-        if (projectRepository.existsById(projectId)) {
-            return true;
-        }
-        int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
-        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
-        return mongoTemplate.exists(new Query(Criteria.where("projectId").is(parentProjectId)), ProjectDocument.class,
-                "projects");
+        return access.projectExists(projectId, parentOf(projectId));
     }
 
     public boolean hasProjectAccess(String projectId, String email) {
@@ -48,31 +37,7 @@ public class ProjectAccessService {
         if (projectId == null || projectId.isBlank() || ((email == null || email.isBlank()) && noUserId)) {
             return false;
         }
-        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
-        if (direct.isPresent() && direct.get().isAccessibleBy(userId, email)) {
-            return true;
-        }
-        int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
-        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
-        Criteria[] anyOf = accessCriteria(userId, email);
-        Query query = new Query(Criteria.where("projectId").is(parentProjectId)
-                .orOperator(anyOf));
-        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
-    }
-
-    private static Criteria[] accessCriteria(String userId, String email) {
-        List<Criteria> anyOf = new ArrayList<>();
-        if (userId != null && !userId.isBlank()) {
-            anyOf.add(Criteria.where("ownerId").is(userId));
-            anyOf.add(Criteria.where("members").elemMatch(Criteria.where("userId").is(userId)));
-        }
-        if (email != null && !email.isBlank()) {
-            java.util.regex.Pattern sameEmail = java.util.regex.Pattern.compile(
-                    "^" + java.util.regex.Pattern.quote(email.trim()) + "$", java.util.regex.Pattern.CASE_INSENSITIVE);
-            anyOf.add(Criteria.where("ownerEmail").regex(sameEmail));
-            anyOf.add(Criteria.where("members").elemMatch(Criteria.where("email").regex(sameEmail)));
-        }
-        return anyOf.toArray(new Criteria[0]);
+        return access.hasAccess(projectId, parentOf(projectId), userId, email == null ? null : email.trim());
     }
 
     public record Visibility(Set<String> projectIds, Set<String> parentIds) {
@@ -90,23 +55,13 @@ public class ProjectAccessService {
     }
 
     public Visibility visibleProjects(String userId, String email) {
-        Criteria[] anyOf = accessCriteria(userId, email);
-        if (anyOf.length == 0) {
+        boolean noUserId = userId == null || userId.isBlank();
+        boolean noEmail = email == null || email.isBlank();
+        if (noUserId && noEmail) {
             return new Visibility(Set.of(), Set.of());
         }
-        Query query = new Query(new Criteria().orOperator(anyOf));
-        query.fields().include("projectId");
-        Set<String> ids = new HashSet<>();
-        Set<String> parents = new HashSet<>();
-        for (ProjectDocument doc : mongoTemplate.find(query, ProjectDocument.class, "projects")) {
-            if (doc.getId() != null) {
-                ids.add(doc.getId());
-            }
-            if (doc.getProjectId() != null) {
-                parents.add(doc.getProjectId());
-            }
-        }
-        return new Visibility(ids, parents);
+        ProjectAccessRepository.AccessibleProjects found = access.accessibleProjects(userId, noEmail ? null : email.trim());
+        return new Visibility(found.projectIds(), found.parentIds());
     }
 
     public boolean isOwner(String projectId, String userId, String email) {
@@ -115,34 +70,16 @@ public class ProjectAccessService {
         if (projectId == null || projectId.isBlank() || (noUserId && noEmail)) {
             return false;
         }
-        Optional<ProjectDocument> workspaceRecord = WorkspaceProjectRecord.find(mongoTemplate, projectId);
+        String parent = parentOf(projectId);
+        var workspaceRecord = access.findWorkspaceProject(parent);
         if (workspaceRecord.isPresent()) {
-            return WorkspaceProjectRecord.ownedBy(workspaceRecord.get(), userId, email);
+            var record = workspaceRecord.get();
+            if (!noUserId && userId.equals(record.ownerId())) {
+                return true;
+            }
+            return !noEmail && record.ownerEmail() != null && email.equalsIgnoreCase(record.ownerEmail());
         }
-        Optional<ProjectDocument> direct = projectRepository.findById(projectId);
-        if (direct.isPresent() && ownedBy(direct.get(), userId, email)) {
-            return true;
-        }
-        int compositeSep = projectId.indexOf(COMPOSITE_PROJECT_SEPARATOR);
-        String parentProjectId = compositeSep > 0 ? projectId.substring(0, compositeSep) : projectId;
-        List<Criteria> anyOf = new ArrayList<>();
-        if (!noUserId) {
-            anyOf.add(Criteria.where("ownerId").is(userId));
-        }
-        if (!noEmail) {
-            anyOf.add(Criteria.where("ownerEmail").regex(java.util.regex.Pattern.compile(
-                    "^" + java.util.regex.Pattern.quote(email.trim()) + "$", java.util.regex.Pattern.CASE_INSENSITIVE)));
-        }
-        Query query = new Query(Criteria.where("projectId").is(parentProjectId)
-                .orOperator(anyOf.toArray(new Criteria[0])));
-        return mongoTemplate.exists(query, ProjectDocument.class, "projects");
-    }
-
-    private static boolean ownedBy(ProjectDocument doc, String userId, String email) {
-        if (userId != null && !userId.isBlank() && userId.equals(doc.getOwnerId())) {
-            return true;
-        }
-        return email != null && !email.isBlank() && email.equalsIgnoreCase(doc.getOwnerEmail());
+        return access.ownsAnyRecord(projectId, parent, userId, noEmail ? null : email.trim());
     }
 
     public boolean isProjectOwner(String projectId, String email) {
@@ -153,10 +90,8 @@ public class ProjectAccessService {
         if (projectId == null || projectId.isBlank()) {
             return false;
         }
-        Optional<ProjectDocument> record = WorkspaceProjectRecord.find(mongoTemplate, projectId);
-        if (record.isEmpty()) {
-            record = projectRepository.findById(projectId);
-        }
-        return record.map(ProjectDocument::getMembers).map(members -> members.size() > 1).orElse(false);
+        return access.findWorkspaceProject(parentOf(projectId))
+                .map(record -> record.memberCount() > 1)
+                .orElse(false);
     }
 }

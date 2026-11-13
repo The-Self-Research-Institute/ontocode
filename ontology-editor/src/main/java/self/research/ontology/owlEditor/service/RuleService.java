@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.io.StringDocumentSource;
 import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.IRI;
@@ -223,14 +224,14 @@ public class RuleService {
                 }
             }
             Path export = storageManager.exportOntology(projectId, "rdfxml");
-            return OWLManager.createOWLOntologyManager().loadOntologyFromOntologyDocument(export.toFile());
+            return OWLFormatConverter.createManagerWithSilentImports().loadOntologyFromOntologyDocument(export.toFile());
         };
     }
 
     static OWLOntology loadTolerant(String text) throws Exception {
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
-        return OWLManager.createOWLOntologyManager().loadOntologyFromOntologyDocument(new StringDocumentSource(text), config);
+        return OWLFormatConverter.createManagerWithSilentImports().loadOntologyFromOntologyDocument(new StringDocumentSource(text), config);
     }
 
     public List<Map<String, Object>> list(String projectId, boolean draft, String userId) {

@@ -13,8 +13,8 @@ const BACKEND_FLOOR_MB = 1280;
 const BACKEND_CAP_MB = 12288;
 const FUSEKI_FLOOR_MB = 768;
 const FUSEKI_CAP_MB = 8192;
-const MONGO_CACHE_MIN_MB = 512;
-const MONGO_CACHE_MAX_MB = 1024;
+const POSTGRES_MIN_MB = 192;
+const POSTGRES_MAX_MB = 256;
 const STEP_MB = 64;
 
 const LOW_DISK_BYTES = 2 * GB;
@@ -31,8 +31,8 @@ function floorTo(value, step) {
 function computeBudget(totalBytes) {
     const totalMb = totalBytes / MB;
     const budgetMb = totalMb * BUDGET_SHARE;
-    const mongoCacheMb = clamp(Math.round((totalMb * 0.06) / 256) * 256, MONGO_CACHE_MIN_MB, MONGO_CACHE_MAX_MB);
-    const remaining = Math.max(budgetMb - mongoCacheMb - SWRL_HEAP_MB, 0);
+    const postgresMb = clamp(Math.round((totalMb * 0.02) / 64) * 64, POSTGRES_MIN_MB, POSTGRES_MAX_MB);
+    const remaining = Math.max(budgetMb - postgresMb - SWRL_HEAP_MB, 0);
     const backendMb = clamp(floorTo(remaining * BACKEND_SHARE, STEP_MB), BACKEND_FLOOR_MB, BACKEND_CAP_MB);
     const fusekiMb = clamp(floorTo(remaining * (1 - BACKEND_SHARE), STEP_MB), FUSEKI_FLOOR_MB, FUSEKI_CAP_MB);
     return {
@@ -40,13 +40,13 @@ function computeBudget(totalBytes) {
         backendMb,
         fusekiMb,
         swrlMb: SWRL_HEAP_MB,
-        mongoCacheMb,
-        sumMb: backendMb + fusekiMb + SWRL_HEAP_MB + mongoCacheMb,
+        postgresMb,
+        sumMb: backendMb + fusekiMb + SWRL_HEAP_MB + postgresMb,
     };
 }
 
-function mongoCacheArg(budget) {
-    return String(budget.mongoCacheMb / 1024);
+function postgresSharedBuffers(budget) {
+    return `${budget.postgresMb}MB`;
 }
 
 function jvmSafetyFlags({ crashDir, tmpDir, heapDump = false }) {
@@ -101,7 +101,7 @@ function classifyExit({ name, code, outputTail = [], stopping, recovery = 'lazy'
     const text = outputTail.join('\n');
     const outOfMemory = code === 3 || /OutOfMemoryError/.test(text);
     const label = {
-        MongoDB: 'The database',
+        PostgreSQL: 'The database',
         Desktop: 'The OntoCode backend',
         Fuseki: 'The graph and SPARQL service',
         SWRL: 'The rule reasoner',
@@ -178,7 +178,7 @@ function idleMsFromEnv(env = process.env) {
 
 module.exports = {
     MB, GB, LOW_DISK_BYTES, MIN_DISK_BYTES,
-    computeBudget, mongoCacheArg, jvmSafetyFlags,
+    computeBudget, postgresSharedBuffers, jvmSafetyFlags,
     freeBytes, diskStatus, diskMessage,
     classifyExit, RestartBudget, IdleTracker, idleMsFromEnv,
 };

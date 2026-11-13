@@ -166,7 +166,7 @@ public class OntologyHistoryService {
             historySyncService.syncChange(projectId, editId, changeData);
             if (origin != null && origin.exact() != null) exactCoverService.record(projectId, origin.exact());
         } catch (Exception e) {
-            log.error("[OntologyHistory] Failed to sync change to MongoDB", e);
+            log.error("[OntologyHistory] Failed to sync change to the database", e);
         }
 
         self.mirrorEditToTripleStoreAsync(historyGraph, editIRI, editId, userId, username,
@@ -212,7 +212,7 @@ public class OntologyHistoryService {
             conn.commit();
             log.debug("[OntologyHistory] Recorded edit: {} by {} on {}", operationType, username, entityIRI);
         } catch (Exception e) {
-            log.warn("[OntologyHistory] Failed to record edit in triple store (change is saved in MongoDB): {}",
+            log.warn("[OntologyHistory] Failed to record edit in triple store (change is saved in the database): {}",
                     e.getMessage());
         }
     }

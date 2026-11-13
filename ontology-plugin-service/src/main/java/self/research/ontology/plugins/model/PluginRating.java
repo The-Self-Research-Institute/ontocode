@@ -4,9 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 
@@ -14,16 +11,12 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Document(collection = "plugin_ratings")
 public class PluginRating {
 
-    @Id
     private String id;
 
-    @Indexed
     private String pluginId;  // Plugin being rated
 
-    @Indexed
     private String userId;  // User who gave the rating
 
     private String username;  // Display name of user

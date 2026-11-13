@@ -1,16 +1,13 @@
 package self.research.ontology.owlEditor.controller;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.search.EntitySearcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
+import self.research.ontology.owlEditor.service.BlobResource;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import self.research.ontology.owlEditor.service.GraphGeneratingService;
@@ -33,7 +30,7 @@ public class VisualizationController {
     private static final Logger log = LoggerFactory.getLogger(VisualizationController.class);
 
     @Autowired
-    private GridFsTemplate gridfs;
+    private BlobFileService blobFiles;
 
     @Autowired
     private GraphGeneratingService graphService;
@@ -71,19 +68,15 @@ public class VisualizationController {
                 return ontology;
             }
         } catch (Exception e) {
-            log.warn("Failed to load ontology from GraphDB for project {}, falling back to GridFS: {}", projectId, e.getMessage());
+            log.warn("Failed to load ontology from GraphDB for project {}, falling back to file store: {}", projectId, e.getMessage());
         }
 
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-        if (file == null) {
-            throw new RuntimeException("Ontology file not found for project: " + projectId);
-        }
-
-        GridFsResource resource = gridfs.getResource(file);
+        BlobResource resource = blobFiles.getFileByProjectId(projectId)
+                .orElseThrow(() -> new RuntimeException("Ontology file not found for project: " + projectId));
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);
-            log.info("Loaded ontology from GridFS for project: {}", projectId);
+            log.info("Loaded ontology from file store for project: {}", projectId);
             return ontology;
         }
     }

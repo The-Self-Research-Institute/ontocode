@@ -1,22 +1,11 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.CompoundIndexes;
-import org.springframework.data.mongodb.core.mapping.Document;
-
 import java.time.Instant;
 
-@Document(collection = "draft_pull_requests")
-@CompoundIndexes({
-    @CompoundIndex(name = "project_status_idx", def = "{'projectId': 1, 'status': 1}"),
-    @CompoundIndex(name = "project_author_idx", def = "{'projectId': 1, 'authorId': 1}")
-})
 public class DraftPullRequest {
 
     public enum Status { OPEN, APPROVED, REJECTED, REVERTED }
 
-    @Id
     private String id;
 
     private String projectId;
@@ -29,11 +18,8 @@ public class DraftPullRequest {
     private java.util.List<String> submittedChangeIds;
     private String snapshotKey;
     private java.util.List<String> publishedChangeSetIds;
-    @org.springframework.data.annotation.Transient
     private Boolean draftChanged;
-    @org.springframework.data.annotation.Transient
     private Integer currentChangeCount;
-    @org.springframework.data.annotation.Transient
     private Boolean needsCopy;
     private Instant revertedAt;
     private String revertedBy;

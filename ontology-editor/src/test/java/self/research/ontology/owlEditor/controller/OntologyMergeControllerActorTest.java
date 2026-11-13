@@ -50,7 +50,7 @@ class OntologyMergeControllerActorTest {
     private static MockHttpServletRequest signedIn() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                "{\"email\":\"real@x.org\",\"userId\":\"mongo-1\"}".getBytes(StandardCharsets.UTF_8));
+                "{\"email\":\"real@x.org\",\"userId\":\"user-1\"}".getBytes(StandardCharsets.UTF_8));
         request.addHeader("Authorization", "Bearer h." + payload + ".s");
         return request;
     }
@@ -68,7 +68,7 @@ class OntologyMergeControllerActorTest {
         ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
         verify(merge).mergeOntologies(anyString(), any(Path.class), any(), isNull(), isNull(), any(MergeOptions.class),
                 user.capture(), anyString(), eq(true));
-        assertEquals("mongo-1", user.getValue());
+        assertEquals("user-1", user.getValue());
     }
 
     @Test

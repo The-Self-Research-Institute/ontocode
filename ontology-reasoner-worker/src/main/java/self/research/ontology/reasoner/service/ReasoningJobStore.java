@@ -274,7 +274,7 @@ public class ReasoningJobStore implements SmartInitializingSingleton {
         unavailableUntil = System.currentTimeMillis() + OUTAGE_BACKOFF_MS;
         if (!outageLogged) {
             outageLogged = true;
-            log.warn("[JobStore] Could not {} in MongoDB — keeping jobs in memory only for now: {}", action, e.getMessage());
+            log.warn("[JobStore] Could not {} in the database — keeping jobs in memory only for now: {}", action, e.getMessage());
         }
     }
 }

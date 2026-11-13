@@ -4,9 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
 import java.util.List;
@@ -15,10 +12,8 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Document(collection = "assistant_edit_group")
 public class AssistantEditGroupDocument {
 
-    @Id
     private String id;
 
     private String sessionId;
@@ -43,7 +38,6 @@ public class AssistantEditGroupDocument {
     private Instant createdAt;
     private Instant updatedAt;
 
-    @Indexed(name = "expiresAt_ttl", expireAfterSeconds = 0)
     private Instant expiresAt;
 
     private Instant appliedAt;

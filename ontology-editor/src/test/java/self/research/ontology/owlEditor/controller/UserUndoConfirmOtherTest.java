@@ -62,9 +62,9 @@ class UserUndoConfirmOtherTest {
 
         when(undoService.nextUndo(eq(P), anyBoolean(), any())).thenReturn(
                 new Next(true, ChangeRollbackService.UNDO, "t1", null, null, null, "Ontology merge", null, List.of()));
-        HistoryChange target = row("t1", null, "mongo-1", "owner");
+        HistoryChange target = row("t1", null, "user-1", "owner");
         when(historySync.getHistoryChange("t1")).thenReturn(target);
-        HistoryChange other = row("o1", "csO", "mongo-2", "sam");
+        HistoryChange other = row("o1", "csO", "user-2", "sam");
         when(historySync.getChangeSet(P, "csO")).thenReturn(List.of(other));
         when(blockers.othersOnTop(eq(P), any(), any())).thenReturn(List.of(other));
         when(preconditions.violation(eq(P), anyList(), any())).thenAnswer(inv -> othersGone.get() ? Optional.empty()
@@ -92,7 +92,7 @@ class UserUndoConfirmOtherTest {
     private static MockHttpServletRequest signedIn(boolean confirmOther) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("{\"email\":\"" + EMAIL + "\",\"userId\":\"mongo-1\"}").getBytes(StandardCharsets.UTF_8));
+                ("{\"email\":\"" + EMAIL + "\",\"userId\":\"user-1\"}").getBytes(StandardCharsets.UTF_8));
         request.addHeader("Authorization", "Bearer h." + payload + ".s");
         if (confirmOther) {
             request.setParameter("confirmOther", "true");
@@ -102,11 +102,11 @@ class UserUndoConfirmOtherTest {
 
     @Test
     void nothingIsUndoneWhenALaterItemOfTheChainWouldBeRefused() {
-        HistoryChange first = row("o1", "csO1", "mongo-2", "sam");
-        HistoryChange second = row("o2", "csO2", "mongo-3", "kim");
+        HistoryChange first = row("o1", "csO1", "user-2", "sam");
+        HistoryChange second = row("o2", "csO2", "user-3", "kim");
         second.setPublishedPrId("pr9");
         HistorySyncService historySync = mock(HistorySyncService.class);
-        when(historySync.getHistoryChange("t1")).thenReturn(row("t1", null, "mongo-1", "owner"));
+        when(historySync.getHistoryChange("t1")).thenReturn(row("t1", null, "user-1", "owner"));
         when(historySync.getChangeSet(P, "csO1")).thenReturn(List.of(first));
         when(historySync.getChangeSet(P, "csO2")).thenReturn(List.of(second));
         when(blockers.othersOnTop(eq(P), any(), any())).thenReturn(List.of(first, second));
@@ -125,10 +125,10 @@ class UserUndoConfirmOtherTest {
 
     @Test
     void theChainStopsWhenAnOtherChangeBelongsToAMergedPullRequest() {
-        HistoryChange other = row("o1", "csO", "mongo-2", "sam");
+        HistoryChange other = row("o1", "csO", "user-2", "sam");
         other.setPublishedPrId("pr9");
         HistorySyncService historySync = mock(HistorySyncService.class);
-        HistoryChange target = row("t1", null, "mongo-1", "owner");
+        HistoryChange target = row("t1", null, "user-1", "owner");
         when(historySync.getHistoryChange("t1")).thenReturn(target);
         when(historySync.getChangeSet(P, "csO")).thenReturn(List.of(other));
         UndoPreconditions preconditions = mock(UndoPreconditions.class);

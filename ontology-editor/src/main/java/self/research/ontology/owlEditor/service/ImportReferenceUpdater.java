@@ -5,9 +5,6 @@ import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
@@ -41,7 +38,6 @@ public class ImportReferenceUpdater {
 
     private final SparqlDatasetService datasetService;
     private final ProjectRepository projectRepository;
-    private final MongoTemplate mongoTemplate;
     private final WorkspaceOwnershipService ownership;
     private final OntologyMutationService mutationService;
     private final ProjectWriteLockRegistry locks;
@@ -51,12 +47,11 @@ public class ImportReferenceUpdater {
     private OperationGroups groups;
 
     public ImportReferenceUpdater(SparqlDatasetService datasetService, ProjectRepository projectRepository,
-                                  MongoTemplate mongoTemplate, WorkspaceOwnershipService ownership,
+                                  WorkspaceOwnershipService ownership,
                                   OntologyMutationService mutationService, ProjectWriteLockRegistry locks,
                                   @Value("${ontocode.desktop.mode:false}") boolean desktopMode) {
         this.datasetService = datasetService;
         this.projectRepository = projectRepository;
-        this.mongoTemplate = mongoTemplate;
         this.ownership = ownership;
         this.mutationService = mutationService;
         this.locks = locks;
@@ -157,10 +152,7 @@ public class ImportReferenceUpdater {
     private Set<String> importersListedInMetadata(String safeOld) {
         Set<String> projects = new LinkedHashSet<>();
         try {
-            for (ProjectDocument document : mongoTemplate.find(Query.query(Criteria.where("metadata.imports").is(safeOld)),
-                    ProjectDocument.class)) {
-                projects.add(document.getId());
-            }
+            projects.addAll(projectRepository.findIdsByImportedIri(safeOld));
         } catch (RuntimeException e) {
             log.debug("[IMPORTS] Could not read imports from the project metadata: {}", e.getMessage());
         }

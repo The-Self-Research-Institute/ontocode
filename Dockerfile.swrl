@@ -16,6 +16,7 @@ COPY ontology-gateway/pom.xml ./ontology-gateway/pom.xml
 COPY ontology-editor/pom.xml ./ontology-editor/pom.xml
 COPY ontology-plugin-service/pom.xml ./ontology-plugin-service/pom.xml
 COPY ontology-reasoner-worker/pom.xml ./ontology-reasoner-worker/pom.xml
+COPY ontology-data-migrator/pom.xml ./ontology-data-migrator/pom.xml
 
 # Full source only for what we actually compile
 COPY shared/ ./shared/
@@ -55,6 +56,8 @@ RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 # Create logs directory
 RUN mkdir -p /app/logs && \
     chown -R 1000:1000 /app
+
+COPY licenses/ /licenses/
 
 # Copy the built JAR (spring-boot:repackage creates executable JAR)
 COPY --from=build /build/ontology-swrl/target/*.jar app.jar

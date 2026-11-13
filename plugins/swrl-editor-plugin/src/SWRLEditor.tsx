@@ -19,7 +19,9 @@ import { AssertedAxiomsPanel, Owl2RlPanel } from './AxiomPanels';
 import { sqwrlMeta, localPage, pageKey, sqwrlRowsPath, nextSort, sortArrow, clampPage, pageCount, showingText, resultsLine, truncationNotice, buildCsv, buildTsv, formatNumber, filterRows, sortRows, SQWRL_EXPIRED_MESSAGE, SQWRL_PAGE_SIZES, SQWRL_DEFAULT_PAGE_SIZE, SQWRL_FILTER_DEBOUNCE_MS } from './sqwrlModel';
 import type { SqwrlSort } from './sqwrlModel';
 import type { SwrlRule, UnmigratedRule, ValidationResult as SwrlValidationResult, ExecutionResponse, PluginContext, SqwrlQueryResponse, InferredAxiom, AxiomsPageResponse } from './types';
+import { RuleHeads, headNameSet, parseRuleHeads, ruleGroupLabel, rulesProducing } from './ruleGroups';
 import { withDraft, normalizeRulesResponse, unmigratedNotice, hasDisabledRule, isImportedRule, sourceLabel, localCopyBody, cloneRuleBody, ruleWriteBody, friendlyRuleError, applySavedRule, ruleFromResponse, needsValidation, importSessionFor, importSummaryLine, importButtonLabel, canRunImport, importOutcomeNotice, staleImportReport, importErrorMessage, isImportFile, skippedRowsView, isPagedRun, derivedSummary, formatCount, nextOffset, previousOffset, pageRangeText, pageCacheKey, axiomsPagePath, toggleSelection, addToSelection, allSelected, isExpiredRunError, pageErrorMessage, RESULTS_PAGE_SIZE, EXPIRED_RUN_MESSAGE, isSqwrlRule, inferredTotal, ruleTitle, INFERRED_NOTE, ADD_INFERRED_CAP, axiomsToOps, collectInferredAxioms, inferredPlan, resultCounts, resultHeading, searchMatchText, cutoffNote, showMoreLabel, countLabel, sectionTotal, groupLabel, groupTotal, ResultFilter } from './ruleModel';
+import { announceViewOnlyBlocked, isEditRefused } from './ruleModel';
 import type { AxiomKind, FactOp } from './ruleModel';
 import type { ImportReport, ImportSession } from './ruleModel';
 
@@ -1052,32 +1054,15 @@ const SECTION_TITLES: Record<FactSection, string> = { rules: 'From your rules', 
 const SECTION_ORDER: FactSection[] = ['rules', 'standard', 'structure'];
 const STANDARD_NOTE = 'These follow from the class tree and the standard reasoning the engine always applies, not from a rule you wrote. For example, a Customer is also a Person because Customer is a kind of Person. They are not errors, and no rule explanation exists for them.';
 
-const atomLocalName = (raw: string): string => raw.replace(/^<|>$/g, '').split(/[#/:]/).pop() || '';
-
-const ruleHeadNames = (rules: SwrlRule[]): Set<string> => {
-  const names = new Set<string>();
-  rules.forEach(rule => {
-    const text = rule.ruleText || '';
-    if (!rule.enabled || /sqwrl:/i.test(text)) return;
-    const ascii = text.lastIndexOf('->');
-    const unicode = text.lastIndexOf('\u2192');
-    if (ascii < 0 && unicode < 0) return;
-    const head = ascii > unicode ? text.slice(ascii + 2) : text.slice(unicode + 1);
-    const pattern = /([^\s(),^]+)\s*\(/g;
-    let m: RegExpExecArray | null;
-    while ((m = pattern.exec(head)) !== null) {
-      const name = atomLocalName(m[1]);
-      if (name) names.add(name);
-    }
-  });
-  return names;
+const axiomHeadKey = (ax: InferredAxiom): { name: string; literal: string | null } => {
+  const parsed = formatInferredAxiom(ax);
+  return { name: (parsed.type === 'ClassAssertion' ? parsed.object : parsed.predicate) || '', literal: ax.objectLiteral ?? null };
 };
 
-const sectionOf = (ax: InferredAxiom, heads: Set<string>): FactSection => {
+const sectionOf = (ax: InferredAxiom, names: Set<string>): FactSection => {
   if (ax.category !== 'conclusion') return 'structure';
-  const parsed = formatInferredAxiom(ax);
-  const name = parsed.type === 'ClassAssertion' ? parsed.object : parsed.predicate;
-  return name && heads.has(name) ? 'rules' : 'standard';
+  const { name } = axiomHeadKey(ax);
+  return name && names.has(name) ? 'rules' : 'standard';
 };
 
 interface SectionData {
@@ -1088,15 +1073,34 @@ interface SectionData {
   groups: Map<string, GroupedAxiomItem[]>;
 }
 
-const splitSections = (axioms: InferredAxiom[], heads: Set<string>): SectionData[] => {
+const groupAxiomsByRule = (axioms: InferredAxiom[], heads: RuleHeads[]): Map<string, GroupedAxiomItem[]> => {
+  const byLabel = new Map<string, InferredAxiom[]>();
+  axioms.forEach(ax => {
+    const { name, literal } = axiomHeadKey(ax);
+    const label = ruleGroupLabel(rulesProducing(name, literal, heads));
+    const list = byLabel.get(label);
+    if (list) { list.push(ax); } else { byLabel.set(label, [ax]); }
+  });
+  const position = (label: string): number => {
+    const index = heads.findIndex(h => label.split(' or ').includes(h.ruleName));
+    return index < 0 ? heads.length : index;
+  };
+  const groups = new Map<string, GroupedAxiomItem[]>();
+  Array.from(byLabel.keys()).sort((a, b) => position(a) - position(b))
+    .forEach(label => groups.set(label, Array.from(groupAxiomsByType(byLabel.get(label)!).values()).flat()));
+  return groups;
+};
+
+const splitSections = (axioms: InferredAxiom[], heads: RuleHeads[]): SectionData[] => {
+  const names = headNameSet(heads);
   const buckets: Record<FactSection, InferredAxiom[]> = { rules: [], standard: [], structure: [] };
-  axioms.forEach(ax => buckets[sectionOf(ax, heads)].push(ax));
+  axioms.forEach(ax => buckets[sectionOf(ax, names)].push(ax));
   return SECTION_ORDER.filter(key => buckets[key].length > 0).map(key => ({
     key,
     title: SECTION_TITLES[key],
     note: key === 'rules' ? undefined : STANDARD_NOTE,
     axioms: buckets[key],
-    groups: groupAxiomsByType(buckets[key]),
+    groups: key === 'rules' ? groupAxiomsByRule(buckets[key], heads) : groupAxiomsByType(buckets[key]),
   }));
 };
 
@@ -1162,7 +1166,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
 };
 
 const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, rules = [], draftMode = false }) => {
-  const ruleHeads = useMemo(() => ruleHeadNames(rules), [rules]);
+  const ruleHeads = useMemo(() => parseRuleHeads(rules), [rules]);
   const [explained, setExplained] = useState<InferredAxiom | null>(null);
   const toggleWhy = (ax: InferredAxiom) => setExplained(prev => (prev === ax ? null : ax));
   const [addState, setAddState] = useState<{ phase: 'idle' | 'confirm' | 'busy' | 'done' | 'error'; message?: string }>({ phase: 'idle' });
@@ -2250,6 +2254,10 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       window.dispatchEvent(new CustomEvent('ontocode:committed-change', { detail: { projectId, direction: 'APPLY', changeSetId: res?.changeSetId } }));
       return { ok: true, message: '' };
     } catch (e: any) {
+      if (isEditRefused(e)) {
+        announceViewOnlyBlocked();
+        return { ok: false, message: friendlyRuleError(e, 'Could not add the facts.') };
+      }
       if (/stale|out of date|\(409\)|changed since/i.test(String(e?.message || ''))) {
         return { ok: false, message: 'The ontology or the rules changed since you ran this. Run the rules again, then add.' };
       }
@@ -2433,7 +2441,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       console.error('Execution failed:', e);
       const failed = {
         success: false,
-        errorMessage: 'Execution failed',
+        errorMessage: friendlyRuleError(e, 'Execution failed'),
         executionTimeMs: 0,
         totalRulesExecuted: 0,
         inferredAxiomsCount: 0,

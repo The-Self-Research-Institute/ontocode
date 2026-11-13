@@ -1,8 +1,5 @@
 package self.research.ontology.auth.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 
@@ -10,13 +7,10 @@ import java.time.LocalDateTime;
  * Persisted record of processed Stripe webhook events.
  * Used for idempotency — ensures each event is processed exactly once.
  */
-@Document(collection = "stripe_events")
 public class StripeEvent {
 
-    @Id
     private String id;
 
-    @Indexed(unique = true)
     private String stripeEventId;
 
     private String eventType;

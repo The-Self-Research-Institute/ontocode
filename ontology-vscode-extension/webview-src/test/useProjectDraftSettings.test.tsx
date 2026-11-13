@@ -85,7 +85,7 @@ describe("useProjectDraftSettings", () => {
   });
 
   it("ignores a late response for the old project after switching", async () => {
-    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean }>();
+    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean; shared: boolean }>();
     getSettings.mockReturnValueOnce(late.promise);
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     let pending!: Promise<unknown>;
@@ -109,7 +109,7 @@ describe("useProjectDraftSettings", () => {
   });
 
   it("ignores a late response for the old project even when the new project never loads", async () => {
-    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean }>();
+    const late = deferred<{ requireDraftForMembers: boolean; isOwner: boolean; shared: boolean }>();
     getSettings.mockReturnValueOnce(late.promise);
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     let pending!: Promise<unknown>;
@@ -138,8 +138,45 @@ describe("useProjectDraftSettings", () => {
     h.unmount();
   });
 
+  it("keeps the last known requireDraftForMembers while a reload of the same project is pending", async () => {
+    getSettings.mockResolvedValueOnce({ requireDraftForMembers: true, isOwner: true, shared: true });
+    const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
+    await act(async () => {
+      await h.result.current.loadDraftSettings("A", "u1");
+    });
+    const next = deferred<{ requireDraftForMembers: boolean; isOwner: boolean; shared: boolean }>();
+    getSettings.mockReturnValueOnce(next.promise);
+    let pending!: Promise<unknown>;
+    act(() => {
+      pending = h.result.current.loadDraftSettings("A", "u1");
+    });
+    expect(h.result.current.requireDraftForMembers).toBe(true);
+    await act(async () => {
+      next.resolve({ requireDraftForMembers: false, isOwner: true, shared: true });
+      await pending;
+    });
+    expect(h.result.current.requireDraftForMembers).toBe(false);
+    h.unmount();
+  });
+
+  it("keeps requireDraftForMembers but fails owner and shared closed when a same-project reload fails", async () => {
+    getSettings.mockResolvedValueOnce({ requireDraftForMembers: true, isOwner: true, shared: true });
+    const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
+    await act(async () => {
+      await h.result.current.loadDraftSettings("A", "u1");
+    });
+    getSettings.mockRejectedValueOnce(new Error("boom"));
+    await act(async () => {
+      await h.result.current.loadDraftSettings("A", "u1");
+    });
+    expect(h.result.current.requireDraftForMembers).toBe(true);
+    expect(h.result.current.isProjectOwner).toBe(false);
+    expect(h.result.current.isProjectShared).toBe(false);
+    h.unmount();
+  });
+
   it("resetDraftSettings clears flags and cancels an in-flight load (shared or non-workspace)", async () => {
-    const pendingReq = deferred<{ requireDraftForMembers: boolean; isOwner: boolean }>();
+    const pendingReq = deferred<{ requireDraftForMembers: boolean; isOwner: boolean; shared: boolean }>();
     getSettings.mockReturnValueOnce(pendingReq.promise);
     const h = renderHook((p: { id: string }) => useProjectDraftSettings(p.id), { id: "A" });
     let pending!: Promise<unknown>;

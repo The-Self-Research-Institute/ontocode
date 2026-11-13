@@ -13,11 +13,12 @@ COPY ontology-editor/ ./ontology-editor/
 COPY ontology-swrl/ ./ontology-swrl/
 COPY ontology-plugin-service/ ./ontology-plugin-service/
 COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
+COPY ontology-data-migrator/pom.xml ./ontology-data-migrator/pom.xml
 
 RUN --mount=type=cache,target=/root/.m2 \
     sh -c 'for attempt in 1 2 3; do \
         mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-            clean install -pl shared/common-utils,ontology-reasoner-worker -DskipTests -B -ntp && exit 0; \
+            clean install -pl shared/common-utils,shared/common-db,ontology-reasoner-worker -DskipTests -B -ntp && exit 0; \
         echo "Reasoner-worker module build failed, retrying ($$attempt/3)..."; \
     done; \
     exit 1'
@@ -28,6 +29,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /build/ontology-reasoner-worker/target/*-exec.jar app.jar
+COPY licenses/ /licenses/
 
 EXPOSE 8088
 

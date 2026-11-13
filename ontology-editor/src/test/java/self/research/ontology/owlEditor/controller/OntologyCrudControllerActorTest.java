@@ -34,7 +34,7 @@ class OntologyCrudControllerActorTest {
     private static MockHttpServletRequest signedIn(String email) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         String payload = Base64.getUrlEncoder().withoutPadding().encodeToString(
-                ("{\"email\":\"" + email + "\",\"userId\":\"mongo-1\"}").getBytes(StandardCharsets.UTF_8));
+                ("{\"email\":\"" + email + "\",\"userId\":\"user-1\"}").getBytes(StandardCharsets.UTF_8));
         request.addHeader("Authorization", "Bearer h." + payload + ".s");
         return request;
     }
@@ -66,7 +66,7 @@ class OntologyCrudControllerActorTest {
         controller.mutate("proj", request(null), true, signedIn("real@x.org"));
         ArgumentCaptor<String> user = ArgumentCaptor.forClass(String.class);
         verify(recorder).recordGrouped(eq("proj"), eq(true), user.capture(), anyString(), any(), any());
-        assertEquals("mongo-1", user.getValue());
+        assertEquals("user-1", user.getValue());
     }
 
     @Test

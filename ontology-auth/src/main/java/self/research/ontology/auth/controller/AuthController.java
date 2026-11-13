@@ -140,6 +140,14 @@ public class AuthController {
      */
     @PostConstruct
     public void createDefaultUsers() {
+        try {
+            seedDefaultUsers();
+        } catch (org.springframework.dao.DataAccessException e) {
+            log.warn("Default users could not be checked because the database is not reachable: {}", e.getMessage());
+        }
+    }
+
+    private void seedDefaultUsers() {
         // Ensure the designated admin account has ROLE_ADMIN
         userRepository.findByEmailIgnoreCase(adminEmail).ifPresentOrElse(admin -> {
             boolean needsSave = false;
@@ -263,9 +271,8 @@ public class AuthController {
 
         // Authenticate directly against the selected user's stored BCrypt hash.
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            // Increment failed attempts
-            user.incrementFailedAttempts();
-            
+            user.setFailedLoginAttempts(userRepository.incrementFailedLoginAttempts(user.getId()));
+
             // Lock account after 5 failed attempts
             if (user.getFailedLoginAttempts() >= 5) {
                 user.lockAccount(15); // 15 minutes lockout
@@ -276,7 +283,6 @@ public class AuthController {
                 ));
             }
 
-            userRepository.save(user);
             auditService.logLoginFailure(loginIdentifier, clientIp, "Bad credentials");
             
             return ResponseEntity.badRequest().body(Map.of(

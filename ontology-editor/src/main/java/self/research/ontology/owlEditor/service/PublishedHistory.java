@@ -4,12 +4,9 @@ import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.impl.LinkedHashModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.model.HistoryChange;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import self.research.ontology.owlEditor.service.delta.DeltaCapture;
 import self.research.ontology.owlEditor.service.delta.ExactDelta;
 import self.research.ontology.owlEditor.service.delta.ExactReversal;
@@ -25,13 +22,13 @@ public class PublishedHistory {
 
     private static final Logger log = LoggerFactory.getLogger(PublishedHistory.class);
 
-    private final MongoTemplate mongoTemplate;
+    private final HistoryChangeRepository history;
     private final SparqlDatasetService datasetService;
     private final OntologyHistoryService historyService;
 
-    public PublishedHistory(MongoTemplate mongoTemplate, SparqlDatasetService datasetService,
+    public PublishedHistory(HistoryChangeRepository history, SparqlDatasetService datasetService,
                             OntologyHistoryService historyService) {
-        this.mongoTemplate = mongoTemplate;
+        this.history = history;
         this.datasetService = datasetService;
         this.historyService = historyService;
     }
@@ -63,8 +60,7 @@ public class PublishedHistory {
     }
 
     private void apply(String projectId, String userId, ExactDelta committed) {
-        List<HistoryChange> rows = mongoTemplate.find(Query.query(Criteria.where("projectId").is(projectId)
-                .and("userId").is(userId).and("draft").is(true)), HistoryChange.class);
+        List<HistoryChange> rows = history.findDraftRowsOfUser(projectId, userId);
         List<HistoryChange> carriers = new ArrayList<>();
         for (HistoryChange row : rows) {
             if (row.getDocumentStore() != null || row.getCoveredBy() != null || row.isReverted()
@@ -98,12 +94,7 @@ public class PublishedHistory {
     }
 
     private void block(HistoryChange row) {
-        mongoTemplate.updateFirst(Query.query(Criteria.where("_id").is(row.getId())),
-                new Update().set("undoBlockedReason", CHANGED_IN_PUBLISH).unset("exactDeleted").unset("exactInserted")
-                        .set("exactCovers", 0), HistoryChange.class);
-        mongoTemplate.updateMulti(Query.query(Criteria.where("coveredBy").is(row.getEditId())
-                        .and("projectId").is(row.getProjectId())),
-                new Update().set("undoBlockedReason", CHANGED_IN_PUBLISH).unset("coveredBy"), HistoryChange.class);
+        history.blockExact(row.getId(), row.getEditId(), row.getProjectId(), CHANGED_IN_PUBLISH);
     }
 
     private void recordResidual(String projectId, String userId, List<HistoryChange> carriers, ExactDelta residual) {

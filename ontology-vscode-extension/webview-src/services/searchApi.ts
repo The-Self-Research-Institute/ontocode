@@ -20,10 +20,10 @@ export const SEARCH_TYPE_BY_TAB: Record<string, SearchEntityType> = {
 export interface EntitySearchOptions {
   query: string;
   types: SearchEntityType[];
-  annotations: boolean;
-  regex: boolean;
-  hideDeprecated: boolean;
-  hideBuiltins: boolean;
+  annotations?: boolean;
+  regex?: boolean;
+  hideDeprecated?: boolean;
+  hideBuiltins?: boolean;
   caseSensitive?: boolean;
   wholeWords?: boolean;
   ignoreWhitespace?: boolean;
@@ -66,10 +66,10 @@ export const buildSearchParams = (options: EntitySearchOptions): Record<string, 
   const params: Record<string, string> = {
     q: options.query,
     types: options.types.join(","),
-    annotations: String(options.annotations),
-    regex: String(options.regex),
-    hideDeprecated: String(options.hideDeprecated),
-    hideBuiltins: String(options.hideBuiltins),
+    annotations: String(options.annotations === true),
+    regex: String(options.regex === true),
+    hideDeprecated: String(options.hideDeprecated === true),
+    hideBuiltins: String(options.hideBuiltins === true),
     limit: String(options.limit ?? 50),
     scope: options.scope ?? "active",
   };

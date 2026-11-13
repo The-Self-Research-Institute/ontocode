@@ -1,14 +1,10 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.Date;
 
-@Document("fuzzy_rules")
 public class FuzzyRuleEntity {
 
-    @Id
     private String id;
     private String projectId;
     private String name;

@@ -28,7 +28,7 @@ class UndoQueueServiceTest {
 
     private HistoryChangeRepository history;
     private UndoQueueService service;
-    private final Identity me = Identity.of("Me@x.com", "mongo-1");
+    private final Identity me = Identity.of("Me@x.com", "user-1");
 
     @BeforeEach
     void setUp() {
@@ -145,8 +145,8 @@ class UndoQueueServiceTest {
     }
 
     @Test
-    void findsHistoryStoredUnderTheMongoIdWhenSubjectIsTheEmail() {
-        own(change("m", "mongo-1", "e:M", 2));
+    void findsHistoryStoredUnderTheUserIdWhenSubjectIsTheEmail() {
+        own(change("m", "user-1", "e:M", 2));
         Queue queue = service.queue(P, false, me, 1);
         assertEquals("m", queue.steps().get(0).changeId());
     }

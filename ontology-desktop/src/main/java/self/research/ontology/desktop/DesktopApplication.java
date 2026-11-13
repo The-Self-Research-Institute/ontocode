@@ -5,7 +5,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FullyQualifiedAnnotationBeanNameGenerator;
 import org.springframework.context.annotation.FilterType;
-import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import self.research.ontology.auth.AuthApplication;
@@ -36,11 +35,6 @@ import self.research.ontology.plugins.config.SecurityConfig;
     )
 )
 @EnableScheduling
-@EnableMongoRepositories(basePackages = {
-    "self.research.ontology.auth",
-    "self.research.ontology.owlEditor",
-    "self.research.ontology.plugins"
-})
 public class DesktopApplication {
 
     public static void main(String[] args) {

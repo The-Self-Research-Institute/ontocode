@@ -1,15 +1,13 @@
 package self.research.ontology.owlEditor.service;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.stereotype.Service;
+import self.research.ontology.common.db.BlobStore;
+import self.research.ontology.common.db.StoredFile;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -21,8 +19,14 @@ public class VersionControlService {
 
     private static final Logger log = LoggerFactory.getLogger(VersionControlService.class);
 
+    public static final String BUCKET = "ontology-versions";
+
+    private final BlobStore blobStore;
+
     @Autowired
-    private GridFsTemplate gridfs;
+    public VersionControlService(BlobStore blobStore) {
+        this.blobStore = blobStore;
+    }
 
     public static class Version {
         private String id;
@@ -93,15 +97,8 @@ public class VersionControlService {
             metadata.put("individualCount", ontology.getIndividualsInSignature().size());
             metadata.put("axiomCount", ontology.getAxiomCount());
 
-            org.bson.Document doc = new org.bson.Document();
-            doc.putAll(metadata);
-
-            String fileId = gridfs.store(
-                new ByteArrayInputStream(ontologyData),
-                "version_" + versionNumber + ".owl",
-                "application/rdf+xml",
-                doc
-            ).toString();
+            String fileId = blobStore.store(BUCKET, "version_" + versionNumber + ".owl", "application/rdf+xml", metadata,
+                new ByteArrayInputStream(ontologyData)).id();
 
             Version version = new Version();
             version.setId(fileId);
@@ -125,54 +122,40 @@ public class VersionControlService {
     }
 
     public List<Version> getVersions(String projectId) {
-        Query query = new Query(Criteria.where("metadata.projectId").is(projectId));
-        query.with(org.springframework.data.domain.Sort.by(
-            org.springframework.data.domain.Sort.Direction.DESC,
-            "metadata.timestamp"
-        ));
-
-        List<GridFSFile> files = new ArrayList<>();
-        gridfs.find(query).into(files);
-
         List<Version> versions = new ArrayList<>();
-        for (GridFSFile file : files) {
+        for (StoredFile file : blobStore.find(BUCKET, null, Map.of("projectId", projectId))) {
             Version version = fileToVersion(file);
             if (version != null) {
                 versions.add(version);
             }
         }
-
+        versions.sort(Comparator.comparing(Version::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())));
         return versions;
     }
 
     public Version getVersion(String versionId) {
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("_id").is(new org.bson.types.ObjectId(versionId))));
-        return fileToVersion(file);
+        return findVersionFile(versionId).map(this::fileToVersion).orElse(null);
     }
 
     public Version getVersionByNumber(String projectId, String versionNumber) {
-        Query query = new Query(
-            Criteria.where("metadata.projectId").is(projectId)
-                .and("metadata.versionNumber").is(versionNumber)
-        );
+        return blobStore.findLatest(BUCKET, null, Map.of("projectId", projectId, "versionNumber", versionNumber))
+            .map(this::fileToVersion).orElse(null);
+    }
 
-        GridFSFile file = gridfs.findOne(query);
-        return fileToVersion(file);
+    private Optional<StoredFile> findVersionFile(String versionId) {
+        if (versionId == null || versionId.isBlank()) {
+            return Optional.empty();
+        }
+        return blobStore.info(versionId).filter(file -> BUCKET.equals(file.bucket()));
     }
 
     public boolean rollbackToVersion(String projectId, String versionId, String userId, String username) {
         try {
 
-            GridFSFile versionFile = gridfs.findOne(
-                new Query(Criteria.where("_id").is(new org.bson.types.ObjectId(versionId)))
-            );
-
-            if (versionFile == null) {
+            if (findVersionFile(versionId).isEmpty()) {
                 log.warn("Version not found: {}", versionId);
                 return false;
             }
-
-            org.springframework.data.mongodb.gridfs.GridFsResource resource = gridfs.getResource(versionFile);
 
             log.info("Rolled back project {} to version {} by {}", projectId, versionId, username);
 
@@ -231,11 +214,7 @@ public class VersionControlService {
 
     public boolean tagVersion(String versionId, String tag, String userId) {
         try {
-            GridFSFile file = gridfs.findOne(
-                new Query(Criteria.where("_id").is(new org.bson.types.ObjectId(versionId)))
-            );
-
-            if (file == null) {
+            if (findVersionFile(versionId).isEmpty()) {
                 return false;
             }
 
@@ -250,9 +229,9 @@ public class VersionControlService {
 
     public boolean deleteVersion(String versionId, String userId) {
         try {
-            gridfs.delete(new Query(Criteria.where("_id").is(new org.bson.types.ObjectId(versionId))));
-            log.info("Deleted version {} by user {}", versionId, userId);
-            return true;
+            boolean deleted = findVersionFile(versionId).isPresent() && blobStore.delete(versionId);
+            log.info("Deleted version {} by user {}: {}", versionId, userId, deleted);
+            return deleted;
         } catch (Exception e) {
             log.error("Failed to delete version", e);
             return false;
@@ -309,26 +288,26 @@ public class VersionControlService {
         return "1.0.0";
     }
 
-    private Version fileToVersion(GridFSFile file) {
+    private Version fileToVersion(StoredFile file) {
         if (file == null) {
             return null;
         }
 
-        org.bson.Document metadata = file.getMetadata();
+        Map<String, Object> metadata = file.metadata();
         if (metadata == null) {
             return null;
         }
 
         Version version = new Version();
-        version.setId(file.getObjectId().toString());
-        version.setProjectId(metadata.getString("projectId"));
-        version.setVersionNumber(metadata.getString("versionNumber"));
-        version.setCreatedBy(metadata.getString("createdBy"));
-        version.setDescription(metadata.getString("description"));
-        version.setTag(metadata.getString("tag"));
-        version.setFileSize(file.getLength());
+        version.setId(file.id());
+        version.setProjectId(asText(metadata.get("projectId")));
+        version.setVersionNumber(asText(metadata.get("versionNumber")));
+        version.setCreatedBy(asText(metadata.get("createdBy")));
+        version.setDescription(asText(metadata.get("description")));
+        version.setTag(asText(metadata.get("tag")));
+        version.setFileSize(file.length());
 
-        String timestamp = metadata.getString("timestamp");
+        String timestamp = asText(metadata.get("timestamp"));
         if (timestamp != null) {
             try {
                 version.setCreatedAt(LocalDateTime.parse(timestamp));
@@ -337,12 +316,12 @@ public class VersionControlService {
             }
         }
 
-        Map<String, Object> metadataMap = new HashMap<>();
-        for (String key : metadata.keySet()) {
-            metadataMap.put(key, metadata.get(key));
-        }
-        version.setMetadata(metadataMap);
+        version.setMetadata(new HashMap<>(metadata));
 
         return version;
+    }
+
+    private static String asText(Object value) {
+        return value == null ? null : value.toString();
     }
 }

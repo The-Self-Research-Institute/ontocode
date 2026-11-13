@@ -58,7 +58,7 @@ class ReasoningJobStoreTest {
     }
 
     @Test
-    void unreachableMongoDoesNotBreakStartupOrLookups() {
+    void unreachableDatabaseDoesNotBreakStartupOrLookups() {
         ReasoningJobRecordRepository repository = mock(ReasoningJobRecordRepository.class);
         when(repository.findByStatusIn(any())).thenThrow(new IllegalStateException("Timed out waiting for a server"));
         ReasoningJobStore store = new ReasoningJobStore(repository, 1_000_000, 72);

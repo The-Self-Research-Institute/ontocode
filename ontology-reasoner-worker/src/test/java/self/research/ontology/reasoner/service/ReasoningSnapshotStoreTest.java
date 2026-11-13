@@ -74,7 +74,7 @@ class ReasoningSnapshotStoreTest {
     }
 
     @Test
-    void unreachableMongoIsSkippedForAWhileInsteadOfSlowingEveryLookup() {
+    void unreachableDatabaseIsSkippedForAWhileInsteadOfSlowingEveryLookup() {
         ReasoningSnapshotRecordRepository repository = mock(ReasoningSnapshotRecordRepository.class);
         when(repository.findById(anyString())).thenThrow(new IllegalStateException("Timed out waiting for a server"));
         ReasoningSnapshotStore store = new ReasoningSnapshotStore(repository, 1_000_000, 72);
@@ -151,7 +151,7 @@ class ReasoningSnapshotStoreTest {
     }
 
     @Test
-    void workerKeepsWorkingWhenMongoIsDown() throws Exception {
+    void workerKeepsWorkingWhenDatabaseIsDown() throws Exception {
         SnapshotTestSupport.FakeEditor editor = new SnapshotTestSupport.FakeEditor()
                 .projectWithoutSwrl("P1", SnapshotTestSupport.PIZZA);
         ReasoningSnapshotRecordRepository repository = mock(ReasoningSnapshotRecordRepository.class);

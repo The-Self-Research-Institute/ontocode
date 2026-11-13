@@ -2,7 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.rdf4j.rio.RDFFormat;
-import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.OWLEntityRenamer;
@@ -149,7 +149,7 @@ private boolean isDeclaredEntity(String projectId, String iri) {
         IRI oldEntityIri = IRI.create(oldIri);
         IRI newEntityIri = IRI.create(newIri);
 
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
                 new ByteArrayInputStream(draftRdf.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
 

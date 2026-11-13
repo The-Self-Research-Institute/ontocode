@@ -1,29 +1,21 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
-import org.springframework.data.mongodb.core.index.Indexed;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.Map;
 
-@Document(collection = "ontology_changes")
 public class OntologyChange {
 
-    @Id
     private String id;
 
-    @Indexed
     private String projectId;
 
-    @Indexed
     private String userId;
 
     private String username;
 
-    @Indexed
     private LocalDateTime timestamp;
 
     private ChangeType changeType;

@@ -76,6 +76,18 @@ class RuleControllerTest {
     }
 
     @Test
+    void anOntologyTooLargeForTheRuleEngineAnswers413WithTheReason() {
+        when(service.list(anyString(), anyBoolean(), any()))
+                .thenThrow(new SwrlRuleClient.TooLargeException("This ontology is too large for the rule engine on this server."));
+
+        ResponseEntity<?> response = controller.list("p", false, null, null);
+
+        assertEquals(413, response.getStatusCode().value());
+        assertEquals("This ontology is too large for the rule engine on this server.",
+                ((Map<?, ?>) response.getBody()).get("error"));
+    }
+
+    @Test
     void aSavedRuleIsReturnedWithItsFields() throws Exception {
         when(service.create(anyString(), anyBoolean(), any(), any(), any(), any(ChangeOrigin.class)))
                 .thenReturn(Map.of("id", "abc", "ruleName", "R"));

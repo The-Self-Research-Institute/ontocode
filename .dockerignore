@@ -52,6 +52,7 @@ ontology-vscode-extension/webview-src/dist/
 scripts/*
 !scripts/package.json
 !scripts/manage-plugins.js
+!scripts/lib/
 k8s/
 
 # Test files
