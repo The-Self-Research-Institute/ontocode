@@ -33,7 +33,7 @@ async function compressData(data: Uint8Array): Promise<Uint8Array> {
     try {
 
         if (typeof (globalThis as any).CompressionStream !== 'undefined') {
-            const blob = new Blob([data]);
+            const blob = new Blob([data as BlobPart]);
             const stream = blob.stream().pipeThrough(new (globalThis as any).CompressionStream('gzip'));
             const compressedBlob = await new Response(stream).blob();
             return new Uint8Array(await compressedBlob.arrayBuffer());

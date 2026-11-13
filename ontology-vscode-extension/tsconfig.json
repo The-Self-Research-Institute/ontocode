@@ -10,6 +10,7 @@
     "rootDir": "src", // Only compile files under 'src'
     "strict": true,
     "esModuleInterop": true,
+    "types": ["node"],
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "out" // Or "dist" if your webpack.extension.js points there
