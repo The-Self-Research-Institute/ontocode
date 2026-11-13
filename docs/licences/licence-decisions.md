@@ -1,38 +1,32 @@
-# Licence decisions (Phase 0 review, 2026-11-09)
+# Licence decisions
 
-Every licence claim below comes from THIRD_PARTY_NOTICES.md and the projects' own pages. It is not legal advice.
+Notes on how we read the licences of our main dependencies (review of 2026-11-09). Based on THIRD_PARTY_NOTICES.md and each project's own page. Not legal advice.
 
-## Recorded facts
+1. **OWL API** has two licences, LGPL-3.0 or Apache-2.0. We use it under Apache-2.0.
 
-1. **OWL API** is offered under LGPL-3.0 or Apache-2.0 (dual licence). OntoCode uses it under Apache-2.0. This is OntoCode's recorded choice; the owner must confirm it.
-   Evidence: OWL API project page and THIRD_PARTY_NOTICES.md.
+2. **SWRLAPI 2.1.3** is BSD-2-Clause. One file, `org/swrlapi/factory/NaturalOrderComparator.java`, keeps its own notices: a BBNT Solutions one (Cougaar, BSD-style) and a short zlib-style one from Paour and Pool. Both allow commercial use as long as the notices stay and changed copies are marked.
+   THIRD_PARTY_NOTICES.md lists GPL-2.0-only for SWRLAPI, but that is a scanner mistake. On 2026-11-13 we searched all 277 Java files in `swrlapi-2.1.3-sources.jar` (Maven Central, group `edu.stanford.swrl`) for "GNU" and "GPL" and found no licence text, only the word "signum".
+   To repeat it, download the jar from https://repo1.maven.org/maven2/edu/stanford/swrl/swrlapi/2.1.3/, search it the same way, and read the header of `NaturalOrderComparator.java`.
 
-2. **SWRLAPI 2.1.3** is declared BSD-2-Clause.
-   - Its only third-party code is `org/swrlapi/factory/NaturalOrderComparator.java`. It carries a BBNT Solutions header (Cougaar Open Source License, BSD-style) plus Paour/Pool zlib-style terms: use for any purpose including commercial, the notice must stay, altered versions must be marked.
-   - The sources contain no GPL text, so the "GPL-2.0-only" entry in THIRD_PARTY_NOTICES.md is a scanner misdetection.
-   Evidence: `swrlapi-2.1.3-sources.jar` from Maven Central (277 Java files).
-   To check it yourself: download https://repo1.maven.org/maven2/org/swrlapi/swrlapi/2.1.3/swrlapi-2.1.3-sources.jar, unzip it, and search the files for "GNU" and "GPL". Then open `org/swrlapi/factory/NaturalOrderComparator.java` and read its header.
-   Status: a person who owns the licence decision should repeat this check once and sign off. Until then this is our reading, not a confirmed answer.
+3. **Apache Jena and Fuseki 6.1.0** are Apache-2.0 (`jena-arq` in ontology-editor and the bundled `fuseki-server.jar`).
 
-3. **Apache Jena and Fuseki 6.1.0** are Apache-2.0 (`jena-arq` in ontology-editor, bundled `fuseki-server.jar`).
+4. **Drools 7.74.1.Final** is Apache-2.0. It comes in through `swrlapi-drools-engine`.
 
-4. **Drools 7.74.1.Final** is Apache-2.0, pulled in through `swrlapi-drools-engine`.
+5. **The "FaCT++" option is really JFact 5.0.3** (LGPL-2.1), a Java port of FaCT++. The UI now says "JFact (FaCT++ port)". The request ids (`fact++`, `FACTPLUSPLUS`) and the Java display name `FaCT++` stay as they are, because clients, saved data and tests use them.
 
-5. **The "FaCT++" option is really JFact 5.0.3** (LGPL-2.1). The code builds `uk.ac.manchester.cs.jfact.JFactFactory`, a Java port of FaCT++. UI labels now say "JFact (FaCT++ port)". Request ids (`fact++`, `FACTPLUSPLUS`) and the Java display name `FaCT++` are unchanged because clients, saved data and tests use them.
-
-6. **HermiT 1.4.5.519** is LGPL-3.0, with some BSD-3 parts.
+6. **HermiT 1.4.5.519** is LGPL-3.0, with some BSD-3-Clause parts.
 
 7. **owlexplanation 5.0.0** is LGPL-3.0.
 
 8. **ELK 0.6.0** is Apache-2.0.
 
-9. **Openllet and Pellet** are no longer available. Requests naming them still run HermiT and now log a warning.
+9. **Openllet and Pellet** are gone. Requests that name them run HermiT and log a warning.
+
+10. **`@secretlint/secretlint-rule-preset-recommend` 10.2.2** is MIT, but FOSSA flags it as GPL-1.0-only, which our policy denies. The flag comes from a copy of `node-forge` bundled in the package. `node-forge` is BSD-3-Clause or GPL-2.0, and we take BSD-3-Clause.
+    It is only pulled in by `@vscode/vsce`, a dev dependency we use to package the VSIX. It is not in the VSIX, the desktop app or the server images (we checked the file list of the 1.2.9 VSIX). We ignore the FOSSA issue.
+
+11. **Replacing the LGPL libraries.** HermiT, JFact, owlexplanation, trove4j (LGPL-2.1), OWL API telemetry (LGPL-3.0) and java-getopt (LGPL-2.0, pulled in by HermiT) are shipped unmodified as separate jars, and all six are allowed by name in `licence-policy/policy.json`. `licenses/lgpl/README.md` lists where the jars are in each package, where to get the source, and the steps to swap them in the Spring Boot jars, the desktop app and the Docker images. The licence texts are in the same folder.
 
 ## Open items
 
-- LGPL replaceability wording (how users can swap the LGPL libraries in the packaged apps).
-- GPL-3.0 library `org.scijava:jep:2.4.2` in `swrl.jar` (comes with SWRLAPI): remove, replace or take legal advice.
-- LGPL libraries trove4j, OWL API telemetry and java-getopt: decide whether to allow them by name in `licence-policy/policy.json`.
-- Fuzzy plugin: what the "threshold" setting means, and which fuzzy logic family to use.
-- SHACL: which route and which library.
-- JFact: keep or remove.
+- `org.scijava:jep:2.4.2` (GPL-3.0) in `swrl.jar`, which comes with SWRLAPI: remove it, replace it, or get legal advice.

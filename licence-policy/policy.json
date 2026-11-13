@@ -24,10 +24,15 @@
   "allowedByName": {
     "LGPL-2.1": [
       "net.sourceforge.owlapi:org.semanticweb.hermit",
-      "net.sourceforge.owlapi:jfact"
+      "net.sourceforge.owlapi:jfact",
+      "net.sf.trove4j:trove4j"
+    ],
+    "LGPL-2.0": [
+      "gnu.getopt:java-getopt"
     ],
     "LGPL-3.0": [
-      "net.sourceforge.owlapi:owlexplanation"
+      "net.sourceforge.owlapi:owlexplanation",
+      "net.sourceforge.owlapi:telemetry"
     ]
   },
   "blocked": {

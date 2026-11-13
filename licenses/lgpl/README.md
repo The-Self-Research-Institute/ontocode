@@ -11,11 +11,12 @@ or repackaged into OntoCode's own classes.
 | JFact reasoner | `net.sourceforge.owlapi:jfact` | 5.0.3 | LGPL-2.1 |
 | OWL Explanation | `net.sourceforge.owlapi:owlexplanation` | 5.0.0 | LGPL-3.0 |
 
-Two small helper libraries travel with HermiT and are also LGPL: `net.sf.trove4j:trove4j`
-3.0.3 and `net.sourceforge.owlapi:telemetry` 5.0.0.
+Three small helper libraries travel with HermiT and are also LGPL: `net.sf.trove4j:trove4j`
+3.0.3 (LGPL-2.1), `net.sourceforge.owlapi:telemetry` 5.0.0 (LGPL-3.0) and
+`gnu.getopt:java-getopt` 1.0.13 (LGPL-2.0).
 
-The licence texts are in this folder: `LGPL-3.0.txt`, `LGPL-2.1.txt` and `GPL-3.0.txt`
-(the LGPL-3.0 builds on the GPL-3.0).
+The licence texts are in this folder: `LGPL-3.0.txt`, `LGPL-2.1.txt`, `LGPL-2.0.txt` and
+`GPL-3.0.txt` (the LGPL-3.0 builds on the GPL-3.0).
 
 ## Where the jars are
 
@@ -25,7 +26,9 @@ The licence texts are in this folder: `LGPL-3.0.txt`, `LGPL-2.1.txt` and `GPL-3.
   plain files in `resources/backend/lib/` (`jfact-5.0.3.jar`,
   `org.semanticweb.hermit-1.4.5.519.jar`, `owlexplanation-5.0.0.jar`, `telemetry-5.0.0.jar`,
   `trove4j-3.0.3.jar`). The backend jar is `resources/backend/jars/desktop.jar`. The licence
-  files are installed at `resources/licenses/`.
+  files are installed at `resources/licenses/`. The one exception is java-getopt: it is
+  inside the backend jar at `BOOT-INF/lib/java-getopt-1.0.13.jar`, so replace it as described
+  under "Spring Boot jars" below.
 - Docker images: the jars are inside `/app/app.jar` as above, and the licence files are in
   `/licenses/`.
 
@@ -42,6 +45,7 @@ Source jars for the exact versions we ship, from Maven Central:
 - https://repo1.maven.org/maven2/net/sourceforge/owlapi/org.semanticweb.hermit/1.4.5.519/org.semanticweb.hermit-1.4.5.519-sources.jar
 - https://repo1.maven.org/maven2/net/sourceforge/owlapi/jfact/5.0.3/jfact-5.0.3-sources.jar
 - https://repo1.maven.org/maven2/net/sourceforge/owlapi/owlexplanation/5.0.0/owlexplanation-5.0.0-sources.jar
+- https://repo1.maven.org/maven2/gnu/getopt/java-getopt/1.0.13/java-getopt-1.0.13-sources.jar
 
 If you cannot reach these, contact the OntoCode maintainers and we will provide the source.
 
@@ -79,7 +83,7 @@ to be unzipped or repacked.
 
 1. Close OntoCode Studio.
 2. Open the `resources/backend/lib` folder inside the app installation (the `resources`
-   folder is next to the application executable, for example `<install dir>esources` on
+   folder is next to the application executable, for example `<install dir>\resources` on
    Windows).
 3. Delete the jar you want to replace and put your jar in the same folder. Use a jar that
    contains the same library (same packages and classes). Its version must be compatible
