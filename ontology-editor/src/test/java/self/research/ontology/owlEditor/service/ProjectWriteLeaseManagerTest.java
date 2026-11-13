@@ -5,7 +5,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.dao.DataAccessResourceFailureException;
-import self.research.ontology.owlEditor.document.ProjectWriteLeaseDocument;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -27,8 +26,8 @@ class ProjectWriteLeaseManagerTest {
     private static final Instant START = Instant.parse("2026-01-01T00:00:00Z");
     private static final Duration TTL = Duration.ofSeconds(30);
 
-    private final InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
-    private final InMemoryLeaseCollection.MutableClock clock = new InMemoryLeaseCollection.MutableClock(START);
+    private final LeaseTable collection = new LeaseTable();
+    private final LeaseTable.MutableClock clock = new LeaseTable.MutableClock(START);
     private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     private ProjectWriteLeaseManager manager;
 
@@ -40,7 +39,7 @@ class ProjectWriteLeaseManagerTest {
     }
 
     private ProjectWriteLeaseManager manager(Duration renewInterval, Duration acquireTimeout) {
-        manager = new ProjectWriteLeaseManager(collection.template, clock,
+        manager = new ProjectWriteLeaseManager(collection.repository, clock,
                 new ProjectWriteLeaseManager.Settings(TTL, renewInterval, acquireTimeout,
                         Duration.ofMillis(10), Duration.ofMillis(40)),
                 meters);
@@ -52,7 +51,7 @@ class ProjectWriteLeaseManagerTest {
     void acquireStoresALeaseWithAUniqueOwnerTokenAndExpiry() throws Exception {
         ProjectWriteLeaseManager.Lease lease = manager(Duration.ofSeconds(10), Duration.ofSeconds(1)).acquire("proj-1");
 
-        ProjectWriteLeaseDocument stored = collection.get("proj-1");
+        LeaseTable.LeaseRow stored = collection.get("proj-1");
         assertNotNull(stored);
         assertEquals(lease.getOwnerToken(), stored.getOwnerToken());
         assertEquals(START, stored.getAcquiredAt());
@@ -76,7 +75,7 @@ class ProjectWriteLeaseManagerTest {
 
         lease.release();
 
-        ProjectWriteLeaseDocument stored = collection.get("proj-1");
+        LeaseTable.LeaseRow stored = collection.get("proj-1");
         assertNotNull(stored);
         assertEquals("someone-else", stored.getOwnerToken());
     }
@@ -100,7 +99,7 @@ class ProjectWriteLeaseManagerTest {
 
         ProjectWriteLeaseManager.Lease lease = manager(Duration.ofSeconds(10), Duration.ofSeconds(1)).acquire("proj-1");
 
-        ProjectWriteLeaseDocument stored = collection.get("proj-1");
+        LeaseTable.LeaseRow stored = collection.get("proj-1");
         assertEquals(lease.getOwnerToken(), stored.getOwnerToken());
         assertEquals(START, stored.getAcquiredAt());
         assertEquals(START.plus(TTL), stored.getExpiresAt());
@@ -212,7 +211,7 @@ class ProjectWriteLeaseManagerTest {
     @Timeout(5)
     void anotherNodeCannotTakeOverALeaseThatIsStillValid() throws Exception {
         ProjectWriteLeaseManager.Lease lease = manager(Duration.ofSeconds(10), Duration.ofSeconds(1)).acquire("proj-1");
-        ProjectWriteLeaseManager other = new ProjectWriteLeaseManager(collection.template, clock,
+        ProjectWriteLeaseManager other = new ProjectWriteLeaseManager(collection.repository, clock,
                 new ProjectWriteLeaseManager.Settings(TTL, Duration.ofSeconds(10), Duration.ofMillis(100),
                         Duration.ofMillis(10), Duration.ofMillis(40)),
                 null);

@@ -1,7 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import self.research.ontology.owlEditor.util.StandardVocabulary;
-import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.io.FileDocumentSource;
 import org.semanticweb.owlapi.io.StringDocumentSource;
@@ -116,7 +116,7 @@ public class OntologyMergeService {
         log.info("[MERGE] Analyzing ontologies for conflicts");
         log.info("[MERGE] Source: {}, Target project: {}", sourceFile, targetProjectId);
 
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         
         // Configure to ignore missing imports (don't try to download from web)
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
@@ -325,7 +325,7 @@ public class OntologyMergeService {
         log.info("[MERGE] Source: {}, Target: {}", sourceFile, targetProjectId);
         log.info("[MERGE] Strategy: {}", options.getStrategy());
 
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         
         // Configure to ignore missing imports (don't try to download from web)
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
@@ -438,7 +438,7 @@ public class OntologyMergeService {
             if (!isNewFile) {
                 // Only refresh metadata and reimport for "merge into existing" modes.
                 // For "save as new file", the auth upload + file-open flow handles this.
-                storedFileUpdated = updateGridFsFile(importProjectId, targetFileName, outputPath);
+                storedFileUpdated = updateStoredFile(importProjectId, targetFileName, outputPath);
                 if (!importService.trySubmitImport(importProjectId, outputPath)) {
                     result.setReimportSkipped(true);
                     log.warn("[MERGE] Project {} was already importing a file, so the merged file was not imported again; "
@@ -541,9 +541,9 @@ public class OntologyMergeService {
         return sep > 0 ? projectId.substring(0, sep) : projectId;
     }
 
-    boolean updateGridFsFile(String projectId, String fileName, Path mergedFilePath) {
+    boolean updateStoredFile(String projectId, String fileName, Path mergedFilePath) {
         try {
-            log.info("[MERGE] Updating GridFS file for project {} file {}", projectId, fileName);
+            log.info("[MERGE] Updating stored file for project {} file {}", projectId, fileName);
 
             // Step 1: Get the file ID for the target file
             String getFilesUrl = authServiceUrl + "/api/projects/" + authProjectId(projectId) + "/files";
@@ -584,7 +584,7 @@ public class OntologyMergeService {
             log.info("[MERGE] Found target file ID: {} for file {}", targetFileId, fileName);
 
             // Stream from disk — never Files.readAllBytes for large merges (200MB+ would
-            // double heap and often fail silently, leaving GridFS with a stale/partial file
+            // double heap and often fail silently, leaving file store with a stale/partial file
             // while the editor disk copy is correct). Auth upload already accepts streamed multipart.
             long fileSizeBytes = Files.size(mergedFilePath);
             String updateFileUrl = authServiceUrl + "/api/projects/" + authProjectId(projectId) + "/files";
@@ -605,7 +605,7 @@ public class OntologyMergeService {
 
             HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
 
-            ResponseEntity<Map<String, Object>> updateResponse = gridFsRestTemplate().exchange(
+            ResponseEntity<Map<String, Object>> updateResponse = storeRestTemplate().exchange(
                 updateFileUrl,
                 HttpMethod.POST,
                 requestEntity,
@@ -613,26 +613,26 @@ public class OntologyMergeService {
             );
 
             if (updateResponse.getStatusCode().is2xxSuccessful()) {
-                log.info("[MERGE] Successfully updated GridFS file {} for project {} ({} MB)",
+                log.info("[MERGE] Successfully updated stored file {} for project {} ({} MB)",
                         targetFileId, projectId, fileSizeBytes / (1024 * 1024));
                 return true;
             } else {
-                log.error("[MERGE] Failed to update GridFS file {} for project {}: {} — "
+                log.error("[MERGE] Failed to update stored file {} for project {}: {} — "
                         + "library/download via auth may serve a stale file; editor disk copy is authoritative",
                     targetFileId, projectId, updateResponse.getStatusCode());
                 return false;
             }
 
         } catch (Exception e) {
-            log.error("[MERGE] Failed to update GridFS file for project {} file {}: {} — "
-                    + "editor disk copy is still correct; re-upload from project library may import a stale GridFS object",
+            log.error("[MERGE] Failed to update stored file for project {} file {}: {} — "
+                    + "editor disk copy is still correct; re-upload from project library may import a stale file store object",
                 projectId, fileName, e.getMessage(), e);
             return false;
         }
     }
 
-    /** Long timeouts for streaming large merged OWL files into auth/GridFS. */
-    private RestTemplate gridFsRestTemplate() {
+    /** Long timeouts for streaming large merged OWL files into auth/file store. */
+    private RestTemplate storeRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(60_000);
         // 3 hours — aligned with ingress; 200MB+ multipart can take a long time on shared links
@@ -1809,7 +1809,7 @@ public class OntologyMergeService {
     // ── Draft publish three-way merge (baseline / ours / theirs) ─────────────
 
     public OWLOntology loadOntologyFromRdf(String rdfXml) throws OWLOntologyCreationException {
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
         OWLOntology loaded = manager.loadOntologyFromOntologyDocument(

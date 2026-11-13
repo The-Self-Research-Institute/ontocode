@@ -1,14 +1,11 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.DatatypeDefinitionEntity;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface DatatypeDefinitionRepository extends MongoRepository<DatatypeDefinitionEntity, String> {
+public interface DatatypeDefinitionRepository {
 
     List<DatatypeDefinitionEntity> findByProjectIdAndDatatypeIriAndDraftNotOrderByCreatedAtDesc(
             String projectId, String datatypeIri, boolean draft);
@@ -19,4 +16,14 @@ public interface DatatypeDefinitionRepository extends MongoRepository<DatatypeDe
     List<DatatypeDefinitionEntity> findByProjectIdAndOwnerUserIdAndDraftTrue(String projectId, String ownerUserId);
 
     Optional<DatatypeDefinitionEntity> findByIdAndProjectId(String id, String projectId);
+
+    Optional<DatatypeDefinitionEntity> findById(String id);
+
+    DatatypeDefinitionEntity save(DatatypeDefinitionEntity entity);
+
+    void delete(DatatypeDefinitionEntity entity);
+
+    void deleteById(String id);
+
+    void deleteAll(Iterable<? extends DatatypeDefinitionEntity> entities);
 }

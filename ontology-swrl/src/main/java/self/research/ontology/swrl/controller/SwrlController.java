@@ -252,15 +252,14 @@ public class SwrlController {
         }
     }
 
-    /**
-     * ✅ FIXED: Get single rule - Now implemented!
-     */
     @GetMapping("/{projectId}/rules/embedded")
     public ResponseEntity<?> getEmbeddedRules(@PathVariable String projectId,
                                               @RequestParam(defaultValue = "false") boolean draft,
                                               @RequestParam(required = false) String userId) {
         try {
             return ResponseEntity.ok(swrlEngineService.listEmbeddedRules(projectId, draft ? userId : null));
+        } catch (self.research.ontology.swrl.service.OntologyTooLargeException e) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(createErrorResponse(e.getMessage()));
         } catch (Exception e) {
             logger.error("Failed to list rules stored in the ontology for project {}", projectId, e);
             return ResponseEntity.status(500).body(createErrorResponse("Could not read the rules stored in the ontology"));

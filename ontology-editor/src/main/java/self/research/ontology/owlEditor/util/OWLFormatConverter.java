@@ -37,12 +37,22 @@ public class OWLFormatConverter {
      */
     public static OWLOntologyManager createManagerWithSilentImports() {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-
-        // Prevent all network access for import resolution - this is the #1 performance killer.
-        // Without this, OWL API tries to HTTP-fetch every <Import> URL and waits for timeout.
-        // SILENT mode still tries to connect before ignoring — so we redirect HTTP/HTTPS IRIs
-        // to a nonexistent local path for instant failure (same fix as HierarchySnapshotBuildService).
         manager.getIRIMappers().clear();
+        blockRemoteImports(manager);
+
+        OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
+                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
+                .setConnectionTimeout(1000);
+        manager.setOntologyLoaderConfiguration(config);
+
+        manager.addMissingImportListener(event -> {
+            log.info("Skipped import: {}", event.getImportedOntologyURI());
+        });
+
+        return manager;
+    }
+
+    public static void blockRemoteImports(OWLOntologyManager manager) {
         manager.addIRIMapper(iri -> {
             String s = iri.toString();
             if (s.startsWith("http://") || s.startsWith("https://")) {
@@ -51,17 +61,6 @@ public class OWLFormatConverter {
             }
             return null;
         });
-
-        OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
-                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
-                .setConnectionTimeout(1000); // 1 second max if any network call still happens
-        manager.setOntologyLoaderConfiguration(config);
-
-        manager.addMissingImportListener(event -> {
-            log.info("Skipped import: {}", event.getImportedOntologyURI());
-        });
-
-        return manager;
     }
     
     /**

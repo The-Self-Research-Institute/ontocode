@@ -1,14 +1,20 @@
 package self.research.ontology.owlEditor.service;
 
-import com.mongodb.client.model.Filters;
-import com.mongodb.client.model.ReplaceOptions;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
-import org.bson.Document;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import self.research.ontology.owlEditor.model.DatatypeDefinitionEntity;
+import self.research.ontology.owlEditor.model.FuzzyRuleEntity;
+import self.research.ontology.owlEditor.repository.DatatypeDefinitionRepository;
+import self.research.ontology.owlEditor.repository.FuzzyRuleRepository;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.EnumMap;
+import java.util.Map;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 @Slf4j
 @Component
@@ -16,22 +22,24 @@ public class DocumentRollbackActions implements RollbackActionRunner {
 
     public static final String SAVED_RULES_MOVED = "Saved rules moved into the ontology; undo from the rule list";
 
+    public static final String LEGACY_FORMAT = "This change was recorded before the move to PostgreSQL and its saved copy cannot be restored";
+
     public static boolean isRetired(RollbackAction action) {
         return action != null && DocumentStore.SWRL_RULE.key().equals(action.store());
     }
 
-    private final MongoTemplate mongoTemplate;
-    private final String swrlServiceUrl;
-    private final RestTemplate restTemplate;
+    private record Access(Class<?> type, Function<String, Object> find, Consumer<Object> save, Consumer<String> delete) {
+    }
 
-    public DocumentRollbackActions(MongoTemplate mongoTemplate,
-                                   @Value("${ontocode.swrl.service.url:http://localhost:8084}") String swrlServiceUrl) {
-        this.mongoTemplate = mongoTemplate;
-        this.swrlServiceUrl = swrlServiceUrl;
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(2_000);
-        factory.setReadTimeout(4_000);
-        this.restTemplate = new RestTemplate(factory);
+    private final Map<DocumentStore, Access> stores = new EnumMap<>(DocumentStore.class);
+
+    public DocumentRollbackActions(DatatypeDefinitionRepository datatypes, FuzzyRuleRepository fuzzyRules) {
+        stores.put(DocumentStore.DATATYPE_DEFINITION, new Access(DatatypeDefinitionEntity.class,
+                id -> datatypes.findById(id).orElse(null), entity -> datatypes.save((DatatypeDefinitionEntity) entity),
+                datatypes::deleteById));
+        stores.put(DocumentStore.FUZZY_RULE, new Access(FuzzyRuleEntity.class,
+                id -> fuzzyRules.findById(id).orElse(null), entity -> fuzzyRules.save((FuzzyRuleEntity) entity),
+                fuzzyRules::deleteById));
     }
 
     @Override
@@ -40,15 +48,21 @@ public class DocumentRollbackActions implements RollbackActionRunner {
             throw new IllegalStateException(SAVED_RULES_MOVED);
         }
         DocumentStore store = requireStore(action);
-        Object id = identity(action);
-        if (action.document() != null && !projectId.equals(Document.parse(action.document()).getString("projectId"))) {
+        Access access = stores.get(store);
+        String id = identity(action);
+        if (action.document() == null) {
+            access.delete().accept(id);
+            return;
+        }
+        JsonNode target = DocumentSnapshots.tree(action.document());
+        requirePlainJson(target);
+        if (!projectId.equals(target.path("projectId").asText(null))) {
             throw new IllegalArgumentException("The stored document does not belong to this project");
         }
-        var collection = mongoTemplate.getCollection(store.collection());
-        if (action.document() == null) {
-            collection.deleteOne(Filters.eq("_id", id));
-        } else {
-            collection.replaceOne(Filters.eq("_id", id), Document.parse(action.document()), new ReplaceOptions().upsert(true));
+        try {
+            access.save().accept(DocumentSnapshots.MAPPER.treeToValue(target, access.type()));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 
@@ -58,22 +72,33 @@ public class DocumentRollbackActions implements RollbackActionRunner {
             return false;
         }
         DocumentStore store = DocumentStore.find(action.store());
-        if (store == null) {
+        Access access = store == null ? null : stores.get(store);
+        if (access == null) {
             return false;
         }
-        Document current = mongoTemplate.getCollection(store.collection()).find(Filters.eq("_id", identity(action))).first();
+        String id;
+        try {
+            id = identity(action);
+        } catch (IllegalStateException legacy) {
+            return false;
+        }
+        Object current = access.find().apply(id);
         if (action.expectedDocument() == null) {
             return current == null;
         }
         if (current == null) {
             return false;
         }
-        Document expected = Document.parse(action.expectedDocument());
-        store.volatileFields().forEach(field -> {
-            current.remove(field);
-            expected.remove(field);
-        });
-        return current.equals(expected);
+        JsonNode expected = DocumentSnapshots.tree(action.expectedDocument());
+        if (isLegacy(expected)) {
+            return false;
+        }
+        JsonNode actual = DocumentSnapshots.MAPPER.valueToTree(current);
+        for (String field : store.volatileFields()) {
+            ((ObjectNode) actual).remove(field);
+            ((ObjectNode) expected).remove(field);
+        }
+        return actual.equals(expected);
     }
 
     private static DocumentStore requireStore(RollbackAction action) {
@@ -84,11 +109,27 @@ public class DocumentRollbackActions implements RollbackActionRunner {
         return store;
     }
 
-    private static Object identity(RollbackAction action) {
+    private static String identity(RollbackAction action) {
         String json = action.document() != null ? action.document() : action.expectedDocument();
         if (json == null) {
             throw new IllegalArgumentException("A document action needs a before or after state");
         }
-        return Document.parse(json).get("_id");
+        JsonNode tree = DocumentSnapshots.tree(json);
+        requirePlainJson(tree);
+        JsonNode id = tree.get("id");
+        if (id == null || id.isNull()) {
+            throw new IllegalArgumentException("A document action needs a document id");
+        }
+        return id.asText();
+    }
+
+    private static boolean isLegacy(JsonNode tree) {
+        return tree.has("_id");
+    }
+
+    private static void requirePlainJson(JsonNode tree) {
+        if (isLegacy(tree)) {
+            throw new IllegalStateException(LEGACY_FORMAT);
+        }
     }
 }

@@ -47,8 +47,12 @@ public class DesktopBootstrap implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        User user = seedUser();
-        seedWorkspace(user);
+        try {
+            User user = seedUser();
+            seedWorkspace(user);
+        } catch (org.springframework.dao.DataAccessException e) {
+            log.warn("Desktop user and workspace were not prepared because the database is not reachable: {}", e.getMessage());
+        }
     }
 
     private User seedUser() {

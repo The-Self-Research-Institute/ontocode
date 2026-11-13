@@ -182,7 +182,7 @@ class PrSnapshotServiceTest {
 
     @Test
     void droppingKeepsGoingWhenOneStepFails() {
-        doThrow(new RuntimeException("gridfs down")).when(publish).clearBaseline(P, "pr-snapshot-pr1");
+        doThrow(new RuntimeException("store down")).when(publish).clearBaseline(P, "pr-snapshot-pr1");
 
         service.drop(P, "pr1");
 

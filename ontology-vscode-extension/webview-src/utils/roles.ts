@@ -33,6 +33,48 @@ export function isWorkspaceOwnerRole(role: WorkspaceRole | null): boolean {
   return role === "OWNER";
 }
 
+export function roleDisplayLabel(role: string | null | undefined): string {
+  switch (normalizeRole(role)) {
+    case "OWNER":
+      return "Owner";
+    case "ADMIN":
+    case "EDITOR":
+      return "Editor";
+    case "DRAFT_EDITOR":
+      return "Draft editor";
+    case "VIEWER":
+      return "Viewer";
+    case "MEMBER":
+      return "Member";
+    default:
+      return role ? String(role) : "";
+  }
+}
+
+export function projectRoleSelectValue(role: string | null | undefined): string {
+  const normalized = normalizeRole(role);
+  return normalized === "ADMIN" ? "EDITOR" : normalized;
+}
+
+export interface WorkspaceOwnershipInput {
+  userId?: string | null;
+  workspaceOwnerId?: string | null;
+  teamRoles?: readonly string[] | null;
+  teamLoaded: boolean;
+  tokenRole?: string | null;
+}
+
+export function resolveIsWorkspaceOwner(input: WorkspaceOwnershipInput): boolean {
+  const ownershipLoaded = input.teamLoaded || Boolean(input.workspaceOwnerId);
+  if (!ownershipLoaded) {
+    return normalizeRole(input.tokenRole) === "OWNER";
+  }
+  if (input.userId && input.workspaceOwnerId && input.userId === input.workspaceOwnerId) {
+    return true;
+  }
+  return Boolean(input.teamRoles?.some((r) => normalizeRole(r) === "OWNER"));
+}
+
 export function isWorkspaceAdminRole(role: WorkspaceRole | null): boolean {
   return role === "ADMIN";
 }

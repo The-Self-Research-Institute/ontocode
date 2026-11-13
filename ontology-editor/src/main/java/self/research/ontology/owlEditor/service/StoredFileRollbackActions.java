@@ -42,7 +42,7 @@ public class StoredFileRollbackActions implements RollbackActionRunner {
             Files.copy(exported, current, StandardCopyOption.REPLACE_EXISTING);
             metadataService.readStatus(projectId).map(status -> status.filename())
                     .filter(name -> name != null && !name.isBlank())
-                    .ifPresent(name -> mergeService.updateGridFsFile(projectId, name, current));
+                    .ifPresent(name -> mergeService.updateStoredFile(projectId, name, current));
         } catch (IOException | RuntimeException e) {
             log.warn("[UNDO] Could not bring the stored file of project {} in line with the graph: {}", projectId, e.getMessage());
         }

@@ -1,6 +1,5 @@
 package self.research.ontology.owlEditor.service;
 
-import com.mongodb.client.gridfs.model.GridFSFile;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.expression.OWLEntityChecker;
@@ -17,10 +16,6 @@ import org.semanticweb.owlapi.util.mansyntax.ManchesterOWLSyntaxParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.gridfs.GridFsResource;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -45,7 +40,7 @@ public class DLQueryService {
         this.taskRunner = taskRunner;
     }
 
-    private final GridFsTemplate gridfs;
+    private final BlobFileService blobFiles;
     private final SparqlDatasetService datasetService;
     private final OWLReasonerFactory reasonerFactory;
     private final long maxReasonerTriples;
@@ -54,11 +49,11 @@ public class DLQueryService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private HeavyWorkAdmission heavyWork = HeavyWorkAdmission.disabled();
 
-    public DLQueryService(GridFsTemplate gridfs,
+    public DLQueryService(BlobFileService blobFiles,
                           SparqlDatasetService datasetService,
                           @Value("${ontocode.reasoner.max-triples:5000000}") long maxReasonerTriples,
                           ProjectImportService importService) {
-        this.gridfs = gridfs;
+        this.blobFiles = blobFiles;
         this.datasetService = datasetService;
         this.maxReasonerTriples = maxReasonerTriples;
         this.importService = importService;
@@ -255,7 +250,7 @@ public class DLQueryService {
                 }
             }
         } catch (Exception e) {
-            log.warn("Fuseki load failed for DL Query project {}, trying GridFS: {}", projectId, e.getMessage());
+            log.warn("Fuseki load failed for DL Query project {}, trying file store: {}", projectId, e.getMessage());
         } finally {
             if (tempFile != null) {
                 try {
@@ -265,15 +260,9 @@ public class DLQueryService {
             }
         }
 
-        GridFSFile file = gridfs.findOne(new Query(Criteria.where("metadata.projectId").is(projectId)));
-        if (file == null) {
-            file = gridfs.findOne(new Query(Criteria.where("filename").is(projectId + ".owl")));
-        }
-        if (file == null) {
-            throw new RuntimeException("Ontology file not found for project: " + projectId);
-        }
-
-        GridFsResource resource = gridfs.getResource(file);
+        BlobResource resource = blobFiles.getFileByProjectId(projectId)
+                .or(() -> blobFiles.getFileByName(projectId + ".owl"))
+                .orElseThrow(() -> new RuntimeException("Ontology file not found for project: " + projectId));
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         try (InputStream inputStream = resource.getInputStream()) {
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(inputStream);

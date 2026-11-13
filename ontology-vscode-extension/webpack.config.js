@@ -1,6 +1,7 @@
 const path = require("path");
 const webpack = require("webpack");
 const CopyPlugin = require("copy-webpack-plugin");
+const { cloudDefines } = require("./scripts/cloud-env");
 const { BundleAnalyzerPlugin } = require("webpack-bundle-analyzer");
 const TerserPlugin = require("terser-webpack-plugin");
 
@@ -94,6 +95,7 @@ module.exports = {
     }),
     new webpack.DefinePlugin({
       "process.env.NODE_DEBUG": JSON.stringify(false),
+      ...cloudDefines(),
     }),
     new CopyPlugin({
       patterns: [

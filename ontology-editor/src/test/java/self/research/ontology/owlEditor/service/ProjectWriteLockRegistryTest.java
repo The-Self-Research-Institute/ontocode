@@ -6,8 +6,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import self.research.ontology.owlEditor.document.ProjectWriteLeaseDocument;
+import self.research.ontology.owlEditor.repository.ProjectWriteLeaseRepository;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -252,8 +251,8 @@ class ProjectWriteLockRegistryTest {
         return timer;
     }
 
-    private static ProjectWriteLeaseManager leaseManager(InMemoryLeaseCollection collection, Duration acquireTimeout) {
-        return new ProjectWriteLeaseManager(collection.template, Clock.systemUTC(),
+    private static ProjectWriteLeaseManager leaseManager(LeaseTable collection, Duration acquireTimeout) {
+        return new ProjectWriteLeaseManager(collection.repository, Clock.systemUTC(),
                 new ProjectWriteLeaseManager.Settings(Duration.ofSeconds(30), Duration.ofSeconds(10), acquireTimeout,
                         Duration.ofMillis(10), Duration.ofMillis(40)),
                 null);
@@ -261,18 +260,18 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(5)
-    void mongoModeHoldsTheProjectLeaseOnlyWhileExclusiveWorkRuns() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeHoldsTheProjectLeaseOnlyWhileExclusiveWorkRuns() throws Exception {
+        LeaseTable collection = new LeaseTable();
         ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(1)), null);
         try {
-            AtomicReference<ProjectWriteLeaseDocument> duringWork = new AtomicReference<>();
+            AtomicReference<LeaseTable.LeaseRow> duringWork = new AtomicReference<>();
 
             registry.runExclusive("proj-1", () -> {
                 duringWork.set(collection.get("proj-1"));
                 return null;
             });
 
-            assertEquals("mongo", registry.getMode());
+            assertEquals("database", registry.getMode());
             assertNotNull(duringWork.get());
             assertNotNull(duringWork.get().getOwnerToken());
             assertNull(collection.get("proj-1"));
@@ -283,8 +282,8 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(5)
-    void mongoModeReleasesTheLeaseAndLocalLockWhenTheWorkThrows() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeReleasesTheLeaseAndLocalLockWhenTheWorkThrows() throws Exception {
+        LeaseTable collection = new LeaseTable();
         ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(1)), null);
         try {
             assertThrows(IllegalStateException.class, () -> registry.runExclusive("proj-1", () -> {
@@ -300,8 +299,8 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(5)
-    void mongoModeNestedExclusiveOnTheSameThreadTakesTheLeaseOnce() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeNestedExclusiveOnTheSameThreadTakesTheLeaseOnce() throws Exception {
+        LeaseTable collection = new LeaseTable();
         ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofMillis(300)), null);
         try {
             String result = registry.runExclusive("proj-1", () -> registry.runExclusive("proj-1", () -> {
@@ -320,7 +319,7 @@ class ProjectWriteLockRegistryTest {
     @Test
     @Timeout(10)
     void twoNodesSharingTheLeaseStoreNeverRunExclusiveWorkForTheSameProjectAtOnce() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+        LeaseTable collection = new LeaseTable();
         ProjectWriteLockRegistry nodeA = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(5)), null);
         ProjectWriteLockRegistry nodeB = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(5)), null);
         AtomicInteger active = new AtomicInteger();
@@ -359,8 +358,8 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(5)
-    void mongoModeExclusiveOnAnotherNodeWaitsUntilTheFirstNodeReleases() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeExclusiveOnAnotherNodeWaitsUntilTheFirstNodeReleases() throws Exception {
+        LeaseTable collection = new LeaseTable();
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         ProjectWriteLockRegistry nodeA = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(3)), null);
         ProjectWriteLockRegistry nodeB = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(3)), meters);
@@ -403,8 +402,8 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(5)
-    void mongoModeLeaseTimeoutSkipsTheWorkAndFreesTheLocalLock() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeLeaseTimeoutSkipsTheWorkAndFreesTheLocalLock() throws Exception {
+        LeaseTable collection = new LeaseTable();
         collection.put("proj-1", "other-node-token", Instant.now().plusSeconds(600));
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofMillis(200)), meters);
@@ -429,8 +428,8 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(10)
-    void mongoModeLocalReadsKeepRunningWhileAWriterWaitsForAnotherNodesLease() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeLocalReadsKeepRunningWhileAWriterWaitsForAnotherNodesLease() throws Exception {
+        LeaseTable collection = new LeaseTable();
         collection.put("proj-1", "other-node-token", Instant.now().plusSeconds(600));
         ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(8)), null);
         AtomicBoolean writerRan = new AtomicBoolean(false);
@@ -461,8 +460,8 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(5)
-    void mongoModeRefusesToUpgradeASharedReadInsteadOfDeadlockingWhileHoldingTheLease() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeRefusesToUpgradeASharedReadInsteadOfDeadlockingWhileHoldingTheLease() throws Exception {
+        LeaseTable collection = new LeaseTable();
         ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofSeconds(1)), null);
         try {
             assertThrows(IllegalStateException.class, () -> registry.runShared("proj-1",
@@ -479,8 +478,8 @@ class ProjectWriteLockRegistryTest {
 
     @Test
     @Timeout(5)
-    void mongoModeSharedReadsStayLocalAndNeverTouchTheLeaseStore() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void databaseModeSharedReadsStayLocalAndNeverTouchTheLeaseStore() throws Exception {
+        LeaseTable collection = new LeaseTable();
         collection.put("proj-1", "other-node-token", Instant.now().plusSeconds(600));
         ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(leaseManager(collection, Duration.ofMillis(100)), null);
         try {
@@ -494,28 +493,28 @@ class ProjectWriteLockRegistryTest {
     }
 
     @Test
-    void springConstructorDefaultsToLocalModeAndNeverAsksForMongo() throws Exception {
-        ObjectProvider<MongoTemplate> mongo = provider(null);
-        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry("local", 30000, 10000, 120000, mongo, provider(null));
+    void springConstructorDefaultsToLocalModeAndNeverAsksForTheLeaseRepository() throws Exception {
+        ObjectProvider<ProjectWriteLeaseRepository> leases = provider(null);
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry("local", 30000, 10000, 120000, leases, provider(null));
 
         assertEquals("local", registry.getMode());
         assertEquals(1, (int) registry.runExclusive("proj-1", () -> 1));
     }
 
     @Test
-    void springConstructorBuildsMongoModeFromTheProperty() throws Exception {
-        InMemoryLeaseCollection collection = new InMemoryLeaseCollection();
+    void springConstructorBuildsDatabaseModeFromTheProperty() throws Exception {
+        LeaseTable collection = new LeaseTable();
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
-        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(" Mongo ", 30000, 10000, 1000,
-                provider(collection.template), provider(meters));
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry(" Database ", 30000, 10000, 1000,
+                provider(collection.repository), provider(meters));
         try {
-            AtomicReference<ProjectWriteLeaseDocument> duringWork = new AtomicReference<>();
+            AtomicReference<LeaseTable.LeaseRow> duringWork = new AtomicReference<>();
             registry.runExclusive("proj-1", () -> {
                 duringWork.set(collection.get("proj-1"));
                 return null;
             });
 
-            assertEquals("mongo", registry.getMode());
+            assertEquals("database", registry.getMode());
             assertNotNull(duringWork.get());
             assertEquals(1, timer(meters, "assistant.lock.hold", "exclusive").count());
         } finally {
@@ -524,14 +523,31 @@ class ProjectWriteLockRegistryTest {
     }
 
     @Test
-    void springConstructorRejectsMongoModeWithoutAMongoTemplateAndUnknownModes() {
+    void springConstructorRejectsDatabaseModeWithoutALeaseRepositoryAndUnknownModes() {
         assertThrows(IllegalStateException.class,
-                () -> new ProjectWriteLockRegistry("mongo", 30000, 10000, 1000, provider(null), provider(null)));
+                () -> new ProjectWriteLockRegistry("database", 30000, 10000, 1000, provider(null), provider(null)));
         assertThrows(IllegalStateException.class,
                 () -> new ProjectWriteLockRegistry("redis", 30000, 10000, 1000, provider(null), provider(null)));
         assertThrows(IllegalArgumentException.class,
-                () -> new ProjectWriteLockRegistry("mongo", 10000, 10000, 1000,
-                        provider(new InMemoryLeaseCollection().template), provider(null)));
+                () -> new ProjectWriteLockRegistry("database", 10000, 10000, 1000,
+                        provider(new LeaseTable().repository), provider(null)));
+    }
+
+    @Test
+    void theOldMongoModeNameStillSelectsTheDatabaseLeases() throws Exception {
+        LeaseTable collection = new LeaseTable();
+        ProjectWriteLockRegistry registry = new ProjectWriteLockRegistry("mongo", 30000, 10000, 1000,
+                provider(collection.repository), provider(null));
+        try {
+            assertEquals("database", registry.getMode());
+            registry.runExclusive("proj-1", () -> {
+                assertNotNull(collection.get("proj-1"));
+                return null;
+            });
+            assertNull(collection.get("proj-1"));
+        } finally {
+            registry.shutdown();
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -1,11 +1,15 @@
 package self.research.ontology.reasoner.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
 import self.research.ontology.reasoner.model.ReasoningSnapshotRecord;
 
 import java.time.Instant;
+import java.util.Optional;
 
-public interface ReasoningSnapshotRecordRepository extends MongoRepository<ReasoningSnapshotRecord, String> {
+public interface ReasoningSnapshotRecordRepository {
+
+    ReasoningSnapshotRecord save(ReasoningSnapshotRecord record);
+
+    Optional<ReasoningSnapshotRecord> findById(String id);
 
     long deleteByUpdatedAtBefore(Instant cutoff);
 

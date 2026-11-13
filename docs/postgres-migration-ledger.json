@@ -1,0 +1,1896 @@
+{
+ "summary": {
+  "generatedAt": "2026-11-06T12:39:57.436Z",
+  "documents": 0,
+  "distinctCollectionsFromDocuments": 0,
+  "sharedCollections": [],
+  "repositories": 0,
+  "templateFiles": 0,
+  "gridFsFiles": 3,
+  "objectIdFiles": 4,
+  "rawDriverFiles": 58,
+  "configClasses": 1,
+  "testFilesTouchingMongoTypes": 13,
+  "rawOnlyCollections": [],
+  "nonJavaFilesMentioningMongo": 78,
+  "bannedTotalOccurrences": 863,
+  "byModule": {
+   "documents": {},
+   "repositories": {},
+   "templateFiles": {},
+   "gridFsFiles": {
+    "ontology-data-migrator": 1,
+    "ontology-editor": 1,
+    "ontology-plugin-service": 1
+   },
+   "tests": {
+    "ontology-data-migrator": 13
+   }
+  }
+ },
+ "documents": [],
+ "repositories": [],
+ "templateFiles": [],
+ "gridFsFiles": [
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/MongoBlobSource.java",
+   "module": "ontology-data-migrator",
+   "ops": {
+    "find": 1
+   },
+   "buffers": false,
+   "metadataKeys": []
+  },
+  {
+   "file": "ontology-editor/src/main/java/self/research/ontology/owlEditor/controller/ProjectLoadController.java",
+   "module": "ontology-editor",
+   "ops": {
+    "find": 3
+   },
+   "buffers": true,
+   "metadataKeys": []
+  },
+  {
+   "file": "ontology-plugin-service/src/main/java/self/research/ontology/plugins/controller/ReasonerController.java",
+   "module": "ontology-plugin-service",
+   "ops": {},
+   "buffers": true,
+   "metadataKeys": [
+    "projectId"
+   ]
+  }
+ ],
+ "objectIdFiles": [
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/IdCodec.java",
+   "module": "ontology-data-migrator",
+   "newObjectId": 1,
+   "isValid": 0,
+   "toHex": 1
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/Values.java",
+   "module": "ontology-data-migrator",
+   "newObjectId": 0,
+   "isValid": 0,
+   "toHex": 2
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/MongoBlobSource.java",
+   "module": "ontology-data-migrator",
+   "newObjectId": 0,
+   "isValid": 0,
+   "toHex": 0
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/ResumeFilter.java",
+   "module": "ontology-data-migrator",
+   "newObjectId": 0,
+   "isValid": 0,
+   "toHex": 0
+  }
+ ],
+ "rawDriverFiles": [
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/AppMigrationMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/AssistantApplyOperationMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/AssistantAuditMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/AuditEventMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DatatypeDefinitionMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DesktopDownloadEventMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftChangeRows.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftPrChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftPullRequestMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/DraftSessionMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/EditorSkips.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/EmailLogMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/FileMetadataMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/FuzzyRuleMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/HistoryChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/InvitationMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/IssueReportMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/OntologyChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/OntologyFileMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ParkedDraftChangeMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/PlanFeatureConfigMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/PluginMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/PluginRatingMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/PluginUserInstallMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/PluginVersionMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ProjectContainerMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ProjectKinds.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ProjectRecoveryLockMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ProjectShareMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ProjectWriteLeaseMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/PublicGraphVersionMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ReasoningJobMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/ReasoningSnapshotMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/RollbackAuditMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SparqlQueryMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SpreadsheetImportRecordMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SpreadsheetRuleSetMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/StripeEventMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/StripeUnmatchedInvoiceMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SwrlRuleMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/SystemSettingsMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/UndoIntentMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/UserMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/UserProjectPreferenceMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/collections/WorkspaceMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/BlobFile.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/CollectionMigration.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/DedupPlan.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/IdCodec.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.types.ObjectId"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/MigrationRunner.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/SourceReader.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/UniqueRule.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/Values.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document",
+    "org.bson.types.Decimal128",
+    "org.bson.types.ObjectId"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/core/Verification.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/MongoBlobSource.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "com.mongodb.client.MongoCursor",
+    "com.mongodb.client.gridfs.GridFSBucket",
+    "com.mongodb.client.gridfs.GridFSBuckets",
+    "com.mongodb.client.model.Sorts.ascending",
+    "org.bson.BsonInt32",
+    "org.bson.BsonInt64",
+    "org.bson.BsonObjectId",
+    "org.bson.BsonString",
+    "org.bson.BsonValue",
+    "org.bson.Document",
+    "org.bson.types.ObjectId"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/MongoSourceReader.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "com.mongodb.ConnectionString",
+    "com.mongodb.MongoClientSettings",
+    "com.mongodb.ReadPreference",
+    "com.mongodb.client.MongoClient",
+    "com.mongodb.client.MongoClients",
+    "com.mongodb.client.MongoCollection",
+    "com.mongodb.client.MongoCursor",
+    "com.mongodb.client.MongoDatabase",
+    "com.mongodb.client.model.Sorts.ascending",
+    "org.bson.Document"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/ResumeFilter.java",
+   "module": "ontology-data-migrator",
+   "imports": [
+    "com.mongodb.client.model.Filters.gt",
+    "com.mongodb.client.model.Filters.or",
+    "com.mongodb.client.model.Filters.type",
+    "org.bson.BsonType",
+    "org.bson.conversions.Bson",
+    "org.bson.types.ObjectId"
+   ]
+  }
+ ],
+ "configFiles": [
+  {
+   "file": "ontology-data-migrator/src/main/java/self/research/ontology/migrator/mongo/MongoSourceReader.java",
+   "module": "ontology-data-migrator"
+  }
+ ],
+ "testFiles": [
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/BlobMigrationTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/DuplicateRulesTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/EditorRulesTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/EndToEndTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/MappingRulesTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson",
+    "GridFs"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/MigrationRunnerTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/OptionsAndResumeFilterTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/PostgresMigrationTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/ReadOnlySourceTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "com.mongodb"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/support/Docs.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/support/Fixtures.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/support/InMemorySource.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/src/test/java/self/research/ontology/migrator/VerificationTest.java",
+   "module": "ontology-data-migrator",
+   "kinds": [
+    "org.bson"
+   ]
+  }
+ ],
+ "nonJava": [
+  {
+   "file": "THIRD_PARTY_NOTICES.md",
+   "module": "THIRD_PARTY_NOTICES.md",
+   "test": false,
+   "hits": {
+    "spring-boot-starter-data-mongodb": 10,
+    "mongod": 76,
+    "MongoDB": 76,
+    "mongo": 76
+   },
+   "total": 238,
+   "sampleLines": [
+    "112: **[@mongodb-js/saslprep (1.3.2)](#mongodb-jssaslprep-132)**|MIT",
+    "858: **[mongodb (6.21.0)](#mongodb-6210)**|Apache-2.0",
+    "859: **[mongodb-connection-string-url (3.0.2)](#mongodb-connection-string-url-302)**|Apache-2.0"
+   ]
+  },
+  {
+   "file": "docs/deployment-jena.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "27017": 5,
+    "GridFs": 4,
+    "gridfs": 4,
+    "mongodb://": 4,
+    "MONGODB_": 1,
+    "MONGO_": 7,
+    "mongod": 15,
+    "mongosh": 2,
+    "mongodump": 1,
+    "mongorestore": 1,
+    "mongo-data": 4,
+    "MongoDB": 14,
+    "mongo": 57
+   },
+   "total": 119,
+   "sampleLines": [
+    "150: <tr><td>OWL editor</td><td><code>ontocode-editor</code></td><td>8083</td><td>Ontology mutations, Fuseki SPARQL integration, in-memory cache,",
+    "161: <tr><td><code>ontocode-mongo</code></td><td>MongoDB 6 — primary database (users, projects, GridFS files, billing). Single DB named <code>ont",
+    "163: <tr><td><code>ontocode-plugin-init</code></td><td>One-shot init container; seeds the plugin catalogue into MongoDB, then exits.</td></tr>"
+   ]
+  },
+  {
+   "file": "scripts/windows/start-hybrid.ps1",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 12,
+    "27018": 7,
+    "mongodb://": 2,
+    "MONGODB_": 5,
+    "MONGO_": 2,
+    "mongod": 18,
+    "MongoDB": 18,
+    "mongo": 49
+   },
+   "total": 113,
+   "sampleLines": [
+    "1: # Hybrid dev: Mongo + Fuseki in Docker; Java services via Maven (auto-restart on save).",
+    "5: #   .\\scripts\\start-hybrid.ps1 -SkipMaven      # infra only (mongo + fuseki)",
+    "12: [switch]$KeepLocalMongo"
+   ]
+  },
+  {
+   "file": "docs/DEPLOYMENT.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "27017": 4,
+    "mongodb://": 4,
+    "MONGODB_": 1,
+    "MONGO_": 7,
+    "mongod": 13,
+    "mongosh": 2,
+    "mongodump": 1,
+    "mongorestore": 1,
+    "mongo-data": 1,
+    "MongoDB": 12,
+    "mongo": 53
+   },
+   "total": 99,
+   "sampleLines": [
+    "155: <tr><td><code>ontocode-mongo</code></td><td>MongoDB 6 — primary database, single DB named <code>ontocode</code></td></tr>",
+    "238: <tr><td>mongo</td><td>512 m / WT 0.15g</td><td>768 m / WT 0.3g</td><td>1 g / WT 0.5g</td><td>3 g / WT 1.5g</td></tr>",
+    "358: MONGO_ROOT_USER=admin"
+   ]
+  },
+  {
+   "file": "docs/KT_HANDOVER.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "GridFs": 7,
+    "gridfs": 7,
+    "SPRING_DATA_MONGODB": 1,
+    "MONGODB_": 1,
+    "mongod": 18,
+    "MongoDB": 18,
+    "mongo": 29
+   },
+   "total": 81,
+   "sampleLines": [
+    "201: .pill.mongo { background: rgba(110, 231, 183, 0.10); color: #86efac; border: 1px solid rgba(110, 231, 183, 0.25); }",
+    "271: <a href=\"#mongo-schema\">MongoDB collections</a>",
+    "370: Spring Cloud Gateway, Spring Security with JWT, Spring Data MongoDB."
+   ]
+  },
+  {
+   "file": "scripts/windows/clear-mongodb-simple.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 2,
+    "mongodb://": 2,
+    "MONGODB_": 3,
+    "mongod": 19,
+    "mongosh": 6,
+    "MongoDB": 19,
+    "mongo": 30
+   },
+   "total": 81,
+   "sampleLines": [
+    "3: echo ║   MongoDB Cleanup Script               ║",
+    "7: set MONGODB_URI=mongodb://localhost:27017/ontocode",
+    "9: echo Checking for MongoDB CLI tools..."
+   ]
+  },
+  {
+   "file": "scripts/windows/clear-all.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 4,
+    "mongodb://": 4,
+    "mongod": 20,
+    "mongosh": 4,
+    "MongoDB": 20,
+    "mongo": 27
+   },
+   "total": 79,
+   "sampleLines": [
+    "40: echo === Step 2: MongoDB Cleanup Instructions ===",
+    "42: echo MongoDB cannot be automatically cleared from this script.",
+    "43: echo Please clear MongoDB manually using ONE of these methods:"
+   ]
+  },
+  {
+   "file": "scripts/load-test/README.md",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 5,
+    "mongodb://": 3,
+    "MONGODB_": 4,
+    "mongod": 13,
+    "MongoDB": 12,
+    "mongo": 26
+   },
+   "total": 63,
+   "sampleLines": [
+    "18: The target is `POST /api/v1/code-assistant/sessions` on the `ontology-editor` service. It only needs MongoDB (it does not touch Fuseki), so:",
+    "20: 1. MongoDB reachable at the URI in `ontology-editor/src/main/resources/application*.properties` (or override with `MONGODB_URI`). Either:",
+    "21: - `docker compose -f docker-compose.dev.yml up mongo`, or"
+   ]
+  },
+  {
+   "file": "docs/PAYMENT_TESTING.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "27017": 3,
+    "mongodb://": 3,
+    "MONGODB_": 3,
+    "mongod": 9,
+    "MongoDB": 9,
+    "mongo": 32
+   },
+   "total": 59,
+   "sampleLines": [
+    "125: <a href=\"#mongo-cli\">payment-test CLI</a>",
+    "150: The <a href=\"#mongo-cli\">payment-test CLI</a> and the",
+    "184: <li>MongoDB reachable; the <code>users</code> and <code>workspaces</code> collections exist.</li>"
+   ]
+  },
+  {
+   "file": "flathub/org.selfresearch.OntoCode.yml",
+   "module": "flathub",
+   "test": false,
+   "hits": {
+    "mongod": 16,
+    "fastdl.mongodb.org": 2,
+    "MongoDB": 10,
+    "mongo": 22
+   },
+   "total": 50,
+   "sampleLines": [
+    "55: mkdir -p data/mongodb/bin/linux-x64 data/mongodb/bin/linux-arm64 &&",
+    "56: if [ -d mongo-src-x64 ]; then",
+    "57: f=$(find mongo-src-x64 -name mongod -type f | head -1) &&"
+   ]
+  },
+  {
+   "file": "docs/postgres-data-migration.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "GridFs": 9,
+    "gridfs": 9,
+    "ObjectId": 2,
+    "MONGO_": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 18
+   },
+   "total": 43,
+   "sampleLines": [
+    "1: # MongoDB to PostgreSQL data migration",
+    "3: The module `ontology-data-migrator` copies the data of an existing OntoCode installation from MongoDB (and GridFS) into PostgreSQL and the b",
+    "7: - Reads every supported Mongo collection in batches (default 1000 documents, ordered by `_id`) and writes each batch to PostgreSQL in one tr"
+   ]
+  },
+  {
+   "file": "docs/postgres-schema-mapping.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "mongock": 2,
+    "GridFs": 5,
+    "gridfs": 5,
+    "ObjectId": 1,
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 28
+   },
+   "total": 43,
+   "sampleLines": [
+    "3: Rules every module follows when moving from MongoDB documents to PostgreSQL tables. The generated list of what still has to move is `docs/po",
+    "10: | Ids | `text` primary keys. New ids come from `Ids.newObjectId()` (24 hex characters, time ordered). Existing ids are copied unchanged. Bus",
+    "12: | Booleans | A flag that Mongo allowed to be missing and that the code treats as false becomes `boolean not null default false`. The migrati"
+   ]
+  },
+  {
+   "file": "OntoCodeLauncher.cs",
+   "module": "OntoCodeLauncher.cs",
+   "test": false,
+   "hits": {
+    "27017": 2,
+    "mongodb://": 2,
+    "MONGO_": 12,
+    "mongod": 5,
+    "MongoDB": 5,
+    "mongo": 17
+   },
+   "total": 43,
+   "sampleLines": [
+    "14: static string MONGO_INITDB_ROOT_USERNAME = \"admin\";",
+    "15: static string MONGO_INITDB_ROOT_PASSWORD = \"changeme123\";",
+    "16: static string MONGO_INITDB_DATABASE = \"ontocode\";"
+   ]
+  },
+  {
+   "file": "OntoCodeLauncher.sh",
+   "module": "OntoCodeLauncher.sh",
+   "test": false,
+   "hits": {
+    "27017": 2,
+    "mongodb://": 2,
+    "MONGO_": 10,
+    "mongod": 5,
+    "MongoDB": 5,
+    "mongo": 15
+   },
+   "total": 39,
+   "sampleLines": [
+    "18: MONGO_INITDB_ROOT_USERNAME=\"admin\"",
+    "19: MONGO_INITDB_ROOT_PASSWORD=\"changeme123\"",
+    "20: MONGO_INITDB_DATABASE=\"ontocode\""
+   ]
+  },
+  {
+   "file": "scripts/linux/build-macos-app.sh",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 2,
+    "mongodb://": 2,
+    "MONGO_": 10,
+    "mongod": 5,
+    "MongoDB": 5,
+    "mongo": 15
+   },
+   "total": 39,
+   "sampleLines": [
+    "57: MONGO_INITDB_ROOT_USERNAME=\"admin\"",
+    "58: MONGO_INITDB_ROOT_PASSWORD=\"admin123\"",
+    "59: MONGO_INITDB_DATABASE=\"ontology\""
+   ]
+  },
+  {
+   "file": "docs/persistence/editor-conversion-brief.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "mongock": 2,
+    "GridFs": 2,
+    "gridfs": 2,
+    "mongod": 4,
+    "MongoDB": 4,
+    "mongo": 24
+   },
+   "total": 38,
+   "sampleLines": [
+    "3: Moves `ontology-editor` from MongoDB to PostgreSQL in six stages (E1 to E6). One stage at a time, because all stages share one module and on",
+    "8: - Do not connect to or write to any MongoDB. The local MongoDB service on this PC holds the owner's real data. No Mongo is needed for any te",
+    "18: 4. `docs/postgres-migration-ledger.md` and `docs/postgres-migration-ledger.json` for the list of editor classes still bound to Mongo. Re-run"
+   ]
+  },
+  {
+   "file": "docs/DEPLOYMENT_GUIDE.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "MONGODB_": 2,
+    "MONGO_": 2,
+    "mongod": 10,
+    "MongoDB": 10,
+    "mongo": 12
+   },
+   "total": 37,
+   "sampleLines": [
+    "33: <li><strong>MongoDB</strong> — application data and users.</li>",
+    "47: <li>Strong <code>JWT_SECRET</code> and unique MongoDB root credentials for production.</li>",
+    "58: <tr><td>MongoDB</td><td><code>MONGODB_URI</code>, <code>MONGODB_DATABASE</code>; compose may use <code>MONGO_ROOT_USER</code>, <code>MONGO_R"
+   ]
+  },
+  {
+   "file": "electron-app/docs/electron-guide.html",
+   "module": "electron-app",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "27117": 3,
+    "mongod": 11,
+    "MongoDB": 6,
+    "mongo": 12
+   },
+   "total": 33,
+   "sampleLines": [
+    "213: │                                  │ mongod  :27117       │            │",
+    "229: <tr><td>MongoDB</td><td>27017</td><td>27117</td><td><code>resources/backend/mongodb/</code></td></tr>",
+    "344: await startMongo();    <span class=\"comment\">// waits for TCP :27117</span>"
+   ]
+  },
+  {
+   "file": "docs/DEPLOYMENT_PRODUCTION_EC2_DOCKER.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "MONGODB_": 2,
+    "MONGO_": 3,
+    "mongod": 7,
+    "mongo-data": 1,
+    "MongoDB": 7,
+    "mongo": 11
+   },
+   "total": 32,
+   "sampleLines": [
+    "32: <li>One EC2 host running Docker with the services defined in <code>docker-compose.production.yml</code> (MongoDB, GraphDB, auth, gateway, on",
+    "37: <p><strong>Capacity:</strong> Production compose expects meaningful RAM (GraphDB alone is capped at 8g in the file; editor up to 4g; plus Mo",
+    "58: <tr><td>27017, 7200, 8083, 8084, 8087</td><td><strong>Do not</strong> open to the internet</td><td>MongoDB, GraphDB, editor, SWRL, plugin — "
+   ]
+  },
+  {
+   "file": "electron-app/test/processGuard.test.js",
+   "module": "electron-app",
+   "test": false,
+   "hits": {
+    "mongod": 12,
+    "MongoDB": 5,
+    "mongo": 12
+   },
+   "total": 29,
+   "sampleLines": [
+    "46: guard.register('MongoDB', 'mongod.exe', c);",
+    "47: assert.deepEqual(guard.readRegistry().map((e) => [e.pid, e.exe]), [[111, 'mongod.exe']]);",
+    "55: guard.register('MongoDB', 'mongod.exe', fakeChild(333));"
+   ]
+  },
+  {
+   "file": "scripts/windows/fix-mongo-auth.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "MONGO_": 2,
+    "mongod": 7,
+    "mongo-data": 1,
+    "MongoDB": 7,
+    "mongo": 10
+   },
+   "total": 27,
+   "sampleLines": [
+    "3: echo   Fixing MongoDB Authentication Issue",
+    "8: echo   2. Remove MongoDB data volume (reset database)",
+    "11: echo WARNING: This will DELETE all data in MongoDB!"
+   ]
+  },
+  {
+   "file": "docs/DEPLOYMENT_PRODUCTION.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "MONGODB_": 1,
+    "MONGO_": 1,
+    "mongod": 6,
+    "MongoDB": 6,
+    "mongo": 8
+   },
+   "total": 22,
+   "sampleLines": [
+    "33: <li><strong>Network exposure:</strong> Do not publish MongoDB or GraphDB ports to the public internet. Only gateway (and optionally auth for",
+    "35: <li><strong>No destructive test tools:</strong> Do not run Mongo time-travel or billing mutation scripts from <code>scripts/payment-test</co",
+    "40: <p>Ensure host directories for log volumes exist if your compose binds <code>/var/log/ontocode/*</code>. Wait for MongoDB and GraphDB health"
+   ]
+  },
+  {
+   "file": "scripts/windows/start-services.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 3,
+    "mongod": 6,
+    "MongoDB": 6,
+    "mongo": 6
+   },
+   "total": 21,
+   "sampleLines": [
+    "38: :: Check MongoDB",
+    "39: echo Checking MongoDB...",
+    "40: curl -s http://localhost:27017 >nul 2>&1"
+   ]
+  },
+  {
+   "file": "docs/DEPLOYMENT_UAT.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "MONGODB_": 1,
+    "MONGO_": 2,
+    "mongod": 5,
+    "MongoDB": 5,
+    "mongo": 7
+   },
+   "total": 20,
+   "sampleLines": [
+    "32: <li><strong>Same services as prod:</strong> MongoDB, GraphDB, auth, gateway, ontology editor, SWRL, plugin service, webapp — so behaviour ma",
+    "34: <li><strong>Separate data:</strong> UAT must not use production MongoDB, GraphDB, or secrets. Use its own hosts, volumes, and <code>JWT_SECR",
+    "35: <li><strong>Safe to reset:</strong> Plan how to wipe or restore UAT data after major billing experiments (see <code>scripts/payment-test</co"
+   ]
+  },
+  {
+   "file": "docs/postgres-deployment.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "mongod": 6,
+    "MongoDB": 6,
+    "mongo": 8
+   },
+   "total": 20,
+   "sampleLines": [
+    "3: OntoCode keeps its records in PostgreSQL and its uploaded files (ontology uploads, project files, plugin bundles, desktop installers) on dis",
+    "50: PostgreSQL settings per size override (these replace the old MongoDB cache sizes):",
+    "63: 1. Announce the maintenance window and stop every service that writes (gateway, auth, editor, swrl, reasoner-worker, plugin-service, plugin-"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/utils/vscodeBridge.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongod": 6,
+    "MongoDB": 6,
+    "mongo": 6
+   },
+   "total": 18,
+   "sampleLines": [
+    "517: // Immediately save to MongoDB to persist the file",
+    "518: console.log('[BrowserBridge] Saving to MongoDB for persistence...');",
+    "525: console.log('[BrowserBridge] ✅ New file saved to MongoDB - will persist after refresh');"
+   ]
+  },
+  {
+   "file": "scripts/windows/manage-plugins.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "GridFs": 1,
+    "gridfs": 1,
+    "mongod": 5,
+    "MongoDB": 5,
+    "mongo": 5
+   },
+   "total": 18,
+   "sampleLines": [
+    "8: REM - Insert metadata into MongoDB",
+    "9: REM - Upload bundles to GridFS",
+    "12: REM - MongoDB running on localhost:27017"
+   ]
+  },
+  {
+   "file": "README.md",
+   "module": "README.md",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "GridFs": 1,
+    "gridfs": 1,
+    "mongod": 4,
+    "MongoDB": 4,
+    "mongo": 5
+   },
+   "total": 16,
+   "sampleLines": [
+    "120: - **File management**: Upload, download, and delete files with GridFS storage",
+    "170: | **MongoDB**           | Metadata, version control, collaboration | `27017` |",
+    "174: **Data flow:** Fuseki stores RDF triples (primary). MongoDB stores metadata, collaboration data, and change history. Changes sync automatica"
+   ]
+  },
+  {
+   "file": "docs/ontocode-desktop-decisions.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "GridFs": 3,
+    "gridfs": 3,
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 3
+   },
+   "total": 15,
+   "sampleLines": [
+    "666: <li>Desktop A uploads the full <code>.owl</code> file + all sidecar files (queries/, rules/, history/) to cloud storage (<strong>MongoDB Gri",
+    "670: <li>Desktop B downloads the full <code>.owl</code> + sidecars from GridFS. Creates local workspace folder. Records <code>DeviceSyncState</co",
+    "682: <p><strong>Backend additions required:</strong> 2 new endpoints, 3 new MongoDB collections (<code>WorkspaceSync</code>, <code>DeviceSyncStat"
+   ]
+  },
+  {
+   "file": "docs/postgres-desktop-notes.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "mongod": 4,
+    "MongoDB": 4,
+    "mongo": 5
+   },
+   "total": 13,
+   "sampleLines": [
+    "3: The desktop app starts its own PostgreSQL 17 instead of MongoDB. Nothing is installed on the user's computer.",
+    "9: | Folder | `<userData>/data/postgres`. The old `<userData>/data/mongo` folder is never touched or deleted. |",
+    "29: ## Old MongoDB data"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/utils/openSourceLibraries.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongod": 4,
+    "MongoDB": 4,
+    "SSPL": 1,
+    "mongo": 4
+   },
+   "total": 13,
+   "sampleLines": [
+    "37: { name: \"Spring Data MongoDB\", license: \"Apache-2.0\", url: \"https://spring.io/projects/spring-data-mongodb\", usedIn: \"Auth / Editor data lay",
+    "48: { name: \"MongoDB\", license: \"SSPL\", url: \"https://www.mongodb.com/\", usedIn: \"Metadata & collaboration storage\" },"
+   ]
+  },
+  {
+   "file": "docs/INSTALLATION_GUIDE.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "27017": 2,
+    "mongodb://": 1,
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 3
+   },
+   "total": 12,
+   "sampleLines": [
+    "88: - **MongoDB:** mongodb://localhost:27017",
+    "151: | **MongoDB** | 27017 | Document database |"
+   ]
+  },
+  {
+   "file": "INSTANCE_COMPARISON.html",
+   "module": "INSTANCE_COMPARISON.html",
+   "test": false,
+   "hits": {
+    "mongod": 4,
+    "MongoDB": 4,
+    "mongo": 4
+   },
+   "total": 12,
+   "sampleLines": [
+    "352: <div class=\"seg\" style=\"width:9.6%;background:#c678dd;\">MongoDB 768MB</div>",
+    "363: <div class=\"seg\" style=\"width:6.25%;background:#c678dd;\">MongoDB 1GB</div>",
+    "374: <div class=\"seg\" style=\"width:6.25%;background:#c678dd;\">MongoDB 2GB</div>"
+   ]
+  },
+  {
+   "file": "scripts/windows/docker-install.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongodb://": 1,
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 3
+   },
+   "total": 11,
+   "sampleLines": [
+    "53: echo This includes: MongoDB, GraphDB, Auth, Gateway, Editor, SWRL, Plugins, and VS Code Web",
+    "88: echo   - MongoDB:             mongodb://localhost:27017"
+   ]
+  },
+  {
+   "file": "scripts/windows/docker-install.ps1",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongodb://": 1,
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 3
+   },
+   "total": 11,
+   "sampleLines": [
+    "77: Write-Host \"This includes: MongoDB, GraphDB, Auth, Gateway, Editor, SWRL, Plugins, and VS Code Web\" -ForegroundColor Gray",
+    "137: Write-Host \"  - MongoDB:             mongodb://localhost:27017\" -ForegroundColor White"
+   ]
+  },
+  {
+   "file": "scripts/windows/start-docker.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "MONGO_": 1,
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 4
+   },
+   "total": 11,
+   "sampleLines": [
+    "20: echo   2. MONGO_ROOT_PASSWORD - Change from default",
+    "56: echo [2] Start all services (with MongoDB Express admin UI)",
+    "87: echo Starting OntoCode services with MongoDB Express..."
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/src/extension.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "GridFs": 2,
+    "gridfs": 2,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 2
+   },
+   "total": 10,
+   "sampleLines": [
+    "989: // Handle file upload to MongoDB project (admin flow - save to project)",
+    "2901: * single-shot /upload endpoint's response (success/projectId/gridfsFileId/...), and this method",
+    "2983: message: isLastChunk && chunkResp.data?.success && chunkResp.data?.gridfsFileId"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/components/dashboard-parts/hooks/useDashboardInit.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "GridFs": 5,
+    "gridfs": 5
+   },
+   "total": 10,
+   "sampleLines": [
+    "1810: // Map files to ensure they have proper project structure, not just GridFS file IDs",
+    "1812: // If this looks like a raw GridFS file (has only id, contentType, length), skip it",
+    "1814: console.warn(\"[Dashboard] âš ï¸ Skipping raw GridFS file entry:\", p.id);"
+   ]
+  },
+  {
+   "file": "scripts/windows/health-check.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 3
+   },
+   "total": 10,
+   "sampleLines": [
+    "6: :: Check MongoDB",
+    "7: curl -s http://localhost:27017 >nul 2>&1",
+    "9: echo [92m✓[0m MongoDB         - UP"
+   ]
+  },
+  {
+   "file": "ontology-data-migrator/pom.xml",
+   "module": "ontology-data-migrator",
+   "test": false,
+   "hits": {
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 3
+   },
+   "total": 9,
+   "sampleLines": [
+    "14: <description>One-time MongoDB to PostgreSQL data migration tool</description>",
+    "36: <groupId>org.mongodb</groupId>",
+    "37: <artifactId>mongodb-driver-sync</artifactId>"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/test/codeAssistantPanelHelpers.test.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "27018": 1,
+    "com.mongodb": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 3
+   },
+   "total": 9,
+   "sampleLines": [
+    "21: it(\"collapses a raw MongoDB driver exception into a short timeout message\", () => {",
+    "25: \"Client view of cluster state is {type=UNKNOWN, servers=[{address=127.0.0.1:27018, type=UNKNOWN, \" +",
+    "26: \"state=CONNECTING, exception={com.mongodb.MongoSocketReadException: Prematurely reached end of stream}}]}\";"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/test/mutationActor.test.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongo": 9
+   },
+   "total": 9,
+   "sampleLines": [
+    "19: signIn({ userId: 'mongo-1', email: 'real@x.org' });",
+    "20: expect(userIdFromAuthToken()).toBe('mongo-1');",
+    "24: signIn({ userId: 'mongo-1', email: 'real@x.org' });"
+   ]
+  },
+  {
+   "file": "scripts/windows/clean-all-dbs.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "mongod": 3,
+    "MongoDB": 3,
+    "mongo": 3
+   },
+   "total": 9,
+   "sampleLines": [
+    "7: echo ║   - MongoDB (ontocode database)                    ║",
+    "23: echo   STEP 2: Cleaning MongoDB",
+    "26: call clear-mongodb-simple.bat"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/components/ProjectSelector.tsx",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 6
+   },
+   "total": 8,
+   "sampleLines": [
+    "134: // Determine base MongoDB status for cards with no live WS event",
+    "135: const mongoProcessing = !ws && (project.status === 'PROCESSING' || project.status === 'UPLOADED');",
+    "137: const locked = importing || mongoProcessing;"
+   ]
+  },
+  {
+   "file": "scripts/windows/check-status.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongodb://": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 2
+   },
+   "total": 8,
+   "sampleLines": [
+    "73: echo   MongoDB:         mongodb://localhost:27017"
+   ]
+  },
+  {
+   "file": "scripts/windows/check-status.ps1",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongodb://": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 2
+   },
+   "total": 8,
+   "sampleLines": [
+    "125: Write-Host \"  MongoDB:         mongodb://localhost:27017\""
+   ]
+  },
+  {
+   "file": "scripts/windows/install-and-run.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongodb://": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 2
+   },
+   "total": 8,
+   "sampleLines": [
+    "126: echo   MongoDB:             mongodb://localhost:27017"
+   ]
+  },
+  {
+   "file": "scripts/windows/install-and-run.ps1",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongodb://": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 2
+   },
+   "total": 8,
+   "sampleLines": [
+    "165: Write-Host \"  - MongoDB:         mongodb://localhost:27017\" -ForegroundColor White"
+   ]
+  },
+  {
+   "file": "scripts/windows/run-plugin-init.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 4
+   },
+   "total": 8,
+   "sampleLines": [
+    "7: REM It inserts default plugins into MongoDB.",
+    "11: REM - Main services running (mongo must be healthy)",
+    "40: echo Make sure MongoDB is running: docker compose -f docker-compose.yml up mongo"
+   ]
+  },
+  {
+   "file": "scripts/windows/start-dev.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "27017": 1,
+    "mongodb://": 1,
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 2
+   },
+   "total": 8,
+   "sampleLines": [
+    "25: echo   MongoDB:        mongodb://localhost:27017"
+   ]
+  },
+  {
+   "file": "docs/capacity-tuning.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "mongod": 2,
+    "MongoDB": 2,
+    "mongo": 3
+   },
+   "total": 7,
+   "sampleLines": [
+    "18: | `max-delta-triples` | triples | 2,000 | 5,000 | 20,000 | 100 | Size of one history record in MongoDB and of the update sent on undo | Huge",
+    "19: | `merge-delta-max-triples` | triples | 20,000 | 200,000 | 500,000 | 1,000 | Size of the compressed change record stored for one ontology me",
+    "24: | `feed-page-size` | rows | 100 | 200 | 400 | 10 | Mongo page size and memory per feed request | Bigger reads per page | More round trips |"
+   ]
+  },
+  {
+   "file": "docs/ops-memory-settings.html",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "wiredTiger": 2,
+    "mongo": 3
+   },
+   "total": 5,
+   "sampleLines": [
+    "23: <tr><td>mongo</td><td class=\"n\">768</td><td class=\"n\">768</td><td>WiredTiger 0.3 GiB</td><td class=\"n\">463</td><td class=\"n\">1,024</td><td>n",
+    "65: <li>Mongo cache flag: confirm whether production sets <code>--wiredTigerCacheSizeGB</code> (the memfix file sets 0.5 and the base files may "
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/components/Dashboard.tsx",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "GridFs": 2,
+    "gridfs": 2,
+    "mongo": 1
+   },
+   "total": 5,
+   "sampleLines": [
+    "4282: console.log(\"[Dashboard] Web mode — Fuseki/Mongo hierarchy (no auto OWLAPI warm)\");",
+    "5972: console.warn(\"[Dashboard] ⚠️ Skipping raw GridFS file entry:\", p.id);",
+    "6009: console.warn(\"[Dashboard] ⚠️ Skipping raw GridFS file entry:\", p.id);"
+   ]
+  },
+  {
+   "file": "electron-app/dist-electron/win-arm64-unpacked/resources/backend/plugin-bundles/graph-view-plugin/index.js",
+   "module": "electron-app",
+   "test": false,
+   "hits": {
+    "ObjectId": 4
+   },
+   "total": 4,
+   "sampleLines": [
+    "2: !function(e,t){\"object\"==typeof exports&&\"object\"==typeof module?module.exports=t(require(\"LucideReact\"),require(\"React\")):\"function\"==typeo"
+   ]
+  },
+  {
+   "file": "scripts/windows/stop-hybrid.ps1",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "mongo": 4
+   },
+   "total": 4,
+   "sampleLines": [
+    "1: # Stop hybrid dev: Docker mongo+fuseki and Maven Java listeners on known ports.",
+    "3: #   .\\scripts\\stop-hybrid.ps1 -KeepDocker   # only kill Java, leave mongo/fuseki up",
+    "27: docker compose -f docker-compose.dev.yml stop mongo fuseki 2>&1 | Out-Host"
+   ]
+  },
+  {
+   "file": "code-view-assistant-full-lifecycle.drawio.html",
+   "module": "code-view-assistant-full-lifecycle.drawio.html",
+   "test": false,
+   "hits": {
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 1
+   },
+   "total": 3,
+   "sampleLines": [
+    "8: <body><div class=\"mxgraph\" style=\"max-width:100%;border:1px solid transparent;\" data-mxgraph=\"{&quot;highlight&quot;: &quot;#0000ff&quot;, &"
+   ]
+  },
+  {
+   "file": "electron-app/electron-builder.yml",
+   "module": "electron-app",
+   "test": false,
+   "hits": {
+    "mongo": 3
+   },
+   "total": 3,
+   "sampleLines": [
+    "39: - \"!mongo-tmp/**\"",
+    "41: - \"!mongo-bits.zip\"",
+    "42: - \"!mongo-win32.zip\""
+   ]
+  },
+  {
+   "file": "electron-app/test/logHygiene.test.js",
+   "module": "electron-app",
+   "test": false,
+   "hits": {
+    "mongo": 3
+   },
+   "total": 3,
+   "sampleLines": [
+    "37: fs.writeFileSync(path.join(dir, 'mongo.log'), 'x'.repeat(hygiene.MAX_LOG_BYTES + 1));",
+    "42: assert.deepEqual(rotated.sort(), ['crash.txt', 'mongo.log']);",
+    "43: assert.ok(fs.existsSync(path.join(dir, 'mongo.log.1')));"
+   ]
+  },
+  {
+   "file": "HANDOFF-2026-10-29.md",
+   "module": "HANDOFF-2026-10-29.md",
+   "test": false,
+   "hits": {
+    "mongo": 3
+   },
+   "total": 3,
+   "sampleLines": [
+    "16: | Desktop launcher | Child heaps from installed RAM (at most half), Mongo cache cap, leftover-process cleanup on every exit path, log rotati",
+    "73: - The Mongo health check contains the admin password in plain text: treat as exposed, rotate, and replace with a password-free ping.",
+    "74: - Disk: GraphDB leftovers (about 11 GB) and old heap dumps (24 GB) were being cleaned by the user; Fuseki volume holds many datasets with no"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/components/MergeWizard.tsx",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 1
+   },
+   "total": 3,
+   "sampleLines": [
+    "293: // the current MongoDB project so it appears in the project file list."
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/components/PrivacyPolicyModal.tsx",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 1
+   },
+   "total": 3,
+   "sampleLines": [
+    "99: projects, and the bundled MongoDB and Apache Jena Fuseki data stores used to power editing and"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/public/privacy.html",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 1
+   },
+   "total": 3,
+   "sampleLines": [
+    "128: and the bundled MongoDB and Apache Jena Fuseki data stores used to power editing and reasoning, are"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/test/mergeWizardDraft.test.tsx",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongo": 3
+   },
+   "total": 3,
+   "sampleLines": [
+    "62: draftFields = { draft: 'true', userId: 'mongo-1' };",
+    "66: expect(analyzeUrl).toContain('userId=mongo-1');",
+    "70: expect(form.get('userId')).toBe('mongo-1');"
+   ]
+  },
+  {
+   "file": "packaging/linux/org.selfresearch.OntoCode.metainfo.xml",
+   "module": "packaging",
+   "test": false,
+   "hits": {
+    "mongod": 1,
+    "MongoDB": 1,
+    "mongo": 1
+   },
+   "total": 3,
+   "sampleLines": [
+    "20: store and MongoDB instance."
+   ]
+  },
+  {
+   "file": "scripts/lib/db.js",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "ObjectId": 3
+   },
+   "total": 3,
+   "sampleLines": [
+    "50: function newObjectId() {",
+    "82: const id = newObjectId();",
+    "115: module.exports = { connectionConfig, newPool, waitForSchema, newObjectId, blobsRoot, blobPath, storeFile, deleteStoredFile };"
+   ]
+  },
+  {
+   "file": "scripts/manage-plugins.js",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "ObjectId": 3
+   },
+   "total": 3,
+   "sampleLines": [
+    "6: const { newPool, waitForSchema, newObjectId, blobsRoot, storeFile, deleteStoredFile } = require('./lib/db');",
+    "214: [newObjectId(), plugin.pluginId, plugin.name, plugin.description, 'OntoCode Team', 'admin@ontocode.com', plugin.version, plugin.category, pl",
+    "260: [newObjectId(), plugin.pluginId, plugin.version, `Version ${plugin.version}`, stored.id, stored.length]"
+   ]
+  },
+  {
+   "file": "scripts/windows/verify-hybrid.ps1",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "mongo": 3
+   },
+   "total": 3,
+   "sampleLines": [
+    "1: # Quick audit check for hybrid dev stack (mongo+fuseki docker, java via mvn).",
+    "22: Check \"Docker mongo\" {",
+    "23: $s = docker inspect ontocode-mongo --format \"{{.State.Status}}\" 2>$null"
+   ]
+  },
+  {
+   "file": "build-desktop.sh",
+   "module": "build-desktop.sh",
+   "test": false,
+   "hits": {
+    "mongod": 1,
+    "mongo": 1
+   },
+   "total": 2,
+   "sampleLines": [
+    "157: # prepare-resources.js (JRE download/embed, fuseki-server.jar + mongod copy) entirely,"
+   ]
+  },
+  {
+   "file": "NOTES.md",
+   "module": "NOTES.md",
+   "test": false,
+   "hits": {
+    "mongo": 2
+   },
+   "total": 2,
+   "sampleLines": [
+    "104: - Indexes: dev and docker run with `auto-index-creation=false`, so `@Indexed` alone would not create them there. Added to `UndoMongoIndexIni"
+   ]
+  },
+  {
+   "file": "scripts/deploy-coretopia-release.ps1",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "GridFs": 1,
+    "gridfs": 1
+   },
+   "total": 2,
+   "sampleLines": [
+    "15: #   -AdminUser / -AdminPassword (for GridFS installer upload)"
+   ]
+  },
+  {
+   "file": "docs/persistence/persistence-guide.md",
+   "module": "docs",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "27: 5. Add the table to `docs/postgres-migration-ledger.md` (generated by `scripts/migration/mongo-ledger.mjs`)."
+   ]
+  },
+  {
+   "file": "electron-app/splash.html",
+   "module": "electron-app",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "368: // (no \"Mongo repositories\" / \"Tomcat\" jargon a non-technical user shouldn't"
+   ]
+  },
+  {
+   "file": "HARDENING_RESUME.md",
+   "module": "HARDENING_RESUME.md",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "21: - **Write lock:** an optional multi-server version (`ontocode.assistant.lock.mode=mongo`, off by default)."
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/e2e/desktop-global-setup.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "42: 'Start the OntoCode Desktop app first (it bundles Mongo + Fuseki + Java on :18085). No Docker needed.',"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/e2e/electron-global-setup.ts",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "34: console.log('[electron-setup] Will launch Electron with bundled Mongo/Fuseki/JVM');"
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/.env.desktop-e2e",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "2: # Start OntoCode Desktop first; it bundles Mongo + Fuseki + JVM internally."
+   ]
+  },
+  {
+   "file": "ontology-vscode-extension/webview-src/components/ProjectLibrary.tsx",
+   "module": "ontology-vscode-extension",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "827: // no teams, no owner/member distinction (see buildDesktopUser vs Mongo owner id)."
+   ]
+  },
+  {
+   "file": "scripts/windows/start-hybrid.bat",
+   "module": "scripts",
+   "test": false,
+   "hits": {
+    "mongo": 1
+   },
+   "total": 1,
+   "sampleLines": [
+    "2: REM Mongo + Fuseki in Docker; Auth/Gateway/Editor/SWRL/Plugin via Maven."
+   ]
+  }
+ ],
+ "rawOnlyCollections": []
+}

@@ -198,7 +198,7 @@ class CodeViewReimportPipelineCacheTest {
 
     @Test
     void aCacheFailureDoesNotFailAnEditThatAlreadyReachedTheGraph() throws Exception {
-        doThrow(new RuntimeException("mongo down"))
+        doThrow(new RuntimeException("database down"))
                 .when(ontologyMutationService).invalidateEntityCaches(anyString(), any(), anyBoolean());
         Path patched = Files.createTempFile("patched-", ".ttl");
 

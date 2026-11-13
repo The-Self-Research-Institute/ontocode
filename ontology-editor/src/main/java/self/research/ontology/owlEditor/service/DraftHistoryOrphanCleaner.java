@@ -1,13 +1,9 @@
 package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.bson.Document;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.aggregation.Aggregation;
-import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.stereotype.Service;
-import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.DraftSessionRepository;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,14 +16,14 @@ import java.util.Set;
 @Service
 public class DraftHistoryOrphanCleaner {
 
-    private final MongoTemplate mongo;
+    private final HistoryChangeRepository history;
     private final DraftSessionRepository sessions;
     private final DraftTrackingService drafts;
     private final HistorySyncService historySync;
 
-    public DraftHistoryOrphanCleaner(MongoTemplate mongo, DraftSessionRepository sessions,
+    public DraftHistoryOrphanCleaner(HistoryChangeRepository history, DraftSessionRepository sessions,
                                      DraftTrackingService drafts, HistorySyncService historySync) {
-        this.mongo = mongo;
+        this.history = history;
         this.sessions = sessions;
         this.drafts = drafts;
         this.historySync = historySync;
@@ -37,16 +33,14 @@ public class DraftHistoryOrphanCleaner {
         List<Map<String, Object>> orphans = new ArrayList<>();
         long orphanRows = 0;
         long marked = 0;
-        for (Document group : liveDraftGroups()) {
-            Document id = group.get("_id", Document.class);
-            String projectId = id.getString("projectId");
-            String userId = id.getString("userId");
-            long rows = ((Number) group.get("rows")).longValue();
+        for (HistoryChangeRepository.DraftGroup group : history.countLiveDraftGroups()) {
+            String projectId = group.projectId();
+            String userId = group.userId();
             if (projectId == null || userId == null || hasLiveDraft(projectId, userId)) {
                 continue;
             }
-            orphanRows += rows;
-            orphans.add(Map.of("projectId", projectId, "userId", userId, "rows", rows));
+            orphanRows += group.rows();
+            orphans.add(Map.of("projectId", projectId, "userId", userId, "rows", group.rows()));
             if (!dryRun) {
                 marked += historySync.markDraftsDiscarded(projectId, userId);
             }
@@ -67,29 +61,13 @@ public class DraftHistoryOrphanCleaner {
                 || !drafts.getUnappliedDraftsForUser(projectId, userId).isEmpty();
     }
 
-    private List<Document> liveDraftGroups() {
-        Aggregation aggregation = Aggregation.newAggregation(
-                Aggregation.match(Criteria.where("draft").is(true).and("draftDiscarded").ne(true)),
-                Aggregation.group("projectId", "userId").count().as("rows"));
-        return mongo.aggregate(aggregation, HistoryChange.class, Document.class).getMappedResults();
-    }
-
     private List<Map<String, Object>> sameNameUnderSeveralIds() {
-        Aggregation aggregation = Aggregation.newAggregation(
-                Aggregation.match(Criteria.where("username").ne(null)),
-                Aggregation.group("projectId", "username").addToSet("userId").as("ids"));
         List<Map<String, Object>> found = new ArrayList<>();
-        for (Document group : mongo.aggregate(aggregation, HistoryChange.class, Document.class).getMappedResults()) {
-            Set<String> ids = new LinkedHashSet<>();
-            for (Object id : (List<?>) group.get("ids")) {
-                if (id != null) {
-                    ids.add(id.toString());
-                }
-            }
+        for (HistoryChangeRepository.SameNameGroup group : history.findNamesUnderSeveralUserIds()) {
+            Set<String> ids = new LinkedHashSet<>(group.userIds());
             if (ids.size() > 1) {
-                Document key = group.get("_id", Document.class);
-                found.add(Map.of("projectId", String.valueOf(key.get("projectId")),
-                        "username", String.valueOf(key.get("username")), "userIds", new ArrayList<>(ids)));
+                found.add(Map.of("projectId", String.valueOf(group.projectId()),
+                        "username", String.valueOf(group.username()), "userIds", new ArrayList<>(ids)));
             }
         }
         return found;

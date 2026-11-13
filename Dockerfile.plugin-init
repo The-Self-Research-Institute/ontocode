@@ -1,5 +1,5 @@
 # =============================================================================
-# MULTI-STAGE BUILD: Build all plugins then upload to MongoDB
+# MULTI-STAGE BUILD: Build all plugins then store them in PostgreSQL
 # No need for local npm install/build - everything happens in Docker
 # =============================================================================
 
@@ -123,7 +123,7 @@ COPY plugins/spreadsheet-import-plugin/ ./
 RUN npm run build
 
 # -----------------------------------------------------------------------------
-# Stage 8: Final runtime - Install plugins to MongoDB
+# Stage 8: Final runtime - Install plugins into PostgreSQL
 # -----------------------------------------------------------------------------
 FROM node:21-alpine
 WORKDIR /app
@@ -131,7 +131,7 @@ WORKDIR /app
 # Install bash and curl for health checks
 RUN apk add --no-cache bash curl
 
-# Install MongoDB driver
+# Install PostgreSQL driver
 COPY scripts/package.json ./package.json
 RUN --mount=type=cache,id=npm-runtime,target=/root/.npm \
     npm config set fetch-retries 30 && \
@@ -140,10 +140,11 @@ RUN --mount=type=cache,id=npm-runtime,target=/root/.npm \
     npm config set fetch-timeout 600000 && \
     npm config set maxsockets 3 && \
     npm config set prefer-online true && \
-    npm install mongodb --prefer-online
+    npm install pg --prefer-online
 
 # Copy unified plugin manager script
 COPY scripts/manage-plugins.js ./manage-plugins.js
+COPY scripts/lib ./lib
 
 # Copy built plugin bundles from build stages
 COPY --from=build-change-assistant /build/dist/index.js ./plugins/change-assistant-plugin/dist/index.js
@@ -154,5 +155,5 @@ COPY --from=build-sparql-query /build/dist/index.js ./plugins/sparql-query-plugi
 COPY --from=build-reasoner /build/dist/index.js ./plugins/reasoner-plugin/dist/index.js
 COPY --from=build-spreadsheet-import /build/dist/index.js ./plugins/spreadsheet-import-plugin/dist/index.js
 
-# Wait for MongoDB, then install plugins using unified script
-CMD ["sh", "-c", "echo 'Waiting for MongoDB to be ready...' && sleep 10 && echo 'Installing plugins...' && node manage-plugins.js install && echo 'Plugin initialization complete!'"]
+# Wait for PostgreSQL and the plugin tables, then install plugins using unified script
+CMD ["sh", "-c", "echo 'Installing plugins...' && node manage-plugins.js install && echo 'Plugin initialization complete!'"]

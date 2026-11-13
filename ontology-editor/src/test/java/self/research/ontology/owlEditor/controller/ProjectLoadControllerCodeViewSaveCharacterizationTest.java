@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.MockitoAnnotations;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -17,7 +17,7 @@ import self.research.ontology.owlEditor.repository.DraftChangeRepository;
 import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.HierarchyIndexService;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.OntologyExportJobService;
@@ -69,7 +69,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
     @Mock
     private ProjectImportService importService;
     @Mock
-    private GridFSFileService gridFSFileService;
+    private BlobFileService blobFileService;
     @Mock
     private ProjectShareService shareService;
     @Mock
@@ -91,7 +91,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
     @Mock
     private ImportWorkerDispatcher importWorkerDispatcher;
     @Mock
-    private MongoTemplate mongoTemplate;
+    private FileMetadataRepository fileMetadataRepository;
     @Mock
     private OntologyExportJobService exportJobService;
 
@@ -126,7 +126,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
                 storageManager,
                 metadataService,
                 importService,
-                gridFSFileService,
+                blobFileService,
                 shareService,
                 draftTrackingService,
                 draftCopyService,
@@ -137,7 +137,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
                 projectRepository,
                 preparseService,
                 importWorkerDispatcher,
-                mongoTemplate,
+                fileMetadataRepository,
                 exportJobService,
                 codeViewReimportPipeline,
                 lockRegistry,

@@ -5,11 +5,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
 import self.research.ontology.auth.model.Invitation;
-import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
 import self.research.ontology.auth.repository.InvitationRepository;
 import self.research.ontology.auth.repository.UserRepository;
@@ -21,6 +18,8 @@ import self.research.ontology.auth.service.SystemSettingsService;
 import java.util.List;
 import java.util.Optional;
 
+import static self.research.ontology.auth.controller.AuthTestSupport.signInAs;
+import static self.research.ontology.auth.controller.AuthTestSupport.stubUser;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -52,10 +51,10 @@ class InvitationControllerSecurityTest {
         workspace.addMember("u-admin", "admin", "admin@x.org", Workspace.WorkspaceRole.ADMIN);
         when(workspaces.findByWorkspaceId("w1")).thenReturn(Optional.of(workspace));
 
-        user("u-owner", "owner@x.org");
-        user("u-viewer", "viewer@x.org");
-        user("u-admin", "admin@x.org");
-        user("u-mallory", "mallory@x.org");
+        stubUser(users, "u-owner", "owner@x.org");
+        stubUser(users, "u-viewer", "viewer@x.org");
+        stubUser(users, "u-admin", "admin@x.org");
+        stubUser(users, "u-mallory", "mallory@x.org");
 
         Invitation pending = new Invitation();
         pending.setInvitationToken("tok");
@@ -71,19 +70,6 @@ class InvitationControllerSecurityTest {
     @AfterEach
     void clear() {
         SecurityContextHolder.clearContext();
-    }
-
-    private void user(String id, String email) {
-        User user = new User();
-        user.setId(id);
-        user.setEmail(email);
-        user.setUsername(id);
-        when(users.findByEmail(email)).thenReturn(Optional.of(user));
-    }
-
-    private static void signInAs(String email) {
-        SecurityContextHolder.getContext().setAuthentication(
-                new UsernamePasswordAuthenticationToken(email, null, AuthorityUtils.createAuthorityList("ROLE_USER")));
     }
 
     @Test

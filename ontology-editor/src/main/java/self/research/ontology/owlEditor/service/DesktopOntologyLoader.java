@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
@@ -73,7 +74,7 @@ public class DesktopOntologyLoader {
     private SparqlDatasetService datasetService;
 
     @Autowired(required = false)
-    private GridFSFileService gridFSFileService;
+    private BlobFileService blobFileService;
 
     @Autowired(required = false)
     private ProjectRepository projectRepository;
@@ -308,14 +309,14 @@ public class DesktopOntologyLoader {
     }
 
     /**
-     * After restart, OWLAPI cache is empty but GridFS/Mongo still have the file.
+     * After restart, OWLAPI cache is empty but file store/database still have the file.
      * Write ontology.original.owl + ontology.current.owl so warm can parse locally.
      */
     private void materializeOntologyOnDiskIfMissing(String projectId) {
         if (storageManager.findCurrentOntology(projectId).isPresent()) {
             return;
         }
-        if (gridFSFileService == null || projectRepository == null) {
+        if (blobFileService == null || projectRepository == null) {
             return;
         }
         try {
@@ -324,13 +325,13 @@ public class DesktopOntologyLoader {
                 return;
             }
             ProjectDocument doc = docOpt.get();
-            String gridfsId = doc.getGridfsFileId();
-            if (gridfsId == null || gridfsId.isBlank()) {
+            String blobId = doc.getGridfsFileId();
+            if (blobId == null || blobId.isBlank()) {
                 return;
             }
-            var resourceOpt = gridFSFileService.getFileById(gridfsId);
+            var resourceOpt = blobFileService.getFileById(blobId);
             if (resourceOpt.isEmpty()) {
-                log.warn("[Desktop] GridFS content missing for {} (gridfsId={})", projectId, gridfsId);
+                log.warn("[Desktop] file store content missing for {} (blobId={})", projectId, blobId);
                 return;
             }
             Path projectDir = storageManager.prepareProjectDir(projectId);
@@ -340,7 +341,7 @@ public class DesktopOntologyLoader {
                 Files.copy(in, original, StandardCopyOption.REPLACE_EXISTING);
             }
             Files.copy(original, current, StandardCopyOption.REPLACE_EXISTING);
-            log.info("[Desktop] Materialized ontology on disk from GridFS for OWLAPI warm: {}", projectId);
+            log.info("[Desktop] Materialized ontology on disk from file store for OWLAPI warm: {}", projectId);
         } catch (Exception e) {
             log.warn("[Desktop] Could not materialize ontology on disk for {}: {}", projectId, e.getMessage());
         }
@@ -540,6 +541,7 @@ public class DesktopOntologyLoader {
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                     .setLoadAnnotationAxioms(true)
             );
+            OWLFormatConverter.blockRemoteImports(manager);
 
             OWLOntology ontology = manager.loadOntologyFromOntologyDocument(owlFilePath.toFile());
             long parseMs = System.currentTimeMillis() - start;

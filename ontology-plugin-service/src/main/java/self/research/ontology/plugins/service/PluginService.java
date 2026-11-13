@@ -49,8 +49,7 @@ public class PluginService {
     public Page<PluginDTO> searchPlugins(String query, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "totalDownloads"));
 
-        String safeQuery = query == null ? "" : query.replaceAll("[\\\\^$.|?*+()\\[\\]{}]", "\\\\$0");
-        Page<Plugin> plugins = pluginRepository.searchPlugins(safeQuery, pageable);
+        Page<Plugin> plugins = pluginRepository.searchPlugins(query == null ? "" : query, pageable);
         return plugins.map(this::toDTO);
     }
 
@@ -71,13 +70,8 @@ public class PluginService {
         PluginVersion pluginVersion = versionRepository.findByPluginIdAndVersion(pluginId, version)
             .orElseThrow(() -> new PluginNotFoundException("Plugin version not found: " + pluginId + "@" + version));
 
-        pluginVersion.setDownloads((pluginVersion.getDownloads() != null ? pluginVersion.getDownloads() : 0L) + 1);
-        versionRepository.save(pluginVersion);
-
-        pluginRepository.findByPluginId(pluginId).ifPresent(plugin -> {
-            plugin.setTotalDownloads((plugin.getTotalDownloads() != null ? plugin.getTotalDownloads() : 0L) + 1);
-            pluginRepository.save(plugin);
-        });
+        versionRepository.incrementDownloads(pluginId, version);
+        pluginRepository.incrementTotalDownloads(pluginId);
 
         return storageService.downloadPlugin(pluginVersion.getVsixFileId());
     }

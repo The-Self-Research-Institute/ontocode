@@ -50,18 +50,9 @@ public class ProjectRecoveryLockService {
     }
 
     public void release(String projectId, String actor, String action) {
-        Optional<ProjectRecoveryLockDocument> existing = repository.findById(projectId);
-        if (existing.isEmpty() || !existing.get().isLocked()) {
+        if (!repository.releaseIfLocked(projectId, actor, action, Instant.now())) {
             return;
         }
-        ProjectRecoveryLockDocument lock = existing.get();
-        Instant now = Instant.now();
-        lock.setLocked(false);
-        lock.setReleasedBy(actor);
-        lock.setReleaseAction(action);
-        lock.setReleasedAt(now);
-        lock.setUpdatedAt(now);
-        repository.save(lock);
         log.info("[Recovery] Project {} unlocked by {} ({})", projectId, actor, action);
     }
 }

@@ -59,7 +59,7 @@ public class DesktopFusekiController {
         try {
             boolean saved = desktopOntologyLoader.saveProject(projectId);
             if (saved) {
-                // The file-based save above is the desktop source of truth; the Mongo-tracked
+                // The file-based save above is the desktop source of truth; the database-tracked
                 // draft records exist only to drive the "pending drafts" UI, so once the save
                 // lands they're stale and must be cleared or that UI shows unsaved work forever.
                 try {

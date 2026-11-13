@@ -15,6 +15,7 @@ fi
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+cp "$repo_root/baseline.json" "$tmpdir/baseline.json"
 
 check_paths=()
 while IFS= read -r rel; do

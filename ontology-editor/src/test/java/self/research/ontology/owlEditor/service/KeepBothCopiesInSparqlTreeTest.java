@@ -53,7 +53,7 @@ import static self.research.ontology.owlEditor.service.KeepBothPizzaFixture.SUFF
 
 class KeepBothCopiesInSparqlTreeTest {
 
-    private static final String USER = "mongo-1";
+    private static final String USER = "user-1";
 
     @Mock
     private SparqlDatasetService datasetService;

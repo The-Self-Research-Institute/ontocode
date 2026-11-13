@@ -5,6 +5,7 @@ export type DraftCopyPhase = 'idle' | 'import-blocked' | 'copying' | 'ready' | '
 interface DraftCopyModalProps {
   phase: DraftCopyPhase;
   tripleCount?: number;
+  failureReason?: string;
   onCancel: () => void;
 }
 
@@ -15,7 +16,7 @@ function estimateCopySeconds(tripleCount: number): string {
   return 'a few minutes';
 }
 
-const DraftCopyModal: React.FC<DraftCopyModalProps> = ({ phase, tripleCount, onCancel }) => {
+const DraftCopyModal: React.FC<DraftCopyModalProps> = ({ phase, tripleCount, failureReason, onCancel }) => {
   const [dots, setDots] = useState('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -96,7 +97,7 @@ const DraftCopyModal: React.FC<DraftCopyModalProps> = ({ phase, tripleCount, onC
               <h3 className="text-base font-semibold text-gray-900">Draft Copy Failed</h3>
             </div>
             <p className="text-sm text-gray-600 mb-5">
-              Something went wrong while creating your draft. You've been kept in Public mode. Please try again.
+              {failureReason || "Something went wrong while creating your draft."} You've been kept in Public mode.{failureReason ? "" : " Please try again."}
             </p>
             <div className="flex justify-end">
               <button

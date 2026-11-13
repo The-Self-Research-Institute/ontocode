@@ -1,6 +1,5 @@
 package self.research.ontology.swrl.service;
 
-import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -218,7 +217,7 @@ public class OntologyClientService {
                     if (response.getHeaders().getContentLength() > textLimit) {
                         throw new OntologyTooLargeException(axiomLimit);
                     }
-                    OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+                    OWLOntologyManager manager = TolerantOntologyLoading.manager();
                     // Mirror only the first DIAGNOSTIC_CAPTURE_LIMIT bytes into a small in-memory
                     // buffer as the parser reads, so a parse failure can log what the editor
                     // actually sent instead of just "6 parsers tried, all failed". Bounded to a

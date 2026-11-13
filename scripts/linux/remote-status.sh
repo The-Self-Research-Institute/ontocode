@@ -12,6 +12,7 @@ echo '=== fuseki logs ==='
 docker logs ontocode-fuseki --tail 50 2>&1 || true
 echo '=== fuseki health ==='
 docker inspect ontocode-fuseki --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>&1 || true
-echo '=== mongo ==='
-docker inspect ontocode-mongo --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>&1 || true
+echo '=== postgres ==='
+docker inspect ontocode-postgres --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' 2>&1 || true
+docker exec ontocode-postgres pg_isready -U ontocode -d ontocode 2>&1 || true
 REMOTE

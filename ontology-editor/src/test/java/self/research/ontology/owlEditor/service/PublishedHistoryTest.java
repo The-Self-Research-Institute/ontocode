@@ -9,10 +9,8 @@ import org.eclipse.rdf4j.repository.sail.SailRepository;
 import org.eclipse.rdf4j.sail.memory.MemoryStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import self.research.ontology.owlEditor.model.HistoryChange;
+import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 import self.research.ontology.owlEditor.service.delta.DeltaCapture;
 import self.research.ontology.owlEditor.service.delta.ExactDelta;
 
@@ -38,7 +36,7 @@ class PublishedHistoryTest {
     private static final IRI C = VF.createIRI("http://ex.org/C");
 
     private SailRepository repository;
-    private MongoTemplate mongo;
+    private HistoryChangeRepository rows;
     private OntologyHistoryService history;
     private PublishedHistory published;
 
@@ -48,9 +46,9 @@ class PublishedHistoryTest {
         repository.init();
         SparqlDatasetService datasets = mock(SparqlDatasetService.class);
         when(datasets.graphTarget("p")).thenReturn(new SparqlDatasetService.ProjectGraphTarget(repository, GRAPH.stringValue()));
-        mongo = mock(MongoTemplate.class);
+        rows = mock(HistoryChangeRepository.class);
         history = mock(OntologyHistoryService.class);
-        published = new PublishedHistory(mongo, datasets, history);
+        published = new PublishedHistory(rows, datasets, history);
     }
 
     private static HistoryChange row(String id, IRI object) {
@@ -65,7 +63,7 @@ class PublishedHistoryTest {
     }
 
     private void publish(List<HistoryChange> rows, IRI... added) {
-        when(mongo.find(any(Query.class), eq(HistoryChange.class))).thenReturn(rows);
+        when(this.rows.findDraftRowsOfUser("p", "u1")).thenReturn(rows);
         Optional<DeltaCapture> capture = published.begin("p");
         try (RepositoryConnection c = repository.getConnection()) {
             for (IRI object : added) {
@@ -79,7 +77,7 @@ class PublishedHistoryTest {
     void rowsMatchingWhatWasCommittedAreLeftUndoableAndNothingExtraIsRecorded() {
         publish(List.of(row("r1", B)), B);
 
-        verify(mongo, never()).updateFirst(any(Query.class), any(Update.class), eq(HistoryChange.class));
+        verify(this.rows, never()).blockExact(anyString(), anyString(), anyString(), anyString());
         verify(history, never()).recordEdit(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(),
                 anyString(), any(), any(), anyBoolean(), any());
     }
@@ -88,7 +86,7 @@ class PublishedHistoryTest {
     void aRowThatDidNotReachThePublicGraphIsBlockedFromUndo() {
         publish(List.of(row("r1", B), row("r2", C)), B);
 
-        verify(mongo).updateFirst(any(Query.class), any(Update.class), eq(HistoryChange.class));
+        verify(this.rows).blockExact(eq("r2"), anyString(), eq("p"), eq(PublishedHistory.CHANGED_IN_PUBLISH));
     }
 
     @Test
@@ -107,7 +105,7 @@ class PublishedHistoryTest {
 
         publish(List.of(row("r1", B), plain), B, C);
 
-        verify(mongo, never()).updateFirst(any(Query.class), any(Update.class), eq(HistoryChange.class));
+        verify(this.rows, never()).blockExact(anyString(), anyString(), anyString(), anyString());
         verify(history, never()).recordEdit(anyString(), anyString(), anyString(), anyString(), any(), any(), any(), any(),
                 anyString(), any(), any(), anyBoolean(), any());
     }

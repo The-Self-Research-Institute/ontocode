@@ -1,90 +1,108 @@
 package self.research.ontology.owlEditor.service;
 
-import org.bson.Document;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.UpdateDefinition;
+import org.springframework.jdbc.core.JdbcTemplate;
+import self.research.ontology.owlEditor.TestDatabase;
 import self.research.ontology.owlEditor.document.ProjectDocument;
 import self.research.ontology.owlEditor.model.ProjectStatus;
-import self.research.ontology.owlEditor.repository.ProjectRepository;
+import self.research.ontology.owlEditor.repository.JdbcProjectAccessRepository;
+import self.research.ontology.owlEditor.repository.JdbcProjectRepository;
 
-import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class ProjectMetadataServiceOwnerTest {
 
-    private Document savedUpdate(String ownerId) {
-        MongoTemplate mongo = mock(MongoTemplate.class);
-        ProjectMetadataService service = new ProjectMetadataService(mock(ProjectRepository.class), mongo);
+    private final JdbcTemplate jdbc = TestDatabase.jdbc();
+    private final JdbcProjectRepository files = new JdbcProjectRepository(jdbc);
+    private final ProjectMetadataService service = new ProjectMetadataService(files, new JdbcProjectAccessRepository(jdbc));
 
-        service.updateProjectMetadata("p1", ProjectStatus.uploaded("a.owl"), "g1", "ann@x.org", ownerId, null, null);
-
-        ArgumentCaptor<UpdateDefinition> update = ArgumentCaptor.forClass(UpdateDefinition.class);
-        verify(mongo).upsert(org.mockito.ArgumentMatchers.any(Query.class), update.capture(), eq(ProjectDocument.class));
-        return update.getValue().getUpdateObject();
+    @BeforeEach
+    void clean() {
+        jdbc.update("delete from project_member");
+        jdbc.update("delete from project");
+        jdbc.update("delete from ontology_file");
+        jdbc.update("delete from app_user");
     }
 
     @Test
     void aNewProjectGetsTheVerifiedOwnerIdAlongsideTheEmail() {
-        Document setOnInsert = (Document) savedUpdate("u-ann").get("$setOnInsert");
+        service.updateProjectMetadata("p1", ProjectStatus.uploaded("a.owl"), "g1", "ann@x.org", "u-ann", null, null);
 
-        assertEquals("u-ann", setOnInsert.get("ownerId"));
-        assertEquals("ann@x.org", setOnInsert.get("ownerEmail"));
+        ProjectDocument stored = files.findById("p1").orElseThrow();
+        assertEquals("u-ann", stored.getOwnerId());
+        assertEquals("ann@x.org", stored.getOwnerEmail());
+        assertEquals("g1", stored.getGridfsFileId());
+        assertEquals("a.owl", stored.getFilename());
     }
 
     @Test
     void aLaterUploadNeverReplacesTheStoredOwner() {
-        Document set = (Document) savedUpdate("u-member").get("$set");
+        service.updateProjectMetadata("p1", ProjectStatus.uploaded("a.owl"), "g1", "ann@x.org", "u-ann", null, null);
 
-        assertFalse(set.containsKey("ownerId"));
-        assertFalse(set.containsKey("ownerEmail"));
+        service.updateProjectMetadata("p1", ProjectStatus.uploaded("a.owl"), "g2", "bob@x.org", "u-member", null, null);
+
+        ProjectDocument stored = files.findById("p1").orElseThrow();
+        assertEquals("u-ann", stored.getOwnerId());
+        assertEquals("ann@x.org", stored.getOwnerEmail());
+        assertEquals("g2", stored.getGridfsFileId());
     }
 
     @Test
     void withoutAVerifiedIdTheOwnerIdIsLeftAlone() {
-        assertFalse(((Document) savedUpdate(null).get("$setOnInsert")).containsKey("ownerId"));
-        assertFalse(((Document) savedUpdate(" ").get("$setOnInsert")).containsKey("ownerId"));
+        service.updateProjectMetadata("p1", ProjectStatus.uploaded("a.owl"), "g1", "ann@x.org", null, null, null);
+        service.updateProjectMetadata("p2", ProjectStatus.uploaded("a.owl"), "g1", "ann@x.org", " ", null, null);
+
+        assertNull(files.findById("p1").orElseThrow().getOwnerId());
+        assertNull(files.findById("p2").orElseThrow().getOwnerId());
     }
 
     @Test
     void theOwnerEmailComesFromTheWorkspaceProjectNotFromWhoUploaded() {
-        ProjectRepository repository = mock(ProjectRepository.class);
-        MongoTemplate mongo = mock(MongoTemplate.class);
+        jdbc.update("insert into project (id, project_id, workspace_id, owner_id) values ('row-p1', 'p1', 'ws-1', 'u-owner')");
+        jdbc.update("insert into project_member (project_row_id, position, user_id, email, role) values ('row-p1', 0, 'u-up', 'uploader@x.org', 'EDITOR')");
+        jdbc.update("insert into project_member (project_row_id, position, user_id, email, role) values ('row-p1', 1, 'u-owner', 'owner@x.org', 'OWNER')");
         ProjectDocument fileRecord = new ProjectDocument("p1", "p", "p.owl");
         fileRecord.setOwnerEmail("uploader@x.org");
-        when(repository.findById("p1")).thenReturn(Optional.of(fileRecord));
-        ProjectDocument workspaceRecord = new ProjectDocument();
-        ProjectDocument.MemberRef owner = new ProjectDocument.MemberRef();
-        owner.setRole("OWNER");
-        owner.setEmail("owner@x.org");
-        ProjectDocument.MemberRef editor = new ProjectDocument.MemberRef();
-        editor.setRole("EDITOR");
-        editor.setEmail("uploader@x.org");
-        workspaceRecord.setMembers(List.of(editor, owner));
-        when(mongo.findOne(org.mockito.ArgumentMatchers.any(Query.class), eq(ProjectDocument.class), eq("projects")))
-                .thenReturn(workspaceRecord);
+        files.save(fileRecord);
 
-        assertEquals(Optional.of("owner@x.org"), new ProjectMetadataService(repository, mongo).getOwnerEmail("p1"));
+        assertEquals(Optional.of("owner@x.org"), service.getOwnerEmail("p1"));
     }
 
     @Test
     void withoutAWorkspaceProjectTheFileRecordOwnerIsUsed() {
-        ProjectRepository repository = mock(ProjectRepository.class);
         ProjectDocument fileRecord = new ProjectDocument("p1", "p", "p.owl");
         fileRecord.setOwnerEmail("solo@x.org");
-        when(repository.findById("p1")).thenReturn(Optional.of(fileRecord));
+        files.save(fileRecord);
 
-        assertTrue(new ProjectMetadataService(repository, mock(MongoTemplate.class)).getOwnerEmail("p1").isPresent());
-        assertEquals("solo@x.org", new ProjectMetadataService(repository, mock(MongoTemplate.class)).getOwnerEmail("p1").get());
+        assertEquals(Optional.of("solo@x.org"), service.getOwnerEmail("p1"));
+        assertEquals(Optional.empty(), service.getOwnerEmail("missing"));
+    }
+
+    @Test
+    void statusMetadataAndVersionsRoundTripThroughTheService() {
+        service.writeStatus("p1", ProjectStatus.uploaded("a.owl"));
+        service.writeMeta("p1", java.util.Map.of("k", "v"));
+        service.writeImportProgress("p1", 150, "parse", "Parsing");
+        service.setOwnerEmail("p1", "ann@x.org");
+        service.setGridfsFileId("p1", "g7");
+
+        assertEquals("a.owl", service.readStatus("p1").orElseThrow().filename());
+        assertEquals("v", service.readMeta("p1").orElseThrow().get("k"));
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> progress = (java.util.Map<String, Object>) service.readMeta("p1").orElseThrow().get("importProgress");
+        assertEquals(99, progress.get("progress"));
+        assertEquals("parse", progress.get("stage"));
+        assertEquals("ann@x.org", files.findById("p1").orElseThrow().getOwnerEmail());
+        assertEquals("g7", files.findById("p1").orElseThrow().getGridfsFileId());
+        assertEquals(1L, service.incrementMutationVersion("p1"));
+        assertEquals(2L, service.incrementMutationVersion("p1"));
+        assertEquals(2L, service.getMutationVersion("p1"));
+        assertEquals(1L, service.incrementMainGraphRevision("p1"));
+        assertEquals(1L, service.getMainGraphRevision("p1"));
+        assertEquals(Optional.of("p1"), service.getExistingProjectId("a.owl", "ann@x.org"));
     }
 }

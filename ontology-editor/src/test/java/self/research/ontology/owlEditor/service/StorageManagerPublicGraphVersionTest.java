@@ -211,7 +211,7 @@ class StorageManagerPublicGraphVersionTest {
         @Override
         public long increment(String projectId) {
             if (failIncrements) {
-                throw new IllegalStateException("mongo unavailable");
+                throw new IllegalStateException("database unavailable");
             }
             return versions.computeIfAbsent(projectId, k -> new AtomicLong()).incrementAndGet();
         }

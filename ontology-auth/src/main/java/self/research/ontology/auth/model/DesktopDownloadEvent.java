@@ -1,8 +1,5 @@
 package self.research.ontology.auth.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
 
@@ -10,17 +7,13 @@ import java.time.Instant;
  * Privacy-friendly download analytics — stores a one-way hash of the client IP
  * (never the raw address) plus coarse request metadata.
  */
-@Document(collection = "desktop_download_events")
 public class DesktopDownloadEvent {
 
-    @Id
     private String id;
 
-    @Indexed
     private String platform;
 
     /** Visitor OS (windows, macos, linux, android, ios, unknown) — not the installer platform. */
-    @Indexed
     private String clientOs;
 
     private String version;

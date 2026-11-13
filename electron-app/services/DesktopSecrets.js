@@ -11,7 +11,12 @@ function generateSecrets() {
     return {
         jwtSecret: crypto.randomBytes(32).toString('base64'),
         adminPassword: crypto.randomBytes(24).toString('base64url'),
+        dbPassword: crypto.randomBytes(24).toString('base64url'),
     };
+}
+
+function hasDbPassword(secrets) {
+    return typeof secrets.dbPassword === 'string' && secrets.dbPassword.length >= 16;
 }
 
 function isValid(secrets) {
@@ -59,8 +64,14 @@ function loadDesktopSecrets({ store, safeStorage, platform = process.platform, e
     const sealing = sealingAvailable(safeStorage, platform);
     let secrets = readStored(store, safeStorage, sealing);
     const created = !secrets;
-    if (created) secrets = generateSecrets();
-    if (created || (sealing && store.get(PLAIN_KEY, null))) {
+    let upgraded = false;
+    if (created) {
+        secrets = generateSecrets();
+    } else if (!hasDbPassword(secrets)) {
+        secrets = { ...secrets, dbPassword: generateSecrets().dbPassword };
+        upgraded = true;
+    }
+    if (created || upgraded || (sealing && store.get(PLAIN_KEY, null))) {
         writeStored(store, safeStorage, sealing, platform, secrets);
     }
     const override = env[ADMIN_PASSWORD_OVERRIDE_ENV];

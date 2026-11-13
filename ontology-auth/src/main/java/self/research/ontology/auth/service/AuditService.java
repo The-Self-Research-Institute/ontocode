@@ -2,7 +2,7 @@ package self.research.ontology.auth.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import self.research.ontology.auth.repository.AuditEventRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -13,22 +13,16 @@ import java.util.Map;
 public class AuditService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditService.class);
-    private final MongoTemplate mongoTemplate;
+    private final AuditEventRepository auditEvents;
 
-    public AuditService(MongoTemplate mongoTemplate) {
-        this.mongoTemplate = mongoTemplate;
+    public AuditService(AuditEventRepository auditEvents) {
+        this.auditEvents = auditEvents;
     }
 
     public void logEvent(String username, String eventType, String ipAddress, Map<String, String> metadata) {
         try {
-            Map<String, Object> auditEvent = new HashMap<>();
-            auditEvent.put("username", username);
-            auditEvent.put("eventType", eventType);
-            auditEvent.put("ipAddress", ipAddress);
-            auditEvent.put("timestamp", LocalDateTime.now());
-            auditEvent.put("metadata", metadata != null ? metadata : new HashMap<>());
-
-            mongoTemplate.save(auditEvent, "audit_events");
+            auditEvents.insert(username, eventType, ipAddress, LocalDateTime.now(),
+                    metadata != null ? metadata : new HashMap<>());
 
             log.info("Audit: {} - {} from {}", eventType, username, ipAddress);
         } catch (Exception e) {

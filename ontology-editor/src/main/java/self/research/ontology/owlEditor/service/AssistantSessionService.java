@@ -3,12 +3,6 @@ package self.research.ontology.owlEditor.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.mongodb.core.FindAndModifyOptions;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument;
 import self.research.ontology.owlEditor.document.AssistantSessionDocument.AssistantSessionStatus;
@@ -52,7 +46,6 @@ public class AssistantSessionService {
 
     private final AssistantSessionRepository sessionRepository;
     private final ProjectMetadataService metadataService;
-    private final MongoTemplate mongoTemplate;
     private final AssistantAuditService auditService;
 
     @Value("${assistant.session.retrieval-attempts-default:8}")
@@ -68,19 +61,16 @@ public class AssistantSessionService {
     private int maxActiveSessionsPerUser;
 
     public AssistantSessionService(AssistantSessionRepository sessionRepository,
-                                    ProjectMetadataService metadataService,
-                                    MongoTemplate mongoTemplate) {
-        this(sessionRepository, metadataService, mongoTemplate, null);
+                                    ProjectMetadataService metadataService) {
+        this(sessionRepository, metadataService, null);
     }
 
     @Autowired
     public AssistantSessionService(AssistantSessionRepository sessionRepository,
                                     ProjectMetadataService metadataService,
-                                    MongoTemplate mongoTemplate,
                                     AssistantAuditService auditService) {
         this.sessionRepository = sessionRepository;
         this.metadataService = metadataService;
-        this.mongoTemplate = mongoTemplate;
         this.auditService = auditService;
         for (int i = 0; i < CREATE_LOCK_STRIPES; i++) {
             createLocks[i] = new ReentrantLock();
@@ -213,18 +203,13 @@ public class AssistantSessionService {
 
     public Optional<Integer> activeSessionLimitRetryAfter(String userEmail) {
         Instant now = Instant.now();
-        Query active = Query.query(Criteria.where("userEmail").is(userEmail)
-                .and("status").is(AssistantSessionStatus.ACTIVE)
-                .and("expiresAt").gt(now));
-        long activeCount = mongoTemplate.count(active, AssistantSessionDocument.class);
+        long activeCount = sessionRepository.countActive(userEmail, now);
         if (activeCount < maxActiveSessionsPerUser) {
             return Optional.empty();
         }
-        AssistantSessionDocument soonest = mongoTemplate.findOne(
-                Query.of(active).with(Sort.by(Sort.Direction.ASC, "expiresAt")).limit(1),
-                AssistantSessionDocument.class);
-        long waitSeconds = soonest != null && soonest.getExpiresAt() != null
-                ? Duration.between(now, soonest.getExpiresAt()).toSeconds() + 1
+        Optional<Instant> soonest = sessionRepository.soonestActiveDeadline(userEmail, now);
+        long waitSeconds = soonest.isPresent()
+                ? Duration.between(now, soonest.get()).toSeconds() + 1
                 : deadlineSeconds;
         log.info("[Assistant] User {} has {} active sessions (limit {}), rejecting session create",
                 userEmail, activeCount, maxActiveSessionsPerUser);
@@ -248,15 +233,7 @@ public class AssistantSessionService {
     }
 
     public boolean tryConsumeRetrievalAttempt(String sessionId) {
-        Query query = Query.query(Criteria.where("_id").is(sessionId)
-                .and("status").is(AssistantSessionStatus.ACTIVE)
-                .and("retrievalAttemptsRemaining").gt(0));
-        Update update = new Update()
-                .inc("retrievalAttemptsRemaining", -1)
-                .set("updatedAt", Instant.now());
-        AssistantSessionDocument updated = mongoTemplate.findAndModify(
-                query, update, FindAndModifyOptions.options().returnNew(true), AssistantSessionDocument.class);
-        return updated != null;
+        return sessionRepository.tryConsumeRetrievalAttempt(sessionId, Instant.now());
     }
 
     public int getMaxRetrievalAttempts() {
@@ -264,15 +241,7 @@ public class AssistantSessionService {
     }
 
     public boolean tryConsumeTokenBudget(String sessionId, int estimatedTokens) {
-        Query query = Query.query(Criteria.where("_id").is(sessionId)
-                .and("status").is(AssistantSessionStatus.ACTIVE)
-                .and("tokenBudgetRemaining").gte(estimatedTokens));
-        Update update = new Update()
-                .inc("tokenBudgetRemaining", -estimatedTokens)
-                .set("updatedAt", Instant.now());
-        AssistantSessionDocument updated = mongoTemplate.findAndModify(
-                query, update, FindAndModifyOptions.options().returnNew(true), AssistantSessionDocument.class);
-        return updated != null;
+        return sessionRepository.tryConsumeTokenBudget(sessionId, estimatedTokens, Instant.now());
     }
 
     public record BudgetSnapshot(int retrievalAttemptsRemaining, int tokenBudgetRemaining) {}
@@ -287,16 +256,10 @@ public class AssistantSessionService {
     }
 
     public void completeSession(String sessionId) {
-        mongoTemplate.updateFirst(
-                Query.query(Criteria.where("_id").is(sessionId)),
-                new Update().set("status", AssistantSessionStatus.COMPLETED).set("updatedAt", Instant.now()),
-                AssistantSessionDocument.class);
+        sessionRepository.updateStatus(sessionId, AssistantSessionStatus.COMPLETED, Instant.now());
     }
 
     private void expireSession(String sessionId) {
-        mongoTemplate.updateFirst(
-                Query.query(Criteria.where("_id").is(sessionId)),
-                new Update().set("status", AssistantSessionStatus.EXPIRED).set("updatedAt", Instant.now()),
-                AssistantSessionDocument.class);
+        sessionRepository.updateStatus(sessionId, AssistantSessionStatus.EXPIRED, Instant.now());
     }
 }

@@ -1,19 +1,13 @@
 package self.research.ontology.owlEditor.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.mapping.Document;
 import self.research.ontology.owlEditor.service.spreadsheet.rule.RuleSpec;
 
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
-@Document("spreadsheet_rule_sets")
-@CompoundIndex(name = "project_name", def = "{'projectId': 1, 'name': 1}", unique = true)
 public class SpreadsheetRuleSetEntity {
 
-    @Id
     private String id;
     private String projectId;
     private String name;

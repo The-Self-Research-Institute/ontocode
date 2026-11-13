@@ -4,9 +4,6 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -15,18 +12,15 @@ import java.util.Map;
 @Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
-@Document(collection = "plugin_versions")
-@CompoundIndex(name = "plugin_version_idx", def = "{'pluginId': 1, 'version': 1}", unique = true)
 public class PluginVersion {
 
-    @Id
     private String id;
 
     private String pluginId;  // Reference to Plugin
     private String version;  // Semantic version e.g., "1.2.3"
     private String changelog;  // Release notes
 
-    private String vsixFileId;  // GridFS file ID
+    private String vsixFileId;  // file store ID
     private Long fileSize;  // File size in bytes
 
     private Map<String, String> dependencies;  // Plugin dependencies

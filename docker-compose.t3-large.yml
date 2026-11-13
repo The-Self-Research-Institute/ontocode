@@ -8,8 +8,8 @@
 # Upgrade to t3.xlarge / r6i for heavier reasoning workloads or larger ontologies.
 
 services:
-  mongo:
-    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25", "--auth"]
+  postgres:
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=60", "-c", "effective_cache_size=320MB"]
     deploy:
       resources:
         limits:

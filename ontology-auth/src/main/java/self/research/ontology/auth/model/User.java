@@ -1,8 +1,5 @@
 package self.research.ontology.auth.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
@@ -10,7 +7,6 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
 
-@Document(collection = "users")
 public class User {
 
     public boolean isKnownAs(String identifier) {
@@ -18,16 +14,13 @@ public class User {
     }
 
 
-    @Id
     private String id;
 
     @NotBlank(message = "Username is required")
-    @Indexed(unique = true)
     private String username;
 
     @NotBlank(message = "Email is required")
     @Email(message = "Invalid email format")
-    @Indexed(unique = true)
     private String email;
 
     @NotBlank(message = "Password is required")

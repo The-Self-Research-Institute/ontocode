@@ -1,23 +1,15 @@
 package self.research.ontology.owlEditor.service;
 
-import com.mongodb.client.result.DeleteResult;
-import com.mongodb.client.result.UpdateResult;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataAccessException;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
-import self.research.ontology.owlEditor.document.ProjectWriteLeaseDocument;
+import self.research.ontology.owlEditor.repository.ProjectWriteLeaseRepository;
 
 import java.lang.management.ManagementFactory;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Date;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ScheduledFuture;
@@ -60,7 +52,7 @@ public class ProjectWriteLeaseManager implements AutoCloseable {
         }
     }
 
-    private final MongoTemplate mongoTemplate;
+    private final ProjectWriteLeaseRepository leases;
     private final Clock clock;
     private final Settings settings;
     private final String holder;
@@ -68,8 +60,8 @@ public class ProjectWriteLeaseManager implements AutoCloseable {
     private final Counter timeouts;
     private final Counter lostLeases;
 
-    public ProjectWriteLeaseManager(MongoTemplate mongoTemplate, Clock clock, Settings settings, MeterRegistry meterRegistry) {
-        this.mongoTemplate = Objects.requireNonNull(mongoTemplate, "mongoTemplate");
+    public ProjectWriteLeaseManager(ProjectWriteLeaseRepository leases, Clock clock, Settings settings, MeterRegistry meterRegistry) {
+        this.leases = Objects.requireNonNull(leases, "leases");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.settings = Objects.requireNonNull(settings, "settings");
         this.holder = ManagementFactory.getRuntimeMXBean().getName();
@@ -119,30 +111,11 @@ public class ProjectWriteLeaseManager implements AutoCloseable {
     private boolean tryAcquire(String projectId, String token) {
         Instant now = clock.instant();
         Instant expiresAt = now.plus(settings.leaseTtl());
-        try {
-            mongoTemplate.insert(ProjectWriteLeaseDocument.builder()
-                    .projectId(projectId)
-                    .ownerToken(token)
-                    .holder(holder)
-                    .acquiredAt(now)
-                    .expiresAt(expiresAt)
-                    .build());
-            return true;
-        } catch (DuplicateKeyException alreadyHeld) {
-            Query expired = Query.query(Criteria.where(ProjectWriteLeaseDocument.FIELD_ID).is(projectId)
-                    .and(ProjectWriteLeaseDocument.FIELD_EXPIRES_AT).lt(Date.from(now)));
-            Update takeOver = new Update()
-                    .set(ProjectWriteLeaseDocument.FIELD_OWNER_TOKEN, token)
-                    .set(ProjectWriteLeaseDocument.FIELD_HOLDER, holder)
-                    .set(ProjectWriteLeaseDocument.FIELD_ACQUIRED_AT, Date.from(now))
-                    .set(ProjectWriteLeaseDocument.FIELD_EXPIRES_AT, Date.from(expiresAt));
-            UpdateResult result = mongoTemplate.updateFirst(expired, takeOver, ProjectWriteLeaseDocument.class);
-            if (result.getMatchedCount() > 0) {
-                log.warn("[WriteLease] Took over an expired write lease for project {}", projectId);
-                return true;
-            }
-            return false;
+        ProjectWriteLeaseRepository.Acquisition result = leases.tryAcquire(projectId, token, holder, now, expiresAt);
+        if (result == ProjectWriteLeaseRepository.Acquisition.TOOK_OVER) {
+            log.warn("[WriteLease] Took over an expired write lease for project {}", projectId);
         }
+        return result != ProjectWriteLeaseRepository.Acquisition.HELD;
     }
 
     private Lease startRenewal(String projectId, String token) {
@@ -155,11 +128,6 @@ public class ProjectWriteLeaseManager implements AutoCloseable {
             throw e;
         }
         return lease;
-    }
-
-    private Query ownedBy(String projectId, String token) {
-        return Query.query(Criteria.where(ProjectWriteLeaseDocument.FIELD_ID).is(projectId)
-                .and(ProjectWriteLeaseDocument.FIELD_OWNER_TOKEN).is(token));
     }
 
     @Override
@@ -198,10 +166,8 @@ public class ProjectWriteLeaseManager implements AutoCloseable {
             }
             try {
                 Instant expiresAt = clock.instant().plus(settings.leaseTtl());
-                UpdateResult result = mongoTemplate.updateFirst(ownedBy(projectId, ownerToken),
-                        new Update().set(ProjectWriteLeaseDocument.FIELD_EXPIRES_AT, Date.from(expiresAt)),
-                        ProjectWriteLeaseDocument.class);
-                if (result.getMatchedCount() == 0 && !released.get() && lost.compareAndSet(false, true)) {
+                boolean renewed = leases.renew(projectId, ownerToken, expiresAt);
+                if (!renewed && !released.get() && lost.compareAndSet(false, true)) {
                     if (lostLeases != null) {
                         lostLeases.increment();
                     }
@@ -225,8 +191,7 @@ public class ProjectWriteLeaseManager implements AutoCloseable {
                 scheduled.cancel(false);
             }
             try {
-                DeleteResult result = mongoTemplate.remove(ownedBy(projectId, ownerToken), ProjectWriteLeaseDocument.class);
-                if (result.getDeletedCount() == 0) {
+                if (!leases.release(projectId, ownerToken)) {
                     log.warn("[WriteLease] Write lease for project {} was no longer ours at release", projectId);
                 }
             } catch (RuntimeException e) {

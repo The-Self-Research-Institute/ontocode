@@ -83,7 +83,7 @@ public class MdcLoggingFilter extends OncePerRequestFilter {
             byte[] decoded = Base64.getUrlDecoder().decode(parts[1]);
             JsonNode claims = MAPPER.readTree(decoded);
 
-            // Stable internal id, kept for joining against Mongo if needed.
+            // Stable internal id, kept for joining against database if needed.
             String userId = textClaim(claims, "userId");
             if (userId != null) MDC.put("userId", userId);
 

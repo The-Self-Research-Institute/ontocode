@@ -18,6 +18,18 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.9-beta.1",
+    webVersion: "1.2.9",
+    date: "November 12, 2026",
+    title: "PostgreSQL replaces MongoDB",
+    highlights: [
+      "Database — OntoCode now uses PostgreSQL as its database instead of MongoDB. The desktop app includes it, so there is nothing to install, and the first start takes a little longer.",
+      "Licences — LGPL libraries such as HermiT and JFact ship as separate files with their licence texts, and a check covers every shipped library.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.8-beta.1",
     webVersion: "1.2.8",
     date: "October 29, 2026",

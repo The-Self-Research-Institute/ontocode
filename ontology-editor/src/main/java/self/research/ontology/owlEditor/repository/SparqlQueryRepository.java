@@ -1,12 +1,17 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.SparqlQueryEntity;
 
 import java.util.List;
+import java.util.Optional;
 
-@Repository
-public interface SparqlQueryRepository extends MongoRepository<SparqlQueryEntity, String> {
+public interface SparqlQueryRepository {
+
     List<SparqlQueryEntity> findByProjectId(String projectId);
+
+    Optional<SparqlQueryEntity> findById(String id);
+
+    SparqlQueryEntity save(SparqlQueryEntity entity);
+
+    void deleteById(String id);
 }

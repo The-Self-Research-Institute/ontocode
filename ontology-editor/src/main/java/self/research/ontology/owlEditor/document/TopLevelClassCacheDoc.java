@@ -1,17 +1,12 @@
 package self.research.ontology.owlEditor.document;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 import self.research.ontology.owlEditor.dto.OntologyDto;
 
 import java.util.Date;
 import java.util.List;
 
-@Document(collection = "top_level_class_cache")
 public class TopLevelClassCacheDoc {
 
-    @Id
     private String projectId;
 
     private List<OntologyDto.TreeNode> nodes;
@@ -20,7 +15,6 @@ public class TopLevelClassCacheDoc {
 
     private long computedAt;
 
-    @Indexed(expireAfterSeconds = 0)
     private Date expiresAt;
 
     public TopLevelClassCacheDoc() {}

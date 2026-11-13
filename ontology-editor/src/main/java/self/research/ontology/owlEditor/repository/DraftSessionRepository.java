@@ -1,19 +1,23 @@
 package self.research.ontology.owlEditor.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.stereotype.Repository;
 import self.research.ontology.owlEditor.model.DraftSession;
 
+import java.util.List;
 import java.util.Optional;
 
-@Repository
-public interface DraftSessionRepository extends MongoRepository<DraftSession, String> {
+public interface DraftSessionRepository {
+
+    DraftSession save(DraftSession session);
+
+    Optional<DraftSession> findById(String id);
 
     Optional<DraftSession> findByProjectIdAndUserId(String projectId, String userId);
 
-    java.util.List<DraftSession> findByProjectId(String projectId);
+    List<DraftSession> findByProjectId(String projectId);
 
     void deleteByProjectIdAndUserId(String projectId, String userId);
 
-    java.util.List<DraftSession> findByUserIdStartingWith(String userIdPrefix);
+    void delete(DraftSession session);
+
+    List<DraftSession> findByUserIdStartingWith(String userIdPrefix);
 }

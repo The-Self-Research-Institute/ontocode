@@ -16,7 +16,7 @@ import self.research.ontology.owlEditor.service.SparqlDatasetService;
 import self.research.ontology.owlEditor.service.ProjectAuthorization;
 import self.research.ontology.owlEditor.service.ProjectShareService;
 import self.research.ontology.owlEditor.service.StorageManager;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 
 import java.util.HashMap;
 import java.util.List;
@@ -38,7 +38,7 @@ public class ProjectController {
     private final ProjectRepository projectRepository;
     private final ProjectShareService shareService;
     private final StorageManager storageManager;
-    private final GridFSFileService gridFsFileService;
+    private final BlobFileService blobFileService;
     private final SparqlDatasetService datasetService;
     private final DraftTrackingService draftTrackingService;
 
@@ -50,7 +50,7 @@ public class ProjectController {
     public ProjectController(ProjectRepository projectRepository,
                              ProjectShareService shareService,
                              StorageManager storageManager,
-                             GridFSFileService gridFsFileService,
+                             BlobFileService blobFileService,
                              SparqlDatasetService datasetService,
                              DraftTrackingService draftTrackingService,
                              ChangeTrackingService changeTrackingService,
@@ -58,7 +58,7 @@ public class ProjectController {
         this.projectRepository = projectRepository;
         this.shareService = shareService;
         this.storageManager = storageManager;
-        this.gridFsFileService = gridFsFileService;
+        this.blobFileService = blobFileService;
         this.datasetService = datasetService;
         this.draftTrackingService = draftTrackingService;
         this.changeTrackingService = changeTrackingService;
@@ -214,11 +214,11 @@ public class ProjectController {
                 log.warn("[ProjectController] Failed to clear dataset for {}: {}", projectId, e.getMessage());
             }
 
-            // Delete GridFS file (best-effort)
+            // Delete stored file (best-effort)
             try {
-                gridFsFileService.deleteFileByProjectId(projectId);
+                blobFileService.deleteFileByProjectId(projectId);
             } catch (Exception e) {
-                log.warn("[ProjectController] Failed to delete GridFS file for {}: {}", projectId, e.getMessage());
+                log.warn("[ProjectController] Failed to delete stored file for {}: {}", projectId, e.getMessage());
             }
 
             // Clear drafts and history (best-effort)

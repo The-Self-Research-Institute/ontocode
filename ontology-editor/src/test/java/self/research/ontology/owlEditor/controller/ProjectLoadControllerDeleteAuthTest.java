@@ -2,7 +2,7 @@ package self.research.ontology.owlEditor.controller;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
+import self.research.ontology.owlEditor.repository.FileMetadataRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -13,7 +13,7 @@ import self.research.ontology.owlEditor.repository.ProjectRepository;
 import self.research.ontology.owlEditor.service.CodeViewReimportPipeline;
 import self.research.ontology.owlEditor.service.DraftCopyService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
-import self.research.ontology.owlEditor.service.GridFSFileService;
+import self.research.ontology.owlEditor.service.BlobFileService;
 import self.research.ontology.owlEditor.service.ImportWorkerDispatcher;
 import self.research.ontology.owlEditor.service.OntologyExportJobService;
 import self.research.ontology.owlEditor.service.OntologyHistoryService;
@@ -52,11 +52,11 @@ class ProjectLoadControllerDeleteAuthTest {
         access = mock(ProjectAccessService.class);
         when(metadataService.readStatus("p1")).thenReturn(Optional.of(mock(ProjectStatus.class)));
         controller = new ProjectLoadController(mock(StorageManager.class), metadataService,
-                mock(ProjectImportService.class), mock(GridFSFileService.class), mock(ProjectShareService.class),
+                mock(ProjectImportService.class), mock(BlobFileService.class), mock(ProjectShareService.class),
                 mock(DraftTrackingService.class), mock(DraftCopyService.class), mock(OntologyHistoryService.class),
                 mock(DraftChangeRepository.class), mock(SimpMessagingTemplate.class), datasetService,
                 mock(ProjectRepository.class), mock(OntologyPreparseService.class), mock(ImportWorkerDispatcher.class),
-                mock(MongoTemplate.class), mock(OntologyExportJobService.class), mock(CodeViewReimportPipeline.class),
+                mock(FileMetadataRepository.class), mock(OntologyExportJobService.class), mock(CodeViewReimportPipeline.class),
                 new ProjectWriteLockRegistry(), new ProjectAuthorization(access, false));
     }
 

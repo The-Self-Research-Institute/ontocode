@@ -7,8 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -27,6 +25,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -49,9 +48,6 @@ class AssistantSessionControllerTest {
     private ProjectMetadataService metadataService;
 
     @Mock
-    private MongoTemplate mongoTemplate;
-
-    @Mock
     private AssistantAuditService auditService;
 
     @Mock
@@ -67,7 +63,7 @@ class AssistantSessionControllerTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         AssistantSessionService service = new AssistantSessionService(
-                sessionRepository, metadataService, mongoTemplate, auditService);
+                sessionRepository, metadataService, auditService);
         ReflectionTestUtils.setField(service, "defaultRetrievalAttempts", 5);
         ReflectionTestUtils.setField(service, "defaultTokenBudget", 8000);
         ReflectionTestUtils.setField(service, "deadlineSeconds", 300L);
@@ -75,7 +71,6 @@ class AssistantSessionControllerTest {
         controller = new AssistantSessionController(service, new AssistantAdmissionLimiter(4, 8, 32, 30, 1),
                 projectAccessService, draftCopyService);
         when(metadataService.getMutationVersion("proj-1")).thenReturn(42L);
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(0L);
         when(sessionRepository.save(any())).thenAnswer(inv -> {
             AssistantSessionDocument doc = inv.getArgument(0);
             doc.setId("session-" + ids.incrementAndGet());
@@ -228,9 +223,9 @@ class AssistantSessionControllerTest {
 
     @Test
     void tooManyActiveSessionsReturns429WithRetryAfterAndCreatesNothing() {
-        when(mongoTemplate.count(any(Query.class), eq(AssistantSessionDocument.class))).thenReturn(20L);
-        when(mongoTemplate.findOne(any(Query.class), eq(AssistantSessionDocument.class)))
-                .thenReturn(AssistantSessionDocument.builder().expiresAt(Instant.now().plusSeconds(37)).build());
+        when(sessionRepository.countActive(eq("user@example.com"), any())).thenReturn(20L);
+        when(sessionRepository.soonestActiveDeadline(eq("user@example.com"), any()))
+                .thenReturn(Optional.of(Instant.now().plusSeconds(37)));
 
         ResponseEntity<?> response = controller.createSession(request("proj-1"), requestWithBearerToken());
 
@@ -264,7 +259,7 @@ class AssistantSessionControllerTest {
         assertTrue(retryAfter >= 1 && retryAfter <= 60, String.valueOf(retryAfter));
         assertEquals("RATE_LIMITED", body(rejected).get("errorCode"));
         verify(sessionRepository, times(30)).save(any());
-        verify(mongoTemplate, times(30)).count(any(Query.class), eq(AssistantSessionDocument.class));
+        verify(sessionRepository, times(30)).countActive(eq("user@example.com"), any());
     }
 
     @Test
@@ -282,13 +277,7 @@ class AssistantSessionControllerTest {
     void activeLimitQueryOnlyCountsLiveSessionsOfTheCaller() {
         controller.createSession(request("proj-1"), requestWithBearerToken());
 
-        ArgumentCaptor<Query> captor = ArgumentCaptor.forClass(Query.class);
-        verify(mongoTemplate, atLeastOnce()).count(captor.capture(), eq(AssistantSessionDocument.class));
-        List<Query> queries = captor.getAllValues();
-        org.bson.Document filter = queries.get(0).getQueryObject();
-        assertEquals("user@example.com", filter.get("userEmail"));
-        assertEquals(AssistantSessionDocument.AssistantSessionStatus.ACTIVE, filter.get("status"));
-        assertTrue(((org.bson.Document) filter.get("expiresAt")).containsKey("$gt"));
+        verify(sessionRepository, atLeastOnce()).countActive(eq("user@example.com"), any());
     }
 
     @SuppressWarnings("unchecked")

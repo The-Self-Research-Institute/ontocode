@@ -48,7 +48,7 @@ class AssistantAuditServiceTest {
 
     @Test
     void persistenceFailureNeverBreaksTheCallingOperation() {
-        when(repository.save(any())).thenThrow(new RuntimeException("mongo down"));
+        when(repository.save(any())).thenThrow(new RuntimeException("database down"));
 
         assertDoesNotThrow(() -> service.record(new AssistantAuditEvent("u@x.com", "proj-1", "s1", null,
                 "propose", 7L, null, null, "failed", "VALIDATION_FAILED", null)));

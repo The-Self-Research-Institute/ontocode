@@ -6,7 +6,6 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.AnnotationUtils;
-import org.springframework.data.mongodb.gridfs.GridFsTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -39,7 +38,6 @@ class DesktopDownloadAdminOnlyTest {
     private static DesktopDownloadController controllerWithMethodSecurity() {
         AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
         context.register(Wiring.class);
-        context.getBeanFactory().registerSingleton("gridFsTemplate", mock(GridFsTemplate.class));
         context.getBeanFactory().registerSingleton("downloadService", mock(DesktopDownloadService.class));
         context.refresh();
         return context.getBean(DesktopDownloadController.class);

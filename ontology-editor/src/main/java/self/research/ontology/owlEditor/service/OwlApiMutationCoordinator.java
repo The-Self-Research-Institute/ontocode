@@ -16,7 +16,7 @@ import java.util.Map;
 /**
  * Keeps the OWLAPI in-memory model in sync with Fuseki after mutations.
  * Structured ops from {@link OntologyMutationService} are patched in-place when
- * possible; all other writes bump the MongoDB version and evict the cache.
+ * possible; all other writes bump the database version and evict the cache.
  */
 @Service
 @Conditional(FastOpenCondition.class)
@@ -83,7 +83,7 @@ public class OwlApiMutationCoordinator {
      * and every write already goes through afterMutation() above, which patches the cache
      * in-place or proactively evicts+rewarms right when a non-patchable write happens — there
      * is no other-instance scenario for a read to reactively catch here. Checking anyway reads
-     * MongoDB's version and the cache's version as two separate, non-atomic steps; if a read
+     * the database version and the cache's version as two separate, non-atomic steps; if a read
      * lands between them it can see a spurious mismatch and evict a cache entry that was
      * actually already correct, sending the next read to whatever is mid-rewarm.
      * Cloud/web IS multi-instance, so this check stays load-bearing there.
@@ -95,21 +95,21 @@ public class OwlApiMutationCoordinator {
         if (!ontologyCache.has(projectId)) {
             return;
         }
-        long mongoVersion;
+        long databaseVersion;
         try {
-            mongoVersion = metadataService.getMutationVersion(projectId);
+            databaseVersion = metadataService.getMutationVersion(projectId);
         } catch (Exception e) {
             log.warn("[OwlApiCoord] Could not read mutation version for {} — assuming match: {}",
                     projectId, e.getMessage());
             return;
         }
         long cachedVersion = ontologyCache.getCachedVersion(projectId);
-         log.info("[TRACE] project={}, mongoVersion={}, cachedVersion={}",
-        projectId, mongoVersion, cachedVersion);
-        if (cachedVersion >= 0 && mongoVersion > cachedVersion) {
+         log.info("[TRACE] project={}, databaseVersion={}, cachedVersion={}",
+        projectId, databaseVersion, cachedVersion);
+        if (cachedVersion >= 0 && databaseVersion > cachedVersion) {
             log.info("[TRACE] Evicting ontology cache for {}", projectId);
-            log.info("[OwlApiCoord] Version mismatch for project {} (mongo={}, cached={}) — evicting OWLAPI cache",
-                    projectId, mongoVersion, cachedVersion);
+            log.info("[OwlApiCoord] Version mismatch for project {} (database={}, cached={}) — evicting OWLAPI cache",
+                    projectId, databaseVersion, cachedVersion);
             ontologyCache.evict(projectId);
             desktopOntologyLoader.warmProject(projectId, 5_000);
         }

@@ -1,15 +1,12 @@
 package self.research.ontology.owlEditor.service;
 
-import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoOperations;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 import self.research.ontology.owlEditor.document.ProjectShare;
 import self.research.ontology.owlEditor.model.collaboration.ShareNotification;
+import self.research.ontology.owlEditor.repository.ProjectAccessRepository;
 import self.research.ontology.owlEditor.repository.ProjectShareRepository;
 
 import java.util.Optional;
@@ -25,25 +22,23 @@ import static org.mockito.Mockito.when;
 class ProjectShareNotificationTest {
 
     private SimpMessagingTemplate messaging;
-    private MongoOperations mongo;
+    private ProjectAccessRepository accounts;
     private ProjectShareService service;
 
     @BeforeEach
     void setUp() {
         messaging = mock(SimpMessagingTemplate.class);
-        mongo = mock(MongoOperations.class);
+        accounts = mock(ProjectAccessRepository.class);
         ProjectShareRepository repository = mock(ProjectShareRepository.class);
-        when(repository.findByProjectId("p1")).thenReturn(Optional.of(new ProjectShare("p1", "ann@x.org", "view")));
-        when(repository.save(any(ProjectShare.class))).thenAnswer(call -> call.getArgument(0));
+        when(repository.addSharedEmail(eq("p1"), anyString(), any(), any()))
+                .thenReturn(Optional.of(new ProjectShare("p1", "ann@x.org", "view")));
         service = new ProjectShareService(repository, new RestTemplate(), mock(EmailNotificationService.class),
-                mock(ProjectMetadataService.class), messaging);
-        ReflectionTestUtils.setField(service, "mongo", mongo);
+                mock(ProjectMetadataService.class), messaging, accounts);
     }
 
     @Test
     void theNotificationGoesToTheRecipientsOwnQueueAndNotToAnyoneElse() {
-        when(mongo.findOne(any(Query.class), eq(Document.class), eq("users")))
-                .thenReturn(new Document("_id", "u-bob").append("email", "bob@x.org"));
+        when(accounts.findUserIdByEmail("Bob@x.org")).thenReturn(Optional.of("u-bob"));
 
         service.addEmailAccess("p1", "Bob@x.org", "edit");
 

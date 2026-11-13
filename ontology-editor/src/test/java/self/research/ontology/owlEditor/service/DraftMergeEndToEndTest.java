@@ -52,7 +52,7 @@ import static org.mockito.Mockito.when;
 class DraftMergeEndToEndTest {
 
     private static final String NS = "http://ex.org/";
-    private static final String USER = "mongo-1";
+    private static final String USER = "user-1";
 
     @Mock
     private SparqlDatasetService datasetService;

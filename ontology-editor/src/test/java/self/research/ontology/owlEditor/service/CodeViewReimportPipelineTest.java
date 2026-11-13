@@ -378,7 +378,7 @@ class CodeViewReimportPipelineTest {
 
     @Test
     void recordPrefixChangesSwallowsAFailureSyncingTheDraftSideChannel() {
-        doThrow(new RuntimeException("mongo down")).when(datasetService)
+        doThrow(new RuntimeException("database down")).when(datasetService)
                 .updateDraftPrefix(anyString(), anyString(), anyString(), anyString(), any());
 
         pipeline.recordPrefixChanges("proj-1", "u1", "User", true, null,

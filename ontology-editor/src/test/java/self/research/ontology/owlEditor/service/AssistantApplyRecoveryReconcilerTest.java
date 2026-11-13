@@ -112,7 +112,7 @@ class AssistantApplyRecoveryReconcilerTest {
         AssistantApplyOperationDocument fine = operation("op-2", "proj-b", ApplyOperationStatus.PREPARED);
         when(operationService.findInterrupted()).thenReturn(List.of(broken, fine));
         when(groupRepository.findById(anyString())).thenReturn(Optional.empty());
-        doThrow(new IllegalStateException("mongo blip")).when(operationService)
+        doThrow(new IllegalStateException("database blip")).when(operationService)
                 .markFailedAwaitingRecovery(eq(broken), anyString());
 
         AssistantApplyRecoveryReconciler.ReconcileReport report = reconciler.reconcile();
@@ -123,7 +123,7 @@ class AssistantApplyRecoveryReconcilerTest {
 
     @Test
     void startupHookSwallowsFailuresSoTheAppStillStarts() {
-        when(operationService.findInterrupted()).thenThrow(new IllegalStateException("mongo down"));
+        when(operationService.findInterrupted()).thenThrow(new IllegalStateException("database down"));
 
         reconciler.reconcileOnStartup();
     }

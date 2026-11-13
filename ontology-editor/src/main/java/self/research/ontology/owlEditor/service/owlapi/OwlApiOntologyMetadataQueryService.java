@@ -33,7 +33,7 @@ public class OwlApiOntologyMetadataQueryService {
         return context.withOntology(projectId, (ont, reasoner) -> buildSchema(ont), Map.of());
     }
 
-    private List<Map<String, String>> buildAnnotations(OWLOntology ont) {
+    public static List<Map<String, String>> buildAnnotations(OWLOntology ont) {
         List<Map<String, String>> annotations = new ArrayList<>();
         for (OWLAnnotation annotation : ont.annotations().collect(Collectors.toList())) {
             Map<String, String> ann = new LinkedHashMap<>();

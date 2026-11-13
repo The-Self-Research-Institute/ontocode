@@ -255,7 +255,8 @@ public class RuleController {
                     "errors", List.of(e.getMessage())));
         }
         if (e instanceof SwrlRuleClient.UnavailableException) {
-            return ResponseEntity.status(503).body(Map.of("success", false, "error", e.getMessage()));
+            return ResponseEntity.status(e instanceof SwrlRuleClient.TooLargeException ? 413 : 503)
+                    .body(Map.of("success", false, "error", e.getMessage()));
         }
         log.error("[RULES] Rule request failed: {}", e.getMessage(), e);
         return ResponseEntity.status(500).body(Map.of("success", false, "error", "The rule request failed"));

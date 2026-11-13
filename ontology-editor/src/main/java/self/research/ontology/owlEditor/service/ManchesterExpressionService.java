@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import lombok.extern.slf4j.Slf4j;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.expression.OWLEntityChecker;
 import org.semanticweb.owlapi.expression.ShortFormEntityChecker;
 import org.semanticweb.owlapi.model.*;
@@ -274,9 +275,7 @@ private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, bool
             String draftGraph = datasetService.getDraftGraphUri(projectId, userId);
             String rdf = datasetService.exportNamedGraph(
                     projectId, draftGraph, org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
-            OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
-            // Tolerate unresolvable owl:imports — the ontology may import IRIs that aren't
-            // network-resolvable (common), and we only need the local axioms for name resolution.
+            OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
             OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT);
             return manager.loadOntologyFromOntologyDocument(
@@ -294,13 +293,13 @@ private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, bool
         // Slow fallback: export from Fuseki and parse (cold cache or fast-open disabled).
         log.info("[Manchester] OWLAPI cache miss for project {} — exporting from Fuseki (slow path)", projectId);
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
     }
 
     public OWLOntology loadFreshOntology(String projectId) throws Exception {
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
     }
 

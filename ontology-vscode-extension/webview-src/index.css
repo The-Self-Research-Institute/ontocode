@@ -829,6 +829,27 @@ textarea.code-editor-textarea {
   background-color: var(--surface-2) !important;
 }
 
+.dark .bg-yellow-50,
+.dark .bg-yellow-100 {
+  background-color: var(--warning-tint) !important;
+}
+
+.dark .bg-yellow-200 {
+  background-color: var(--surface-3) !important;
+}
+
+.dark .border-yellow-200,
+.dark .border-yellow-300 {
+  border-color: rgba(245, 158, 11, 0.45) !important;
+}
+
+.dark .text-yellow-800,
+.dark .text-yellow-700,
+.dark .text-yellow-600,
+.dark .text-yellow-500 {
+  color: var(--warning) !important;
+}
+
 .dark .bg-stone-300,
 .dark .bg-purple-200,
 .dark .bg-blue-200,

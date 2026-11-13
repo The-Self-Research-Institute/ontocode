@@ -55,7 +55,7 @@ echo -e "${GREEN}[OK] Cleanup complete${NC}"
 # Build and start all Docker services
 echo ""
 echo -e "${YELLOW}[4/5] Building and starting all services...${NC}"
-echo -e "${GRAY}This includes: MongoDB, GraphDB, Auth, Gateway, Editor, SWRL, Plugins, and VS Code Web${NC}"
+echo -e "${GRAY}This includes: PostgreSQL, GraphDB, Auth, Gateway, Editor, SWRL, Plugins, and VS Code Web${NC}"
 echo -e "${YELLOW}First run may take 5-10 minutes...${NC}"
 docker compose up -d --build
 
@@ -89,7 +89,7 @@ echo "  - Auth Service:        http://localhost:8086"
 echo "  - OWL Editor:          http://localhost:8083"
 echo "  - SWRL Service:        http://localhost:8084"
 echo "  - Plugin Service:      http://localhost:8087"
-echo "  - MongoDB:             mongodb://localhost:27017"
+echo "  - PostgreSQL:          localhost:5432 (127.0.0.1 only)"
 echo "  - GraphDB:             http://localhost:7200"
 echo ""
 echo -e "${GREEN}========================================${NC}"

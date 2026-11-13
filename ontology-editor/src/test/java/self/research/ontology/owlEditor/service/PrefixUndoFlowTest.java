@@ -35,7 +35,7 @@ import static org.mockito.Mockito.when;
 class PrefixUndoFlowTest {
 
     private static final String P = "proj";
-    private static final String MONGO_ID = "66f0c0ffee";
+    private static final String USER_ID = "66f0c0ffee";
     private static final String EMAIL = "me@x.com";
     private static final LocalDateTime T0 = LocalDateTime.of(2026, 10, 16, 10, 0);
 
@@ -126,7 +126,7 @@ class PrefixUndoFlowTest {
         HistoryChange change = new HistoryChange();
         change.setId(id);
         change.setProjectId(P);
-        change.setUserId(MONGO_ID);
+        change.setUserId(USER_ID);
         change.setUsername("Me");
         change.setOperationType(type);
         change.setEntityLabel(prefix);
@@ -155,7 +155,7 @@ class PrefixUndoFlowTest {
 
     @Test
     void anAddedPrefixIsSetAsideByUndoAndRestoredByRedo() {
-        Identity who = Identity.of(EMAIL, MONGO_ID);
+        Identity who = Identity.of(EMAIL, USER_ID);
         prefixes.put("ex", "http://ex/");
         recorded("c1", "prefixAdded", "ex", null, null, "http://ex/", 1);
 
@@ -174,7 +174,7 @@ class PrefixUndoFlowTest {
 
     @Test
     void aChangedPrefixIsRestoredByUndoAndReappliedByRedo() {
-        Identity who = Identity.of(EMAIL, MONGO_ID);
+        Identity who = Identity.of(EMAIL, USER_ID);
         prefixes.put("ex", "http://new/");
         recorded("c1", "prefixModified", "ex", null, "http://old/", "http://new/", 1);
 
@@ -186,7 +186,7 @@ class PrefixUndoFlowTest {
 
     @Test
     void aRenamedPrefixIsRenamedBackAndForward() {
-        Identity who = Identity.of(EMAIL, MONGO_ID);
+        Identity who = Identity.of(EMAIL, USER_ID);
         prefixes.put("new", "http://ex/");
         recorded("c1", "prefixModified", "new", "old", "http://ex/", "http://ex/", 1);
 
@@ -198,7 +198,7 @@ class PrefixUndoFlowTest {
 
     @Test
     void aDeletedPrefixComesBackOnUndoAndGoesAgainOnRedo() {
-        Identity who = Identity.of(EMAIL, MONGO_ID);
+        Identity who = Identity.of(EMAIL, USER_ID);
         recorded("c1", "prefixDeleted", "ex", null, "http://ex/", null, 1);
 
         assertTrue(undo(who).ok());
@@ -209,7 +209,7 @@ class PrefixUndoFlowTest {
 
     @Test
     void undoIsRefusedWhenTheNamespaceWasChangedByAnotherEdit() {
-        Identity who = Identity.of(EMAIL, MONGO_ID);
+        Identity who = Identity.of(EMAIL, USER_ID);
         prefixes.put("ex", "http://someone-else/");
         recorded("c1", "prefixAdded", "ex", null, null, "http://ex/", 1);
 

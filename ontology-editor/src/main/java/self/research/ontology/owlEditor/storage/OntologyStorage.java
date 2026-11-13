@@ -10,7 +10,6 @@ import java.util.Map;
 public interface OntologyStorage {
 
     enum StorageType {
-        MONGODB,
         JENA_TDB,
         JENA_FUSEKI,
         GRAPHDB,

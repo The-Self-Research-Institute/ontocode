@@ -1,0 +1,100 @@
+package self.research.ontology.reasoner.repository.jpa;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Repository;
+import self.research.ontology.reasoner.model.ReasoningJobRecord;
+import self.research.ontology.reasoner.repository.ReasoningJobRecordRepository;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+@ConditionalOnProperty(name = "ontocode.db.impl", havingValue = "jpa")
+public class JpaReasoningJobRecordRepository implements ReasoningJobRecordRepository {
+
+    private final SpringDataReasoningJobRepository delegate;
+
+    public JpaReasoningJobRecordRepository(SpringDataReasoningJobRepository delegate) {
+        this.delegate = delegate;
+    }
+
+    @Override
+    public ReasoningJobRecord save(ReasoningJobRecord record) {
+        try {
+            delegate.save(toEntity(record));
+        } catch (DataIntegrityViolationException e) {
+            delegate.save(toEntity(record));
+        }
+        return record;
+    }
+
+    @Override
+    public List<ReasoningJobRecord> saveAll(Iterable<ReasoningJobRecord> records) {
+        List<ReasoningJobRecord> saved = new ArrayList<>();
+        List<ReasoningJobEntity> entities = new ArrayList<>();
+        for (ReasoningJobRecord record : records) {
+            saved.add(record);
+            entities.add(toEntity(record));
+        }
+        if (!entities.isEmpty()) {
+            delegate.saveAll(entities);
+        }
+        return saved;
+    }
+
+    @Override
+    public Optional<ReasoningJobRecord> findById(String jobId) {
+        return delegate.findById(jobId).map(JpaReasoningJobRecordRepository::toRecord);
+    }
+
+    @Override
+    public List<ReasoningJobRecord> findByStatusIn(Collection<String> statuses) {
+        if (statuses == null || statuses.isEmpty()) {
+            return List.of();
+        }
+        return delegate.findByStatusIn(statuses).stream().map(JpaReasoningJobRecordRepository::toRecord).toList();
+    }
+
+    @Override
+    public long deleteByUpdatedAtBefore(Instant cutoff) {
+        return delegate.deleteOlderThan(cutoff);
+    }
+
+    private static ReasoningJobEntity toEntity(ReasoningJobRecord r) {
+        ReasoningJobEntity e = new ReasoningJobEntity();
+        e.setJobId(r.getJobId());
+        e.setJobType(r.getJobType());
+        e.setProjectId(r.getProjectId());
+        e.setStatus(r.getStatus());
+        e.setQueuedAt(r.getQueuedAt());
+        e.setStartedAt(r.getStartedAt());
+        e.setCompletedAt(r.getCompletedAt());
+        e.setUpdatedAt(r.getUpdatedAt() != null ? r.getUpdatedAt() : Instant.now());
+        e.setExecutionTimeMs(r.getExecutionTimeMs());
+        e.setError(r.getError());
+        e.setResultJson(r.getResultJson());
+        e.setResultTooLarge(r.isResultTooLarge());
+        return e;
+    }
+
+    private static ReasoningJobRecord toRecord(ReasoningJobEntity e) {
+        return ReasoningJobRecord.builder()
+                .jobId(e.getJobId())
+                .jobType(e.getJobType())
+                .projectId(e.getProjectId())
+                .status(e.getStatus())
+                .queuedAt(e.getQueuedAt())
+                .startedAt(e.getStartedAt())
+                .completedAt(e.getCompletedAt())
+                .updatedAt(e.getUpdatedAt())
+                .executionTimeMs(e.getExecutionTimeMs())
+                .error(e.getError())
+                .resultJson(e.getResultJson())
+                .resultTooLarge(e.isResultTooLarge())
+                .build();
+    }
+}

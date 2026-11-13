@@ -2,69 +2,33 @@ package self.research.ontology.owlEditor.service;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
-import self.research.ontology.owlEditor.document.HierarchySnapshotChunkDoc;
+import self.research.ontology.owlEditor.TestDatabase;
 import self.research.ontology.owlEditor.document.HierarchySnapshotDoc;
 import self.research.ontology.owlEditor.dto.OntologyDto;
-import self.research.ontology.owlEditor.repository.HierarchySnapshotChunkRepository;
-import self.research.ontology.owlEditor.repository.HierarchySnapshotRepository;
+import self.research.ontology.owlEditor.repository.JdbcHierarchySnapshotRepository;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class HierarchySnapshotStoreTest {
 
-    private final Map<String, HierarchySnapshotDoc> docs = new HashMap<>();
-    private final Map<String, HierarchySnapshotChunkDoc> chunks = new LinkedHashMap<>();
+    private final JdbcTemplate jdbc = TestDatabase.jdbc();
     private HierarchySnapshotStore store;
 
     @BeforeEach
     void setUp() {
-        HierarchySnapshotRepository repository = mock(HierarchySnapshotRepository.class);
-        when(repository.findById(anyString())).thenAnswer(inv -> Optional.ofNullable(docs.get(inv.<String>getArgument(0))));
-        when(repository.save(any())).thenAnswer(inv -> {
-            HierarchySnapshotDoc d = inv.getArgument(0);
-            docs.put(d.getProjectId(), d);
-            return d;
-        });
-        HierarchySnapshotChunkRepository chunkRepository = mock(HierarchySnapshotChunkRepository.class);
-        when(chunkRepository.save(any())).thenAnswer(inv -> {
-            HierarchySnapshotChunkDoc c = inv.getArgument(0);
-            chunks.put(c.getId(), c);
-            return c;
-        });
-        when(chunkRepository.findBySetIdOrderByIndexAsc(anyString())).thenAnswer(inv -> {
-            String setId = inv.getArgument(0);
-            List<HierarchySnapshotChunkDoc> found = new ArrayList<>();
-            chunks.values().stream().filter(c -> c.getSetId().equals(setId)).forEach(found::add);
-            found.sort((a, b) -> Integer.compare(a.getIndex(), b.getIndex()));
-            return found;
-        });
-        doAnswer(inv -> {
-            String setId = inv.getArgument(0);
-            chunks.values().removeIf(c -> c.getSetId().equals(setId));
-            return null;
-        }).when(chunkRepository).deleteBySetId(anyString());
-        store = new HierarchySnapshotStore(repository, chunkRepository);
-    }
-
-    private void shrinkLimits() {
-        ReflectionTestUtils.setField(store, "inlineLimitBytes", 1_000);
-        ReflectionTestUtils.setField(store, "chunkBytes", 300);
+        jdbc.update("delete from hierarchy_snapshot");
+        store = new HierarchySnapshotStore(new JdbcHierarchySnapshotRepository(jdbc));
     }
 
     private static OntologyDto.TreeNode node(String id) {
@@ -90,6 +54,7 @@ class HierarchySnapshotStoreTest {
         d.setTopLevelNodes(top);
         d.setTopLevelTotal(top.size());
         d.setChildrenByParent(index);
+        d.setMeta(Map.of("classCount", 7, "hierarchyEngine", "snapshot"));
         d.markReady();
         return d;
     }
@@ -101,70 +66,102 @@ class HierarchySnapshotStoreTest {
     }
 
     @Test
-    void smallSnapshotIsStoredAsOneDocument() {
-        store.save(doc(5, 3));
+    void aLargeSnapshotIsStoredInOneRowAndReadBackIdentically() {
+        HierarchySnapshotDoc original = doc(400, 12);
+        Map<String, List<String>> expected = ids(original.getChildrenByParent());
 
-        assertTrue(chunks.isEmpty());
-        assertNull(docs.get("p1").getChunkSetId());
+        store.save(original);
+
+        assertEquals(1, jdbc.queryForObject("select count(*) from hierarchy_snapshot", Integer.class));
         HierarchySnapshotDoc read = store.findById("p1").orElseThrow();
+        assertEquals(HierarchySnapshotDoc.Status.READY, read.getStatus());
+        assertEquals(400, read.getTopLevelNodes().size());
+        assertEquals(400, read.getTopLevelTotal());
+        assertEquals("r1", read.getRevision());
+        assertEquals(7, read.getMeta().get("classCount"));
+        assertEquals(expected, ids(read.getChildrenByParent()));
+        assertTrue(read.getExpiresAt().after(new Date()));
+    }
+
+    @Test
+    void classIrisWithDotsColonsAndSlashesSurviveAsMapKeys() {
+        HierarchySnapshotDoc d = doc(0, 0);
+        Map<String, List<OntologyDto.TreeNode>> index = new LinkedHashMap<>();
+        index.put("http://example.org/a.b:c/d#E", List.of(node("http://example.org/kid")));
+        d.setChildrenByParent(index);
+        d.setTopLevelNodes(List.of());
+
+        store.save(d);
+
+        assertEquals(List.of("http://example.org/kid"),
+                ids(store.findById("p1").orElseThrow().getChildrenByParent()).get("http://example.org/a.b:c/d#E"));
+    }
+
+    @Test
+    void aBuildingRowHasNoPayloadAndNoExpiry() {
+        store.save(HierarchySnapshotDoc.building("p1", "r2"));
+
+        HierarchySnapshotDoc read = store.findById("p1").orElseThrow();
+        assertEquals(HierarchySnapshotDoc.Status.BUILDING, read.getStatus());
+        assertNull(read.getTopLevelNodes());
+        assertNull(read.getExpiresAt());
+    }
+
+    @Test
+    void markingAStoredSnapshotStaleKeepsTheHierarchy() {
+        store.save(doc(5, 3));
+        HierarchySnapshotDoc raw = store.findRaw("p1").orElseThrow();
+        assertNull(raw.getTopLevelNodes());
+        raw.setStatus(HierarchySnapshotDoc.Status.STALE);
+
+        store.save(raw);
+
+        HierarchySnapshotDoc read = store.findById("p1").orElseThrow();
+        assertEquals(HierarchySnapshotDoc.Status.STALE, read.getStatus());
         assertEquals(5, read.getTopLevelNodes().size());
         assertEquals(3, read.getChildrenByParent().get("http://example.org/c#P2").size());
     }
 
     @Test
-    void largeSnapshotIsChunkedAndReassembledIdentically() {
-        shrinkLimits();
-        HierarchySnapshotDoc original = doc(40, 6);
-        Map<String, List<String>> expected = ids(original.getChildrenByParent());
+    void resavingReplacesTheSnapshotInPlace() {
+        store.save(doc(40, 6));
+        store.save(doc(2, 1));
 
-        store.save(original);
-
-        assertTrue(chunks.size() > 1);
-        assertNull(docs.get("p1").getChildrenByParent());
-        HierarchySnapshotDoc read = store.findById("p1").orElseThrow();
-        assertEquals(HierarchySnapshotDoc.Status.READY, read.getStatus());
-        assertEquals(40, read.getTopLevelNodes().size());
-        assertEquals(40, read.getTopLevelTotal());
-        assertEquals(expected, ids(read.getChildrenByParent()));
+        assertEquals(1, jdbc.queryForObject("select count(*) from hierarchy_snapshot", Integer.class));
+        assertEquals(2, store.findById("p1").orElseThrow().getTopLevelNodes().size());
     }
 
     @Test
-    void missingChunkIsTreatedAsNoSnapshot() {
-        shrinkLimits();
-        store.save(doc(40, 6));
-        chunks.remove(chunks.keySet().iterator().next());
+    void anExpiredSnapshotIsIgnored() {
+        store.save(doc(5, 3));
+        jdbc.update("update hierarchy_snapshot set expires_at = now() - interval '1 minute'");
+
+        assertTrue(store.findById("p1").isEmpty());
+        assertTrue(store.findRaw("p1").isEmpty());
+    }
+
+    @Test
+    void aCorruptStoredPayloadIsTreatedAsNoSnapshot() {
+        store.save(doc(5, 3));
+        jdbc.update("update hierarchy_snapshot set payload = 'not json'");
 
         assertTrue(store.findById("p1").isEmpty());
     }
 
     @Test
-    void corruptChunkIsTreatedAsNoSnapshot() {
-        shrinkLimits();
-        store.save(doc(40, 6));
-        chunks.values().iterator().next().setData(new byte[] {1, 2, 3});
-
-        assertTrue(store.findById("p1").isEmpty());
-    }
-
-    @Test
-    void resavingReplacesOldChunks() {
-        shrinkLimits();
-        store.save(doc(40, 6));
-        store.save(doc(40, 6));
-        int afterTwo = chunks.size();
-        store.save(doc(1, 0));
-
-        assertTrue(afterTwo > 1);
-        assertTrue(chunks.isEmpty());
-    }
-
-    @Test
-    void snapshotBeyondTheChunkCapIsRefused() {
-        ReflectionTestUtils.setField(store, "inlineLimitBytes", 1_000);
-        ReflectionTestUtils.setField(store, "chunkBytes", 10);
+    void aSnapshotBeyondTheSizeCapIsRefusedAndNothingIsStored() {
+        ReflectionTestUtils.setField(store, "maxPayloadBytes", 1_000);
 
         assertThrows(HierarchySnapshotStore.SnapshotTooLargeException.class, () -> store.save(doc(200, 6)));
-        assertTrue(chunks.isEmpty());
-        assertTrue(docs.isEmpty());
+        assertEquals(0, jdbc.queryForObject("select count(*) from hierarchy_snapshot", Integer.class));
+    }
+
+    @Test
+    void deleteRemovesTheSnapshot() {
+        store.save(doc(5, 3));
+
+        store.deleteById("p1");
+
+        assertTrue(store.findById("p1").isEmpty());
     }
 }

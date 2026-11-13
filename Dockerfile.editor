@@ -15,13 +15,14 @@ COPY ontology-editor/ ./ontology-editor/
 COPY ontology-swrl/ ./ontology-swrl/
 COPY ontology-plugin-service/ ./ontology-plugin-service/
 COPY ontology-reasoner-worker/ ./ontology-reasoner-worker/
+COPY ontology-data-migrator/pom.xml ./ontology-data-migrator/pom.xml
 
 # Build shared modules first (these are dependencies for all services)
 # Uses BuildKit cache for ~/.m2 to avoid re-downloading dependencies on every build.
 RUN --mount=type=cache,target=/root/.m2 \
     sh -c 'for attempt in 1 2 3; do \
         mvn -Dhttp.keepAlive=false -Dmaven.wagon.http.retryHandler.count=5 \
-            clean install -pl shared/common-models,shared/common-utils,ontology-editor -DskipTests -B -ntp && exit 0; \
+            clean install -pl shared/common-models,shared/common-utils,shared/common-db,ontology-editor -DskipTests -B -ntp && exit 0; \
         echo "Editor module build failed, retrying ($$attempt/3)..."; \
     done; \
     exit 1'
@@ -46,6 +47,7 @@ RUN mkdir -p /app/data /app/logs && \
 # classifier=exec produces owlEditor-1.0.0-exec.jar (fat JAR) + owlEditor-1.0.0.jar (plain)
 # Copy the exec JAR explicitly to avoid picking up the plain non-executable JAR
 COPY --from=build --chown=1000:1000 /build/ontology-editor/target/*-exec.jar app.jar
+COPY licenses/ /licenses/
 
 USER 1000
 

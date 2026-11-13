@@ -9,17 +9,13 @@ import com.stripe.net.Webhook;
 import com.stripe.param.*;
 import com.stripe.param.checkout.SessionCreateParams;
 import jakarta.annotation.PostConstruct;
-import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.index.Index;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
+import self.research.ontology.auth.model.EmailLog;
+import self.research.ontology.auth.model.StripeUnmatchedInvoice;
+import self.research.ontology.auth.repository.EmailLogRepository;
+import self.research.ontology.auth.repository.StripeUnmatchedInvoiceRepository;
 import org.springframework.stereotype.Service;
 import self.research.ontology.auth.model.User;
 import self.research.ontology.auth.model.Workspace;
@@ -74,19 +70,25 @@ public class StripeService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("MMMM d, yyyy");
 
+    @org.springframework.beans.factory.annotation.Autowired
+    NewSubscriptionCreator subscriptionCreator;
+
     private final UserRepository userRepository;
     private final WorkspaceRepository workspaceRepository;
     private final WorkspaceService workspaceService;
     private final EmailService emailService;
-    private final MongoTemplate mongoTemplate;
+    private final EmailLogRepository emailLogs;
+    private final StripeUnmatchedInvoiceRepository unmatchedInvoices;
 
     public StripeService(UserRepository userRepository, WorkspaceRepository workspaceRepository,
-                         WorkspaceService workspaceService, EmailService emailService, MongoTemplate mongoTemplate) {
+                         WorkspaceService workspaceService, EmailService emailService, EmailLogRepository emailLogs,
+                         StripeUnmatchedInvoiceRepository unmatchedInvoices) {
         this.userRepository = userRepository;
         this.workspaceRepository = workspaceRepository;
         this.workspaceService = workspaceService;
         this.emailService = emailService;
-        this.mongoTemplate = mongoTemplate;
+        this.emailLogs = emailLogs;
+        this.unmatchedInvoices = unmatchedInvoices;
     }
 
     @PostConstruct
@@ -108,8 +110,6 @@ public class StripeService {
         validatePriceId("STRIPE_PRICE_ENTERPRISE_MONTHLY", priceEnterpriseMonthly);
         validatePriceId("STRIPE_PRICE_ENTERPRISE_YEARLY", priceEnterpriseYearly);
         Stripe.apiKey = stripeSecretKey;
-        mongoTemplate.indexOps("email_logs")
-                .ensureIndex(new Index().on("key", Sort.Direction.ASC).unique());
         log.info("StripeService initialised — base URL: {}", baseUrl);
     }
 
@@ -161,7 +161,7 @@ public class StripeService {
         return intent.getClientSecret();
     }
 
-    public String createSubscriptionAfterSetup(User user, String setupIntentId,
+    public SubscriptionResult createSubscriptionAfterSetup(User user, String setupIntentId,
             String planName, String interval, String workspaceId) throws StripeException {
 
         if (!tryClaimSubscriptionCreationLock(user.getId())) {
@@ -270,10 +270,7 @@ public class StripeService {
                             user.getUsername(), user.isHasUsedFreeTrial(), user.getFirstSubscriptionAt(), hadPriorSubscription, planName);
                 }
 
-                String createIdempotencyKey = "sub-create-" + user.getId() + "-" + setupIntentId;
-                subscription = com.stripe.model.Subscription.create(
-                        createParams.build(),
-                        com.stripe.net.RequestOptions.builder().setIdempotencyKey(createIdempotencyKey).build());
+                subscription = subscriptionCreator.create(user, createParams, setupIntentId);
 
                 user.setHasUsedFreeTrial(true);
                 if (user.getFirstSubscriptionAt() == null) {
@@ -288,7 +285,7 @@ public class StripeService {
 
             log.info("Subscription {} ({}) created for user {} / workspace {}",
                     subscription.getId(), subscription.getStatus(), user.getUsername(), workspaceId);
-            return subscription.getId();
+            return subscriptionCreator.resultFor(subscription);
         } finally {
             releaseSubscriptionCreationLock(user.getId());
         }
@@ -867,9 +864,7 @@ public class StripeService {
             return;
         }
 
-        findUserForInvoice(invoice).ifPresent(user -> {
-            user.setSubscriptionStatus("past_due");
-            userRepository.save(user);
+        findUserForInvoice(invoice).flatMap(found -> PastDueMarker.apply(userRepository, found, invoice)).ifPresent(user -> {
             log.warn("[InvoicePaymentFailed] user={} invoice={} billingReason={} — status set to past_due",
                     user.getUsername(), invoice.getId(), billingReason);
 
@@ -1064,19 +1059,20 @@ public class StripeService {
 
     private void recordUnmatchedInvoice(Invoice invoice, String discoveredEmail) {
         try {
-            Document doc = new Document("invoiceId", invoice.getId())
-                    .append("stripeCustomerId", invoice.getCustomer())
-                    .append("stripeSubscriptionId", invoice.getSubscription())
-                    .append("customerEmail", invoice.getCustomerEmail())
-                    .append("discoveredEmail", discoveredEmail)
-                    .append("amountPaid", invoice.getAmountPaid())
-                    .append("amountDue", invoice.getAmountDue())
-                    .append("currency", invoice.getCurrency())
-                    .append("hostedInvoiceUrl", invoice.getHostedInvoiceUrl())
-                    .append("recordedAt", LocalDateTime.now())
-                    .append("status", "unmatched");
-            mongoTemplate.insert(doc, "stripe_unmatched_invoices");
-            log.error("[InvoicePaymentSucceeded] UNMATCHED invoice {} customerId={} customerEmail={} discoveredEmail={} — recorded to stripe_unmatched_invoices for reconciliation",
+            unmatchedInvoices.insert(StripeUnmatchedInvoice.builder()
+                    .invoiceId(invoice.getId())
+                    .stripeCustomerId(invoice.getCustomer())
+                    .stripeSubscriptionId(invoice.getSubscription())
+                    .customerEmail(invoice.getCustomerEmail())
+                    .discoveredEmail(discoveredEmail)
+                    .amountPaid(invoice.getAmountPaid())
+                    .amountDue(invoice.getAmountDue())
+                    .currency(invoice.getCurrency())
+                    .hostedInvoiceUrl(invoice.getHostedInvoiceUrl())
+                    .recordedAt(LocalDateTime.now())
+                    .status("unmatched")
+                    .build());
+            log.error("[InvoicePaymentSucceeded] UNMATCHED invoice {} customerId={} customerEmail={} discoveredEmail={} — recorded to stripe_unmatched_invoice for reconciliation",
                     invoice.getId(), invoice.getCustomer(), invoice.getCustomerEmail(), discoveredEmail);
         } catch (Exception persistEx) {
             log.error("[InvoicePaymentSucceeded] UNMATCHED invoice {} could not even be recorded: {}",
@@ -1194,42 +1190,32 @@ public class StripeService {
     }
 
     private boolean reserveEmailLog(String key, User user, Invoice invoice, String type) {
-        Document doc = new Document("key", key)
-                .append("type", type)
-                .append("status", "sending")
-                .append("email", user.getEmail())
-                .append("userId", user.getId())
-                .append("username", user.getUsername())
-                .append("stripeInvoiceId", invoice.getId())
-                .append("stripeCustomerId", invoice.getCustomer())
-                .append("stripeSubscriptionId", invoice.getSubscription())
-                .append("amountPaid", invoice.getAmountPaid())
-                .append("currency", invoice.getCurrency())
-                .append("createdAt", LocalDateTime.now());
-        try {
-            mongoTemplate.insert(doc, "email_logs");
-            return true;
-        } catch (DuplicateKeyException e) {
-            return false;
-        }
+        return emailLogs.reserve(EmailLog.builder()
+                .key(key)
+                .type(type)
+                .email(user.getEmail())
+                .userId(user.getId())
+                .username(user.getUsername())
+                .stripeInvoiceId(invoice.getId())
+                .stripeCustomerId(invoice.getCustomer())
+                .stripeSubscriptionId(invoice.getSubscription())
+                .amountPaid(invoice.getAmountPaid())
+                .currency(invoice.getCurrency())
+                .createdAt(LocalDateTime.now())
+                .build());
     }
 
     private boolean reserveEmailLog(String key, User user, Subscription subscription, String type) {
-        Document doc = new Document("key", key)
-                .append("type", type)
-                .append("status", "sending")
-                .append("email", user.getEmail())
-                .append("userId", user.getId())
-                .append("username", user.getUsername())
-                .append("stripeCustomerId", subscription.getCustomer())
-                .append("stripeSubscriptionId", subscription.getId())
-                .append("createdAt", LocalDateTime.now());
-        try {
-            mongoTemplate.insert(doc, "email_logs");
-            return true;
-        } catch (DuplicateKeyException e) {
-            return false;
-        }
+        return emailLogs.reserve(EmailLog.builder()
+                .key(key)
+                .type(type)
+                .email(user.getEmail())
+                .userId(user.getId())
+                .username(user.getUsername())
+                .stripeCustomerId(subscription.getCustomer())
+                .stripeSubscriptionId(subscription.getId())
+                .createdAt(LocalDateTime.now())
+                .build());
     }
 
     private void sendCancellationEmailOnce(User user, Subscription subscription) {
@@ -1300,20 +1286,11 @@ public class StripeService {
     }
 
     private void markEmailLogSent(String key) {
-        mongoTemplate.updateFirst(
-                new Query(Criteria.where("key").is(key)),
-                new Update().set("status", "sent").set("sentAt", LocalDateTime.now()),
-                "email_logs");
+        emailLogs.markSent(key, LocalDateTime.now());
     }
 
     private void markEmailLogFailed(String key, String errorMessage) {
-        mongoTemplate.updateFirst(
-                new Query(Criteria.where("key").is(key)),
-                new Update()
-                        .set("status", "failed")
-                        .set("failedAt", LocalDateTime.now())
-                        .set("errorMessage", errorMessage),
-                "email_logs");
+        emailLogs.markFailed(key, errorMessage, LocalDateTime.now());
     }
 
     private String formatSubscriptionAccessEnd(Subscription subscription) {
@@ -1714,24 +1691,11 @@ public class StripeService {
     private boolean tryClaimSubscriptionCreationLock(String userId) {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime staleBefore = now.minusSeconds(SUBSCRIPTION_CREATION_LOCK_TTL_SECONDS);
-        Query query = new Query(new Criteria().andOperator(
-                Criteria.where("_id").is(userId),
-                new Criteria().orOperator(
-                        Criteria.where("subscriptionCreationLockedAt").exists(false),
-                        Criteria.where("subscriptionCreationLockedAt").is(null),
-                        Criteria.where("subscriptionCreationLockedAt").lt(staleBefore)
-                )
-        ));
-        Update update = new Update().set("subscriptionCreationLockedAt", now);
-        User claimed = mongoTemplate.findAndModify(query, update, User.class);
-        return claimed != null;
+        return userRepository.tryClaimSubscriptionCreationLock(userId, now, staleBefore);
     }
 
     private void releaseSubscriptionCreationLock(String userId) {
-        mongoTemplate.updateFirst(
-                new Query(Criteria.where("_id").is(userId)),
-                new Update().unset("subscriptionCreationLockedAt"),
-                User.class);
+        userRepository.releaseSubscriptionCreationLock(userId);
     }
 
     private void assertSetupIntentBelongsToUser(User user, SetupIntent setupIntent) {
@@ -1763,11 +1727,11 @@ public class StripeService {
 
             if (!liveStatus.equals(cached) || periodEndStale) {
                 if (!liveStatus.equals(cached)) {
-                    log.info("[syncStatusFromStripe] Stale status for user={}: cached={} live={}. Updating MongoDB.",
+                    log.info("[syncStatusFromStripe] Stale status for user={}: cached={} live={}. Updating the database.",
                             user.getUsername(), cached, liveStatus);
                 }
                 if (periodEndStale) {
-                    log.info("[syncStatusFromStripe] Stale periodEnd for user={}: cached={} live={}. Updating MongoDB.",
+                    log.info("[syncStatusFromStripe] Stale periodEnd for user={}: cached={} live={}. Updating the database.",
                             user.getUsername(), user.getSubscriptionCurrentPeriodEnd(),
                             sub.getCurrentPeriodEnd());
                 }

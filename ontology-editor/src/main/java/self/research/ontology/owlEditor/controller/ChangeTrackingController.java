@@ -177,7 +177,7 @@ public class ChangeTrackingController {
     }
 
     /**
-     * Get recent changes - Uses MongoDB as the single source of truth
+     * Get recent changes - Uses the database as the single source of truth
      * GET /api/ontology/{projectId}/changes/recent
      */
     @GetMapping("/{projectId}/changes/recent")
@@ -387,7 +387,7 @@ public class ChangeTrackingController {
     }
     
     /**
-     * Get synced history changes from MongoDB (with collaboration features)
+     * Get synced history changes from the database (with collaboration features)
      * GET /api/ontology/{projectId}/changes/synced
      */
     @GetMapping("/{projectId}/changes/synced")
@@ -609,7 +609,7 @@ public class ChangeTrackingController {
             @PathVariable String changeId
     ) {
         try {
-            // Try to find in MongoDB synced changes first (has comments)
+            // Try to find in the database synced changes first (has comments)
             HistoryChange historyChange = historySyncService.getHistoryChange(
                     self.research.ontology.owlEditor.service.MergeFeedExpander.baseId(changeId));
 

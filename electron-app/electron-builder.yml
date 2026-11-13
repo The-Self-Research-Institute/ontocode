@@ -44,6 +44,10 @@ extraResources:
       - "!temurin-jre.tar.gz"
       - "!fuseki-6.1.0.tar.gz"
       - "!**/*.gitkeep"
+  - from: ../licenses
+    to: licenses
+    filter:
+      - "**/*"
 
 # ── Windows ────────────────────────────────────────────────────────────────────
 win:
@@ -72,7 +76,7 @@ appx:
   minVersion: 10.0.17763.0
   maxVersionTested: 10.0.26100.0
   # capabilities defaults to ['runFullTrust'], required for Electron's child-process
-  # spawning (bundled MongoDB + two JVMs) and normal file I/O — do not remove.
+  # spawning (bundled PostgreSQL + two JVMs) and normal file I/O — do not remove.
 
 nsis:
   oneClick: false

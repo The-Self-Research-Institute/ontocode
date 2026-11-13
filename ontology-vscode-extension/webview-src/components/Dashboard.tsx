@@ -235,6 +235,7 @@ import { buildEntityIri, isBulkChangeIri, labelForNewEntity } from "../utils/ent
 import { requestChangeAssistantTab } from "../utils/changeAssistantNav";
 import { keepPendingChildren } from "../utils/treeChildren";
 import { useCommittedChangeRefresh } from "../hooks/useCommittedChangeRefresh";
+import { useViewOnlyBlockedPrompt } from "../hooks/useViewOnlyBlockedPrompt";
 import { DRAFT_COPY_MAX_MISSING, DRAFT_COPY_MAX_WAIT_MS, ROLLBACK_REFRESH_DELAY_MS } from "../utils/refreshTiming";
 import { useLastCallTimer } from "../hooks/useLastCallTimer";
 import { PluginMarketplace } from "./PluginMarketplace";
@@ -278,6 +279,8 @@ import {
 import { OntoCodeLogo } from "./OntoCodeLogo";
 import ReleaseNotesModal from "./ReleaseNotesModal";
 import DraftCopyModal from "./dialogs/DraftCopyModal";
+import SyncModeControls from "./topbar/SyncModeControls";
+import { serverReason } from "../utils/serverReason";
 import PRsModal from "./PRsModal";
 import DraftPRPanel from "./DraftPRPanel";
 import RevertPrDialog from "./RevertPrDialog";
@@ -316,6 +319,7 @@ const TopMenuBar = ({
   isProjectOwner,
   isProjectShared,
   isDraftEditorRole,
+  isViewerRole,
   autoDraftStatus,
   onToggleRequireDraftForMembers,
   onSwitchToDraftMode,
@@ -379,6 +383,7 @@ const TopMenuBar = ({
   isProjectOwner?: boolean;
   isProjectShared?: boolean;
   isDraftEditorRole?: boolean;
+  isViewerRole?: boolean;
   autoDraftStatus?: 'idle' | 'copying' | 'ready';
   onToggleRequireDraftForMembers?: () => void;
   onSwitchToDraftMode?: () => void;
@@ -1064,67 +1069,18 @@ const TopMenuBar = ({
         <UndoRunControls menu={undoMenu} />
         {isDesktop() ? null : (
           <>
-            {autoDraftStatus === 'copying' && (
-              <span className="hidden sm:inline text-xs text-blue-500 italic animate-pulse" title="Setting up your private draft workspace…">
-                Setting up draft…
-              </span>
-            )}
-            {autoDraftStatus === 'ready' && (
-              <span className="hidden sm:inline text-xs text-green-600 font-medium">
-                Draft ready
-              </span>
-            )}
-            <span className={`hidden sm:inline text-xs font-medium ${(requireDraftForMembers && !isProjectOwner || isDraftEditorRole) && syncMode === 'public'
-                ? "text-amber-600"
-                : syncMode === "public" ? "text-green-600" : "text-gray-500"
-              }`}>
-              {(requireDraftForMembers && !isProjectOwner) || isDraftEditorRole
-                ? (syncMode === 'public' ? "Public (View Only)" : "Draft Mode")
-                : syncMode === "public" ? "Public (Live)" : "Private (Draft)"}
-            </span>
-            {((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'public' ? (
-              <button
-                onClick={onSwitchToDraftMode}
-                className="ml-1 flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
-                title="Start your private draft copy to make edits"
-              >
-                Switch to Draft Mode
-              </button>
-            ) : ((requireDraftForMembers && !isProjectOwner) || isDraftEditorRole) && syncMode === 'private' ? (
-              <button
-                onClick={onToggleSyncMode}
-                className="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 bg-gray-300"
-                title="Switch back to Public view-only mode"
-              >
-                <span className="inline-block h-3 w-3 transform rounded-full bg-white transition-transform translate-x-1" />
-              </button>
-            ) : (
-              <button
-                onClick={onToggleSyncMode}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${syncMode === "public" ? "bg-green-500" : "bg-gray-300"
-                  }`}
-                title={syncMode === "public" ? "Switch to Draft Mode" : "View Public (draft preserved)"}
-              >
-                <span
-                  className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${syncMode === "public" ? "translate-x-5" : "translate-x-1"
-                    }`}
-                />
-              </button>
-            )}
-            {isProjectOwner && (isProjectShared || requireDraftForMembers) && onToggleRequireDraftForMembers && (
-              <button
-                onClick={onToggleRequireDraftForMembers}
-                className={`ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${requireDraftForMembers
-                    ? 'bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100'
-                    : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
-                  }`}
-                title={requireDraftForMembers
-                  ? 'Members are locked to Draft Mode — click to allow public editing'
-                  : 'Allow members to edit publicly — click to require Draft Mode for members'}
-              >
-                {requireDraftForMembers ? '🔒 Draft required' : 'Allow public'}
-              </button>
-            )}
+            <SyncModeControls
+              syncMode={syncMode}
+              requireDraftForMembers={requireDraftForMembers}
+              isProjectOwner={isProjectOwner}
+              isProjectShared={isProjectShared}
+              isDraftEditorRole={isDraftEditorRole}
+              isViewerRole={isViewerRole}
+              autoDraftStatus={autoDraftStatus}
+              onToggleSyncMode={onToggleSyncMode}
+              onSwitchToDraftMode={onSwitchToDraftMode}
+              onToggleRequireDraftForMembers={onToggleRequireDraftForMembers}
+            />
           </>
         )}
       </div>
@@ -1188,6 +1144,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     : "You have view-only access. Upgrade your plan to edit.";
   const [showProPromptType, setShowProPromptType] = useState<'edit' | 'export' | 'viewer' | 'draftRequired' | null>(null);
   const handleViewOnlyAction = () => setShowProPromptType(isProjectViewerRole ? 'viewer' : 'edit');
+  useViewOnlyBlockedPrompt(setShowProPromptType, isProjectViewerRole);
   const handleExportProAction = () => setShowProPromptType('export');
   const [showThemeSettings, setShowThemeSettings] = useState(false);
   const [metricViewMode, setMetricViewMode] = useState<Record<string, "used" | "available">>({});
@@ -1538,6 +1495,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const pluginDraftMode = !isDesktop() && syncMode === "private";
   const [publishConflictStatus, setPublishConflictStatus] = useState<'idle' | 'checking' | 'clean' | 'conflict'>('idle');
   const [draftCopyPhase, setDraftCopyPhase] = useState<'idle' | 'import-blocked' | 'copying' | 'ready' | 'failed'>('idle');
+  const [draftCopyFailureReason, setDraftCopyFailureReason] = useState<string | undefined>(undefined);
   const [draftCopyTripleCount, setDraftCopyTripleCount] = useState<number | undefined>(undefined);
   const {
     requireDraftForMembers,
@@ -1676,7 +1634,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         options?.onReady?.();
         return;
       }
-      if (options?.showModal) setDraftCopyPhase('copying');
+      if (options?.showModal) { setDraftCopyFailureReason(undefined); setDraftCopyPhase('copying'); }
       else setAutoDraftStatus('copying');
 
       const beginCopy = () => {
@@ -1690,6 +1648,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               if (err?.response?.status === 409 || (err?.message || '').includes('import')) {
                 setDraftCopyPhase('import-blocked');
               } else {
+                setDraftCopyFailureReason(serverReason(err, '') || undefined);
                 setDraftCopyPhase('failed');
               }
             } else {
@@ -10253,7 +10212,7 @@ const updateItemInState = useCallback(
         showNotification(`Object property "${name}" created successfully!`);
       } catch (error) {
         console.error("Failed to create object property:", error);
-        showNotification("Failed to create object property. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create object property. See console for details."), "error");
         throw error;
       }
     },
@@ -10304,7 +10263,7 @@ const updateItemInState = useCallback(
         showNotification(`Data property "${name}" created successfully!`);
       } catch (error) {
         console.error("Failed to create data property:", error);
-        showNotification("Failed to create data property. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create data property. See console for details."), "error");
         throw error;
       }
     },
@@ -10408,7 +10367,7 @@ const updateItemInState = useCallback(
         showNotification(`Class "${name}" created successfully!`);
       } catch (error) {
         console.error("Failed to create class:", error);
-        showNotification("Failed to create class. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create class. See console for details."), "error");
         throw error;
       }
     },
@@ -10741,7 +10700,7 @@ const updateItemInState = useCallback(
         setAddClassDialogOpen(false);
       } catch (error) {
         console.error("Failed to create entity:", error);
-        showNotification("Failed to create entity. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create entity. See console for details."), "error");
       }
     },
     [projectId, selectedItem, addClassType, entitiesTab, effectiveOntologyIri, classHierarchy, markAsUnsaved, refreshProperties, loadChildren],
@@ -10809,7 +10768,7 @@ const updateItemInState = useCallback(
         setPropertyParentLabel("owl:topObjectProperty");
       } catch (error) {
         console.error("Failed to create property:", error);
-        showNotification("Failed to create property. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create property. See console for details."), "error");
       }
     },
     [projectId, selectedItem, addPropertyType, objectPropertyHierarchy, expandedNodes, effectiveOntologyIri, markAsUnsaved, refreshProperties],
@@ -10877,7 +10836,7 @@ const updateItemInState = useCallback(
         setPropertyParentLabel("owl:topDataProperty");
       } catch (error) {
         console.error("Failed to create data property:", error);
-        showNotification("Failed to create data property. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create data property. See console for details."), "error");
       }
     },
     [projectId, selectedItem, addPropertyType, dataPropertyHierarchy, expandedNodes, effectiveOntologyIri, markAsUnsaved, refreshProperties],
@@ -10911,7 +10870,7 @@ const updateItemInState = useCallback(
         setAddDatatypeDialogOpen(false);
       } catch (error) {
         console.error("Failed to create datatype:", error);
-        showNotification("Failed to create datatype. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create datatype. See console for details."), "error");
       }
     },
     [projectId, effectiveOntologyIri, markAsUnsaved, showNotification],
@@ -10950,7 +10909,7 @@ const updateItemInState = useCallback(
         setAddPropertyDialogOpen(false);
       } catch (error) {
         console.error("Failed to create annotation property:", error);
-        showNotification("Failed to create annotation property. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create annotation property. See console for details."), "error");
       }
     },
     [
@@ -10998,7 +10957,7 @@ const updateItemInState = useCallback(
         showNotification(`Individual "${name}" created successfully!`, "info");
       } catch (error) {
         console.error("Failed to create individual:", error);
-        showNotification("Failed to create individual. See console for details.", "error");
+        showNotification(serverReason(error, "Failed to create individual. See console for details."), "error");
       }
     },
     [projectId, effectiveOntologyIri, entitiesTab, selectedItem, markAsUnsaved, showNotification],
@@ -17748,6 +17707,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           isProjectOwner={isProjectOwner}
           isProjectShared={isCurrentFileShared || isProjectSharedBySettings}
           isDraftEditorRole={isProjectDraftEditorRole}
+          isViewerRole={isProjectViewerRole}
           autoDraftStatus={autoDraftStatus}
           onSwitchToDraftMode={handleSwitchToDraftMode}
           onToggleRequireDraftForMembers={() => {
@@ -18728,6 +18688,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
       <DraftCopyModal
         phase={draftCopyPhase}
         tripleCount={draftCopyTripleCount}
+        failureReason={draftCopyFailureReason}
         onCancel={() => {
           if (draftCopyPollRef.current) clearInterval(draftCopyPollRef.current);
           setDraftCopyPhase('idle');

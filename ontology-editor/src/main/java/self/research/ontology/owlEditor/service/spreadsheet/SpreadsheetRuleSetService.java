@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service.spreadsheet;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import self.research.ontology.owlEditor.model.SpreadsheetRuleSetEntity;
 import self.research.ontology.owlEditor.repository.SpreadsheetRuleSetRepository;
@@ -60,7 +61,11 @@ public class SpreadsheetRuleSetService {
         e.setCreatedBy(user);
         e.setCreatedByUserId(userId);
         e.setUpdatedBy(user);
-        return repository.save(e);
+        try {
+            return repository.save(e);
+        } catch (DuplicateKeyException ex) {
+            throw new DuplicateNameException(clean);
+        }
     }
 
     public Optional<SpreadsheetRuleSetEntity> update(String projectId, String id, String name, String description,
@@ -81,7 +86,11 @@ public class SpreadsheetRuleSetService {
         e.setRules(List.copyOf(rules));
         e.setUpdatedBy(user);
         e.setUpdatedAt(new Date());
-        return Optional.of(repository.save(e));
+        try {
+            return Optional.of(repository.save(e));
+        } catch (DuplicateKeyException ex) {
+            throw new DuplicateNameException(clean);
+        }
     }
 
     public boolean delete(String projectId, String id) {

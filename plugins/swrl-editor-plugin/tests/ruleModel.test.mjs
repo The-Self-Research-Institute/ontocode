@@ -200,6 +200,11 @@ test('friendlyRuleError', () => {
   assert.match(friendlyRuleError({ status: 409, data: { message: 'stale precondition' } }, 'x'), /changed since/);
   assert.match(friendlyRuleError({ status: 404 }, 'x'), /no longer exists/);
   assert.match(friendlyRuleError({ status: 503 }, 'x'), /not available/);
+  assert.equal(
+    friendlyRuleError({ status: 413, data: { error: 'This ontology is too large for the rule engine on this server.' } }, 'x'),
+    'This ontology is too large for the rule engine on this server.'
+  );
+  assert.match(friendlyRuleError({ status: 413 }, 'x'), /too large for the rule engine/);
   assert.equal(friendlyRuleError(new Error('boom'), 'x'), 'boom');
   assert.equal(friendlyRuleError(null, 'fallback'), 'fallback');
 });

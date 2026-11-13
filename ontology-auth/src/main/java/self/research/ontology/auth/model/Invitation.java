@@ -1,21 +1,15 @@
 package self.research.ontology.auth.model;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
-import org.springframework.data.mongodb.core.mapping.Document;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
 import java.time.LocalDateTime;
 
-@Document(collection = "invitations")
 public class Invitation {
 
-    @Id
     private String id;
 
     @NotBlank
-    @Indexed(unique = true)
     private String invitationToken;
 
     @NotBlank

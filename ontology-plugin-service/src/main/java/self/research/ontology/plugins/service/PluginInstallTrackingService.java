@@ -28,40 +28,17 @@ public class PluginInstallTrackingService {
 
     @Transactional
     public void trackInstall(String pluginId, String userId, String username, String version) {
-        PluginUserInstall install = installRepository.findByPluginIdAndUserId(pluginId, userId)
-                .orElse(PluginUserInstall.builder()
-                        .pluginId(pluginId)
-                        .userId(userId)
-                        .username(username)
-                        .totalInstalls(0)
-                        .firstInstalledAt(LocalDateTime.now())
-                        .createdAt(LocalDateTime.now())
-                        .build());
-
-        install.setVersion(version);
-        install.setIsActive(true);
-        install.setTotalInstalls(install.getTotalInstalls() + 1);
-        install.setLastInstalledAt(LocalDateTime.now());
-        install.setUpdatedAt(LocalDateTime.now());
-
-        installRepository.save(install);
-
-        updatePluginDownloadCount(pluginId);
+        installRepository.recordInstall(pluginId, userId, username, version);
+        pluginRepository.setTotalDownloadsFromInstalls(pluginId);
 
         log.info("Tracked installation of plugin {} by user {} (version {})", pluginId, userId, version);
     }
 
     @Transactional
     public void trackUninstall(String pluginId, String userId) {
-        installRepository.findByPluginIdAndUserId(pluginId, userId)
-                .ifPresent(install -> {
-                    install.setIsActive(false);
-                    install.setLastUninstalledAt(LocalDateTime.now());
-                    install.setUpdatedAt(LocalDateTime.now());
-                    installRepository.save(install);
-
-                    log.info("Tracked uninstallation of plugin {} by user {}", pluginId, userId);
-                });
+        if (installRepository.recordUninstall(pluginId, userId)) {
+            log.info("Tracked uninstallation of plugin {} by user {}", pluginId, userId);
+        }
     }
 
     public PluginStatsResponse getPluginStats(String pluginId) {
@@ -127,12 +104,4 @@ public class PluginInstallTrackingService {
                 .orElse(0);
     }
 
-    private void updatePluginDownloadCount(String pluginId) {
-        pluginRepository.findByPluginId(pluginId).ifPresent(plugin -> {
-            Long totalDownloads = installRepository.countByPluginId(pluginId);
-            plugin.setTotalDownloads(totalDownloads);
-            plugin.setUpdatedAt(LocalDateTime.now());
-            pluginRepository.save(plugin);
-        });
-    }
 }

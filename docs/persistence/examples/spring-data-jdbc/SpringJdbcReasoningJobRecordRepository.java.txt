@@ -1,0 +1,119 @@
+package self.research.ontology.reasoner.repository.springjdbc;
+
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.relational.core.conversion.DbActionExecutionException;
+import org.springframework.stereotype.Repository;
+import self.research.ontology.reasoner.model.ReasoningJobRecord;
+import self.research.ontology.reasoner.repository.ReasoningJobRecordRepository;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
+@Repository
+@ConditionalOnProperty(name = "ontocode.db.impl", havingValue = "springjdbc")
+public class SpringJdbcReasoningJobRecordRepository implements ReasoningJobRecordRepository {
+
+    private final SpringDataJdbcJobRepository delegate;
+
+    public SpringJdbcReasoningJobRecordRepository(SpringDataJdbcJobRepository delegate) {
+        this.delegate = delegate;
+    }
+
+    @Override
+    public ReasoningJobRecord save(ReasoningJobRecord record) {
+        JobRow row = toRow(record);
+        row.markNew(!delegate.existsById(row.getJobId()));
+        try {
+            delegate.save(row);
+        } catch (DataIntegrityViolationException | DbActionExecutionException e) {
+            row.markNew(false);
+            delegate.save(row);
+        }
+        return record;
+    }
+
+    @Override
+    public List<ReasoningJobRecord> saveAll(Iterable<ReasoningJobRecord> records) {
+        List<ReasoningJobRecord> saved = new ArrayList<>();
+        List<JobRow> rows = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
+        for (ReasoningJobRecord record : records) {
+            saved.add(record);
+            JobRow row = toRow(record);
+            rows.add(row);
+            ids.add(row.getJobId());
+        }
+        if (rows.isEmpty()) {
+            return saved;
+        }
+        Set<String> existing = new HashSet<>();
+        for (int from = 0; from < ids.size(); from += 5000) {
+            for (JobRow found : delegate.findAllById(ids.subList(from, Math.min(from + 5000, ids.size())))) {
+                existing.add(found.getJobId());
+            }
+        }
+        for (JobRow row : rows) {
+            row.markNew(!existing.contains(row.getJobId()));
+        }
+        delegate.saveAll(rows);
+        return saved;
+    }
+
+    @Override
+    public Optional<ReasoningJobRecord> findById(String jobId) {
+        return delegate.findById(jobId).map(SpringJdbcReasoningJobRecordRepository::toRecord);
+    }
+
+    @Override
+    public List<ReasoningJobRecord> findByStatusIn(Collection<String> statuses) {
+        if (statuses == null || statuses.isEmpty()) {
+            return List.of();
+        }
+        return delegate.findByStatusIn(statuses).stream().map(SpringJdbcReasoningJobRecordRepository::toRecord).toList();
+    }
+
+    @Override
+    public long deleteByUpdatedAtBefore(Instant cutoff) {
+        return delegate.deleteOlderThan(cutoff);
+    }
+
+    private static JobRow toRow(ReasoningJobRecord r) {
+        JobRow e = new JobRow();
+        e.setJobId(r.getJobId());
+        e.setJobType(r.getJobType());
+        e.setProjectId(r.getProjectId());
+        e.setStatus(r.getStatus());
+        e.setQueuedAt(r.getQueuedAt());
+        e.setStartedAt(r.getStartedAt());
+        e.setCompletedAt(r.getCompletedAt());
+        e.setUpdatedAt(r.getUpdatedAt() != null ? r.getUpdatedAt() : Instant.now());
+        e.setExecutionTimeMs(r.getExecutionTimeMs());
+        e.setError(r.getError());
+        e.setResultJson(r.getResultJson());
+        e.setResultTooLarge(r.isResultTooLarge());
+        return e;
+    }
+
+    private static ReasoningJobRecord toRecord(JobRow e) {
+        return ReasoningJobRecord.builder()
+                .jobId(e.getJobId())
+                .jobType(e.getJobType())
+                .projectId(e.getProjectId())
+                .status(e.getStatus())
+                .queuedAt(e.getQueuedAt())
+                .startedAt(e.getStartedAt())
+                .completedAt(e.getCompletedAt())
+                .updatedAt(e.getUpdatedAt())
+                .executionTimeMs(e.getExecutionTimeMs())
+                .error(e.getError())
+                .resultJson(e.getResultJson())
+                .resultTooLarge(e.isResultTooLarge())
+                .build();
+    }
+}

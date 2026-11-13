@@ -10,6 +10,7 @@ const crypto = require('crypto');
 
 const guard = require('./SharedGuard');
 const policy = require('./ResourcePolicy');
+const pg = require('./PostgresRuntime');
 const logHygiene = require('./LogHygiene');
 
 function jvmHeaps() {
@@ -18,7 +19,7 @@ function jvmHeaps() {
         desktopXmx: `${budget.backendMb}m`,
         fusekiXmx: `${budget.fusekiMb}m`,
         swrlXmx: `${budget.swrlMb}m`,
-        mongoCacheGb: policy.mongoCacheArg(budget),
+        postgresBuffers: policy.postgresSharedBuffers(budget),
         totalGb: Math.round(budget.totalMb / 1024),
         budget,
     };
@@ -29,9 +30,10 @@ const RESOURCES_DIR = app.isPackaged
     : path.join(__dirname, '..', 'resources', 'backend');
 
 const DATA_DIR        = path.join(app.getPath('userData'), 'data');
-const MONGO_DATA_DIR  = path.join(DATA_DIR, 'mongo');
+const POSTGRES_DATA_DIR = path.join(DATA_DIR, 'postgres');
 const FUSEKI_DATA_DIR = path.join(DATA_DIR, 'fuseki');
 const OWL_DATA_DIR    = path.join(DATA_DIR, 'ontologies');
+const BLOB_DIR        = path.join(DATA_DIR, 'blobs');
 const LOGS_DIR        = path.join(app.getPath('userData'), 'logs');
 const FUSEKI_BASE_DIR = path.join(app.getPath('userData'), 'fuseki-base');
 const JVM_TMP_DIR     = path.join(app.getPath('userData'), 'tmp');
@@ -55,8 +57,6 @@ const PLATFORM_JVM_FLAGS = [
     ...(process.mas ? ['-XX:-UsePerfData'] : []),
 ];
 
-const MONGO_PLATFORM_ARGS = process.mas ? ['--nounixsocket'] : [];
-
 const helperProcesses = new Set();
 let startupCancelled = false;
 
@@ -78,21 +78,20 @@ const STARTUP_HEALTH_TIMEOUT_MS = 300000;
 const FUSEKI_QUERY_TIMEOUT_MS = 120000;
 
 const DEFAULT_PORTS = {
-    mongo:   27117,
+    postgres: 15432,
     fuseki:  13030,
     desktop: 18083,
     swrl:    18084,
     proxy:   18085,
-    proxy:   18085,
 };
 
-let MONGO_PORT   = DEFAULT_PORTS.mongo;
+let POSTGRES_PORT = DEFAULT_PORTS.postgres;
 let FUSEKI_PORT  = DEFAULT_PORTS.fuseki;
 let DESKTOP_PORT = DEFAULT_PORTS.desktop;
 let SWRL_PORT    = DEFAULT_PORTS.swrl;
 let PROXY_PORT   = DEFAULT_PORTS.proxy;
 
-let mongoProcess   = null;
+let postgresProcess = null;
 
 const LAZY_FUSEKI = process.env.ONTOCODE_LAZY_FUSEKI !== '0';
 
@@ -142,12 +141,12 @@ async function findFreePort(preferred, label) {
 
 async function resolveAllPorts() {
     log('info', 'Checking port availability…');
-    MONGO_PORT   = await findFreePort(DEFAULT_PORTS.mongo,   'MongoDB');
+    POSTGRES_PORT = await findFreePort(DEFAULT_PORTS.postgres, 'PostgreSQL');
     FUSEKI_PORT  = await findFreePort(DEFAULT_PORTS.fuseki,  'Fuseki');
     DESKTOP_PORT = await findFreePort(DEFAULT_PORTS.desktop, 'Desktop');
     SWRL_PORT    = await findFreePort(DEFAULT_PORTS.swrl,    'SWRL');
     PROXY_PORT   = await findFreePort(DEFAULT_PORTS.proxy,   'Routing proxy');
-    log('info', `Ports → MongoDB:${MONGO_PORT}  Fuseki:${FUSEKI_PORT}  Desktop:${DESKTOP_PORT}  SWRL:${SWRL_PORT}  Proxy:${PROXY_PORT}`);
+    log('info', `Ports → PostgreSQL:${POSTGRES_PORT}  Fuseki:${FUSEKI_PORT}  Desktop:${DESKTOP_PORT}  SWRL:${SWRL_PORT}  Proxy:${PROXY_PORT}`);
 }
 
 const DESKTOP_LAUNCH_KEY = crypto.randomBytes(32).toString('hex');
@@ -168,7 +167,7 @@ function requireDesktopSecrets() {
 module.exports = {
     setDesktopSecrets,
     get DESKTOP_LAUNCH_KEY() { return DESKTOP_LAUNCH_KEY; },
-    get MONGO_PORT()   { return MONGO_PORT; },
+    get POSTGRES_PORT() { return POSTGRES_PORT; },
     get FUSEKI_PORT()  { return FUSEKI_PORT; },
     get DESKTOP_PORT() { return DESKTOP_PORT; },
     get SWRL_PORT()    { return SWRL_PORT; },
@@ -212,7 +211,7 @@ module.exports = {
         startIdleWatcher();
         validateBackendBundles();
         await resolveAllPorts();
-        await startMongo();
+        await startPostgres();
         assertNotCancelled();
         if (!LAZY_FUSEKI) {
             await startFuseki();
@@ -293,11 +292,11 @@ module.exports = {
         await stopProcess(swrlProcess,    'SWRL',    4000);
         await stopProcess(desktopProcess, 'Desktop', 10000);
         await stopProcess(fusekiProcess,  'Fuseki',  4000);
-        await stopProcess(mongoProcess,   'MongoDB', 4000);
+        await stopPostgres();
         swrlProcess    = null;
         desktopProcess = null;
         fusekiProcess  = null;
-        mongoProcess   = null;
+        postgresProcess = null;
         guard.killAllSync();
     },
 
@@ -305,7 +304,7 @@ module.exports = {
 
         const isRunning = (p) => Boolean(p && !p.killed && p.exitCode === null);
         return {
-            mongo:   isRunning(mongoProcess),
+            postgres: isRunning(postgresProcess),
             fuseki:  isRunning(fusekiProcess),
             desktop: isRunning(desktopProcess),
             swrl:    isRunning(swrlProcess),
@@ -314,7 +313,7 @@ module.exports = {
 };
 
 function ensureDirs() {
-    [MONGO_DATA_DIR, FUSEKI_DATA_DIR, OWL_DATA_DIR, LOGS_DIR, FUSEKI_BASE_DIR, DIAG_DIR].forEach(d => {
+    [POSTGRES_DATA_DIR, FUSEKI_DATA_DIR, OWL_DATA_DIR, BLOB_DIR, LOGS_DIR, FUSEKI_BASE_DIR, DIAG_DIR].forEach(d => {
         if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
     });
 }
@@ -369,7 +368,7 @@ function stopIdle(name) {
 }
 
 const SERVICE_LABELS = {
-    MongoDB: 'The database',
+    PostgreSQL: 'The database',
     Desktop: 'The OntoCode backend',
     Fuseki: 'The graph and SPARQL service',
     SWRL: 'The rule reasoner',
@@ -377,7 +376,7 @@ const SERVICE_LABELS = {
 
 function handleChildExit(name, child, code, tail) {
     if (shuttingDown || child._ontoStopping || !child._ontoReady) return;
-    const restartable = name === 'MongoDB' || name === 'Desktop';
+    const restartable = name === 'PostgreSQL' || name === 'Desktop';
     let recovery = 'lazy';
     if (restartable) recovery = restartBudget.tryTake() ? 'restart' : 'none';
     const info = policy.classifyExit({ name, code, outputTail: tail, stopping: false, recovery });
@@ -389,9 +388,8 @@ function handleChildExit(name, child, code, tail) {
 async function restartService(name) {
     const label = SERVICE_LABELS[name] || name;
     try {
-        if (name === 'MongoDB') {
-            clearMongoLock();
-            mongoProcess = await attemptStartMongo(MONGO_DATA_DIR);
+        if (name === 'PostgreSQL') {
+            postgresProcess = await attemptStartPostgres();
         } else {
             await startDesktop();
         }
@@ -408,12 +406,8 @@ function log(level, msg) {
     if (_logCallback) _logCallback(level, msg);
 }
 
-function mongoBin() {
-    const platform = process.platform;
-    const dir = path.join(RESOURCES_DIR, 'mongodb', platform === 'win32' ? 'win32' : platform);
-    const name = platform === 'win32' ? 'mongod.exe' : 'mongod';
-    const p = path.join(dir, name);
-    return fs.existsSync(p) ? p : 'mongod';
+function postgresRoot() {
+    return path.join(RESOURCES_DIR, 'postgres', process.platform);
 }
 
 function javaBin() {
@@ -461,41 +455,33 @@ function validateBackendBundles() {
     throw new Error(lines.join('\n'));
 }
 
-const MONGO_EXIT_NEED_DOWNGRADE = 62;
-
 const STATUS_DLL_NOT_FOUND = 0xC0000135;
 
 function isDllNotFound(code) {
     return typeof code === 'number' && (code >>> 0) === STATUS_DLL_NOT_FOUND;
 }
 
-async function attemptStartMongo(dataDir) {
-    const logFile = path.join(LOGS_DIR, 'mongo.log');
-    const proc = spawnService('MongoDB', mongoBin(), [
-        '--dbpath', dataDir,
-        '--port',   String(MONGO_PORT),
-        '--logpath', logFile,
-        '--logappend',
-        '--logRotate', 'rename',
-        '--wiredTigerCacheSizeGB', jvmHeaps().mongoCacheGb,
-        '--bind_ip', '127.0.0.1',
-        ...MONGO_PLATFORM_ARGS,
-    ], {});
+async function attemptStartPostgres() {
+    const root = postgresRoot();
+    pg.clearStalePid(POSTGRES_DATA_DIR);
+    await pg.applyPassword(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword);
+    const logFile = path.join(LOGS_DIR, 'postgres.log');
+    const proc = spawnService('PostgreSQL', pg.binPath(root, 'postgres'),
+        pg.serverArgs(POSTGRES_DATA_DIR, POSTGRES_PORT, jvmHeaps().postgresBuffers), {}, logFile);
 
-    let onEarlyExit, onSpawnError, exitCode = null;
+    let onEarlyExit, onSpawnError;
     const earlyDeath = new Promise((_, reject) => {
         onEarlyExit = (code) => {
-            exitCode = code;
-            const reason = isDllNotFound(code) ? ' (a required Windows library is missing next to mongod.exe)' : '';
-            reject(new Error(`MongoDB exited with code ${code} before becoming ready${reason}`));
+            const reason = isDllNotFound(code) ? ' (a required Windows library is missing next to postgres.exe)' : '';
+            reject(new Error(`PostgreSQL exited with code ${code} before becoming ready${reason}`));
         };
-        onSpawnError = (err) => reject(new Error(`MongoDB failed to start: ${err.message}`));
+        onSpawnError = (err) => reject(new Error(`PostgreSQL failed to start: ${err.message}`));
         proc.once('exit', onEarlyExit);
         proc.once('error', onSpawnError);
     });
     try {
         await Promise.race([
-            waitForTcp('127.0.0.1', MONGO_PORT, 30000, 'MongoDB'),
+            pg.waitUntilAccepting(POSTGRES_PORT, 60000, () => hasExited(proc)),
             earlyDeath,
         ]);
         proc.removeListener('exit', onEarlyExit);
@@ -505,40 +491,47 @@ async function attemptStartMongo(dataDir) {
     } catch (err) {
         proc.removeListener('exit', onEarlyExit);
         proc.removeListener('error', onSpawnError);
-        await stopProcess(proc, 'MongoDB', 4000);
-        err.mongoExitCode = exitCode;
+        await stopPostgresProcess(proc);
         throw err;
     }
 }
 
-function clearMongoLock() {
-    const mongoLock = path.join(MONGO_DATA_DIR, 'mongod.lock');
-    try {
-        if (fs.existsSync(mongoLock) && fs.readFileSync(mongoLock, 'utf8').trim()) {
-            fs.unlinkSync(mongoLock);
-            log('info', `Removed stale MongoDB lock: ${mongoLock}`);
-        }
-    } catch (_) {}
+function stopPostgresProcess(proc) {
+    return new Promise((resolve) => {
+        if (!proc || proc.killed || proc.exitCode !== null) return resolve();
+        proc._ontoStopping = true;
+        const giveUp = setTimeout(() => {
+            log('warn', 'PostgreSQL did not stop in time; force-killing');
+            if (proc.pid) guard.killTree(proc.pid);
+            try { proc.kill('SIGKILL'); } catch (_) {}
+            resolve();
+        }, 15000);
+        proc.once('exit', () => { clearTimeout(giveUp); resolve(); });
+        const ctl = spawn(pg.binPath(postgresRoot(), 'pg_ctl'),
+            ['stop', '-D', POSTGRES_DATA_DIR, '-m', 'fast', '-t', '12'], { stdio: 'ignore', windowsHide: true });
+        ctl.on('error', () => {
+            if (process.platform === 'win32' && proc.pid) guard.killTree(proc.pid);
+            else { try { proc.kill('SIGTERM'); } catch (_) {} }
+        });
+    });
 }
 
-async function startMongo() {
-    log('info', 'Starting MongoDB…');
-    clearMongoLock();
+async function stopPostgres() {
+    await stopPostgresProcess(postgresProcess);
+}
 
-    try {
-        mongoProcess = await attemptStartMongo(MONGO_DATA_DIR);
-    } catch (err) {
-        if (err.mongoExitCode !== MONGO_EXIT_NEED_DOWNGRADE) throw err;
-
-        const backupDir = `${MONGO_DATA_DIR}.incompatible-${Date.now()}`;
-        log('warn', `MongoDB data at ${MONGO_DATA_DIR} is from an incompatible version (exit 62). `
-            + `Backing up to ${backupDir} and starting fresh — original data is preserved, not deleted.`);
-        fs.renameSync(MONGO_DATA_DIR, backupDir);
-        fs.mkdirSync(MONGO_DATA_DIR, { recursive: true });
-        mongoProcess = await attemptStartMongo(MONGO_DATA_DIR);
-        log('warn', `Recovered from incompatible MongoDB data. Previous data backed up at: ${backupDir}`);
+async function startPostgres() {
+    log('info', 'Starting PostgreSQL…');
+    const root = postgresRoot();
+    const version = pg.checkVersion(root, POSTGRES_DATA_DIR);
+    if (!version.ok) {
+        throw new Error(`The local database in ${POSTGRES_DATA_DIR} was created by PostgreSQL ${version.dataMajor} but this version of OntoCode Studio ships PostgreSQL ${version.bundledMajor}. Your data has not been changed. Please install the OntoCode Studio version that matches it.`);
     }
-    log('ok', `MongoDB ready on port ${MONGO_PORT}`);
+    if (pg.clusterState(POSTGRES_DATA_DIR) !== 'present') log('info', 'Creating the local database (first start only)…');
+    await pg.prepareCluster(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword, { log });
+    assertNotCancelled();
+    postgresProcess = await attemptStartPostgres();
+    log('ok', `PostgreSQL ready on port ${POSTGRES_PORT}`);
 }
 
 async function startFuseki() {
@@ -699,13 +692,28 @@ function discardPartialArchive(archiveFile) {
     } catch (_) {}
 }
 
+const LGPL_LIB_DIR = path.join(RESOURCES_DIR, 'lib');
+const DESKTOP_MAIN_CLASS = 'self.research.ontology.desktop.DesktopApplication';
+
+function lgplLibFingerprint() {
+    try {
+        return fs.readdirSync(LGPL_LIB_DIR).sort()
+            .map((f) => `${f}:${fs.statSync(path.join(LGPL_LIB_DIR, f)).size}`).join(',');
+    } catch { return ''; }
+}
+
+function desktopJarArgs(jar, originalJar) {
+    if (jar === originalJar) return [`-Dloader.path=${LGPL_LIB_DIR}`, '-jar', jar];
+    return ['-cp', [jar, path.join(LGPL_LIB_DIR, '*')].join(path.delimiter), DESKTOP_MAIN_CLASS];
+}
+
 async function prepareCds(name, originalJar, cdsDir, springArgs, env, javaBinPath) {
     const extractedJar = path.join(cdsDir, 'extracted', path.basename(originalJar));
     const archiveFile  = path.join(cdsDir, `${name.toLowerCase()}.jsa`);
     const markerFile   = path.join(cdsDir, '.java-bin');
 
     const jarStat = fs.statSync(originalJar);
-    const jarFingerprint = `${jarStat.mtimeMs}:${jarStat.size}`;
+    const jarFingerprint = `${jarStat.mtimeMs}:${jarStat.size}` + (name === 'Desktop' ? `:${lgplLibFingerprint()}` : '');
     let recorded = null;
     if (fs.existsSync(markerFile)) {
         try { recorded = JSON.parse(fs.readFileSync(markerFile, 'utf8')); } catch {  }
@@ -779,20 +787,20 @@ function acquireLock(lockFile) {
     return false;
 }
 
-async function startScratchMongo(scratchDir) {
-    const port = await findFreePort(27300, 'CDS training MongoDB');
-    const dbPath = path.join(scratchDir, 'mongo');
-    fs.mkdirSync(dbPath, { recursive: true });
-    const proc = spawn(mongoBin(), [
-        '--dbpath', dbPath, '--port', String(port), '--bind_ip', '127.0.0.1',
-        '--logpath', path.join(scratchDir, 'mongo.log'),
-        ...MONGO_PLATFORM_ARGS,
-    ], { stdio: 'ignore', windowsHide: true });
+async function startScratchPostgres(scratchDir) {
+    const root = postgresRoot();
+    const port = await findFreePort(15600, 'CDS training PostgreSQL');
+    const dataDir = path.join(scratchDir, 'postgres');
+    const password = crypto.randomBytes(24).toString('base64url');
+    await pg.prepareCluster(root, dataDir, password, { log });
+    await pg.applyPassword(root, dataDir, password);
+    const proc = spawn(pg.binPath(root, 'postgres'), pg.serverArgs(dataDir, port, '64MB'),
+        { stdio: 'ignore', windowsHide: true });
     helperProcesses.add(proc);
-    guard.register('Scratch MongoDB', exeNameFor(mongoBin()), proc);
+    guard.register('Scratch PostgreSQL', exeNameFor(pg.binPath(root, 'postgres')), proc);
     proc.once('exit', () => helperProcesses.delete(proc));
-    await waitForTcp('127.0.0.1', port, 30000, 'scratch MongoDB');
-    return { proc, port };
+    await pg.waitUntilAccepting(port, 60000, () => proc.exitCode !== null);
+    return { proc, port, password, dataDir };
 }
 
 async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env, javaBinPath, jarFingerprint }) {
@@ -824,7 +832,7 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
         return;
     }
 
-    let scratchMongo = null;
+    let scratchDb = null;
     const startedAt = Date.now();
     try {
         fs.writeFileSync(path.join(cdsDir, '.java-bin'), JSON.stringify({ javaBin: javaBinPath, jarFingerprint }), 'utf8');
@@ -842,13 +850,12 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
             assertNotCancelled();
         }
 
-        scratchMongo = await startScratchMongo(scratchDir);
+        scratchDb = await startScratchPostgres(scratchDir);
         assertNotCancelled();
 
         const isolatedArgs = springArgs
-            .filter((arg) => !/^--(spring\.data\.mongodb\.uri|ontocode\.data\.dir|server\.port)=/.test(arg))
+            .filter((arg) => !/^--(ontocode\.data\.dir|server\.port)=/.test(arg))
             .concat([
-                `--spring.data.mongodb.uri=mongodb://127.0.0.1:${scratchMongo.port}/cds-training`,
                 `--ontocode.data.dir=${path.join(scratchDir, 'data')}`,
                 '--server.port=0',
             ]);
@@ -859,9 +866,15 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
             `-XX:ArchiveClassesAtExit=${tempArchive}`,
             '-Dspring.context.exit=onRefresh',
             ...PLATFORM_JVM_FLAGS,
-            '-jar', extractedJar,
+            ...(name === 'Desktop' ? desktopJarArgs(extractedJar, originalJar) : ['-jar', extractedJar]),
             ...isolatedArgs,
-        ], env, path.join(cdsDir, 'training.log'), { timeoutMs: CDS_TRAINING_TIMEOUT_MS, lowPriority: true });
+        ], {
+            ...env,
+            ONTOCODE_DB_URL: pg.jdbcUrl(scratchDb.port),
+            ONTOCODE_DB_USER: pg.DB_USER,
+            ONTOCODE_DB_PASSWORD: scratchDb.password,
+            ONTOCODE_BLOBS_DIR: path.join(scratchDir, 'blobs'),
+        }, path.join(cdsDir, 'training.log'), { timeoutMs: CDS_TRAINING_TIMEOUT_MS, lowPriority: true });
         assertNotCancelled();
 
         if (!fs.existsSync(tempArchive)) throw new Error('training produced no archive');
@@ -876,8 +889,8 @@ async function trainCdsInBackground({ name, originalJar, cdsDir, springArgs, env
             log('warn', `[${name}] Startup cache build failed (${err.message}); will retry on a later launch`);
         }
     } finally {
-        if (scratchMongo) {
-            await killAndWait(scratchMongo.proc);
+        if (scratchDb) {
+            await killAndWait(scratchDb.proc);
         }
         removeScratch(scratchDir);
         fs.rmSync(lockFile, { force: true });
@@ -949,13 +962,21 @@ function runToCompletion(bin, args, extraEnv = {}, logFile = null, { timeoutMs =
     });
 }
 
+function databaseEnv() {
+    return {
+        ONTOCODE_DB_URL: `${pg.jdbcUrl(POSTGRES_PORT)}?socketTimeout=60&connectTimeout=5`,
+        ONTOCODE_DB_USER: pg.DB_USER,
+        ONTOCODE_DB_PASSWORD: requireDesktopSecrets().dbPassword,
+        ONTOCODE_BLOBS_DIR: BLOB_DIR,
+    };
+}
+
 async function startDesktop() {
     log('info', 'Starting Desktop service (auth + editor + plugin)…');
     const jar     = path.join(RESOURCES_DIR, 'jars', 'desktop.jar');
     const java    = javaBin();
     const logFile = path.join(LOGS_DIR, 'desktop.log');
 
-    const mongoUri   = `mongodb://127.0.0.1:${MONGO_PORT}/ontocode-desktop`;
     const fusekiBase = `http://127.0.0.1:${FUSEKI_PORT}/ontocode`;
 
     log('info', `[Desktop] JAR:    ${jar}`);
@@ -969,8 +990,6 @@ async function startDesktop() {
         `--server.port=${DESKTOP_PORT}`,
         '--server.address=127.0.0.1',
         '--spring.profiles.active=desktop',
-        `--spring.data.mongodb.uri=${mongoUri}`,
-
         `--ontocode.fuseki.queryEndpoint=${fusekiBase}/query`,
         `--ontocode.fuseki.updateEndpoint=${fusekiBase}/update`,
         `--ontocode.fuseki.gspEndpoint=${fusekiBase}/data`,
@@ -1009,6 +1028,7 @@ async function startDesktop() {
         ONTOCODE_DESKTOP_LAUNCH_KEY: DESKTOP_LAUNCH_KEY,
         JWT_SECRET: requireDesktopSecrets().jwtSecret,
         APP_ADMIN_PASSWORD: requireDesktopSecrets().adminPassword,
+        ...databaseEnv(),
     };
 
     const { launchJar, cdsFlags } = await prepareCds(
@@ -1022,7 +1042,7 @@ async function startDesktop() {
         ...PLATFORM_JVM_FLAGS,
         ...cdsFlags,
         `-DLOG_DIR=${LOGS_DIR}`,
-        '-jar', launchJar,
+        ...desktopJarArgs(launchJar, jar),
         ...springArgs,
     ];
 
@@ -1058,14 +1078,12 @@ async function startSwrl() {
 
     log('info', 'Starting SWRL reasoner service…');
     const logFile  = path.join(LOGS_DIR, 'swrl.log');
-    const mongoUri = `mongodb://127.0.0.1:${MONGO_PORT}/ontocode-desktop`;
 
     const springArgs = [
         `--server.port=${SWRL_PORT}`,
         '--server.address=127.0.0.1',
         '--spring.profiles.active=desktop',
         '--swrl.access-check.enabled=false',
-        `--spring.data.mongodb.uri=${mongoUri}`,
         `--app.auth-service-url=http://127.0.0.1:${DESKTOP_PORT}`,
 
         `--ontology.editor.service.url=http://127.0.0.1:${DESKTOP_PORT}`,
@@ -1079,6 +1097,7 @@ async function startSwrl() {
         JAVA_OPTS: '',
         _JAVA_OPTIONS: '',
         JWT_SECRET: requireDesktopSecrets().jwtSecret,
+        ...databaseEnv(),
     };
 
     const swrlJava = swrlJavaBin();
