@@ -8,6 +8,7 @@ const https         = require('https');
 const { pipeline }  = require('stream/promises');
 const zlib          = require('zlib');
 const crypto        = require('crypto');
+const vcRuntime     = require('./vcRuntime');
 
 const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
@@ -731,6 +732,7 @@ async function main() {
     await bundleJre();
     console.log('\n[5/5] SWRL JRE (dedicated JDK 17 — Drools/MVEL incompatible with JDK 21+)');
     await bundleSwrlJre();
+    copyVcRuntimeForPostgres();
     copySwrlJar();
     generateJreBaseCdsArchives();
 
@@ -739,6 +741,19 @@ async function main() {
         process.exit(1);
     }
     console.log('\n✓  All required resources present — ready for: npm run dist\n');
+}
+
+function postgresBinDir() {
+    return path.join(RESOURCES, 'postgres', TARGET_PLATFORM, 'bin');
+}
+
+function copyVcRuntimeForPostgres() {
+    if (TARGET_PLATFORM !== 'win32') return;
+    console.log('\n[PostgreSQL] Visual C++ runtime next to postgres.exe (a clean Windows does not have it)');
+    const result = vcRuntime.bundleVcRuntime(postgresBinDir(), [path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')]);
+    result.copied.forEach((name) => console.log(`  ✓  copied ${name}`));
+    result.present.forEach((name) => console.log(`  ✓  ${name} already there`));
+    result.missing.forEach((name) => console.error(`  ✗  ${name} not found in the bundled JREs`));
 }
 
 function requiredResourcesPresent() {
@@ -754,6 +769,11 @@ function requiredResourcesPresent() {
         const ok = fs.existsSync(p);
         console.log(`  ${ok ? '✓' : '✗'}  ${label}`);
         if (!ok) allOk = false;
+    }
+    if (TARGET_PLATFORM === 'win32') {
+        const lacking = vcRuntime.missingVcRuntime(postgresBinDir());
+        console.log(`  ${lacking.length ? '✗' : '✓'}  Visual C++ runtime next to postgres.exe${lacking.length ? ` — missing ${lacking.join(', ')}` : ''}`);
+        if (lacking.length) allOk = false;
     }
     const templateOk = fs.existsSync(path.join(RESOURCES, 'postgres', TARGET_PLATFORM, 'cluster-template', 'PG_VERSION'));
     console.log(`  ${templateOk ? '✓' : '⚠'}  empty database template${templateOk ? '' : ' — missing, the first start will take about 35 seconds longer'}`);

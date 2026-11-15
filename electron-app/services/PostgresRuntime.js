@@ -79,9 +79,19 @@ async function runSql(root, dataDir, sql, { timeoutMs = 60000, database = 'postg
     return result;
 }
 
+const STATUS_DLL_NOT_FOUND = 0xC0000135;
+
+const MISSING_RUNTIME_HINT = 'A Windows library that PostgreSQL needs (the Microsoft Visual C++ runtime) is missing. '
+    + 'Install "Microsoft Visual C++ Redistributable 2015-2022 (x64)" from Microsoft and start the app again.';
+
+function isDllNotFound(code) {
+    return typeof code === 'number' && (code >>> 0) === STATUS_DLL_NOT_FOUND;
+}
+
 function failure(label, result) {
     const tail = result.output.split('\n').map((l) => l.trim()).filter(Boolean).slice(-6).join(' | ');
-    return new Error(`${label} failed (exit ${result.code}): ${tail.substring(0, 600)}`);
+    const hint = isDllNotFound(result.code) ? ` ${MISSING_RUNTIME_HINT}` : '';
+    return new Error(`${label} failed (exit ${result.code}):${hint} ${tail.substring(0, 600)}`.trimEnd());
 }
 
 async function runInitdb(root, dataDir, pwFile, extra) {
@@ -267,4 +277,7 @@ module.exports = {
     waitUntilAccepting,
     jdbcUrl,
     clearStalePid,
+    failure,
+    isDllNotFound,
+    MISSING_RUNTIME_HINT,
 };

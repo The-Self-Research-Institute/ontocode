@@ -36,10 +36,8 @@ extraResources:
     to: backend
     filter:
       - "**/*"
-      - "!mongo-tmp/**"
+      - "!mongodb/**"
       - "!.jre-cache/**"
-      - "!mongo-bits.zip"
-      - "!mongo-win32.zip"
       - "!temurin-jre.zip"
       - "!temurin-jre.tar.gz"
       - "!fuseki-6.1.0.tar.gz"

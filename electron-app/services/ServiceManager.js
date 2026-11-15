@@ -455,12 +455,6 @@ function validateBackendBundles() {
     throw new Error(lines.join('\n'));
 }
 
-const STATUS_DLL_NOT_FOUND = 0xC0000135;
-
-function isDllNotFound(code) {
-    return typeof code === 'number' && (code >>> 0) === STATUS_DLL_NOT_FOUND;
-}
-
 async function attemptStartPostgres() {
     const root = postgresRoot();
     pg.clearStalePid(POSTGRES_DATA_DIR);
@@ -472,7 +466,7 @@ async function attemptStartPostgres() {
     let onEarlyExit, onSpawnError;
     const earlyDeath = new Promise((_, reject) => {
         onEarlyExit = (code) => {
-            const reason = isDllNotFound(code) ? ' (a required Windows library is missing next to postgres.exe)' : '';
+            const reason = pg.isDllNotFound(code) ? `. ${pg.MISSING_RUNTIME_HINT}` : '';
             reject(new Error(`PostgreSQL exited with code ${code} before becoming ready${reason}`));
         };
         onSpawnError = (err) => reject(new Error(`PostgreSQL failed to start: ${err.message}`));
