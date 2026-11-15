@@ -6,6 +6,7 @@ const path = require('node:path');
 const net = require('node:net');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const pgElevated = require('./PostgresElevated');
 
 const DB_USER = 'ontocode';
 const DB_NAME = 'ontocode';
@@ -102,7 +103,20 @@ async function runInitdb(root, dataDir, pwFile, extra) {
     ], '', { timeoutMs: 300000 });
 }
 
-async function buildCluster(root, dataDir, password, { log = () => {} } = {}) {
+async function buildCluster(root, dataDir, password, { log = () => {}, elevated = false } = {}) {
+    await initCluster(root, dataDir, password, log);
+    if (elevated) {
+        await pgElevated.createDatabase({
+            root, dataDir, password, user: DB_USER, database: DB_NAME, serverArgs,
+            logFile: path.join(path.dirname(dataDir), 'create-database.log'),
+        });
+        return;
+    }
+    const created = await runSql(root, dataDir, `CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}`, { timeoutMs: 300000 });
+    if (created.code !== 0) throw failure('create database', created);
+}
+
+async function initCluster(root, dataDir, password, log) {
     if (!SAFE_PASSWORD.test(password)) throw new Error('database password has an unsupported format');
     fs.mkdirSync(path.dirname(dataDir), { recursive: true });
     const pwFile = path.join(os.tmpdir(), `ontocode-pw-${crypto.randomBytes(6).toString('hex')}`);
@@ -118,8 +132,6 @@ async function buildCluster(root, dataDir, password, { log = () => {} } = {}) {
     } finally {
         fs.rmSync(pwFile, { force: true });
     }
-    const created = await runSql(root, dataDir, `CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}`, { timeoutMs: 300000 });
-    if (created.code !== 0) throw failure('create database', created);
 }
 
 const EMPTY_CLUSTER_DIRS = [
@@ -156,7 +168,7 @@ function secureClusterPermissions(dir, top = true) {
     }
 }
 
-async function prepareCluster(root, dataDir, password, { log = () => {} } = {}) {
+async function prepareCluster(root, dataDir, password, { log = () => {}, elevated = false } = {}) {
     const state = clusterState(dataDir);
     if (state === 'present') {
         if (checkVersion(root, dataDir).ok) {
@@ -171,19 +183,20 @@ async function prepareCluster(root, dataDir, password, { log = () => {} } = {}) 
         log('warn', `The database folder was incomplete; moved it to ${aside}`);
     }
     const template = path.join(root, 'cluster-template');
-    if (fs.existsSync(path.join(template, 'PG_VERSION'))) {
+    if (!elevated && fs.existsSync(path.join(template, 'PG_VERSION'))) {
         fs.mkdirSync(path.dirname(dataDir), { recursive: true });
         fs.cpSync(template, dataDir, { recursive: true });
         restoreEmptyClusterDirs(dataDir);
         secureClusterPermissions(dataDir);
         return { created: true, fromTemplate: true };
     }
-    await buildCluster(root, dataDir, password, { log });
+    await buildCluster(root, dataDir, password, { log, elevated });
     return { created: true, fromTemplate: false };
 }
 
-async function applyPassword(root, dataDir, password) {
+async function applyPassword(root, dataDir, password, { elevated = false } = {}) {
     if (!SAFE_PASSWORD.test(password)) throw new Error('database password has an unsupported format');
+    if (elevated) return;
     let result = await runSql(root, dataDir, `ALTER USER ${DB_USER} PASSWORD '${password}'`);
     if (result.code !== 0 && /lock file|postmaster\.pid|already exists/i.test(result.output)) {
         fs.rmSync(path.join(dataDir, 'postmaster.pid'), { force: true });

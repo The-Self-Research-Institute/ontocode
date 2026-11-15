@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const guard = require('./SharedGuard');
 const policy = require('./ResourcePolicy');
 const pg = require('./PostgresRuntime');
+const pgElevated = require('./PostgresElevated');
 const logHygiene = require('./LogHygiene');
 
 function jvmHeaps() {
@@ -458,10 +459,13 @@ function validateBackendBundles() {
 async function attemptStartPostgres() {
     const root = postgresRoot();
     pg.clearStalePid(POSTGRES_DATA_DIR);
-    await pg.applyPassword(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword);
+    const elevated = await pgElevated.isElevatedAdmin();
+    await pg.applyPassword(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword, { elevated });
     const logFile = path.join(LOGS_DIR, 'postgres.log');
-    const proc = spawnService('PostgreSQL', pg.binPath(root, 'postgres'),
-        pg.serverArgs(POSTGRES_DATA_DIR, POSTGRES_PORT, jvmHeaps().postgresBuffers), {}, logFile);
+    const serverArgs = pg.serverArgs(POSTGRES_DATA_DIR, POSTGRES_PORT, jvmHeaps().postgresBuffers);
+    const proc = elevated
+        ? await startElevatedPostgres(root, serverArgs, logFile)
+        : spawnService('PostgreSQL', pg.binPath(root, 'postgres'), serverArgs, {}, logFile);
 
     let onEarlyExit, onSpawnError;
     const earlyDeath = new Promise((_, reject) => {
@@ -488,6 +492,16 @@ async function attemptStartPostgres() {
         await stopPostgresProcess(proc);
         throw err;
     }
+}
+
+async function startElevatedPostgres(root, serverArgs, logFile) {
+    log('info', 'Running with administrator rights: starting PostgreSQL through pg_ctl');
+    const server = await pgElevated.startServer({
+        root, dataDir: POSTGRES_DATA_DIR, serverOptions: serverArgs.slice(2), logFile,
+    });
+    guard.register('PostgreSQL', exeNameFor(pg.binPath(root, 'postgres')), server);
+    server.on('exit', (code) => handleChildExit('PostgreSQL', server, code, []));
+    return server;
 }
 
 function stopPostgresProcess(proc) {
@@ -522,7 +536,8 @@ async function startPostgres() {
         throw new Error(`The local database in ${POSTGRES_DATA_DIR} was created by PostgreSQL ${version.dataMajor} but this version of OntoCode Studio ships PostgreSQL ${version.bundledMajor}. Your data has not been changed. Please install the OntoCode Studio version that matches it.`);
     }
     if (pg.clusterState(POSTGRES_DATA_DIR) !== 'present') log('info', 'Creating the local database (first start only)…');
-    await pg.prepareCluster(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword, { log });
+    const elevated = await pgElevated.isElevatedAdmin();
+    await pg.prepareCluster(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword, { log, elevated });
     assertNotCancelled();
     postgresProcess = await attemptStartPostgres();
     log('ok', `PostgreSQL ready on port ${POSTGRES_PORT}`);
