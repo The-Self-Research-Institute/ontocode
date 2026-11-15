@@ -12,6 +12,29 @@ const ADMIN_CHECK = '([Security.Principal.WindowsPrincipal][Security.Principal.W
 
 let cachedElevated = null;
 
+function isHighIntegrity(whoamiGroups) {
+    return /S-1-16-(12288|16384)\b/.test(String(whoamiGroups));
+}
+
+function checkWithWhoami() {
+    return new Promise((resolve) => {
+        execFile('whoami.exe', ['/groups'], { windowsHide: true, timeout: 10000 },
+            (err, stdout) => resolve(err ? null : isHighIntegrity(stdout)));
+    });
+}
+
+function checkWithPowerShell() {
+    return new Promise((resolve) => {
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ADMIN_CHECK],
+            { windowsHide: true, timeout: 20000 }, (err, stdout) => resolve(!err && /true/i.test(String(stdout))));
+    });
+}
+
+async function detectElevated() {
+    const viaWhoami = await checkWithWhoami();
+    return viaWhoami === null ? checkWithPowerShell() : viaWhoami;
+}
+
 function isElevatedAdmin() {
     if (cachedElevated) return cachedElevated;
     if (process.env.ONTOCODE_FORCE_ADMIN_PATH === '1') {
@@ -19,10 +42,7 @@ function isElevatedAdmin() {
     } else if (process.platform !== 'win32') {
         cachedElevated = Promise.resolve(false);
     } else {
-        cachedElevated = new Promise((resolve) => {
-            execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ADMIN_CHECK],
-                { windowsHide: true, timeout: 20000 }, (err, stdout) => resolve(!err && /true/i.test(String(stdout))));
-        });
+        cachedElevated = detectElevated();
     }
     return cachedElevated;
 }
@@ -107,6 +127,36 @@ async function stopServer(root, dataDir) {
     await runPgCtl(root, ['stop', '-D', dataDir, '-m', 'fast', '-w', '-t', '30'], { timeoutMs: 60000 });
 }
 
+const STAGE_MARKER = '.staged-from';
+
+function postgresExeName() {
+    return process.platform === 'win32' ? 'postgres.exe' : 'postgres';
+}
+
+function fingerprint(root) {
+    const stat = fs.statSync(path.join(root, 'bin', postgresExeName()));
+    return `${root}|${stat.size}|${Math.round(stat.mtimeMs)}`;
+}
+
+async function stageRuntime(root, stagingDir) {
+    const wanted = fingerprint(root);
+    const marker = path.join(stagingDir, STAGE_MARKER);
+    const ready = fs.existsSync(marker) && fs.readFileSync(marker, 'utf8') === wanted
+        && fs.existsSync(path.join(stagingDir, 'bin', postgresExeName()));
+    if (ready) return stagingDir;
+    const parent = path.dirname(stagingDir);
+    const partial = `${stagingDir}.partial-${process.pid}`;
+    fs.mkdirSync(parent, { recursive: true });
+    for (const entry of fs.readdirSync(parent)) {
+        if (entry.startsWith(`${path.basename(stagingDir)}.partial-`)) fs.rmSync(path.join(parent, entry), { recursive: true, force: true });
+    }
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    await fs.promises.cp(root, partial, { recursive: true, filter: (src) => path.basename(src) !== 'cluster-template' });
+    fs.writeFileSync(path.join(partial, STAGE_MARKER), wanted, 'utf8');
+    fs.renameSync(partial, stagingDir);
+    return stagingDir;
+}
+
 function freePort() {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
@@ -131,10 +181,12 @@ async function createDatabase({ root, dataDir, password, user, database, serverA
 
 module.exports = {
     isElevatedAdmin,
+    isHighIntegrity,
     resetForTests,
     ElevatedServer,
     startServer,
     stopServer,
     createDatabase,
+    stageRuntime,
     freePort,
 };

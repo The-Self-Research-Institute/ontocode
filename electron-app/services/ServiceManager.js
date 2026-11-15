@@ -407,8 +407,22 @@ function log(level, msg) {
     if (_logCallback) _logCallback(level, msg);
 }
 
+let stagedPostgresRoot = null;
+
 function postgresRoot() {
-    return path.join(RESOURCES_DIR, 'postgres', process.platform);
+    return stagedPostgresRoot || path.join(RESOURCES_DIR, 'postgres', process.platform);
+}
+
+async function useStagedPostgres() {
+    const source = path.join(RESOURCES_DIR, 'postgres', process.platform);
+    const started = Date.now();
+    try {
+        stagedPostgresRoot = await pgElevated.stageRuntime(source, path.join(DATA_DIR, 'pg-runtime'));
+        log('info', `Administrator rights: running PostgreSQL from ${stagedPostgresRoot} (ready in ${Math.round((Date.now() - started) / 1000)}s)`);
+    } catch (err) {
+        stagedPostgresRoot = null;
+        log('warn', `Could not copy PostgreSQL to the data folder (${err.message}); using the installed files`);
+    }
 }
 
 function javaBin() {
@@ -530,13 +544,14 @@ async function stopPostgres() {
 
 async function startPostgres() {
     log('info', 'Starting PostgreSQL…');
+    const elevated = await pgElevated.isElevatedAdmin();
+    if (elevated) await useStagedPostgres();
     const root = postgresRoot();
     const version = pg.checkVersion(root, POSTGRES_DATA_DIR);
     if (!version.ok) {
         throw new Error(`The local database in ${POSTGRES_DATA_DIR} was created by PostgreSQL ${version.dataMajor} but this version of OntoCode Studio ships PostgreSQL ${version.bundledMajor}. Your data has not been changed. Please install the OntoCode Studio version that matches it.`);
     }
     if (pg.clusterState(POSTGRES_DATA_DIR) !== 'present') log('info', 'Creating the local database (first start only)…');
-    const elevated = await pgElevated.isElevatedAdmin();
     await pg.prepareCluster(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword, { log, elevated });
     assertNotCancelled();
     postgresProcess = await attemptStartPostgres();

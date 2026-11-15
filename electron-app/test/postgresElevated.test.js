@@ -89,3 +89,94 @@ test('a prepared template is used normally but never with administrator rights',
     await assert.rejects(() => pg.prepareCluster(root, elevatedDir, GOOD_PASSWORD, { elevated: true }));
     assert.equal(fs.existsSync(path.join(elevatedDir, 'PG_VERSION')), false);
 });
+
+const { execFileSync } = require('child_process');
+
+function fakeRuntime(root, exeBytes) {
+    const exe = process.platform === 'win32' ? 'postgres.exe' : 'postgres';
+    fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'share'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'cluster-template'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'bin', exe), exeBytes);
+    fs.writeFileSync(path.join(root, 'share', 'postgres.bki'), 'bki');
+    fs.writeFileSync(path.join(root, 'cluster-template', 'PG_VERSION'), '17');
+    fs.writeFileSync(path.join(root, 'PG_MAJOR'), '17');
+}
+
+test('an elevated token is recognised from the integrity level that whoami prints', () => {
+    const high = 'Mandatory Label\High Mandatory Level   Label            S-1-16-12288';
+    const medium = 'Mandatory Label\Medium Mandatory Level Label            S-1-16-8192';
+    const system = 'Mandatory Label\System Mandatory Level Label            S-1-16-16384';
+    assert.equal(pgElevated.isHighIntegrity(high), true);
+    assert.equal(pgElevated.isHighIntegrity(system), true);
+    assert.equal(pgElevated.isHighIntegrity(medium), false);
+    assert.equal(pgElevated.isHighIntegrity(''), false);
+});
+
+test('the runtime is copied out of the install folder, without the prepared template', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-stage-'));
+    const root = path.join(base, 'WindowsApps', 'pg');
+    const staging = path.join(base, 'data', 'pg-runtime');
+    fakeRuntime(root, 'version-one');
+
+    const result = await pgElevated.stageRuntime(root, staging);
+
+    assert.equal(result, staging);
+    assert.equal(fs.readFileSync(path.join(staging, 'share', 'postgres.bki'), 'utf8'), 'bki');
+    assert.equal(fs.existsSync(path.join(staging, 'PG_MAJOR')), true);
+    assert.equal(fs.existsSync(path.join(staging, 'cluster-template')), false);
+});
+
+test('a runtime that is already copied is not copied again', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-stage-'));
+    const root = path.join(base, 'pg');
+    const staging = path.join(base, 'data', 'pg-runtime');
+    fakeRuntime(root, 'version-one');
+    await pgElevated.stageRuntime(root, staging);
+    const sentinel = path.join(staging, 'sentinel.txt');
+    fs.writeFileSync(sentinel, 'still here');
+
+    await pgElevated.stageRuntime(root, staging);
+
+    assert.equal(fs.existsSync(sentinel), true);
+});
+
+test('a new version of the app replaces the old copy', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-stage-'));
+    const staging = path.join(base, 'data', 'pg-runtime');
+    const rootOne = path.join(base, 'pg-1');
+    fakeRuntime(rootOne, 'version-one');
+    await pgElevated.stageRuntime(rootOne, staging);
+    fs.writeFileSync(path.join(staging, 'old-only.txt'), 'old');
+
+    const rootTwo = path.join(base, 'pg-2');
+    fakeRuntime(rootTwo, 'a-longer-second-version');
+    await pgElevated.stageRuntime(rootTwo, staging);
+
+    assert.equal(fs.existsSync(path.join(staging, 'old-only.txt')), false);
+    const exe = process.platform === 'win32' ? 'postgres.exe' : 'postgres';
+    assert.equal(fs.readFileSync(path.join(staging, 'bin', exe), 'utf8'), 'a-longer-second-version');
+});
+
+test('unfinished copies left by an earlier crash are cleaned up', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-stage-'));
+    const root = path.join(base, 'pg');
+    const staging = path.join(base, 'data', 'pg-runtime');
+    fakeRuntime(root, 'version-one');
+    const leftover = `${staging}.partial-99999`;
+    fs.mkdirSync(leftover, { recursive: true });
+    fs.writeFileSync(path.join(leftover, 'half.txt'), 'x');
+
+    await pgElevated.stageRuntime(root, staging);
+
+    assert.equal(fs.existsSync(leftover), false);
+});
+
+test('every service file is valid JavaScript, including the ones tests cannot load', () => {
+    const dir = path.join(__dirname, '..', 'services');
+    const files = fs.readdirSync(dir).filter((name) => name.endsWith('.js'));
+    assert.ok(files.length > 5);
+    for (const name of files) {
+        assert.doesNotThrow(() => execFileSync(process.execPath, ['--check', path.join(dir, name)], { stdio: 'pipe' }), name);
+    }
+});
