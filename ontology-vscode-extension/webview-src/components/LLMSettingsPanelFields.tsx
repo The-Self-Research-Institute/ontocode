@@ -27,6 +27,8 @@ export const ApiKeyField: React.FC<{
     <div className="relative">
       <input
         type={showKey ? 'text' : 'password'}
+        name="llm-settings-api-key"
+        autoComplete="new-password"
         value={apiKey}
         onChange={(e) => setApiKey(e.target.value)}
         onBlur={() => { if (apiKey.trim()) onRefreshModels(); }}
