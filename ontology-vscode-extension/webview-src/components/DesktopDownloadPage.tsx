@@ -10,7 +10,7 @@ const RELEASE_BASE = `${getGatewayUrl()}/api/downloads`;
 type PlatformKey = "windows-x64" | "linux-x64" | "mac-arm64" | "mac-x64";
 
 const PLATFORM_META: Record<PlatformKey, { label: string; icon: typeof Monitor; os: string }> = {
-  "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64 or ARM64)" },
+  "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64)" },
   "linux-x64": { label: "Linux", icon: Terminal, os: "Ubuntu 20.04+ or equivalent (AppImage — runs on most distros)" },
   "mac-arm64": { label: "Mac (Apple Silicon)", icon: Monitor, os: "Macs with an M1, M2, M3 or M4 chip" },
   "mac-x64": { label: "Mac (Intel)", icon: Monitor, os: "Macs with an Intel processor (sold before about 2021)" },

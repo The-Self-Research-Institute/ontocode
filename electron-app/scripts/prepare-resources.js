@@ -9,6 +9,7 @@ const { pipeline }  = require('stream/promises');
 const zlib          = require('zlib');
 const crypto        = require('crypto');
 const vcRuntime     = require('./vcRuntime');
+const swrlJar       = require('./swrlJar');
 
 const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
@@ -186,6 +187,11 @@ function copyOwlEditorJar() {
 
 function copySwrlJar() {
     const src = path.join(REPO_ROOT, 'ontology-swrl', 'target', 'ontology-swrl-1.0.0.jar');
+    const problem = fs.existsSync(src) ? swrlJar.describeProblem(src, 17) : null;
+    if (problem) {
+        console.error(`  ✗  ${problem}`);
+        process.exit(1);
+    }
     copyIfExists(src, path.join(JARS_DIR, 'swrl.jar'), 'swrl.jar');
 }
 
