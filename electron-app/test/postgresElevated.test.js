@@ -90,6 +90,40 @@ test('a prepared template is used normally but never with administrator rights',
     assert.equal(fs.existsSync(path.join(elevatedDir, 'PG_VERSION')), false);
 });
 
+test('a template next to the original files is used when the runtime was copied without it', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'onto-pg-template-'));
+    const original = path.join(base, 'original');
+    const copied = path.join(base, 'copied');
+    fs.mkdirSync(path.join(original, 'cluster-template'), { recursive: true });
+    fs.writeFileSync(path.join(original, 'cluster-template', 'PG_VERSION'), '17');
+    fs.mkdirSync(copied, { recursive: true });
+
+    const dataDir = path.join(base, 'data', 'postgres');
+    const result = await pg.prepareCluster(copied, dataDir, GOOD_PASSWORD, { templateRoot: original });
+
+    assert.deepEqual(result, { created: true, fromTemplate: true });
+    assert.equal(fs.readFileSync(path.join(dataDir, 'PG_VERSION'), 'utf8'), '17');
+});
+
+test('the Microsoft Store install folder is recognised on Windows only', () => {
+    const store = 'C:\\Program Files\\WindowsApps\\SelfResearch.OntocodeStudio_1.2.9.0_x64__5h55vr3cpnr66\\app\\resources\\backend\\postgres\\win32';
+    const regular = 'C:\\Program Files\\OntoCode Studio\\resources\\backend\\postgres\\win32';
+    assert.equal(pgElevated.isInsideStorePackage(store, 'win32'), true);
+    assert.equal(pgElevated.isInsideStorePackage(store.replace(/\\/g, '/'), 'win32'), true);
+    assert.equal(pgElevated.isInsideStorePackage(regular, 'win32'), false);
+    assert.equal(pgElevated.isInsideStorePackage('C:\\Users\\Someone\\WindowsAppsNotes\\pg', 'win32'), false);
+    assert.equal(pgElevated.isInsideStorePackage(store, 'linux'), false);
+});
+
+test('the runtime is copied out for administrators and for the Store folder, but not otherwise', () => {
+    const store = 'C:\\Program Files\\WindowsApps\\Pkg\\app\\postgres';
+    const regular = 'C:\\Program Files\\OntoCode Studio\\postgres';
+    assert.equal(pgElevated.needsOwnCopy(false, store, 'win32'), true);
+    assert.equal(pgElevated.needsOwnCopy(true, regular, 'win32'), true);
+    assert.equal(pgElevated.needsOwnCopy(false, regular, 'win32'), false);
+    assert.equal(pgElevated.needsOwnCopy(false, store, 'darwin'), false);
+});
+
 const { execFileSync } = require('child_process');
 
 function fakeRuntime(root, exeBytes) {
