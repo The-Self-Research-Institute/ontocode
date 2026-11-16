@@ -99,6 +99,7 @@ export interface GraphToolbarProps {
   statsLabel: string;
   statsData: { visible: number; total: number; expanded: number };
   statsWarning?: string | null;
+  onOptionsOpenChange?: (open: boolean) => void;
   lazyLoadingActive: boolean;
   webglRenderer: boolean;
   webglSupported: boolean;
@@ -110,6 +111,7 @@ export interface GraphToolbarProps {
   onRefresh: () => void;
   onPresetNetwork: () => void;
   onPresetTree: () => void;
+  onPresetVowl: () => void;
   onSetVisualizationType: (t: VisualizationType) => void;
   onSetOntographLayout: (l: OntographLayoutType) => void;
   onSetAssertionView: (v: 'asserted' | 'inferred' | 'all') => void;
@@ -151,6 +153,11 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const overflowBtnRef = useRef<HTMLButtonElement>(null);
+  const { onOptionsOpenChange } = props;
+
+  useEffect(() => {
+    onOptionsOpenChange?.(optionsOpen);
+  }, [optionsOpen, onOptionsOpenChange]);
 
   // Close the popover on outside click or Escape
   useEffect(() => {
@@ -192,6 +199,14 @@ export const GraphToolbar: React.FC<GraphToolbarProps> = (props) => {
           title="Network view — force-directed graph on the WebGL engine (modules, focus, ask)"
         >
           Network
+        </button>
+        <button
+          data-testid="graph-preset-vowl"
+          onClick={props.onPresetVowl}
+          style={!props.webglRenderer && props.visualizationType === 'vowl' ? styles.btnActive : styles.btn}
+          title="VOWL view — WebVOWL notation for classes, properties and datatypes"
+        >
+          VOWL
         </button>
         <button
           data-testid="graph-preset-tree"
