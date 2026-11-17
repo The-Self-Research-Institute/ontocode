@@ -2,6 +2,12 @@
 
 All notable changes to OntoCode Studio are listed here, newest first. The same notes appear in the app under What's new.
 
+## [1.2.10] - 2026-11-16
+
+**Windows desktop app**
+
+- Microsoft Store — Fixed the PostgreSQL start issue in the Microsoft Store version.
+
 ## [1.2.9] - 2026-11-12
 
 **Database**

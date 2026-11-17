@@ -486,17 +486,16 @@ upload_windows_installer() {
     return 1
   fi
 
-  local win_arm64=() win_x64=()
+  local win_x64=()
   local _w2
   for _w2 in "${win[@]}"; do
     case "$_w2" in
-      *arm64*) win_arm64+=("$_w2") ;;
+      *arm64*) ;;
       *)       win_x64+=("$_w2") ;;
     esac
   done
   local fail=0
   [[ ${#win_x64[@]}   -gt 0 ]] && { local f; f=$(ls -t "${win_x64[@]}"   | head -1); upload_installer "$api_base" "windows-x64"   "$f" "$(basename "$f")" || fail=1; }
-  [[ ${#win_arm64[@]} -gt 0 ]] && { local f; f=$(ls -t "${win_arm64[@]}" | head -1); upload_installer "$api_base" "windows-arm64" "$f" "$(basename "$f")" || fail=1; }
   return $fail
 }
 

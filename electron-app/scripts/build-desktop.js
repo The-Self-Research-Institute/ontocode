@@ -17,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const swrlJar = require('./swrlJar');
 
 const ELECTRON_APP = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(ELECTRON_APP, '..');
@@ -244,10 +245,12 @@ function buildJava(quick) {
     fs.copyFileSync(DESKTOP_JAR_SRC, DESKTOP_JAR_DEST);
     console.log(`  ✓  desktop.jar → ${DESKTOP_JAR_DEST}`);
     copyDesktopLibs(DESKTOP_LIB_SRC, DESKTOP_LIB_DEST);
-    run(`mvn ${quick ? '' : 'clean '}package -pl ontology-swrl -DskipTests -q`, REPO_ROOT, 'Maven: ontology-swrl (SWRL reasoner)');
+    run(`mvn ${quick ? '' : 'clean '}package -pl ontology-swrl -am -DskipTests -q -Djava.version=17 -Dmaven.compiler.release=17 -Dmaven.compiler.source=17 -Dmaven.compiler.target=17`, REPO_ROOT, 'Maven: ontology-swrl (SWRL reasoner, built for Java 17)');
     if (!fs.existsSync(SWRL_JAR_SRC)) {
         throw new Error(`Missing ${SWRL_JAR_SRC} after Maven build`);
     }
+    const swrlProblem = swrlJar.describeProblem(SWRL_JAR_SRC, 17);
+    if (swrlProblem) throw new Error(swrlProblem);
     fs.copyFileSync(SWRL_JAR_SRC, SWRL_JAR_DEST);
     console.log(`  ✓  swrl.jar → ${SWRL_JAR_DEST}`);
 }

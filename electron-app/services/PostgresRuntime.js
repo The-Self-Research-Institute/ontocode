@@ -168,7 +168,7 @@ function secureClusterPermissions(dir, top = true) {
     }
 }
 
-async function prepareCluster(root, dataDir, password, { log = () => {}, elevated = false } = {}) {
+async function prepareCluster(root, dataDir, password, { log = () => {}, elevated = false, templateRoot = root } = {}) {
     const state = clusterState(dataDir);
     if (state === 'present') {
         if (checkVersion(root, dataDir).ok) {
@@ -182,7 +182,7 @@ async function prepareCluster(root, dataDir, password, { log = () => {}, elevate
         fs.renameSync(dataDir, aside);
         log('warn', `The database folder was incomplete; moved it to ${aside}`);
     }
-    const template = path.join(root, 'cluster-template');
+    const template = path.join(templateRoot, 'cluster-template');
     if (!elevated && fs.existsSync(path.join(template, 'PG_VERSION'))) {
         fs.mkdirSync(path.dirname(dataDir), { recursive: true });
         fs.cpSync(template, dataDir, { recursive: true });

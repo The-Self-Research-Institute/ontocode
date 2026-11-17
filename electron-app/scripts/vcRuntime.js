@@ -4,6 +4,11 @@ const fs = require('fs');
 const path = require('path');
 
 const VC_RUNTIME_DLLS = ['vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll'];
+const VC_RUNTIME_DLLS_ARM64 = ['vcruntime140.dll'];
+
+function requiredFor(arch) {
+    return arch === 'arm64' ? VC_RUNTIME_DLLS_ARM64 : VC_RUNTIME_DLLS;
+}
 
 function bundleVcRuntime(binDir, sourceBinDirs, names = VC_RUNTIME_DLLS) {
     const copied = [];
@@ -30,4 +35,4 @@ function missingVcRuntime(binDir, names = VC_RUNTIME_DLLS) {
     return names.filter((name) => !fs.existsSync(path.join(binDir, name)));
 }
 
-module.exports = { VC_RUNTIME_DLLS, bundleVcRuntime, missingVcRuntime };
+module.exports = { VC_RUNTIME_DLLS, VC_RUNTIME_DLLS_ARM64, requiredFor, bundleVcRuntime, missingVcRuntime };

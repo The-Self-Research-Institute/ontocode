@@ -47,6 +47,14 @@ function isElevatedAdmin() {
     return cachedElevated;
 }
 
+function isInsideStorePackage(dir, platform = process.platform) {
+    return platform === 'win32' && /[\\/]WindowsApps[\\/]/i.test(String(dir));
+}
+
+function needsOwnCopy(elevated, root, platform = process.platform) {
+    return Boolean(elevated) || isInsideStorePackage(root, platform);
+}
+
 function resetForTests() {
     cachedElevated = null;
 }
@@ -182,6 +190,8 @@ async function createDatabase({ root, dataDir, password, user, database, serverA
 module.exports = {
     isElevatedAdmin,
     isHighIntegrity,
+    isInsideStorePackage,
+    needsOwnCopy,
     resetForTests,
     ElevatedServer,
     startServer,
