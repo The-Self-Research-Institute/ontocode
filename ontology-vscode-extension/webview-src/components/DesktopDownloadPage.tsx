@@ -127,7 +127,8 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           setReleases(byPlatform);
           if (!found.includes(platform)) setPlatform(found[0]);
         }
-        setExtras(data?.latest ?? {});
+        const latest = data?.latest ?? {};
+        setExtras({ "windows-arm64": latest["windows-x64"], ...latest });
         if (data?.systemRequirements) setRequirements(data.systemRequirements);
       } catch {
         if (!cancelled) {
