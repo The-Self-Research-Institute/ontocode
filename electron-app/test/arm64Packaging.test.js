@@ -83,3 +83,10 @@ test('the ARM64 Store script prepares ARM64 files first and builds an ARM64 pack
     assert.match(script, /electron-builder --win appx --arm64/);
     assert.doesNotMatch(scripts['dist:win:appx'], /arm64/);
 });
+
+test('the ARM64 installer script builds an installer whose name says arm64', () => {
+    const script = require('../package.json').scripts['dist:win:arm64'];
+    assert.match(script, /prepare-resources -- --arch=arm64/);
+    assert.match(script, /electron-builder --win nsis --arm64/);
+    assert.match(script, /Setup \$\{version\} arm64\./);
+});
