@@ -10,11 +10,19 @@ const RELEASE_BASE = `${getGatewayUrl()}/api/downloads`;
 type PlatformKey = "windows-x64" | "linux-x64" | "mac-arm64" | "mac-x64";
 
 const PLATFORM_META: Record<PlatformKey, { label: string; icon: typeof Monitor; os: string }> = {
-  "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64)" },
+  "windows-x64": { label: "Windows", icon: Monitor, os: "Windows 10 or later (64-bit x64). ARM64 PCs: see below" },
   "linux-x64": { label: "Linux", icon: Terminal, os: "Ubuntu 20.04+ or equivalent (AppImage — runs on most distros)" },
   "mac-arm64": { label: "Mac (Apple Silicon)", icon: Monitor, os: "Macs with an M1, M2, M3 or M4 chip" },
   "mac-x64": { label: "Mac (Intel)", icon: Monitor, os: "Macs with an Intel processor (sold before about 2021)" },
 };
+
+const EXTRA_DOWNLOADS: { key: string; on: PlatformKey; text: string }[] = [
+  { key: "windows-arm64", on: "windows-x64", text: "On a Windows 11 ARM64 PC? Download the ARM64 installer (experimental)" },
+  { key: "linux-deb", on: "linux-x64", text: "Prefer a .deb package? Download for Debian/Ubuntu" },
+  { key: "linux-deb-arm64", on: "linux-x64", text: "On ARM64 Debian/Ubuntu? Download the ARM64 .deb" },
+  { key: "linux-flatpak", on: "linux-x64", text: "Prefer Flatpak? Download the Flatpak package" },
+  { key: "linux-arm64", on: "linux-x64", text: "On ARM64 hardware? Download the ARM64 AppImage" },
+];
 
 function defaultPlatform(): PlatformKey {
   const os = detectClientOs();
@@ -89,10 +97,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
   const [platform, setPlatform] = useState<PlatformKey>(defaultPlatform);
   const [availablePlatforms, setAvailablePlatforms] = useState<PlatformKey[]>(["windows-x64"]);
   const [releases, setReleases] = useState<Partial<Record<PlatformKey, ReleaseInfo>>>({});
-  const [linuxDeb, setLinuxDeb] = useState<ReleaseInfo | null>(null);
-  const [linuxDebArm64, setLinuxDebArm64] = useState<ReleaseInfo | null>(null);
-  const [linuxArm64, setLinuxArm64] = useState<ReleaseInfo | null>(null);
-  const [linuxFlatpak, setLinuxFlatpak] = useState<ReleaseInfo | null>(null);
+  const [extras, setExtras] = useState<Record<string, ReleaseInfo>>({});
   const [requirements, setRequirements] = useState<SystemRequirements | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -122,12 +127,7 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
           setReleases(byPlatform);
           if (!found.includes(platform)) setPlatform(found[0]);
         }
-        if (data?.latest?.["linux-deb"]) setLinuxDeb(data.latest["linux-deb"]);
-        if (data?.latest?.["linux-deb-arm64"]) setLinuxDebArm64(data.latest["linux-deb-arm64"]);
-        // linux-arm64 / linux-flatpak are secondary Linux package options
-        // alongside the primary AppImage (same pattern as .deb).
-        if (data?.latest?.["linux-arm64"]) setLinuxArm64(data.latest["linux-arm64"]);
-        if (data?.latest?.["linux-flatpak"]) setLinuxFlatpak(data.latest["linux-flatpak"]);
+        setExtras(data?.latest ?? {});
         if (data?.systemRequirements) setRequirements(data.systemRequirements);
       } catch {
         if (!cancelled) {
@@ -175,20 +175,8 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
     setTimeout(() => setDownloading(false), 3000);
   };
 
-  const handleDebDownload = () => {
-    openExternal(`${RELEASE_BASE}/linux-deb?clientOs=${encodeURIComponent(detectClientOs())}`);
-  };
-
-  const handleDebArm64Download = () => {
-    openExternal(`${RELEASE_BASE}/linux-deb-arm64?clientOs=${encodeURIComponent(detectClientOs())}`);
-  };
-
-  const handleArm64Download = () => {
-    openExternal(`${RELEASE_BASE}/linux-arm64?clientOs=${encodeURIComponent(detectClientOs())}`);
-  };
-
-  const handleFlatpakDownload = () => {
-    openExternal(`${RELEASE_BASE}/linux-flatpak?clientOs=${encodeURIComponent(detectClientOs())}`);
+  const handleExtraDownload = (key: string) => {
+    openExternal(`${RELEASE_BASE}/${key}?clientOs=${encodeURIComponent(detectClientOs())}`);
   };
 
   const versionLabel = release?.version || "…";
@@ -328,49 +316,17 @@ export const DesktopDownloadPage: React.FC<Props> = ({ onBack }) => {
             </span>
           </button>
 
-          {platform === "linux-x64" && linuxDeb && (
+          {EXTRA_DOWNLOADS.filter((x) => x.on === platform && extras[x.key]).map((x) => (
             <button
+              key={x.key}
               type="button"
-              onClick={handleDebDownload}
+              onClick={() => handleExtraDownload(x.key)}
               className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
             >
               <Download size={12} />
-              Prefer a .deb package? Download for Debian/Ubuntu (v{linuxDeb.version})
+              {x.text} (v{extras[x.key].version})
             </button>
-          )}
-
-          {platform === "linux-x64" && linuxDebArm64 && (
-            <button
-              type="button"
-              onClick={handleDebArm64Download}
-              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
-            >
-              <Download size={12} />
-              On ARM64 Debian/Ubuntu? Download the ARM64 .deb (v{linuxDebArm64.version})
-            </button>
-          )}
-
-          {platform === "linux-x64" && linuxFlatpak && (
-            <button
-              type="button"
-              onClick={handleFlatpakDownload}
-              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
-            >
-              <Download size={12} />
-              Prefer Flatpak? Download the Flatpak package (v{linuxFlatpak.version})
-            </button>
-          )}
-
-          {platform === "linux-x64" && linuxArm64 && (
-            <button
-              type="button"
-              onClick={handleArm64Download}
-              className="w-full flex items-center justify-center gap-2 p-2.5 mt-3 rounded-xl text-xs text-white/50 hover:text-white/80 border border-white/10 hover:border-white/20 transition-colors"
-            >
-              <Download size={12} />
-              On ARM64 hardware? Download the ARM64 AppImage (v{linuxArm64.version})
-            </button>
-          )}
+          ))}
 
           {platform.startsWith("mac-") && (
             <p className="text-xs text-white/50 mt-3 text-center">
