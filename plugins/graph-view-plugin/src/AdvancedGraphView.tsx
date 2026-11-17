@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
-import { renderNodeTooltip } from './utils/tooltipDom';
 import {
   RefreshCw,
   ZoomIn,
@@ -4418,6 +4417,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       edgeHitArea?.style('display', (d: any) => (d.__culled ? 'none' : null));
       linkLabel.style('display', (d: any) => (d.__culled ? 'none' : null));
       linkLabelBg.style('display', (d: any) => (d.__culled ? 'none' : null));
+      updateEdgePaths(true);
+      updateLinkLabelPositions();
     };
     applyViewportCullingRef.current = applyViewportCulling;
     uncullForExportRef.current = () => {
@@ -4594,44 +4595,6 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         x: event.clientX + 12,
         y: event.clientY + 12
       });
-
-      if (settings.tooltips) {
-        d3.selectAll('.graph-tooltip').remove();
-
-        const isDarkTip = effectiveDark;
-        const accent = ACCENT_COLORS[d.type] || '#3b82f6';
-        const tooltip = d3.select('body').append('div')
-          .attr('class', 'graph-tooltip')
-          .style('position', 'absolute')
-          .style('background', isDarkTip ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.96)')
-          .style('color', isDarkTip ? '#e2e8f0' : '#1e293b')
-          .style('backdrop-filter', 'blur(10px)')
-          .style('-webkit-backdrop-filter', 'blur(10px)')
-          .style('border', `1px solid ${hexToRgba(accent, 0.4)}`)
-          .style('border-left', `3px solid ${accent}`)
-          .style('box-shadow', `0 8px 24px rgba(0,0,0,0.22), 0 0 12px ${hexToRgba(accent, 0.18)}`)
-          .style('padding', '10px 14px')
-          .style('border-radius', '10px')
-          .style('font-size', '12px')
-          .style('line-height', '1.5')
-          .style('max-width', '280px')
-          .style('pointer-events', 'none')
-          .style('z-index', '1000')
-          .style('left', `${event.pageX + 12}px`)
-          .style('top', `${event.pageY + 12}px`)
-          .style('opacity', '0')
-          .style('transform', 'translateY(4px)')
-          .style('transition', 'opacity 160ms ease, transform 160ms ease')
-          .each(function () {
-            renderNodeTooltip(this as HTMLElement, d, {
-              badgeBackground: hexToRgba(accent, 0.15),
-              badgeColor: accent,
-            });
-          });
-        requestAnimationFrame(() => {
-          tooltip.style('opacity', '1').style('transform', 'translateY(0)');
-        });
-      }
     }
 
     function handleNodeMouseOut() {

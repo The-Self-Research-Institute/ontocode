@@ -731,8 +731,11 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
 
   // Invariant: an external selection always ends up centered on screen.
   // In focus mode it retargets the neighborhood instead (follow-selection).
+  const lastSelectionRef = useRef<typeof selectedNodeIds | null>(null);
   useEffect(() => {
     if (restoredSelectionRef.current !== undefined && selectedNodeIds === restoredSelectionRef.current) return;
+    if (selectedNodeIds === lastSelectionRef.current) return;
+    lastSelectionRef.current = selectedNodeIds;
     if (selectedNodeIds && selectedNodeIds.size === 1) {
       const [id] = [...selectedNodeIds];
       const f = focusRef.current;
