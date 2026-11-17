@@ -79,6 +79,8 @@ export const KeyEntryForm: React.FC<{
     )}
     <input
       type="password"
+      name="ask-ai-api-key"
+      autoComplete="new-password"
       value={keyInput}
       onChange={(e) => setKeyInput(e.target.value)}
       onKeyDown={(e) => e.key === "Enter" && onSaveKey()}

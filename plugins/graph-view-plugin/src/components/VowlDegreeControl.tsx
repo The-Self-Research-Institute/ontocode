@@ -7,6 +7,7 @@ interface VowlDegreeControlProps {
   shownClasses: number;
   totalClasses: number;
   openToken: number;
+  closeToken?: number;
   onChange: (degree: number) => void;
 }
 
@@ -16,6 +17,7 @@ export const VowlDegreeControl: React.FC<VowlDegreeControlProps> = ({
   shownClasses,
   totalClasses,
   openToken,
+  closeToken = 0,
   onChange
 }) => {
   const [open, setOpen] = useState(false);
@@ -28,6 +30,13 @@ export const VowlDegreeControl: React.FC<VowlDegreeControlProps> = ({
     }
   }, [openToken]);
 
+  useEffect(() => {
+    if (closeToken > 0) {
+      setOpen(false);
+      setShowNotice(false);
+    }
+  }, [closeToken]);
+
   const active = degree !== null;
 
   return (
@@ -35,10 +44,11 @@ export const VowlDegreeControl: React.FC<VowlDegreeControlProps> = ({
       data-testid="vowl-degree-control"
       style={{
         position: 'absolute',
-        left: 16,
+        right: 16,
         bottom: 16,
         zIndex: 25,
         display: 'flex',
+        flexDirection: 'row-reverse',
         alignItems: 'flex-end',
         gap: 8,
         maxWidth: 'calc(100% - 32px)'

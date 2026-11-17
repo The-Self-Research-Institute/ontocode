@@ -18,6 +18,17 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.10-beta.1",
+    webVersion: "1.2.10",
+    date: "November 16, 2026",
+    title: "Microsoft Store fix",
+    highlights: [
+      "Microsoft Store — Fixed the PostgreSQL start issue in the Microsoft Store version.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.9-beta.1",
     webVersion: "1.2.9",
     date: "November 12, 2026",

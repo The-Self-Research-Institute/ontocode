@@ -217,6 +217,8 @@ const ZoteroSettingsDialog: React.FC<ZoteroSettingsDialogProps> = ({ isOpen, onC
             </label>
             <input
               type="password"
+              name="zotero-api-key"
+              autoComplete="new-password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Enter your Zotero API key"

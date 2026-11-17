@@ -13,7 +13,7 @@ import type { OntologyNode, OntologyEdge } from '../types';
 import type { GraphAnalytics, StructuralGap, DiscourseStructure } from '../services/GraphAnalyticsService';
 import {
   generateGraphInsights, askGraphQuestion, suggestTopicsForNode,
-  getStoredApiKey, setStoredApiKey, hasApiKey,
+  getStoredApiKey, setStoredApiKey, hasApiKey, getAssistantKeyBridge,
   getStoredProvider, setStoredProvider, getStoredModel, setStoredModel,
   getAvailableProviders, getProviderModels, refreshAvailableModels,
   LlmConfigError, type LlmInsightRequest, type LlmProvider,
@@ -222,6 +222,24 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
   const [model, setModel] = useState<string>(getStoredModel());
   const [keyDraft, setKeyDraft] = useState<string>('');
   const [keySaved, setKeySaved] = useState<boolean>(hasApiKey());
+
+  useEffect(() => {
+    const bridge = getAssistantKeyBridge();
+    if (!bridge) return;
+    let alive = true;
+    const refresh = () => {
+      if (!alive) return;
+      const present = hasApiKey();
+      setKeySaved(present);
+      if (present) setShowKeyInput(false);
+    };
+    bridge.ready?.().then(refresh, refresh);
+    const off = bridge.onChange?.(refresh);
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, []);
 
   // Model list per provider. The hardcoded PROVIDERS table is only ever a placeholder
   // — shown before a key exists, or if a live fetch fails. Whenever a key is present
@@ -740,6 +758,8 @@ export const AnalyticsPanel: React.FC<AnalyticsPanelProps> = ({
                     </label>
                     <input
                       type="password"
+                      name="llm-api-key"
+                      autoComplete="new-password"
                       value={keyDraft}
                       onChange={(e) => setKeyDraft(e.target.value)}
                       onBlur={() => { if (keyDraft.trim()) handleRefreshModels(provider); }}
