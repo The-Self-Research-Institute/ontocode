@@ -10,6 +10,8 @@ const zlib          = require('zlib');
 const crypto        = require('crypto');
 const vcRuntime     = require('./vcRuntime');
 const swrlJar       = require('./swrlJar');
+const peArch        = require('./peArch');
+const pgArm64       = require('./pgArm64Source');
 
 const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
@@ -23,7 +25,8 @@ const JRE_CACHE_ROOT = path.join(RESOURCES, '.jre-cache');
 const TARGET_PLATFORM = process.env.TARGET_PLATFORM || process.platform;
 const CROSS_BUILDING = TARGET_PLATFORM !== process.platform;
 
-const TARGET_ARCH = process.env.TARGET_ARCH || process.arch;
+const archArg = process.argv.find((a) => a.startsWith('--arch='));
+const TARGET_ARCH = archArg ? archArg.slice('--arch='.length) : (process.env.TARGET_ARCH || process.arch);
 
 const FUSEKI_VERSION = '6.1.0';
 const FUSEKI_SHA512 = '75457f45d14397876a41ed51abe7ae5d2f1e708dfe1315765f858158bc5c6813bc036ec1539ddc4dffd26201f5cc31fadec299ca5c3dc2548b723513ed31d326';
@@ -74,6 +77,8 @@ const TEMURIN_URLS = {
 };
 
 const TEMURIN_LINUX_ARM64_URL = 'https://api.adoptium.net/v3/binary/latest/21/ga/linux/aarch64/jre/hotspot/normal/eclipse';
+const TEMURIN_WIN_ARM64_URL = 'https://api.adoptium.net/v3/binary/latest/21/ga/windows/aarch64/jre/hotspot/normal/eclipse';
+const MS_JDK17_ARM64_URL = 'https://aka.ms/download-jdk/microsoft-jdk-17-windows-aarch64.zip';
 
 const TEMURIN_17_URLS = {
     win32:  'https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse',
@@ -259,18 +264,85 @@ async function downloadFuseki(cachedSrc) {
     }
 }
 
+function postgresPreparedForThisArch(destDir) {
+    if (TARGET_PLATFORM !== 'win32') return true;
+    const machine = peArch.peMachine(path.join(destDir, 'bin', 'postgres.exe'));
+    return machine === null || machine === TARGET_ARCH;
+}
+
+function unzipInto(zipPath, destDir) {
+    if (process.platform === 'win32') {
+        execFileSync('powershell', ['-NoProfile', '-Command',
+            `Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force`], { stdio: 'inherit', timeout: 120_000 });
+    } else {
+        execFileSync('unzip', ['-oq', zipPath, '-d', destDir], { stdio: 'inherit', timeout: 120_000 });
+    }
+}
+
+async function copyPostgresWinArm64(destDir) {
+    const pin = pgArm64.loadPin();
+    const exe = path.join(destDir, 'bin', 'postgres.exe');
+    const marker = path.join(destDir, '.arm64-sha256');
+    const prepared = fs.existsSync(exe) && peArch.peMachine(exe) === 'arm64'
+        && fs.existsSync(marker) && fs.readFileSync(marker, 'utf8').trim() === pin.sha256;
+    if (prepared) {
+        console.log('  ✓  postgres/win32 (ARM64) already prepared');
+        return true;
+    }
+    const source = pgArm64.resolveSource();
+    if (!source) {
+        console.error('  ✗  No ARM64 PostgreSQL available. Set ONTOCODE_PG_ARM64_FILE to postgres-<version>-windows-arm64.zip,');
+        console.error('     or put its download link in scripts/postgres-win-arm64.json');
+        return false;
+    }
+    const downloaded = path.join(RESOURCES, 'pg-arm64-download.zip');
+    try {
+        let zipPath = source.file;
+        if (source.kind === 'url') {
+            console.log(`  → Downloading PostgreSQL ${pin.version} for ARM64…`);
+            ensureDir(RESOURCES);
+            await downloadFile(source.url, downloaded);
+            zipPath = downloaded;
+        }
+        const check = pgArm64.verify(zipPath, pin.sha256);
+        if (!check.ok) {
+            throw new Error(`Checksum mismatch for ${zipPath}\n       expected: ${pin.sha256}\n       got:      ${check.actual}`);
+        }
+        console.log('  ✓  Checksum verified');
+        removeDir(destDir);
+        ensureDir(destDir);
+        unzipInto(zipPath, destDir);
+        if (peArch.peMachine(exe) !== 'arm64') throw new Error('postgres.exe in that zip is not an ARM64 program');
+        fs.writeFileSync(marker, pin.sha256);
+        console.log(`  ✓  Installed PostgreSQL ${pin.version} (ARM64) into postgres/win32`);
+        return true;
+    } catch (err) {
+        console.error(`  ✗  ARM64 PostgreSQL preparation failed: ${err.message}`);
+        removeDir(destDir);
+        return false;
+    } finally {
+        fs.rmSync(downloaded, { force: true });
+    }
+}
+
 async function copyPostgres() {
     console.log('\n[3/4] PostgreSQL binaries');
     const key = `${TARGET_PLATFORM}-${TARGET_ARCH}`;
-    const source = POSTGRES_BUILDS[key];
     const destDir = path.join(RESOURCES, 'postgres', TARGET_PLATFORM);
     const exe = TARGET_PLATFORM === 'win32' ? 'postgres.exe' : 'postgres';
+    if (key === 'win32-arm64') {
+        if (!(await copyPostgresWinArm64(destDir))) return false;
+        await buildPostgresClusterTemplate(destDir);
+        return true;
+    }
+    const source = POSTGRES_BUILDS[key];
     if (!source) {
         console.error(`  ✗  No bundled PostgreSQL build for ${key}`);
         return false;
     }
     if (fs.existsSync(path.join(destDir, 'bin', exe)) && fs.existsSync(path.join(destDir, 'PG_MAJOR'))
-        && fs.readFileSync(path.join(destDir, 'PG_MAJOR'), 'utf8').trim() === POSTGRES_MAJOR) {
+        && fs.readFileSync(path.join(destDir, 'PG_MAJOR'), 'utf8').trim() === POSTGRES_MAJOR
+        && postgresPreparedForThisArch(destDir)) {
         console.log(`  ✓  postgres/${TARGET_PLATFORM} already prepared`);
     } else {
         const ok = await downloadPostgres(source, destDir);
@@ -476,7 +548,56 @@ async function tryJlink() {
 
 const JRE17_ARCH_MARKER = path.join(JRE17_DIR, '.prepared-for');
 
+async function buildSwrlJreWinArm64() {
+    const javaExe = path.join(JRE17_DIR, 'bin', 'java.exe');
+    const expectedMarker = 'win32-arm64';
+    const actualMarker = fs.existsSync(JRE17_ARCH_MARKER) ? fs.readFileSync(JRE17_ARCH_MARKER, 'utf8').trim() : null;
+    if (fs.existsSync(javaExe) && actualMarker === expectedMarker && peArch.peMachine(javaExe) === 'arm64') {
+        console.log('  ✓  Bundled SWRL JRE (Java 17, ARM64) already present');
+        return;
+    }
+    const cacheKey = `swrl-${expectedMarker}`;
+    if (restoreJreFromCache(cacheKey, JRE17_DIR, path.relative(JRE17_DIR, javaExe))) {
+        fs.writeFileSync(JRE17_ARCH_MARKER, expectedMarker);
+        return;
+    }
+    removeDir(JRE17_DIR);
+    const hostJdk = findJdkHome(17);
+    const jlinkBin = hostJdk ? path.join(hostJdk, 'bin', process.platform === 'win32' ? 'jlink.exe' : 'jlink') : null;
+    if (!jlinkBin || !fs.existsSync(jlinkBin)) {
+        console.error('  ✗  A JDK 17 with jlink is needed on this PC to cut the ARM64 Java 17 (set JAVA17_HOME)');
+        return;
+    }
+    const jdkZip = path.join(RESOURCES, 'msjdk17-arm64.zip');
+    const jdkDir = path.join(RESOURCES, '_msjdk17-arm64');
+    try {
+        console.log('  → Downloading Microsoft Build of OpenJDK 17 for Windows ARM64…');
+        ensureDir(RESOURCES);
+        await downloadFile(MS_JDK17_ARM64_URL, jdkZip);
+        removeDir(jdkDir);
+        extractJreArchive(jdkZip, jdkDir, 'win32');
+        const jmods = path.join(jdkDir, 'jmods');
+        if (!fs.existsSync(jmods)) throw new Error('the ARM64 JDK has no jmods folder');
+        console.log('  → Cutting a small Java 17 for ARM64 with jlink…');
+        execSync(
+            `"${jlinkBin}" --module-path "${jmods}" --add-modules ${JLINK_MODULES} --output "${JRE17_DIR}" --strip-debug --no-man-pages --no-header-files --compress=2`,
+            { stdio: 'inherit', timeout: 300_000 },
+        );
+        if (peArch.peMachine(javaExe) !== 'arm64') throw new Error('the Java 17 that jlink produced is not ARM64');
+        fs.writeFileSync(JRE17_ARCH_MARKER, expectedMarker);
+        saveJreToCache(cacheKey, JRE17_DIR);
+        console.log('  ✓  SWRL JRE (Java 17, ARM64) ready');
+    } catch (err) {
+        console.error(`  ✗  ARM64 Java 17 failed: ${err.message}`);
+        removeDir(JRE17_DIR);
+    } finally {
+        fs.rmSync(jdkZip, { force: true });
+        removeDir(jdkDir);
+    }
+}
+
 async function bundleSwrlJre() {
+    if (TARGET_PLATFORM === 'win32' && TARGET_ARCH === 'arm64') return buildSwrlJreWinArm64();
     const javaBin = path.join(JRE17_DIR, 'bin', TARGET_PLATFORM === 'win32' ? 'java.exe' : 'java');
     const expectedMarker = `${TARGET_PLATFORM}-${TARGET_ARCH}`;
     const actualMarker = fs.existsSync(JRE17_ARCH_MARKER) ? fs.readFileSync(JRE17_ARCH_MARKER, 'utf8').trim() : null;
@@ -581,7 +702,9 @@ async function downloadTemurin() {
     const platform = TARGET_PLATFORM;
     const url = (platform === 'linux' && TARGET_ARCH === 'arm64')
         ? TEMURIN_LINUX_ARM64_URL
-        : TEMURIN_URLS[platform];
+        : (platform === 'win32' && TARGET_ARCH === 'arm64')
+            ? TEMURIN_WIN_ARM64_URL
+            : TEMURIN_URLS[platform];
     if (!url) {
         console.error(`  ✗  No Temurin URL configured for platform "${platform}" arch "${TARGET_ARCH}"`);
         console.error('     Add the URL to TEMURIN_URLS in prepare-resources.js');
@@ -618,21 +741,18 @@ function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 function downloadFileOnce(url, dest, redirectsLeft = 5) {
     return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
         function follow(u, remaining) {
             const req = https.get(u, { family: 4, headers: { 'User-Agent': 'ontocode-build/1.0' } }, (res) => {
-                if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) {
-                    if (remaining <= 0) {
-                        file.close();
-                        return reject(new Error('Too many redirects'));
-                    }
-                    file.close();
-                    return follow(res.headers.location, remaining - 1);
+                if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
+                    res.resume();
+                    if (remaining <= 0) return reject(new Error('Too many redirects'));
+                    return follow(new URL(res.headers.location, u).toString(), remaining - 1);
                 }
                 if (res.statusCode !== 200) {
-                    file.close();
+                    res.resume();
                     return reject(new Error(`HTTP ${res.statusCode}`));
                 }
+                const file = fs.createWriteStream(dest);
                 const total = parseInt(res.headers['content-length'] || '0', 10);
                 let received = 0;
                 res.on('data', (chunk) => {
@@ -756,7 +876,7 @@ function postgresBinDir() {
 function copyVcRuntimeForPostgres() {
     if (TARGET_PLATFORM !== 'win32') return;
     console.log('\n[PostgreSQL] Visual C++ runtime next to postgres.exe (a clean Windows does not have it)');
-    const result = vcRuntime.bundleVcRuntime(postgresBinDir(), [path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')]);
+    const result = vcRuntime.bundleVcRuntime(postgresBinDir(), [path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')], vcRuntime.requiredFor(TARGET_ARCH));
     result.copied.forEach((name) => console.log(`  ✓  copied ${name}`));
     result.present.forEach((name) => console.log(`  ✓  ${name} already there`));
     result.missing.forEach((name) => console.error(`  ✗  ${name} not found in the bundled JREs`));
@@ -777,9 +897,16 @@ function requiredResourcesPresent() {
         if (!ok) allOk = false;
     }
     if (TARGET_PLATFORM === 'win32') {
-        const lacking = vcRuntime.missingVcRuntime(postgresBinDir());
+        const lacking = vcRuntime.missingVcRuntime(postgresBinDir(), vcRuntime.requiredFor(TARGET_ARCH));
         console.log(`  ${lacking.length ? '✗' : '✓'}  Visual C++ runtime next to postgres.exe${lacking.length ? ` — missing ${lacking.join(', ')}` : ''}`);
         if (lacking.length) allOk = false;
+        const wrongArch = peArch.findArchMismatches([postgresBinDir(), path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')], TARGET_ARCH);
+        if (wrongArch.length) {
+            wrongArch.slice(0, 5).forEach((w) => console.log(`  ${TARGET_ARCH === 'arm64' ? '✗' : '⚠'}  ${path.basename(w.file)} is ${w.arch}, not ${TARGET_ARCH}`));
+            if (TARGET_ARCH === 'arm64') allOk = false;
+        } else {
+            console.log(`  ✓  every bundled program is ${TARGET_ARCH}`);
+        }
     }
     const templateOk = fs.existsSync(path.join(RESOURCES, 'postgres', TARGET_PLATFORM, 'cluster-template', 'PG_VERSION'));
     console.log(`  ${templateOk ? '✓' : '⚠'}  empty database template${templateOk ? '' : ' — missing, the first start will take about 35 seconds longer'}`);
