@@ -79,12 +79,13 @@ import {
   visibilityForDegree
 } from './HierarchicalLazyLoading';
 import { VowlDegreeControl } from './components/VowlDegreeControl';
+import { setAssistantKeyBridge } from './services/LlmInsightsService';
 import { useIsDarkTheme } from './hooks/useIsDarkTheme';
 import { usePrefersReducedMotion } from './hooks/usePrefersReducedMotion';
 import { loadLastView, saveLastView, loadUiPrefs, saveUiPrefs, OntographLayoutType, VowlDisplayOptions, DEFAULT_VOWL_OPTIONS } from './viewMemory';
 import { applyVowlTransform, isThingIri, vowlOriginalNodeId, buildVowlNeighborhoods, placeVowlNeighborhoods } from './vowlTransform';
 import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/GraphToolbar';
-import { WebGLGraphView, buildBenchmarkData, type WebGLCameraHandle } from './renderers/WebGLGraphView';
+import { WebGLGraphView, buildBenchmarkData, type WebGLCameraHandle, type NetworkViewState, type NetworkFocusState } from './renderers/WebGLGraphView';
 import { isWebGLAvailable } from './renderers/graphAdapter';
 import { announceGraphMutation, installGraphCacheInvalidation, subscribeGraphRefresh } from './services/mutationRefresh';
 
@@ -491,6 +492,14 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const assertedGraphRef = useRef<{ nodes: OntologyNode[]; edges: OntologyEdge[] } | null>(null);
   const inferredGraphRef = useRef<{ nodes: OntologyNode[]; edges: OntologyEdge[] } | null>(null);
   const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const viewMemoryRef = useRef<Map<string, {
+    nodeKey: string;
+    transform?: d3.ZoomTransform;
+    positions?: Map<string, { x: number; y: number }>;
+    network?: NetworkViewState;
+  }>>(new Map());
+  const viewRestoreRef = useRef<{ key: string; transform: d3.ZoomTransform; until: number } | null>(null);
+  const networkFocusRef = useRef<NetworkFocusState>(null);
   const vowlPinnedHubIdsRef = useRef<Set<string>>(new Set());
   const vowlHubFingerprintRef = useRef<string>('');
   const applyViewportCullingRef = useRef<() => void>(() => {});
@@ -507,6 +516,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const visibleNodeIds = hierarchyState.visible;
   const expandedNodeIds = hierarchyState.expanded;
   const canEdit = !readonly && (context?.permissions?.canEdit ?? true);
+  setAssistantKeyBridge(context?.assistantKey);
   const updateHierarchyState = useCallback((updater: (prev: HierarchyState) => HierarchyState) => {
     setHierarchyState(prev => updater({
       visible: new Set(prev.visible),
@@ -578,6 +588,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   useEffect(() => {
     nodePositionsRef.current.clear();
+    viewMemoryRef.current.clear();
+    viewRestoreRef.current = null;
+    networkFocusRef.current = null;
     vowlHubFingerprintRef.current = '';
     vowlPinnedHubIdsRef.current = new Set();
   }, [projectId]);
@@ -661,6 +674,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const [entrancePhase, setEntrancePhase] = useState<'pending' | 'playing' | 'done'>('pending');
   const userInteractedRef = useRef(false);
   const pendingToggleFrameRef = useRef<string | null>(null);
+  const treeFrameRef = useRef<{ nodeId: string; until: number } | null>(null);
+  const treeMinZoom = visualizationType === 'ontograph' && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal') ? 0.03 : 0.1;
   const hasSeenGraphRef = useRef(!isFirstEverOpen);
 
   useEffect(() => {
@@ -1115,6 +1130,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   const [vowlDegree, setVowlDegree] = useState<number | null>(null);
   const [vowlDegreeOpenToken, setVowlDegreeOpenToken] = useState(0);
+  const [vowlDegreeCloseToken, setVowlDegreeCloseToken] = useState(0);
+  const handleToolbarOptionsOpenChange = useCallback((open: boolean) => {
+    if (open) setVowlDegreeCloseToken(t => t + 1);
+  }, []);
   const vowlDegreeVisibleRef = useRef<Set<string> | null>(null);
   const classDegrees = useMemo(() => computeClassDegrees(allNodes, allEdges), [allNodes, allEdges]);
   const maxClassDegree = useMemo(
@@ -1131,7 +1150,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const vowlDegreeActive = vowlDegree !== null && vowlDegreeVisibleRef.current === visibleNodeIds;
   const degreeCollapseAvailable = webglActive ||
     visualizationType === 'vowl' ||
-    (visualizationType === 'ontograph' && ontographLayoutType === 'tree');
+    (visualizationType === 'ontograph' && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal'));
   const vowlDegreeShownClasses = useMemo(() => {
     if (vowlDegree === null) return 0;
     let count = 0;
@@ -1466,7 +1485,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       console.log(`[Filtering] OntoGraph mode: Applied relationship visibility ${beforeFilter} -> ${filtered.length}`);
     }
 
-    if (filterMode === 'force') {
+    if (filterMode === 'force' || (filterMode === 'ontograph' && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal'))) {
       filtered = filtered.filter(e => e.type !== 'disjointWith');
     }
 
@@ -1486,7 +1505,48 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     
     return filtered;
-  }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes, assertionView, vowlOptions, webglActive]);
+  }, [visibleEdges, filteredNodes, filters, visualizationType, vowlFilters, allNodes, assertionView, vowlOptions, webglActive, ontographLayoutType]);
+
+  const filteredNodeKey = useMemo(
+    () => filteredNodes.map(n => n.id).sort().join('\u0001'),
+    [filteredNodes]
+  );
+  const svgViewKey = visualizationType === 'vowl' ? 'vowl' : `${visualizationType}:${ontographLayoutType}`;
+  const isViewRestoreHeld = (key: string): boolean => {
+    const hold = viewRestoreRef.current;
+    return !!hold && hold.key === key && Date.now() < hold.until;
+  };
+  const switchVisualizationType = (next: VisualizationType) => {
+    rememberCurrentView();
+    setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
+    setVisualizationType(next);
+    if (next === 'ontograph' && ontographLayoutType === 'spring') {
+      setOntographLayoutType('tree');
+    }
+    if (next === 'vowl') {
+      nodePositionsRef.current.clear();
+      setClassDistance(170);
+      setDatatypeDistance(85);
+    }
+  };
+  const rememberCurrentView = () => {
+    if (webglActive) {
+      const state = webglCamRef.current?.getViewState();
+      if (state) viewMemoryRef.current.set('network', { nodeKey: filteredNodeKey, network: state });
+      return;
+    }
+    if (!svgRef.current) return;
+    viewMemoryRef.current.set(svgViewKey, {
+      nodeKey: filteredNodeKey,
+      transform: d3.zoomTransform(svgRef.current),
+      positions: visualizationType === 'vowl' ? new Map(nodePositionsRef.current) : undefined
+    });
+  };
+  const networkRestoreState = useMemo(() => {
+    if (!webglActive) return null;
+    const remembered = viewMemoryRef.current.get('network');
+    return remembered?.network && remembered.nodeKey === filteredNodeKey ? remembered.network : null;
+  }, [webglActive, filteredNodeKey]);
 
   const graphAnalytics = useMemo(
     () => computeGraphAnalytics(filteredNodes, filteredEdges),
@@ -1723,6 +1783,18 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     if (!svgRef.current || filteredNodes.length === 0) return;
 
     const startTime = performance.now();
+
+    const drawViewKey = svgViewKey;
+    const remembered = viewMemoryRef.current.get(drawViewKey);
+    if (remembered?.transform) {
+      viewMemoryRef.current.delete(drawViewKey);
+      if (remembered.nodeKey === filteredNodeKey) {
+        if (remembered.positions) nodePositionsRef.current = new Map(remembered.positions);
+        viewRestoreRef.current = { key: drawViewKey, transform: remembered.transform, until: Date.now() + 3000 };
+        userInteractedRef.current = true;
+      }
+    }
+    const restoringView = isViewRestoreHeld(drawViewKey);
 
     const vowlGraph = visualizationType === 'vowl'
       ? applyVowlTransform(filteredNodes, filteredEdges, {
@@ -2502,7 +2574,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       : 1;
     const bigExpansion = visualizationType === 'vowl' && hasSavedPositions && newNodeRatio > 0.3;
 
-    const forceRecompress = visualizationType === 'vowl' && !!viewportFitToken;
+    const forceRecompress = visualizationType === 'vowl' && !!viewportFitToken && !restoringView;
 
     if (visualizationType === 'vowl' && usePhysics && (!hasSavedPositions || bigExpansion || forceRecompress)) {
       const placed = simNodes.filter(n => n.x != null && n.y != null);
@@ -4573,7 +4645,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 10])
+      .scaleExtent([treeMinZoom, 10])
       .wheelDelta((event: WheelEvent) =>
         -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * (event.ctrlKey ? 10 : 1) * 0.75
       )
@@ -4638,7 +4710,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
           -event.deltaY * (event.deltaMode === 1 ? 0.05 : event.deltaMode ? 1 : 0.002) * (event.ctrlKey ? 8 : 1) * 0.75
         );
         const base = kTarget ?? currentTransformRef.current.k;
-        kTarget = Math.max(0.1, Math.min(10, base * factor));
+        kTarget = Math.max(treeMinZoom, Math.min(10, base * factor));
         const pt = d3.pointer(event, svgRef.current);
         px = pt[0];
         py = pt[1];
@@ -4766,6 +4838,25 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     setTimeout(() => {
       if (!svgRef.current || !zoomRef.current) return;
+      const restoreHold = viewRestoreRef.current;
+      if (restoreHold && restoreHold.key === drawViewKey && Date.now() < restoreHold.until) {
+        d3.select(svgRef.current).call(zoomRef.current.transform as any, restoreHold.transform);
+        return;
+      }
+      const treeFrame = treeFrameRef.current;
+      if (treeFrame && visualizationType === 'ontograph' && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal')) {
+        if (Date.now() < treeFrame.until) {
+          const frameIds = new Set<string>([treeFrame.nodeId]);
+          filteredEdges.forEach(edge => {
+            if (edge.to === treeFrame.nodeId && (edge.type === 'subClassOf' || edge.type === 'subPropertyOf' || edge.type === 'instanceOf')) {
+              frameIds.add(edge.from);
+            }
+          });
+          glideToNodeIds(frameIds, 1.0);
+          return;
+        }
+        treeFrameRef.current = null;
+      }
       const svgEl = d3.select(svgRef.current);
       const target = computeFitTransform();
       if (!target) return;
@@ -4794,6 +4885,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       };
       simulation.on('end.toggleFrame', frameToggled);
       setTimeout(frameToggled, 5000);
+    } else if (visualizationType === 'ontograph' && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal') && pendingToggleFrameRef.current) {
+      treeFrameRef.current = { nodeId: pendingToggleFrameRef.current, until: Date.now() + 2500 };
+      pendingToggleFrameRef.current = null;
+      userInteractedRef.current = true;
     }
 
     if (visualizationType === 'vowl' && usePhysics && !isLayoutPaused) {
@@ -4858,12 +4953,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     const doFit = () => {
       if (!svgRef.current || !gRef.current || !zoomRef.current) return false;
+      const treeFrame = treeFrameRef.current;
+      if (treeFrame && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal') && Date.now() < treeFrame.until) return true;
+      if (isViewRestoreHeld(`ontograph:${ontographLayoutType}`)) return true;
       const bounds = (gRef.current as any).getBBox();
       if (!bounds.width || !bounds.height) return false;
       const width = svgRef.current.clientWidth;
       const height = svgRef.current.clientHeight;
       if (!width || !height) return false;
-      const scale = Math.max(0.1, Math.min(0.9, 0.9 / Math.max(bounds.width / width, bounds.height / height)));
+      const scale = Math.max(treeMinZoom, Math.min(0.9, 0.9 / Math.max(bounds.width / width, bounds.height / height)));
       const translate = [
         width / 2 - scale * (bounds.x + bounds.width / 2),
         height / 2 - scale * (bounds.y + bounds.height / 2)
@@ -5062,7 +5160,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         return focusEdgeIds.has(d.id) ? 1 : 0.1;
       });
 
-  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, searchFilterMode, searchFocusIds, vowlChipDensityOk, vowlOptions.isolateOnSelect]);
+  }, [selectedNodes, selectedEdgeId, hoveredEdgeId, hoveredNode, visualizationType, settings.showLabels, allEdges, searchQuery, searchFilterMode, searchFocusIds, vowlChipDensityOk, vowlOptions.isolateOnSelect, webglActive]);
 
   useEffect(() => {
     if (!gRef.current) return;
@@ -5096,8 +5194,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .call(zoomRef.current.transform as any, t);
   }, []);
 
+  const lastFocusFitRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     if (!focusedNodeId) return;
+    if (lastFocusFitRef.current === focusedNodeIds) return;
+    lastFocusFitRef.current = focusedNodeIds;
     const ids = focusedNodeIds ?? new Set([focusedNodeId]);
     const timer = window.setTimeout(() => {
       if (webglActive) {
@@ -5231,10 +5332,10 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       };
     });
 
-    if (visualizationType === 'vowl') {
+    if (visualizationType === 'vowl' || (visualizationType === 'ontograph' && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal'))) {
       pendingToggleFrameRef.current = nodeId;
     }
-  }, [allNodes, allEdges, expandedNodeIds, visibleNodeIds, updateHierarchyState, fetchMissingChildren, visualizationType]);
+  }, [allNodes, allEdges, expandedNodeIds, visibleNodeIds, updateHierarchyState, fetchMissingChildren, visualizationType, ontographLayoutType]);
 
   const handleExpandParents = useCallback((nodeId: string) => {
     const node = allNodes.find(n => n.id === nodeId);
@@ -5938,7 +6039,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     const bw = Math.max(1, maxX - minX);
     const bh = Math.max(1, maxY - minY);
-    let scale = Math.max(0.1, Math.min(0.9 / Math.max(bw / w, bh / h), 2));
+    let scale = Math.max(visualizationType === 'ontograph' && (ontographLayoutType === 'tree' || ontographLayoutType === 'horizontal') ? 0.03 : 0.1, Math.min(0.9 / Math.max(bw / w, bh / h), 2));
     const tx = w / 2 - scale * ((minX + maxX) / 2);
     const ty = h / 2 - scale * ((minY + maxY) / 2);
 
@@ -5947,7 +6048,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
 
     return d3.zoomIdentity.translate(tx, ty).scale(scale);
-  }, [visualizationType, filteredEdges, settings.nodeSize]);
+  }, [visualizationType, ontographLayoutType, filteredEdges, settings.nodeSize]);
 
   const handleFit = () => {
     if (webglActive) {
@@ -5969,6 +6070,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
   useEffect(() => {
     if (!viewportFitToken || webglActive) return;
+    if (isViewRestoreHeld(svgViewKey)) return;
     userInteractedRef.current = false;
     const t2 = setTimeout(() => handleFitRef.current(), 1800);
     return () => { clearTimeout(t2); };
@@ -5977,8 +6079,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   const autoFitKey = `${visualizationType}:${ontographLayoutType}:${webglActive}`;
   useEffect(() => {
     if (webglActive) return;
-    const t1 = setTimeout(() => handleFitRef.current(), 450);
-    const t2 = setTimeout(() => handleFitRef.current(), 1800);
+    const autoFit = () => {
+      if (!isViewRestoreHeld(svgViewKey)) handleFitRef.current();
+    };
+    const t1 = setTimeout(autoFit, 450);
+    const t2 = setTimeout(autoFit, 1800);
     return () => { clearTimeout(t1); clearTimeout(t2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFitKey]);
@@ -6881,12 +6986,16 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             statsLabel={`${getExpansionStats(headerTotal, headerVisible, expandedNodeIds.size)} · ${zoomLevel.toFixed(1)}x`}
             statsData={{ visible: headerVisible, total: headerTotal, expanded: expandedNodeIds.size }}
             statsWarning={sharedIdWarning}
+            onOptionsOpenChange={handleToolbarOptionsOpenChange}
             lazyLoadingActive={allNodes.length > 1000}
             webglRenderer={webglActive}
             webglSupported={webglSupported}
             vowlDisplayOptions={vowlOptions}
             onChangeVowlOptions={(patch) => setVowlOptions(prev => ({ ...prev, ...patch }))}
-            onToggleWebGL={() => setSettings(prev => ({ ...prev, renderer: prev.renderer === 'webgl' ? 'svg' : 'webgl' }))}
+            onToggleWebGL={() => {
+              rememberCurrentView();
+              setSettings(prev => ({ ...prev, renderer: prev.renderer === 'webgl' ? 'svg' : 'webgl' }));
+            }}
             showOverflowHint={showToolbarHint}
             onRefresh={() => {
               setSelectedNodes(new Set());
@@ -6897,32 +7006,25 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             }}
             onPresetNetwork={() => {
               if (webglActive) return;
+              rememberCurrentView();
               setSettings(prev => prev.renderer === 'webgl' ? prev : { ...prev, renderer: 'webgl' });
-              const { newExpandedIds, newVisibleIds } = smartInitialGraphVisibility(allNodes, allEdges);
-              updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
-              requestViewportFitAfterBulkExpand();
             }}
             onPresetTree={() => {
+              if (!webglActive && visualizationType === 'ontograph' && ontographLayoutType === 'tree') return;
+              rememberCurrentView();
               setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
               setVisualizationType('ontograph');
               setOntographLayoutType('tree');
-              const { newExpandedIds, newVisibleIds } = smartInitialGraphVisibility(allNodes, allEdges);
-              updateHierarchyState(() => ({ visible: newVisibleIds, expanded: newExpandedIds }));
-              requestViewportFitAfterBulkExpand();
             }}
-            onSetVisualizationType={(next) => {
-              setSettings(prev => prev.renderer === 'webgl' ? { ...prev, renderer: 'svg' } : prev);
-              setVisualizationType(next);
-              if (next === 'ontograph' && ontographLayoutType === 'spring') {
-                setOntographLayoutType('tree');
-              }
-              if (next === 'vowl') {
-                nodePositionsRef.current.clear();
-                setClassDistance(170);
-                setDatatypeDistance(85);
-              }
+            onPresetVowl={() => {
+              if (!webglActive && visualizationType === 'vowl') return;
+              switchVisualizationType('vowl');
             }}
-            onSetOntographLayout={setOntographLayoutType}
+            onSetVisualizationType={switchVisualizationType}
+            onSetOntographLayout={(next) => {
+              rememberCurrentView();
+              setOntographLayoutType(next);
+            }}
             onSetAssertionView={setAssertionView}
             onToggleRelationship={toggleRelationshipVisibility}
             onShowAllRelations={showAllRelationshipTypes}
@@ -7041,6 +7143,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 shownClasses={vowlDegreeShownClasses}
                 totalClasses={classDegrees.size}
                 openToken={vowlDegreeOpenToken}
+                closeToken={vowlDegreeCloseToken}
                 onChange={applyVowlDegree}
               />
             )}
@@ -7101,6 +7204,9 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 dimFocusIds={searchFilterMode === 'dim' && searchFocusIds.size > 0 ? searchFocusIds : null}
                 viewportFitToken={viewportFitToken}
                 searchPanelOpen={showSearch}
+                initialViewState={networkRestoreState}
+                initialFocus={networkFocusRef.current}
+                onFocusChange={(next) => { networkFocusRef.current = next; }}
               />
             )}
             {!webglActive && (

@@ -1,4 +1,4 @@
-import { getApiKey, initApiKeyStore, setApiKey } from './assistantKeyStore';
+import { getApiKey, initApiKeyStore, onApiKeyChange, setApiKey } from './assistantKeyStore';
 import { getProviderModels, LlmProvider, PROVIDERS, refreshAvailableModels } from './llmModelCatalog';
 
 export type { KnownModel, LlmProvider, RefreshModelsResult } from './llmModelCatalog';
@@ -80,6 +80,13 @@ export function setStoredApiKey(key: string): void {
 export function hasApiKey(): boolean {
   return getStoredApiKey().length > 0;
 }
+
+export const assistantKeyBridge = {
+  get: (): string => getStoredApiKey(),
+  set: (key: string): Promise<void> => setApiKey(key),
+  onChange: (listener: () => void): (() => void) => onApiKeyChange(listener),
+  ready: (): Promise<void> => ensureApiKeyLoaded(),
+};
 
 export function getStoredModel(): string {
   try {

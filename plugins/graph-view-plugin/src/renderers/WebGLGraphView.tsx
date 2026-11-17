@@ -28,6 +28,12 @@ export type WebGLCameraHandle = {
   zoomBy: (factor: number) => void;
   reset: () => void;
   capturePng: () => Promise<Blob | null>;
+  getViewState: () => NetworkViewState | null;
+};
+
+export type NetworkViewState = {
+  positions: Map<string, { x: number; y: number }>;
+  camera: { x: number; y: number; ratio: number; angle: number };
 };
 
 // Distinct hues for Louvain module coloring (colorblind-conscious, both themes)
@@ -136,7 +142,12 @@ export interface WebGLGraphViewProps {
    */
   searchPanelOpen?: boolean;
   onZoomChange?: (zoom: number) => void;
+  initialViewState?: NetworkViewState | null;
+  initialFocus?: NetworkFocusState;
+  onFocusChange?: (focus: NetworkFocusState) => void;
 }
+
+export type NetworkFocusState = { id: string; depth: number } | null;
 
 /** Synthetic graph for renderer benchmarks (?bench=N or the perf harness). */
 export function buildBenchmarkData(count: number): { nodes: OntologyNode[]; edges: OntologyEdge[] } {
@@ -188,7 +199,10 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   showGrid = false,
   physicsEnabled = true,
   searchPanelOpen = false,
-  onZoomChange
+  onZoomChange,
+  initialViewState = null,
+  initialFocus = null,
+  onFocusChange
 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onZoomChangeRef = useRef(onZoomChange);
@@ -216,9 +230,19 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   const askAnswersRef = useRef<Set<string> | null>(null);
   // Focus mode (absorbed from LocalGraphView): center a node, show its N-hop
   // neighborhood, walk by clicking, follow external selection.
-  const [focus, setFocus] = useState<{ id: string; depth: number } | null>(null);
+  const [focus, setFocus] = useState<NetworkFocusState>(
+    () => (initialFocus && nodes.some(n => n.id === initialFocus.id) ? initialFocus : null)
+  );
   const focusRef = useRef(focus);
   focusRef.current = focus;
+  const restoredFocusRef = useRef(focus);
+  const restoredSelectionRef = useRef(focus !== null ? selectedNodeIds : undefined);
+  const skipRestoredFocusFit = focus !== null && focus === restoredFocusRef.current && !!initialViewState;
+  const onFocusChangeRef = useRef(onFocusChange);
+  onFocusChangeRef.current = onFocusChange;
+  useEffect(() => {
+    onFocusChangeRef.current?.(focus);
+  }, [focus]);
   const [colorGroups, setColorGroups] = useState<ColorGroup[]>(loadColorGroups);
   const colorGroupsRef = useRef(colorGroups);
 
@@ -228,10 +252,15 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     sigmaRef.current?.refresh({ skipIndexation: true });
   }, [colorGroups]);
 
-  const graph = useMemo<Graph>(
-    () => buildGraphologyGraph(nodes, edges, { dark, positions, nodeSize }),
-    [nodes, edges, dark, positions, nodeSize]
-  );
+  const restoreViewRef = useRef<NetworkViewState | null>(initialViewState);
+  const skipFitTokenRef = useRef<number | null>(initialViewState ? viewportFitToken : null);
+  const { graph, restoredCamera } = useMemo(() => {
+    const restore = restoreViewRef.current;
+    return {
+      graph: buildGraphologyGraph(nodes, edges, { dark, positions: restore ? restore.positions : positions, nodeSize }),
+      restoredCamera: restore ? restore.camera : null
+    };
+  }, [nodes, edges, dark, positions, nodeSize]);
 
   const insights = useMemo(() => analyzeGraph(graph), [graph]);
   const insightsRef = useRef(insights);
@@ -239,7 +268,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
 
   // Layout: ForceAtlas2 in a worker when physics is on and no saved positions
   const getViewportPx = useCallback(() => containerRef.current?.clientWidth ?? 0, []);
-  useFA2Layout(graph, physicsEnabled && (!positions || positions.size === 0), getViewportPx);
+  useFA2Layout(graph, physicsEnabled && !restoredCamera && (!positions || positions.size === 0), getViewportPx);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -271,6 +300,8 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       }
     });
     sigmaRef.current = renderer;
+    if (restoredCamera) renderer.getCamera().setState(restoredCamera);
+    restoreViewRef.current = null;
     // Test hook: lets harnesses resolve node viewport coordinates
     (containerRef.current as unknown as { __sigma?: Sigma }).__sigma = renderer;
 
@@ -506,19 +537,31 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     });
   }, [dark]);
 
+  const getViewState = useCallback((): NetworkViewState | null => {
+    const renderer = sigmaRef.current;
+    if (!renderer) return null;
+    const positions = new Map<string, { x: number; y: number }>();
+    renderer.getGraph().forEachNode((id, attrs) => {
+      positions.set(id, { x: attrs.x, y: attrs.y });
+    });
+    const { x, y, ratio, angle } = renderer.getCamera().getState();
+    return { positions, camera: { x, y, ratio, angle } };
+  }, []);
+
   useImperativeHandle(ref, () => ({
     fitAll,
     fitToNodes,
     zoomBy,
     reset: resetCamera,
-    capturePng
-  }), [fitAll, fitToNodes, zoomBy, resetCamera, capturePng]);
+    capturePng,
+    getViewState
+  }), [fitAll, fitToNodes, zoomBy, resetCamera, capturePng, getViewState]);
 
   // Bulk expand/collapse: nodes spread under FA2 while the camera stays put —
   // re-frame all nodes on the same cadence as SVG Tree↔Network auto-fit, plus
   // a late pass after FA2 has had more time on larger graphs.
   useEffect(() => {
-    if (!viewportFitToken) return;
+    if (!viewportFitToken || viewportFitToken === skipFitTokenRef.current) return;
     const t1 = setTimeout(fitAll, 450);
     const t2 = setTimeout(fitAll, 1800);
     const t3 = setTimeout(fitAll, 4500);
@@ -557,13 +600,14 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
     [graph, focus]
   );
   useEffect(() => {
+    const skipFit = skipRestoredFocusFit;
     if (!focus || !focusNodes) return;
     emphasizedIdsRef.current = focusNodes;
     askAnswersRef.current = new Set([focus.id]);
     setAskResult(null);
     setSearchQuery('');
     sigmaRef.current?.refresh({ skipIndexation: true });
-    fitToNodes([...focusNodes]);
+    if (!skipFit) fitToNodes([...focusNodes]);
   }, [focus, focusNodes, fitToNodes]);
 
   const exitFocus = useCallback(() => {
@@ -688,6 +732,7 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   // Invariant: an external selection always ends up centered on screen.
   // In focus mode it retargets the neighborhood instead (follow-selection).
   useEffect(() => {
+    if (restoredSelectionRef.current !== undefined && selectedNodeIds === restoredSelectionRef.current) return;
     if (selectedNodeIds && selectedNodeIds.size === 1) {
       const [id] = [...selectedNodeIds];
       const f = focusRef.current;
@@ -762,6 +807,8 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       <input
         data-testid="graph-webgl-search"
         type="search"
+        name="graph-search"
+        autoComplete="off"
         placeholder="Search, ask, or SPARQL…"
         value={searchQuery}
         onChange={e => handleSearch(e.target.value)}
