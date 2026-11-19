@@ -259,9 +259,17 @@ export interface ImpactAnalysis {
 
 export type ExportFormat = 'png' | 'svg' | 'pdf' | 'owl' | 'rdf' | 'json-ld' | 'cypher' | 'graphml';
 
+export interface AssistantKeyBridge {
+  get(): string;
+  set(key: string): void | Promise<void>;
+  onChange?(listener: () => void): () => void;
+  ready?(): Promise<void>;
+}
+
 export interface GraphPluginContext {
   projectId: string;
   userId?: string;
+  assistantKey?: AssistantKeyBridge;
   permissions: {
     canEdit: boolean;
     canDelete: boolean;

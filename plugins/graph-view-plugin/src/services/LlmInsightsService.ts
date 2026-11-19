@@ -1,5 +1,7 @@
 
 
+import type { AssistantKeyBridge } from '../types';
+
 export type LlmProvider = 'gemini' | 'claude' | 'openai';
 
 interface ProviderConfig {
@@ -216,7 +218,18 @@ export async function refreshAvailableModels(provider: LlmProvider, key: string)
   return { models: live, live: true };
 }
 
+let keyBridge: AssistantKeyBridge | null = null;
+
+export function setAssistantKeyBridge(bridge: AssistantKeyBridge | null | undefined): void {
+  keyBridge = bridge ?? null;
+}
+
+export function getAssistantKeyBridge(): AssistantKeyBridge | null {
+  return keyBridge;
+}
+
 export function getStoredApiKey(): string {
+  if (keyBridge) return keyBridge.get() || '';
   try {
     return localStorage.getItem(KEY_STORAGE) ?? '';
   } catch {
@@ -225,6 +238,10 @@ export function getStoredApiKey(): string {
 }
 
 export function setStoredApiKey(key: string): void {
+  if (keyBridge) {
+    void keyBridge.set(key.trim());
+    return;
+  }
   try {
     const trimmed = key.trim();
     if (trimmed) localStorage.setItem(KEY_STORAGE, trimmed);

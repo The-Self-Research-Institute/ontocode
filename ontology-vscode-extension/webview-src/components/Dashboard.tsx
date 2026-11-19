@@ -217,7 +217,7 @@ import { discardDraftMessage, runDraftDiscard } from "./dashboard-parts/discardD
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
 import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
-import { getStoredShowLabelOverlay, setStoredShowLabelOverlay } from "../services/LlmInsightsService";
+import { assistantKeyBridge, getStoredShowLabelOverlay, setStoredShowLabelOverlay } from "../services/LlmInsightsService";
 import { userScopedKey } from "../utils/userScopedKey";
 import { isTrustedMessage } from '../utils/trustedMessage';
 import { useCodeViewDownload } from "./dashboard-parts/hooks/useCodeViewDownload";
@@ -14811,6 +14811,7 @@ const updateItemInState = useCallback(
                 draftMode: pluginDraftMode,
                 userId: graphActor.userId,
                 username: graphActor.username,
+                assistantKey: assistantKeyBridge,
                 permissions: {
                   canEdit: !readonlyMode,
                   canDelete: !readonlyMode,

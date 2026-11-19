@@ -11,6 +11,7 @@ const crypto = require('crypto');
 const guard = require('./SharedGuard');
 const policy = require('./ResourcePolicy');
 const pg = require('./PostgresRuntime');
+const pgElevated = require('./PostgresElevated');
 const logHygiene = require('./LogHygiene');
 
 function jvmHeaps() {
@@ -406,8 +407,26 @@ function log(level, msg) {
     if (_logCallback) _logCallback(level, msg);
 }
 
-function postgresRoot() {
+let stagedPostgresRoot = null;
+
+function bundledPostgresRoot() {
     return path.join(RESOURCES_DIR, 'postgres', process.platform);
+}
+
+function postgresRoot() {
+    return stagedPostgresRoot || bundledPostgresRoot();
+}
+
+async function useStagedPostgres() {
+    const source = bundledPostgresRoot();
+    const started = Date.now();
+    try {
+        stagedPostgresRoot = await pgElevated.stageRuntime(source, path.join(DATA_DIR, 'pg-runtime'));
+        log('info', `Running PostgreSQL from a copy in the data folder: ${stagedPostgresRoot} (ready in ${Math.round((Date.now() - started) / 1000)}s)`);
+    } catch (err) {
+        stagedPostgresRoot = null;
+        log('warn', `Could not copy PostgreSQL to the data folder (${err.message}); using the installed files`);
+    }
 }
 
 function javaBin() {
@@ -455,24 +474,21 @@ function validateBackendBundles() {
     throw new Error(lines.join('\n'));
 }
 
-const STATUS_DLL_NOT_FOUND = 0xC0000135;
-
-function isDllNotFound(code) {
-    return typeof code === 'number' && (code >>> 0) === STATUS_DLL_NOT_FOUND;
-}
-
 async function attemptStartPostgres() {
     const root = postgresRoot();
     pg.clearStalePid(POSTGRES_DATA_DIR);
-    await pg.applyPassword(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword);
+    const elevated = await pgElevated.isElevatedAdmin();
+    await pg.applyPassword(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword, { elevated });
     const logFile = path.join(LOGS_DIR, 'postgres.log');
-    const proc = spawnService('PostgreSQL', pg.binPath(root, 'postgres'),
-        pg.serverArgs(POSTGRES_DATA_DIR, POSTGRES_PORT, jvmHeaps().postgresBuffers), {}, logFile);
+    const serverArgs = pg.serverArgs(POSTGRES_DATA_DIR, POSTGRES_PORT, jvmHeaps().postgresBuffers);
+    const proc = elevated
+        ? await startElevatedPostgres(root, serverArgs, logFile)
+        : spawnService('PostgreSQL', pg.binPath(root, 'postgres'), serverArgs, {}, logFile);
 
     let onEarlyExit, onSpawnError;
     const earlyDeath = new Promise((_, reject) => {
         onEarlyExit = (code) => {
-            const reason = isDllNotFound(code) ? ' (a required Windows library is missing next to postgres.exe)' : '';
+            const reason = pg.isDllNotFound(code) ? `. ${pg.MISSING_RUNTIME_HINT}` : '';
             reject(new Error(`PostgreSQL exited with code ${code} before becoming ready${reason}`));
         };
         onSpawnError = (err) => reject(new Error(`PostgreSQL failed to start: ${err.message}`));
@@ -494,6 +510,16 @@ async function attemptStartPostgres() {
         await stopPostgresProcess(proc);
         throw err;
     }
+}
+
+async function startElevatedPostgres(root, serverArgs, logFile) {
+    log('info', 'Running with administrator rights: starting PostgreSQL through pg_ctl');
+    const server = await pgElevated.startServer({
+        root, dataDir: POSTGRES_DATA_DIR, serverOptions: serverArgs.slice(2), logFile,
+    });
+    guard.register('PostgreSQL', exeNameFor(pg.binPath(root, 'postgres')), server);
+    server.on('exit', (code) => handleChildExit('PostgreSQL', server, code, []));
+    return server;
 }
 
 function stopPostgresProcess(proc) {
@@ -522,13 +548,16 @@ async function stopPostgres() {
 
 async function startPostgres() {
     log('info', 'Starting PostgreSQL…');
+    const elevated = await pgElevated.isElevatedAdmin();
+    if (pgElevated.needsOwnCopy(elevated, bundledPostgresRoot())) await useStagedPostgres();
     const root = postgresRoot();
     const version = pg.checkVersion(root, POSTGRES_DATA_DIR);
     if (!version.ok) {
         throw new Error(`The local database in ${POSTGRES_DATA_DIR} was created by PostgreSQL ${version.dataMajor} but this version of OntoCode Studio ships PostgreSQL ${version.bundledMajor}. Your data has not been changed. Please install the OntoCode Studio version that matches it.`);
     }
     if (pg.clusterState(POSTGRES_DATA_DIR) !== 'present') log('info', 'Creating the local database (first start only)…');
-    await pg.prepareCluster(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword, { log });
+    await pg.prepareCluster(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword,
+        { log, elevated, templateRoot: bundledPostgresRoot() });
     assertNotCancelled();
     postgresProcess = await attemptStartPostgres();
     log('ok', `PostgreSQL ready on port ${POSTGRES_PORT}`);
@@ -792,7 +821,7 @@ async function startScratchPostgres(scratchDir) {
     const port = await findFreePort(15600, 'CDS training PostgreSQL');
     const dataDir = path.join(scratchDir, 'postgres');
     const password = crypto.randomBytes(24).toString('base64url');
-    await pg.prepareCluster(root, dataDir, password, { log });
+    await pg.prepareCluster(root, dataDir, password, { log, templateRoot: bundledPostgresRoot() });
     await pg.applyPassword(root, dataDir, password);
     const proc = spawn(pg.binPath(root, 'postgres'), pg.serverArgs(dataDir, port, '64MB'),
         { stdio: 'ignore', windowsHide: true });

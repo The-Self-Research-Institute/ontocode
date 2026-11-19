@@ -1,0 +1,328 @@
+name: Build PostgreSQL for Windows ARM64
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the zip as a release file
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  PG_VERSION: "17.11"
+  PG_PREFIX: C:\pgarm64
+
+jobs:
+  build:
+    runs-on: windows-11-arm
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Machine
+        run: |
+          "processor: $env:PROCESSOR_ARCHITECTURE"
+          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vw) { & $vw -all -products * -property installationPath } else { "no vswhere" }
+          "vcpkg root: $env:VCPKG_INSTALLATION_ROOT"
+          foreach ($t in 'python','perl','cmake','ninja','choco','git') { $c = Get-Command $t -ErrorAction SilentlyContinue; "{0,-8} {1}" -f $t, $(if ($c) { $c.Source } else { 'not found' }) }
+
+      - name: Download and verify the official PostgreSQL source
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = $env:PG_VERSION
+          $base = "https://ftp.postgresql.org/pub/source/v$v"
+          Invoke-WebRequest "$base/postgresql-$v.tar.bz2" -OutFile pg.tar.bz2
+          Invoke-WebRequest "$base/postgresql-$v.tar.bz2.sha256" -OutFile pg.sha256
+          $expected = ((Get-Content pg.sha256 -Raw).Trim() -split '\s+')[0].ToLower()
+          $actual = (Get-FileHash pg.tar.bz2 -Algorithm SHA256).Hash.ToLower()
+          "expected $expected"
+          "actual   $actual"
+          if ($expected -ne $actual) { throw "checksum of the PostgreSQL source does not match" }
+          tar -xjf pg.tar.bz2
+          Rename-Item "postgresql-$v" pgsrc
+          "unpacked: " + (Test-Path pgsrc\meson.build)
+
+      - name: Apply the upstream ARM64 patch (PostgreSQL commit a516b3f00d74, MSVC AArch64 support)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest 'https://github.com/postgres/postgres/commit/a516b3f00d74.patch' -OutFile arm64.patch
+          $expected = '86a32db99e237e419047664ec6093045e4c2fe1182223a71c42a9a33d4db161c'
+          $actual = (Get-FileHash arm64.patch -Algorithm SHA256).Hash.ToLower()
+          "expected $expected"
+          "actual   $actual"
+          if ($expected -ne $actual) { throw "the upstream patch is not the one we reviewed" }
+          Set-Location pgsrc
+          git apply --check --exclude='doc/*' --whitespace=nowarn ..\arm64.patch
+          if ($LASTEXITCODE -ne 0) { throw "the patch does not apply to this PostgreSQL version" }
+          git apply --exclude='doc/*' --whitespace=nowarn --verbose ..\arm64.patch
+          if ($LASTEXITCODE -ne 0) { throw "applying the patch failed" }
+          Select-String -Path src\tools\msvc_gendef.pl -Pattern 'aarch64' | ForEach-Object { $_.Line.Trim() }
+          Select-String -Path src\include\storage\s_lock.h -Pattern '_InterlockedExchange|__isb' | ForEach-Object { $_.Line.Trim() }
+
+      - name: Compiler environment (ARM64)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vw = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vw -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+          if (-not $vs) { $vs = & $vw -latest -products * -property installationPath }
+          "Visual Studio: $vs"
+          "VS_ROOT=$vs" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $bat = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
+          cmd /c "`"$bat`" arm64 >nul && set" | ForEach-Object {
+            if ($_ -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { "$($Matches[1])=$($Matches[2])" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV }
+          }
+
+      - name: Build tools (meson, ninja, pkgconf, perl, flex and bison)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip
+          python -m pip install meson ninja pkgconf
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            [System.Net.ServicePointManager]::SecurityProtocol = 3072
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          }
+          choco install winflexbison3 strawberryperl pkgconfiglite -y --no-progress
+          "C:\Strawberry\perl\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "C:\ProgramData\chocolatey\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          if (Test-Path 'C:\Strawberry\perl\bin\pkg-config.bat') { Rename-Item 'C:\Strawberry\perl\bin\pkg-config.bat' 'pkg-config.bat.disabled' }
+          $env:PATH = "C:\ProgramData\chocolatey\bin;C:\Strawberry\perl\bin;$env:PATH"
+          foreach ($t in 'pkg-config','perl','win_bison','win_flex','meson','ninja') { $c = Get-Command $t -All -ErrorAction SilentlyContinue; "{0,-10} {1}" -f $t, $(if ($c) { ($c | ForEach-Object Source) -join '  |  ' } else { 'NOT FOUND' }) }
+          if (-not (Test-Path 'C:\ProgramData\chocolatey\bin\pkg-config.exe')) { throw "the real pkg-config.exe is missing" }
+          & 'C:\ProgramData\chocolatey\bin\pkg-config.exe' --version
+
+      - name: Restore compiled libraries from the cache
+        id: libcache
+        uses: actions/cache/restore@v4
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-installed-arm64-zlib-lz4-zstd-icu-v1
+
+      - name: Libraries for ARM64 (zlib, lz4, zstd, ICU)
+        id: libs
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkg = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkg -or -not (Test-Path "$vcpkg\vcpkg.exe")) {
+            $vcpkg = 'C:\vcpkg'
+            if (-not (Test-Path "$vcpkg\vcpkg.exe")) {
+              git clone --depth 1 https://github.com/microsoft/vcpkg $vcpkg
+              & "$vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+            }
+          }
+          "VCPKG_DIR=$vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          & "$vcpkg\vcpkg.exe" install zlib:arm64-windows lz4:arm64-windows zstd:arm64-windows icu:arm64-windows --clean-after-build
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg failed with exit code $LASTEXITCODE" }
+          Get-ChildItem "$vcpkg\installed\arm64-windows\bin" -Filter *.dll | Select-Object -ExpandProperty Name
+
+      - name: Save the compiled libraries to the cache
+        if: always() && steps.libs.conclusion == 'success' && steps.libcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-installed-arm64-zlib-lz4-zstd-icu-v1
+
+      - name: Configure and compile PostgreSQL
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inst = "$env:VCPKG_DIR\installed\arm64-windows"
+          $env:PKG_CONFIG_PATH = "$inst\lib\pkgconfig"
+          $env:PKG_CONFIG = 'C:\ProgramData\chocolatey\bin\pkg-config.exe'
+          if (Test-Path 'C:\Strawberry\perl\bin\pkg-config.bat') { Rename-Item 'C:\Strawberry\perl\bin\pkg-config.bat' 'pkg-config.bat.disabled' }
+          $env:PATH = "C:\ProgramData\chocolatey\bin;C:\Strawberry\perl\bin;$inst\bin;$env:PATH"
+          "pkg-config used by meson: $env:PKG_CONFIG"
+          "pkg-config search folder: $env:PKG_CONFIG_PATH"
+          Get-ChildItem $env:PKG_CONFIG_PATH -Filter *.pc | Select-Object -ExpandProperty Name
+          foreach ($m in 'zlib','liblz4','libzstd') { pkg-config --modversion $m; if ($LASTEXITCODE -ne 0) { "pkg-config cannot find $m" } }
+          Set-Location pgsrc
+          meson setup build --buildtype=release "--prefix=$env:PG_PREFIX" `
+            -Dicu=disabled -Dzlib=enabled -Dlz4=enabled -Dzstd=enabled -Dssl=none -Dnls=disabled `
+            -Dtap_tests=disabled -Dplperl=disabled -Dplpython=disabled -Dpltcl=disabled `
+            "-Dextra_include_dirs=$inst\include" "-Dextra_lib_dirs=$inst\lib"
+          if ($LASTEXITCODE -ne 0) { throw "meson setup failed" }
+          ninja -C build
+          if ($LASTEXITCODE -ne 0) { throw "ninja failed" }
+          meson install -C build --no-rebuild
+          if ($LASTEXITCODE -ne 0) { throw "meson install failed" }
+
+      - name: Assemble the runtime folder
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pg = $env:PG_PREFIX
+          $inst = "$env:VCPKG_DIR\installed\arm64-windows"
+          Get-ChildItem "$inst\bin\*.dll" | Where-Object { $_.Name -notlike 'icu*' } | Copy-Item -Destination "$pg\bin" -Force
+          $crt = Get-ChildItem "$env:VS_ROOT\VC\Redist\MSVC" -Recurse -Directory -Filter 'Microsoft.VC*.CRT' |
+            Where-Object { $_.FullName -match '\\arm64\\' -and $_.FullName -notmatch 'onecore|debug' } | Select-Object -First 1
+          "CRT folder: $($crt.FullName)"
+          "files in it: " + ((Get-ChildItem $crt.FullName -Filter *.dll | ForEach-Object Name) -join ', ')
+          "dumpbin: " + (Get-Command dumpbin -ErrorAction Stop).Source
+          function Get-Imports($folders) {
+            $set = @{}
+            Get-ChildItem $folders -Recurse -Include *.exe,*.dll | ForEach-Object {
+              foreach ($line in (& dumpbin /nologo /dependents $_.FullName 2>$null)) {
+                if ($line -match '^\s+([A-Za-z0-9_\-\.]+\.dll)\s*$') { $set[$Matches[1].ToLower()] = $true }
+              }
+            }
+            return $set
+          }
+          for ($pass = 1; $pass -le 3; $pass++) {
+            $imports = Get-Imports @("$pg\bin", "$pg\lib")
+            $added = 0
+            foreach ($d in (Get-ChildItem $crt.FullName -Filter *.dll)) {
+              if ($imports.ContainsKey($d.Name.ToLower()) -and -not (Test-Path "$pg\bin\$($d.Name)")) {
+                Copy-Item $d.FullName "$pg\bin" -Force; "pass ${pass}: copied $($d.Name)"; $added++
+              }
+            }
+            if ($added -eq 0) { break }
+          }
+          "DLLs imported by our programs: " + (($imports.Keys | Sort-Object) -join ', ')
+          "imported by postgres.exe: " + ((& dumpbin /nologo /dependents "$pg\bin\postgres.exe" | Where-Object { $_ -match '\.dll' } | ForEach-Object { $_.Trim() }) -join ', ')
+          Remove-Item "$pg\include" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item "$pg\doc" -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory "$pg\licenses" -Force | Out-Null
+          Copy-Item pgsrc\COPYRIGHT "$pg\licenses\POSTGRESQL-COPYRIGHT.txt"
+          Set-Content "$pg\PG_MAJOR" '17' -NoNewline -Encoding ascii
+          Get-ChildItem $pg -Directory | Select-Object -ExpandProperty Name
+
+      - name: Check that every program is ARM64
+        id: archcheck
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Get-Machine($file) {
+            $fs = [IO.File]::OpenRead($file)
+            try {
+              $b = New-Object byte[] 64
+              if ($fs.Read($b, 0, 64) -lt 64 -or [BitConverter]::ToUInt16($b, 0) -ne 0x5a4d) { return $null }
+              $fs.Position = [BitConverter]::ToUInt32($b, 0x3c)
+              $h = New-Object byte[] 6
+              [void]$fs.Read($h, 0, 6)
+              if ([BitConverter]::ToUInt32($h, 0) -ne 0x4550) { return $null }
+              return [BitConverter]::ToUInt16($h, 4)
+            } finally { $fs.Dispose() }
+          }
+          $bad = @(); $count = 0
+          Get-ChildItem "$env:PG_PREFIX\bin","$env:PG_PREFIX\lib" -Recurse -Include *.exe,*.dll | ForEach-Object {
+            $m = Get-Machine $_.FullName
+            if ($null -ne $m) { $count++; if ($m -ne 0xaa64) { $bad += ("{0} machine 0x{1:x}" -f $_.Name, $m) } }
+          }
+          "checked $count programs and libraries"
+          if ($bad.Count) { $bad; throw "not every file is ARM64" }
+          "all ARM64"
+
+      - name: Test it starts and accepts a login
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $pg = $env:PG_PREFIX
+          & "$pg\bin\postgres.exe" -V
+          $pw = 'smoke-test-password-0123456789'
+          Set-Content pw.txt $pw -NoNewline -Encoding ascii
+
+          "--- DLLs our programs import that are missing ---"
+          $present = @{}; Get-ChildItem "$pg\bin" -Filter *.dll | ForEach-Object { $present[$_.Name.ToLower()] = $true }
+          $sys = "$env:windir\System32"
+          $missing = @{}
+          Get-ChildItem "$pg\bin" -Include *.exe,*.dll -Recurse | ForEach-Object {
+            $who = $_.Name
+            foreach ($line in (& dumpbin /nologo /dependents $_.FullName 2>$null)) {
+              if ($line -match '^\s+([A-Za-z0-9_\-\.]+\.dll)\s*$') {
+                $n = $Matches[1].ToLower()
+                if ($n -like 'api-ms-*' -or $present.ContainsKey($n) -or (Test-Path "$sys\$n")) { continue }
+                $missing["$n  (needed by $who)"] = $true
+              }
+            }
+          }
+          if ($missing.Count) { $missing.Keys | Sort-Object } else { "none missing" }
+
+          function Invoke-Initdb($label, $dir, [string[]]$extra) {
+            Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item initdb-out.txt, initdb-err.txt -Force -ErrorAction SilentlyContinue
+            $base = @('-D', $dir, '-U', 'ontocode', '-E', 'UTF8', '--auth-local=scram-sha-256', '--auth-host=scram-sha-256', '--pwfile=pw.txt', '--no-sync')
+            $p = Start-Process -FilePath "$pg\bin\initdb.exe" -ArgumentList ($base + $extra) -NoNewWindow -Wait -PassThru -RedirectStandardOutput initdb-out.txt -RedirectStandardError initdb-err.txt
+            $code = $p.ExitCode
+            Write-Host ("[$label] initdb exit code: $code (0x{0:x})" -f ([uint32]$code))
+            Write-Host "[$label] stdout:"; Get-Content initdb-out.txt -ErrorAction SilentlyContinue | Select-Object -Last 40 | Out-Host
+            Write-Host "[$label] stderr:"; Get-Content initdb-err.txt -ErrorAction SilentlyContinue | Select-Object -Last 40 | Out-Host
+            return [bool]($code -eq 0)
+          }
+
+          $mode = $null
+          if (Invoke-Initdb 'plain C (no ICU)' 'C:\pgdata' @('--locale=C')) { $mode = 'plain C (this build has no ICU)' }
+          if (-not $mode) { throw "initdb failed" }
+          "COLLATION_MODE=$mode" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "::notice title=initdb mode::$mode"
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:TEMP 'pg.log'
+          "server log file: $log"
+          & "$pg\bin\pg_ctl.exe" start -D C:\pgdata -l $log -w -o "-p 54329 -c listen_addresses=127.0.0.1"
+          if ($LASTEXITCODE -ne 0) { if (Test-Path $log) { Get-Content $log } else { "no server log was written" }; throw "server did not start" }
+          $env:PGPASSWORD = $pw
+          & "$pg\bin\psql.exe" -h 127.0.0.1 -p 54329 -U ontocode -d postgres -Atc "select version()"
+          & "$pg\bin\psql.exe" -h 127.0.0.1 -p 54329 -U ontocode -d postgres -Atc "create database ontocode owner ontocode"
+          & "$pg\bin\psql.exe" -h 127.0.0.1 -p 54329 -U ontocode -d ontocode -Atc "create table smoke(id int); insert into smoke values (1); select count(*) from smoke"
+          & "$pg\bin\psql.exe" -h 127.0.0.1 -p 54329 -U ontocode -d postgres -Atc "select datcollate, datlocprovider from pg_database where datname = 'postgres'"
+          & "$pg\bin\pg_ctl.exe" stop -D C:\pgdata -m fast -w
+          "smoke test passed"
+
+      - name: PostgreSQL's own regression tests (informational, never blocks the zip)
+        id: regress
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          $inst = "$env:VCPKG_DIR\installed\arm64-windows"
+          $env:PKG_CONFIG_PATH = "$inst\lib\pkgconfig"
+          $env:PATH = "C:\ProgramData\chocolatey\bin;C:\Strawberry\perl\bin;$inst\bin;$env:PATH"
+          Set-Location pgsrc
+          meson test -C build --suite setup --suite regress --print-errorlogs --no-suite tap
+          "regression tests exit code: $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) { throw "regression tests failed" }
+
+      - name: Package and checksum
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = "postgres-$($env:PG_VERSION)-windows-arm64.zip"
+          Compress-Archive -Path "$env:PG_PREFIX\*" -DestinationPath $name -CompressionLevel Optimal
+          $sha = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          "$sha  $name" | Set-Content "$name.sha256" -Encoding ascii
+          "ZIP_NAME=$name" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "ZIP_SHA=$sha" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "{0}  {1:N0} bytes  sha256 {2}" -f $name, (Get-Item $name).Length, $sha
+          "::notice title=PostgreSQL ARM64 zip::$name sha256 $sha"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postgres-windows-arm64
+          path: |
+            postgres-*-windows-arm64.zip
+            postgres-*-windows-arm64.zip.sha256
+
+      - name: Publish as a release file
+        if: inputs.publish && steps.archcheck.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tests = '${{ steps.regress.outcome }}'
+          $tag = "postgres-$($env:PG_VERSION)-windows-arm64-run$($env:GITHUB_RUN_NUMBER)"
+          $title = "PostgreSQL $($env:PG_VERSION) for Windows ARM64 (run $($env:GITHUB_RUN_NUMBER), regression tests: $tests, initdb: $($env:COLLATION_MODE))"
+          $notes = "Built from the official PostgreSQL $($env:PG_VERSION) source (checksum verified) with the upstream commit a516b3f00d74 (MSVC AArch64 support) applied. Regression tests: $tests. initdb mode that worked in the CI test (ICU is disabled in this build): $($env:COLLATION_MODE). SHA-256: $($env:ZIP_SHA)"
+          gh release create $tag $env:ZIP_NAME "$($env:ZIP_NAME).sha256" --title $title --notes $notes
+
+      - name: What went wrong (shown as annotations)
+        if: failure()
+        run: |
+          function Show($title, $file, $n) {
+            if (Test-Path $file) {
+              $t = (Get-Content $file -Tail $n) -join "`n"
+              $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+              Write-Host "::error title=$title::$t"
+            }
+          }
+          Show 'meson-log' 'pgsrc\build\meson-logs\meson-log.txt' 60
+          Show 'postgres-server-log' (Join-Path $env:TEMP 'pg.log') 40
+          $vlogs = Get-ChildItem "$env:VCPKG_DIR\buildtrees" -Recurse -Filter '*-err.log' -ErrorAction SilentlyContinue | Select-Object -First 2
+          foreach ($l in $vlogs) { Show ("vcpkg " + $l.Name) $l.FullName 40 }

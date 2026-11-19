@@ -1,0 +1,6 @@
+{
+  "version": "17.11",
+  "sha256": "cef65a2fc38efff87b2e5411a4059fd4ba14702541ba9f936f7279235a4183b0",
+  "url": null,
+  "built": "Official PostgreSQL 17.11 source (checksum verified) with upstream commit a516b3f00d74 (MSVC AArch64 support) applied, built on a GitHub windows-11-arm runner, no ICU. Run 8 of the workflow 'Build PostgreSQL for Windows ARM64'. The runner started it, logged in, and passed PostgreSQL's regression tests."
+}
