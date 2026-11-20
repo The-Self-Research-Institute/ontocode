@@ -210,7 +210,9 @@ final class CodeViewFileStore {
         Path exportPath = exporter.exportOntologyForJob(projectId, format);
         long exported = System.nanoTime();
         Files.createDirectories(cacheFile.getParent());
-        AtomicFiles.copy(exportPath, cacheFile);
+        CodeViewLineIndex.Builder lineIndex = new CodeViewLineIndex.Builder();
+        AtomicFiles.copy(exportPath, cacheFile, lineIndex);
+        CodeViewLineIndex.register(cacheFile, lineIndex.finish(Files.getLastModifiedTime(cacheFile).toMillis(), Files.size(cacheFile)));
         log.info("[PERF] Generated code view cache file for project {} format {}: {} bytes, export={}ms copy={}ms",
                 projectId, format, Files.size(cacheFile), (exported - started) / 1_000_000,
                 (System.nanoTime() - exported) / 1_000_000);

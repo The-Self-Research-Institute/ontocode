@@ -384,12 +384,12 @@ public class OWLFormatConverter {
         return filePath;
     }
 
-    /**
-     * Sanitize a file on disk by stripping any binary garbage bytes before the actual content.
-     * Overwrites the file in place if garbage is found.
-     * Safe to call on any file - returns immediately if the file is already clean.
-     */
+    /** Strips junk bytes before the content, in place; with keepCleanRdfXml a file the Fuseki parser accepts is left as it is. */
     public static void sanitizeFileOnDisk(Path filePath) throws IOException {
+        sanitizeFileOnDisk(filePath, false);
+    }
+
+    public static void sanitizeFileOnDisk(Path filePath, boolean keepCleanRdfXml) throws IOException {
         long fileSize = Files.size(filePath);
         long fileSizeMB = fileSize / (1024 * 1024);
         boolean isLargeFile = fileSize > 50 * 1024 * 1024; // >50MB
@@ -400,20 +400,18 @@ public class OWLFormatConverter {
 
         Path stripped = stripBinaryPrefix(filePath);
         if (!stripped.equals(filePath)) {
-            // Stripped file was created - replace original with it
             Files.move(stripped, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             log.info("Sanitized file in place: {}", filePath.getFileName());
         }
         
+        if (!isLargeFile && keepCleanRdfXml && RdfXmlStrictCheck.parses(filePath)) {
+            return;
+        }
         if (!isLargeFile) {
-            // Full sanitization for small files (<50MB)
             fixMalformedRdfXml(filePath);
             sanitizeNTriplesIRIs(filePath);
             reserializeWithOwlApi(filePath);
         } else {
-            // Large files: prefix strip only. Whole-file RDF/XML fixup and OWL API
-            // re-serialization load the entire ontology into memory; streaming GraphDB
-            // import handles RDF/XML directly, with OWL API fallback on structural errors.
             log.info("[PERFORMANCE] Large file sanitization complete (prefix check only; skipped RDF/XML fixup and OWL API re-serialization)");
         }
     }
@@ -899,7 +897,7 @@ public class OWLFormatConverter {
             try {
                 ontology = CompletableFuture.supplyAsync(() -> {
                     try {
-                        return manager.loadOntologyFromOntologyDocument(filePath.toFile());
+                        return MissingImportStandIns.load(manager, filePath);
                     } catch (OWLOntologyCreationException e) {
                         throw new java.util.concurrent.CompletionException(e);
                     }
@@ -914,14 +912,12 @@ public class OWLFormatConverter {
                 return;
             }
             log.info("OWL API loaded ontology: {} axioms", ontology.getAxiomCount());
-            
-            // Get original format and prefixes
+            if (MissingImportStandIns.hasErrorPlaceholders(ontology)) {
+                log.warn("OWL API could not resolve some class expressions in {} (a skipped import is likely needed) — keeping the original file unchanged", filePath.getFileName());
+                return;
+            }
             OWLDocumentFormat originalFormat = manager.getOntologyFormat(ontology);
-            
-            // Create clean RDF/XML format
             RDFXMLDocumentFormat rdfXmlFormat = new RDFXMLDocumentFormat();
-            
-            // Copy existing prefixes
             if (originalFormat != null && originalFormat.isPrefixOWLDocumentFormat()) {
                 PrefixDocumentFormat prefixFormat = originalFormat.asPrefixOWLDocumentFormat();
                 prefixFormat.getPrefixName2PrefixMap().forEach(rdfXmlFormat::setPrefix);

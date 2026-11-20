@@ -139,6 +139,9 @@ final class CitationPositions {
 
     private Map<String, String> extractCitationEntityMappings(String content, String format) {
         Map<String, String> mappings = new HashMap<>();
+        if (!content.contains("urn:citation:")) {
+            return mappings;
+        }
         String[] lines = content.split("\n", -1);
         
         log.debug("Extracting citation mappings from {} lines in format: {}", lines.length, format);

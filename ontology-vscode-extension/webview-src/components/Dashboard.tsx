@@ -216,6 +216,7 @@ import { isSaveDisabledInDraft } from "./dashboard-parts/draftSave";
 import { discardDraftMessage, runDraftDiscard } from "./dashboard-parts/discardDraft";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
+import CodeViewLoadingNotice from "./CodeViewLoadingNotice";
 import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
 import { assistantKeyBridge, getStoredShowLabelOverlay, setStoredShowLabelOverlay } from "../services/LlmInsightsService";
 import { userScopedKey } from "../utils/userScopedKey";
@@ -14666,9 +14667,7 @@ const updateItemInState = useCallback(
                     )}
                     <CodeViewAskAiStatus recovery={recovery} refreshing={codeViewRefreshing} />
                     {codeViewLoading ? (
-                      <div className="flex items-center justify-center h-64">
-                        <div className="text-gray-500">Loading ontology content...</div>
-                      </div>
+                      <CodeViewLoadingNotice />
                     ) : (
                       <CodeHighlighter
                         ref={codeHighlighterRef}

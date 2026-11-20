@@ -192,6 +192,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting triple count for predicate type " + type, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -209,6 +210,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting typed axiom counts for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return counts;
     }
@@ -225,6 +227,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting count for type " + type, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -240,6 +243,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting annotation property usage count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -255,6 +259,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting datatype usage count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -286,6 +291,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting GCI count", e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -301,6 +307,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting class assertion count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -316,6 +323,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting annotation assertion count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }

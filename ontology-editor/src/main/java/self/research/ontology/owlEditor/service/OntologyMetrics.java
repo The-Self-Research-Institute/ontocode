@@ -11,6 +11,7 @@ import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.ToLongBiFunction;
 
@@ -29,12 +30,15 @@ final class OntologyMetrics {
     private final Function<String, String> ontologyIri;
     private final ToLongBiFunction<String, String> draftVersion;
     private final DraftAxiomCounter draftCounter;
+    private final Function<String, Optional<OWLOntology>> liveModel;
     private final StampedComputeCache<OwlApiAxiomCounts> owlCounts = new StampedComputeCache<>();
 
     OntologyMetrics(SparqlDatasetService datasetService, ProjectMetadataService projectMetadataService,
                     ProjectImportService importService, ManchesterExpressionService manchesterExpressionService,
                     OntologyCountQueries queries, Function<String, String> ontologyIri,
-                    ToLongBiFunction<String, String> draftVersion) {
+                    ToLongBiFunction<String, String> draftVersion,
+                    Function<String, Optional<OWLOntology>> liveModel) {
+        this.liveModel = liveModel;
         this.draftVersion = draftVersion;
         this.draftCounter = new DraftAxiomCounter(datasetService);
         this.datasetService = datasetService;
@@ -45,7 +49,38 @@ final class OntologyMetrics {
         this.ontologyIri = ontologyIri;
     }
 
+    private Optional<OWLOntology> model(String projectId) {
+        String user = SparqlQueryContext.getUserId();
+        if (user != null && !user.isBlank() && datasetService.hasActiveDraftOverlay(projectId, user)) {
+            return Optional.empty();
+        }
+        return liveModel.apply(projectId);
+    }
+
+    int annotationPropertyCount(String projectId) {
+        return model(projectId).map(ModelMetrics::annotationProperties)
+                .orElseGet(() -> queries.getAnnotationPropertyUsageCount(projectId));
+    }
+
+    int datatypeCount(String projectId) {
+        return model(projectId).map(ModelMetrics::datatypes)
+                .orElseGet(() -> queries.getDatatypeUsageCount(projectId));
+    }
+
+    private Map<String, Object> modelCounts(String projectId, OWLOntology ontology) {
+        Map<String, Object> out = ModelMetrics.counts(ontology);
+        out.put("ontologyIRI", ontologyIri.apply(projectId));
+        projectMetadataService.readMeta(projectId).map(meta -> meta.get("preparse"))
+                .filter(Map.class::isInstance).map(preparse -> ((Map<?, ?>) preparse).get("triples"))
+                .filter(Number.class::isInstance).ifPresent(triples -> out.put("tripleCount", ((Number) triples).intValue()));
+        return out;
+    }
+
     Map<String, Object> getDynamicMetrics(String projectId) {
+        Optional<OWLOntology> live = model(projectId);
+        if (live.isPresent()) {
+            return modelCounts(projectId, live.get());
+        }
         Map<String, Object> metrics = new HashMap<>();
         
         log.info("Calculating dynamic metrics for project: {}", projectId);
@@ -79,6 +114,7 @@ final class OntologyMetrics {
         } catch (Exception e) {
             typeCountsFailed = true;
             log.error("Error getting type counts for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
 
         int classCount = typeCountMap.getOrDefault("http://www.w3.org/2002/07/owl#Class", 0);
@@ -140,6 +176,7 @@ final class OntologyMetrics {
             }
         } catch (Exception e) {
             log.error("Error getting predicate counts for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
 
         Map<String, Integer> typedCounts = queries.getTypedAxiomCounts(projectId);
@@ -194,6 +231,7 @@ final class OntologyMetrics {
             }
         } catch (Exception e) {
             log.error("Error getting predicate-type counts for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
 
         metrics.put("objectPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#ObjectProperty", 0));
@@ -208,6 +246,10 @@ final class OntologyMetrics {
     }
 
     Map<String, Object> getPropertyAndAssertionAxiomCounts(String projectId) {
+        Optional<OWLOntology> live = model(projectId);
+        if (live.isPresent()) {
+            return ModelMetrics.counts(live.get());
+        }
         Map<String, Object> metrics = new HashMap<>();
 
         String predicateCounts = PREFIXES + """
@@ -234,6 +276,7 @@ final class OntologyMetrics {
             }
         } catch (Exception e) {
             log.error("Error getting predicate counts (backfill) for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
 
         Map<String, Integer> typedCounts = queries.getTypedAxiomCounts(projectId);
@@ -287,6 +330,7 @@ final class OntologyMetrics {
             }
         } catch (Exception e) {
             log.error("Error getting predicate-type counts (backfill) for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
 
         metrics.put("objectPropertyAssertionAxiomCount", predTypeMap.getOrDefault("http://www.w3.org/2002/07/owl#ObjectProperty", 0));
@@ -351,6 +395,10 @@ final class OntologyMetrics {
     }
 
     OwlApiAxiomCounts getOwlApiAxiomCounts(String projectId) {
+        Optional<OWLOntology> live = model(projectId);
+        if (live.isPresent()) {
+            return DraftAxiomCounter.countsOf(live.get());
+        }
         String draftUserId = SparqlQueryContext.getUserId();
         if (draftUserId != null && !draftUserId.isBlank() && datasetService.hasActiveDraftOverlay(projectId, draftUserId)) {
             String stamp = projectMetadataService.versionStamp(projectId) + "|"

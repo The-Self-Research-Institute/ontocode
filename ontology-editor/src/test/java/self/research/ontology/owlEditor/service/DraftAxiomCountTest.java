@@ -43,7 +43,7 @@ class DraftAxiomCountTest {
             return null;
         }).when(dataset).exportDatasetToStream(eq("p1"), eq("kay"), any(), any());
         metrics = new OntologyMetrics(dataset, projectMetadata, null, manchester, null, p -> null,
-            (project, user) -> draftVersion.get());
+            (project, user) -> draftVersion.get(), p -> java.util.Optional.empty());
     }
 
     @AfterEach

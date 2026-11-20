@@ -196,6 +196,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
         try (MockedStatic<OWLFormatConverter> mockedConverter = mockStatic(OWLFormatConverter.class)) {
             mockedConverter.when(() -> OWLFormatConverter.convertToRDFXML(any(Path.class))).thenReturn(convertedFile);
+            mockedConverter.when(OWLFormatConverter::createManagerWithSilentImports).thenCallRealMethod();
 
             Map<String, Object> request = new HashMap<>();
             request.put("content", originalContent);
@@ -338,6 +339,7 @@ class ProjectLoadControllerCodeViewSaveCharacterizationTest {
 
         try (MockedStatic<OWLFormatConverter> mockedConverter = mockStatic(OWLFormatConverter.class)) {
             mockedConverter.when(() -> OWLFormatConverter.convertToRDFXML(any(Path.class))).thenReturn(convertedFile);
+            mockedConverter.when(OWLFormatConverter::createManagerWithSilentImports).thenCallRealMethod();
 
             Map<String, Object> request = new HashMap<>();
             request.put("content", "<rdf:RDF><this is not well formed");

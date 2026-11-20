@@ -30,5 +30,22 @@ final class LiveOntologyHeaderOverlay {
             }
         }
         metadata.put("annotations", OwlApiOntologyMetadataQueryService.buildAnnotations(ontology));
+        if (!(metadata.get("tripleCount") instanceof Number) || Boolean.TRUE.equals(metadata.get("tripleCountEstimated"))) {
+            Integer indexed = indexedTriples(metadata);
+            metadata.put("tripleCount", indexed != null ? indexed : ontology.getAxiomCount() * 2);
+            if (indexed != null) {
+                metadata.remove("tripleCountEstimated");
+            } else {
+                metadata.put("tripleCountEstimated", true);
+            }
+        }
+    }
+
+    private static Integer indexedTriples(Map<String, Object> metadata) {
+        if (metadata.get("counts") instanceof Map<?, ?> counts && counts.get("triples") instanceof Number triples
+                && triples.intValue() > 0) {
+            return triples.intValue();
+        }
+        return null;
     }
 }

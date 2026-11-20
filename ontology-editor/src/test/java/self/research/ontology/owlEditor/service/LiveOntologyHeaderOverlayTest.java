@@ -132,4 +132,48 @@ class LiveOntologyHeaderOverlayTest {
         assertEquals("http://ex.org/cached", metadata.get("ontologyIRI"));
         Mockito.verifyNoInteractions(cache);
     }
+
+    @Test
+    void aMissingTripleCountIsTakenFromTheIndexedCountsBeforeAnyEstimate() {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("counts", Map.of("triples", 312_395));
+
+        LiveOntologyHeaderOverlay.overlay(metadata, ontology);
+
+        assertEquals(312_395, metadata.get("tripleCount"));
+    }
+
+    @Test
+    void withNoCountAtAllTheTripleCountIsEstimatedFromTheAxiomsAndFlagged() {
+        Map<String, Object> metadata = new HashMap<>();
+
+        LiveOntologyHeaderOverlay.overlay(metadata, ontology);
+
+        assertEquals(ontology.getAxiomCount() * 2, metadata.get("tripleCount"));
+        assertEquals(true, metadata.get("tripleCountEstimated"));
+    }
+
+    @Test
+    void anExistingTripleCountIsNeverReplaced() {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("tripleCount", 42);
+
+        LiveOntologyHeaderOverlay.overlay(metadata, ontology);
+
+        assertEquals(42, metadata.get("tripleCount"));
+        assertFalse(metadata.containsKey("tripleCountEstimated"));
+    }
+
+    @Test
+    void aKeptEstimateIsReplacedOnceTheIndexedCountArrives() {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("tripleCount", 7);
+        metadata.put("tripleCountEstimated", true);
+        metadata.put("counts", Map.of("triples", 312_395));
+
+        LiveOntologyHeaderOverlay.overlay(metadata, ontology);
+
+        assertEquals(312_395, metadata.get("tripleCount"));
+        assertFalse(metadata.containsKey("tripleCountEstimated"));
+    }
 }

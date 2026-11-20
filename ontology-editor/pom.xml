@@ -19,7 +19,7 @@
     <properties>
         <java.version>21</java.version>
         <rdf4j.version>4.3.7</rdf4j.version>
-        <jena.version>6.1.0</jena.version>
+        <jena.version>6.2.0</jena.version>
         <owlapi.version>5.5.0</owlapi.version>
         <git.commit>unknown</git.commit>
     </properties>

@@ -41,6 +41,7 @@ public class OntologyMetadataService {
     private final Map<String, String> ontologyIriCache = new java.util.concurrent.ConcurrentHashMap<>();
     private final OntologyCountQueries countQueries;
     private final OntologyMetrics metrics;
+    private final CachedMetadataCounts cachedCounts;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OntologyHistoryService historyService;
@@ -95,7 +96,8 @@ public class OntologyMetadataService {
         this.countQueries = new OntologyCountQueries(datasetService);
         this.metrics = new OntologyMetrics(datasetService, projectMetadataService, importService,
                 manchesterExpressionService, countQueries, this::getOntologyIri,
-                (project, user) -> storageManager == null ? 0L : storageManager.getDraftGraphVersion(project, user));
+                (project, user) -> storageManager == null ? 0L : storageManager.getDraftGraphVersion(project, user), this::liveModel);
+        this.cachedCounts = CachedMetadataCounts.forService(datasetService, projectMetadataService, importService, storageManager);
     }
 
     /**
@@ -130,15 +132,14 @@ public class OntologyMetadataService {
             log.info("⚡ Using cached metadata for project {} (fast path, skipping GraphDB queries)", projectId);
             metadata.putAll(cached);
 
-            // Always include fresh filename and status from the database
             projectMetadataService.readStatus(projectId).ifPresent(status -> {
                 metadata.put("filename", status.filename());
                 metadata.put("projectStatus", status.status());
             });
 
-            metadata.put("annotationPropertyCount", countQueries.getAnnotationPropertyUsageCount(projectId));
-            metadata.put("datatypeCount", countQueries.getDatatypeUsageCount(projectId));
-            metadata.putAll(metrics.getPropertyAndAssertionAxiomCounts(projectId));
+            metadata.put("annotationPropertyCount", cachedCounts.get(projectId, "annotationPropertyCount", () -> metrics.annotationPropertyCount(projectId)));
+            metadata.put("datatypeCount", cachedCounts.get(projectId, "datatypeCount", () -> metrics.datatypeCount(projectId)));
+            metadata.putAll(cachedCounts.get(projectId, "propertyAndAssertion", () -> metrics.getPropertyAndAssertionAxiomCounts(projectId)));
 
             OntologyMetrics.OwlApiAxiomCounts owlCounts = metrics.getOwlApiAxiomCounts(projectId);
             metadata.put("axiomCount", owlCounts.total());
@@ -156,11 +157,8 @@ public class OntologyMetadataService {
 
         // 2. Cache miss or incomplete - compute from GraphDB (slow path)
         log.info("📊 Computing fresh metadata for project {} (slow path, querying GraphDB)", projectId);
-        // Desktop's Fuseki sync after a mutation is deferred — only pay for it here, on the
-        // actual SPARQL fallback, not on every call (this used to run unconditionally in the
-        // controller, forcing a Fuseki round-trip — and on desktop, a lazy Fuseki cold start —
-        // on every cache-hit call too, which is most of them).
-        if (importService != null) {
+        var live = hasDraft ? java.util.Optional.<org.semanticweb.owlapi.model.OWLOntology>empty() : liveModel(projectId);
+        if (importService != null && live.isEmpty()) {
             importService.syncProjectToFuseki(projectId);
         }
 
@@ -169,12 +167,12 @@ public class OntologyMetadataService {
             metadata.put("projectStatus", status.status());
         });
         
-        metadata.putAll(getDynamicMetrics(projectId));
+        metadata.putAll(cachedCounts.get(projectId, "dynamicMetrics", () -> getDynamicMetrics(projectId)));
         
         String ontologyIri = getOntologyIri(projectId);
         metadata.put("ontologyIRI", ontologyIri);
         
-        if (ontologyIri != null) {
+        if (ontologyIri != null && live.isEmpty()) {
             String query = PREFIXES + String.format("SELECT ?v WHERE { <%s> owl:versionIRI ?v }", ontologyIri);
             try {
                 TupleQueryResult rs = datasetService.execSelect(projectId, query);
@@ -187,9 +185,9 @@ public class OntologyMetadataService {
         }
         
         metadata.put("prefixes", getPrefixes(projectId));
-        metadata.put("annotations", getOntologyAnnotations(projectId));
-        metadata.put("imports", getOntologyImports(projectId));
-        metadata.put("axioms", getGeneralClassAxioms(projectId));
+        metadata.put("annotations", live.isPresent() ? new ArrayList<Map<String, String>>() : getOntologyAnnotations(projectId));
+        metadata.put("imports", live.isPresent() ? live.get().importsDeclarations().map(d -> d.getIRI().toString()).collect(java.util.stream.Collectors.toList()) : getOntologyImports(projectId));
+        metadata.put("axioms", live.isPresent() ? GeneralClassAxioms.describe(live.get()) : getGeneralClassAxioms(projectId));
         if (!hasDraft) {
             LiveOntologyHeaderOverlay.apply(metadata, projectId, ontologyCache, desktopOwlApi);
         }
@@ -1077,19 +1075,18 @@ public class OntologyMetadataService {
 
     @org.springframework.context.event.EventListener
     public void onMainGraphChanged(MainGraphRevisionService.MainGraphChanged event) {
-        ontologyIriCache.remove(event.projectId());
+        ontologyIriCache.remove(event.projectId()); cachedCounts.invalidate(event.projectId());
+    }
+
+    private java.util.Optional<org.semanticweb.owlapi.model.OWLOntology> liveModel(String projectId) {
+        boolean live = desktopOwlApi != null && ontologyCache != null && desktopOwlApi.isAuthoritative(projectId);
+        return live ? ontologyCache.get(projectId).map(entry -> entry.ontology()) : java.util.Optional.empty();
     }
 
     private String[] liveOntologyIds(String projectId) {
-        if (desktopOwlApi == null || ontologyCache == null || !desktopOwlApi.isAuthoritative(projectId)) {
-            return null;
-        }
-        return ontologyCache.get(projectId).map(entry -> {
-            var id = entry.ontology().getOntologyID();
-            return new String[] {
-                    id.getOntologyIRI().map(Object::toString).orElse(null),
-                    id.getVersionIRI().map(Object::toString).orElse(null)
-            };
+        return liveModel(projectId).map(ontology -> {
+            var id = ontology.getOntologyID();
+            return new String[] {id.getOntologyIRI().map(Object::toString).orElse(null), id.getVersionIRI().map(Object::toString).orElse(null)};
         }).orElse(null);
     }
 
@@ -1172,13 +1169,17 @@ public class OntologyMetadataService {
         //    so cached prefixes are always in sync. Skipping the expensive
         //    SPARQL namespace-usage query avoids running it twice during import.
         if (!hasCachedPrefixes) {
-            log.debug("No cached prefixes in the database, querying GraphDB for project {}", projectId);
-            // Same reasoning as getMetadata(): only sync on the actual SPARQL fallback.
-            if (importService != null) {
-                importService.syncProjectToFuseki(projectId);
+            Map<String, String> live = hasDraft ? Map.of() : LivePrefixes.of(ontologyCache, desktopOwlApi, projectId);
+            prefixMap.putAll(live);
+            if (live.isEmpty()) {
+                log.debug("No cached prefixes in the database, querying GraphDB for project {}", projectId);
+                // Same reasoning as getMetadata(): only sync on the actual SPARQL fallback.
+                if (importService != null) {
+                    importService.syncProjectToFuseki(projectId);
+                }
+                datasetService.getPrefixes(projectId)
+                        .forEach((p, ns) -> prefixMap.put(stripTrailingColon(p), ns));
             }
-            datasetService.getPrefixes(projectId)
-                    .forEach((p, ns) -> prefixMap.put(stripTrailingColon(p), ns));
         } else {
             log.debug("Using cached prefixes from the database for project {} ({} entries)", projectId, prefixMap.size());
         }

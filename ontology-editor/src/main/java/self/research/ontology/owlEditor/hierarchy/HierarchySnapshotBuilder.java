@@ -78,9 +78,13 @@ public class HierarchySnapshotBuilder {
 
     public List<OntologyDto.TreeNode> buildTopLevelAsserted(OWLOntology ont, int limit, int offset,
                                                             Imports importsScope) {
-        Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, importsScope);
-        return assertedTopLevelCandidates(ont, importsScope).stream()
-                .sorted(Comparator.comparing(c -> getLabel(ont, c, importsScope).toLowerCase(Locale.ROOT)))
+        return buildTopLevelAsserted(ont, limit, offset, importsScope,
+                assertedChildrenIndex(ont, importsScope), assertedTopLevelCandidates(ont, importsScope));
+    }
+
+    public List<OntologyDto.TreeNode> buildTopLevelAsserted(OWLOntology ont, int limit, int offset, Imports importsScope,
+                                                            Map<OWLClass, Set<OWLClass>> childrenIndex, Set<OWLClass> roots) {
+        return sortedByLabel(roots, ont, importsScope).stream()
                 .skip(Math.max(0, offset))
                 .limit(Math.max(1, limit))
                 .map(c -> toTreeNodeAsserted(ont, c, null, importsScope, childrenIndex))
@@ -224,7 +228,7 @@ public class HierarchySnapshotBuilder {
         labels.add(operand.get("label"));
     }
 
-    private Set<OWLClass> assertedTopLevelCandidates(OWLOntology ont, Imports importsScope) {
+    public Set<OWLClass> assertedTopLevelCandidates(OWLOntology ont, Imports importsScope) {
         Set<OWLClass> roots = new LinkedHashSet<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
             if (cls.isBuiltIn() || cls.isOWLNothing() || isBuiltInOrPlaceholder(cls)) {
@@ -245,11 +249,15 @@ public class HierarchySnapshotBuilder {
     public List<OntologyDto.TreeNode> buildChildren(OWLOntology ont, OWLReasoner reasoner,
                                                     String parentIri, int limit, int offset,
                                                     Imports importsScope) {
+        return buildChildren(ont, reasoner, parentIri, limit, offset, importsScope, assertedChildrenIndex(ont, importsScope));
+    }
+
+    public List<OntologyDto.TreeNode> buildChildren(OWLOntology ont, OWLReasoner reasoner,
+                                                    String parentIri, int limit, int offset,
+                                                    Imports importsScope, Map<OWLClass, Set<OWLClass>> childrenIndex) {
         OWLDataFactory df = ont.getOWLOntologyManager().getOWLDataFactory();
         OWLClass parent = df.getOWLClass(IRI.create(parentIri));
-        Map<OWLClass, Set<OWLClass>> childrenIndex = assertedChildrenIndex(ont, importsScope);
-        return childrenIndex.getOrDefault(parent, Set.of()).stream()
-                .sorted(Comparator.comparing(c -> getLabel(ont, c, importsScope).toLowerCase(Locale.ROOT)))
+        return sortedByLabel(childrenIndex.getOrDefault(parent, Set.of()), ont, importsScope).stream()
                 .skip(Math.max(0, offset))
                 .limit(Math.max(1, limit))
                 .map(c -> toTreeNode(ont, reasoner, c, parentIri, importsScope, childrenIndex))
@@ -282,7 +290,7 @@ public class HierarchySnapshotBuilder {
      * node - on a 50k-class ontology that's the difference between milliseconds and minutes,
      * and unlike a subClassOf-only shortcut it still finds equivalentClass-only children.
      */
-    private Map<OWLClass, Set<OWLClass>> assertedChildrenIndex(OWLOntology ont, Imports importsScope) {
+    public Map<OWLClass, Set<OWLClass>> assertedChildrenIndex(OWLOntology ont, Imports importsScope) {
         Map<OWLClass, Set<OWLClass>> index = new HashMap<>();
         for (OWLClass cls : ont.getClassesInSignature(importsScope)) {
             if (cls.isBuiltIn() || cls.isOWLNothing() || isBuiltInOrPlaceholder(cls)) {
@@ -293,6 +301,16 @@ public class HierarchySnapshotBuilder {
             }
         }
         return index;
+    }
+
+    private List<OWLClass> sortedByLabel(java.util.Collection<OWLClass> classes, OWLOntology ont, Imports importsScope) {
+        Map<OWLClass, String> keys = new HashMap<>(classes.size() * 2);
+        for (OWLClass c : classes) {
+            keys.put(c, getLabel(ont, c, importsScope).toLowerCase(Locale.ROOT));
+        }
+        List<OWLClass> sorted = new ArrayList<>(classes);
+        sorted.sort(Comparator.comparing(keys::get));
+        return sorted;
     }
 
     /** Returns true when the class is declared in the active (non-imported) ontology. */

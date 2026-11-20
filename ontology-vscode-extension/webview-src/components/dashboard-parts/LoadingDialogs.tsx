@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Loader2, Clock, Users, CheckCircle2, AlertCircle, RefreshCw, FolderOpen } from "lucide-react";
 import { formatQueueWait, sanitizeImportMessage } from "../../utils/importStatusText";
+import { loadingTimeHint } from "../../utils/fileSizeHints";
+import { isDesktop } from "../../utils/desktop";
 
 const MODAL_FADE_MS = 220;
 
@@ -242,7 +244,7 @@ export const LoadingDialog = ({
               </span>
             </div>
             {!showQueueInfo && !readyToBrowse && (
-              <span className="text-[10px] opacity-60">Small files: ~1 min · Large (100MB+): 15–40 min</span>
+              <span className="text-[10px] opacity-60">{loadingTimeHint(isDesktop())}</span>
             )}
           </div>
 

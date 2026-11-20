@@ -66,6 +66,7 @@ const JLINK_MODULES = [
     'jdk.httpserver',
     'jdk.jfr',
     'jdk.management',
+    'jdk.net',
     'jdk.unsupported',
     'jdk.zipfs',
 ].join(',');
