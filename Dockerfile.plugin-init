@@ -6,7 +6,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Build change-assistant-plugin
 # -----------------------------------------------------------------------------
-FROM node:21-alpine AS build-change-assistant
+FROM node:22-alpine AS build-change-assistant
 WORKDIR /build
 COPY plugins/change-assistant-plugin/package*.json ./
 RUN --mount=type=cache,id=npm-change-assistant,target=/root/.npm \
@@ -23,7 +23,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 2: Build fuzzy-ontology-plugin
 # -----------------------------------------------------------------------------
-FROM node:21-alpine AS build-fuzzy-ontology
+FROM node:22-alpine AS build-fuzzy-ontology
 WORKDIR /build
 COPY plugins/fuzzy-ontology-plugin/package*.json ./
 RUN --mount=type=cache,id=npm-fuzzy-ontology,target=/root/.npm \
@@ -40,7 +40,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 3: Build graph-view-plugin
 # -----------------------------------------------------------------------------
-FROM node:21-alpine AS build-graph-view
+FROM node:22-alpine AS build-graph-view
 WORKDIR /build
 COPY plugins/graph-view-plugin/package*.json ./
 RUN --mount=type=cache,id=npm-graph-view,target=/root/.npm \
@@ -57,7 +57,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 4: Build swrl-editor-plugin
 # -----------------------------------------------------------------------------
-FROM node:21-alpine AS build-swrl-editor
+FROM node:22-alpine AS build-swrl-editor
 WORKDIR /build
 COPY plugins/swrl-editor-plugin/package*.json ./
 RUN --mount=type=cache,id=npm-swrl-editor,target=/root/.npm \
@@ -74,7 +74,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 5: Build sparql-query-plugin
 # -----------------------------------------------------------------------------
-FROM node:21-alpine AS build-sparql-query
+FROM node:22-alpine AS build-sparql-query
 WORKDIR /build
 COPY plugins/sparql-query-plugin/package*.json ./
 RUN --mount=type=cache,id=npm-sparql-query,target=/root/.npm \
@@ -91,7 +91,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 6: Build reasoner-plugin
 # -----------------------------------------------------------------------------
-FROM node:21-alpine AS build-reasoner
+FROM node:22-alpine AS build-reasoner
 WORKDIR /build
 COPY plugins/reasoner-plugin/package*.json ./
 RUN --mount=type=cache,id=npm-reasoner,target=/root/.npm \
@@ -108,7 +108,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 7: Build spreadsheet-import-plugin
 # -----------------------------------------------------------------------------
-FROM node:21-alpine AS build-spreadsheet-import
+FROM node:22-alpine AS build-spreadsheet-import
 WORKDIR /build
 COPY plugins/spreadsheet-import-plugin/package*.json ./
 RUN --mount=type=cache,id=npm-spreadsheet-import,target=/root/.npm \
@@ -125,7 +125,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 8: Final runtime - Install plugins into PostgreSQL
 # -----------------------------------------------------------------------------
-FROM node:21-alpine
+FROM node:22-alpine
 WORKDIR /app
 
 # Install bash and curl for health checks

@@ -323,7 +323,3 @@ export const LoadingDialog = ({
     </div>
   );
 };
-
-function isDesktop(): boolean {
-  return typeof window !== "undefined" && !!(window as any).electronAPI;
-}

@@ -12,7 +12,7 @@ final class OntologyCountQueries {
 
     private static final String PREFIXES = OntologyMetadataService.PREFIXES;
 
-    private static final String ANNOTATION_PROPERTY_COUNT_QUERY = """
+    static final String ANNOTATION_PROPERTY_COUNT_QUERY = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -22,8 +22,7 @@ final class OntologyCountQueries {
           }
           UNION
           {
-            ?s ?annProp ?o .
-            FILTER(isLiteral(?o) || isIRI(?o))
+            { SELECT DISTINCT ?annProp WHERE { ?s ?annProp ?o . FILTER(isLiteral(?o) || isIRI(?o)) } }
             FILTER NOT EXISTS { ?annProp a owl:ObjectProperty }
             FILTER NOT EXISTS { ?annProp a owl:DatatypeProperty }
             FILTER NOT EXISTS { ?annProp a owl:Class }

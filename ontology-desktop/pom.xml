@@ -36,6 +36,7 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <git.commit>unknown</git.commit>
+        <commons-lang3.version>3.20.0</commons-lang3.version>
     </properties>
 
     <dependencies>
@@ -80,7 +81,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
-                <version>3.5.0</version>
+                <version>3.7.0</version>
                 <executions>
                     <execution>
                         <id>ban-openllet-pellet</id>
@@ -169,7 +170,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.8.1</version>
+                <version>3.11.0</version>
                 <executions>
                     <execution>
                         <id>copy-lgpl-libs</id>

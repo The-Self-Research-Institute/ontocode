@@ -300,7 +300,6 @@
     "package:check": "vsce package && node -e \"const fs=require('fs');const files=fs.readdirSync('.');const vsix=files.find(f=>f.endsWith('.vsix'));if(vsix){const stats=fs.statSync(vsix);const mb=(stats.size/(1024*1024)).toFixed(2);console.log(`\\n📦 VSIX Size: ${mb} MB (${stats.size.toLocaleString()} bytes)`);console.log(`⚠️  Default limit: 25 MB`);console.log(`🔴 Hard limit: 50 MB\\n`);if(stats.size>50*1024*1024)console.log('❌ EXCEEDS HARD LIMIT!');else if(stats.size>25*1024*1024)console.log('⚠️  EXCEEDS DEFAULT LIMIT');}else{console.log('No .vsix file found');}\""
   },
   "devDependencies": {
-    "@types/form-data": "^2.2.1",
     "@types/node": "16.x",
     "@types/sockjs-client": "^1.5.4",
     "@types/vscode": "^1.74.0",
@@ -316,7 +315,7 @@
     "crypto-browserify": "^3.12.1",
     "css-loader": "^7.1.2",
     "css-minimizer-webpack-plugin": "^8.0.0",
-    "eslint": "^9.39.5",
+    "eslint": "^10.15.0",
     "html-webpack-plugin": "^5.6.5",
     "https-browserify": "^1.0.0",
     "mini-css-extract-plugin": "^2.9.4",

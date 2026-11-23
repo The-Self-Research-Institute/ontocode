@@ -23,6 +23,21 @@ final class CachedMetadataCounts {
         }
     }
 
+    static <V> V tracked(Supplier<V> compute, boolean[] failed) {
+        boolean[] outer = FAILED.get();
+        FAILED.set(failed);
+        try {
+            return compute.get();
+        } finally {
+            if (outer == null) {
+                FAILED.remove();
+            } else {
+                FAILED.set(outer);
+                outer[0] |= failed[0];
+            }
+        }
+    }
+
     private final Map<String, Entry> cached = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<Entry>> inFlight = new ConcurrentHashMap<>();
     private final LongSupplier clock;
@@ -88,10 +103,8 @@ final class CachedMetadataCounts {
         }
         Entry result = null;
         boolean[] flag = new boolean[1];
-        boolean[] outer = FAILED.get();
-        FAILED.set(flag);
         try {
-            V fresh = compute.get();
+            V fresh = tracked(compute, flag);
             result = new Entry(stamp, fresh, clock.getAsLong() + TTL_MS);
             if (fresh instanceof Map<?, ?> map && Boolean.TRUE.equals(map.get("metricsFailed"))) {
                 flag[0] = true;
@@ -108,12 +121,6 @@ final class CachedMetadataCounts {
             }
             return fresh;
         } finally {
-            if (outer == null) {
-                FAILED.remove();
-            } else {
-                FAILED.set(outer);
-                outer[0] |= flag[0];
-            }
             mine.complete(result);
             inFlight.remove(key, mine);
         }

@@ -42,6 +42,7 @@ public class OntologyMetadataService {
     private final OntologyCountQueries countQueries;
     private final OntologyMetrics metrics;
     private final CachedMetadataCounts cachedCounts;
+    private final BackgroundCounts backgroundCounts;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private OntologyHistoryService historyService;
@@ -98,6 +99,7 @@ public class OntologyMetadataService {
                 manchesterExpressionService, countQueries, this::getOntologyIri,
                 (project, user) -> storageManager == null ? 0L : storageManager.getDraftGraphVersion(project, user), this::liveModel);
         this.cachedCounts = CachedMetadataCounts.forService(datasetService, projectMetadataService, importService, storageManager);
+        this.backgroundCounts = BackgroundCounts.forService(projectMetadataService, importService);
     }
 
     /**
@@ -137,14 +139,8 @@ public class OntologyMetadataService {
                 metadata.put("projectStatus", status.status());
             });
 
-            metadata.put("annotationPropertyCount", cachedCounts.get(projectId, "annotationPropertyCount", () -> metrics.annotationPropertyCount(projectId)));
-            metadata.put("datatypeCount", cachedCounts.get(projectId, "datatypeCount", () -> metrics.datatypeCount(projectId)));
-            metadata.putAll(cachedCounts.get(projectId, "propertyAndAssertion", () -> metrics.getPropertyAndAssertionAxiomCounts(projectId)));
-
-            OntologyMetrics.OwlApiAxiomCounts owlCounts = metrics.getOwlApiAxiomCounts(projectId);
-            metadata.put("axiomCount", owlCounts.total());
-            metadata.put("logicalAxiomCount", owlCounts.logical());
-            metadata.put("declarationAxiomCount", owlCounts.declarations());
+            metadata.putAll(backgroundCounts.collect(projectId,
+                    FastPathCounts.tasks(metrics, projectId, cached, liveModel(projectId).isPresent())));
 
             metrics.overlayLiveDesktopEntityCounts(projectId, metadata, ontologyCache);
             LiveOntologyHeaderOverlay.apply(metadata, projectId, ontologyCache, desktopOwlApi);
@@ -1075,7 +1071,7 @@ public class OntologyMetadataService {
 
     @org.springframework.context.event.EventListener
     public void onMainGraphChanged(MainGraphRevisionService.MainGraphChanged event) {
-        ontologyIriCache.remove(event.projectId()); cachedCounts.invalidate(event.projectId());
+        ontologyIriCache.remove(event.projectId()); cachedCounts.invalidate(event.projectId()); backgroundCounts.invalidate(event.projectId());
     }
 
     private java.util.Optional<org.semanticweb.owlapi.model.OWLOntology> liveModel(String projectId) {
