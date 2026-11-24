@@ -17,6 +17,13 @@
     <version>1.0.0</version>
     <name>Ontology Plugin Service</name>
     <description>Plugin marketplace and delivery service for OntoCode</description>
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>21</java.version>

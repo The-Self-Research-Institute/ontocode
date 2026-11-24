@@ -29,6 +29,13 @@
     <version>1.0.0</version>
     <name>Ontology Desktop</name>
     <description>Single-JAR desktop launcher combining auth, editor, and plugin services</description>
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>21</java.version>
