@@ -16,7 +16,8 @@ const {
 } = require('electron');
 const path     = require('path');
 const fs       = require('fs');
-const Store    = require('electron-store');
+const Store    = require('electron-store').default;
+const { openSettings } = require('./services/SettingsFile');
 const svcMgr   = require('./services/ServiceManager');
 const { loadDesktopSecrets } = require('./services/DesktopSecrets');
 const syncMgr  = require('./services/SyncManager');
@@ -231,7 +232,10 @@ app.on('open-file', (event, filePath) => {
 });
 
 // ── Auth token store (encrypted at rest) ────────────────────────────────────
-const store = new Store({ encryptionKey: 'ontocode-desktop-v1' });
+const store = openSettings({
+    dir: app.getPath('userData'),
+    create: (name, options) => new Store({ name, ...options }),
+});
 
 let splashWindow = null;
 let mainWindow   = null;

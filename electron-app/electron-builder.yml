@@ -114,6 +114,7 @@ mac:
         - arm64
   icon: build-assets/icon.icns
   category: public.app-category.developer-tools
+  minimumSystemVersion: "13.0"
   signIgnore:
     - '\.jsa$'
   # Notarisation (set APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD in CI)
