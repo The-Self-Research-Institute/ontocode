@@ -61,6 +61,7 @@ export const QueueStatusIndicator: React.FC<QueueStatusIndicatorProps> = ({
       try {
         const positionData: any = await apiClient.get(`/api/import-queue/position/${projectId}`);
         if (!positionData?.inQueue) {
+          setQueueStatus(null);
           return;
         }
         setQueueStatus({

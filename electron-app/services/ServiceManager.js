@@ -77,6 +77,7 @@ let trainingTimer = null;
 let trainingActive = false;
 const STARTUP_HEALTH_TIMEOUT_MS = 300000;
 const FUSEKI_QUERY_TIMEOUT_MS = 120000;
+const FUSEKI_READY_TIMEOUT_MS = 120000;
 
 const DEFAULT_PORTS = {
     postgres: 15432,
@@ -656,7 +657,7 @@ async function startFuseki() {
     });
     try {
         await Promise.race([
-            waitForHttp(`http://127.0.0.1:${FUSEKI_PORT}/$/ping`, 45000, 'Fuseki'),
+            waitForHttp(`http://127.0.0.1:${FUSEKI_PORT}/$/ping`, FUSEKI_READY_TIMEOUT_MS, 'Fuseki'),
             earlyDeath,
         ]);
     } catch (err) {

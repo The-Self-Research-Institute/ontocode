@@ -18,3 +18,17 @@ test('no dispatch builds a message event without going through the helper', () =
     assert.ok(dispatches.length >= 10);
     assert.doesNotMatch(source, /dispatchEvent\(\s*new MessageEvent/);
 });
+
+test('import status reaches the page as a trusted page message, not a custom event the page drops', () => {
+    assert.doesNotMatch(source, /new CustomEvent\('importStatusUpdate'/);
+    assert.match(source, /pageMessageEvent\(\{ data: \{ type: 'importStatusUpdate', status \} \}\)/);
+});
+
+test('a queue status request is not answered with an invented position', () => {
+    assert.doesNotMatch(source, /type: 'queueStatusUpdate'/);
+});
+
+test('a project missing from the import queue is not reported as imported on that alone', () => {
+    assert.doesNotMatch(source, /status === 'NOT_IN_QUEUE'\)\s*return 'done'/);
+    assert.match(source, /if \(status === 'COMPLETED'\) return 'done';/);
+});
