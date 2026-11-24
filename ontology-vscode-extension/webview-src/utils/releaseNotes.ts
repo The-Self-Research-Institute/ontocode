@@ -18,7 +18,7 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
-    version: "1.2.11-beta.1",
+    version: "1.2.11",
     webVersion: "1.2.11",
     date: "November 17, 2026",
     title: "Graph View",
