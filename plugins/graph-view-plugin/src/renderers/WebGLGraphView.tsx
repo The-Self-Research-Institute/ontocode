@@ -104,6 +104,8 @@ export interface WebGLGraphViewProps {
   projectId?: string;
   draftMode?: boolean;
   onNodeClick?: (nodeId: string) => void;
+  onEdgeClick?: (edgeId: string) => void;
+  onStageClick?: () => void;
   onNodeRightClick?: (nodeId: string, event: { x: number; y: number }) => void;
   onNodeDoubleClick?: (nodeId: string) => void;
   /** Hierarchy expansion state/actions for the hover-card quick actions. */
@@ -184,6 +186,8 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   projectId,
   draftMode = false,
   onNodeClick,
+  onEdgeClick,
+  onStageClick,
   onNodeRightClick,
   onNodeDoubleClick,
   hasNodeChildren,
@@ -207,6 +211,11 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   const containerRef = useRef<HTMLDivElement>(null);
   const onZoomChangeRef = useRef(onZoomChange);
   onZoomChangeRef.current = onZoomChange;
+  const onEdgeClickRef = useRef(onEdgeClick);
+  onEdgeClickRef.current = onEdgeClick;
+  const onStageClickRef = useRef(onStageClick);
+  onStageClickRef.current = onStageClick;
+  const stageDownRef = useRef<{ x: number; y: number } | null>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const hoveredNodeStateRef = useRef<string | null>(null);
@@ -273,8 +282,10 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const edgeEventsEnabled = graph.size <= 2000;
     const renderer = new Sigma(graph, containerRef.current, {
       allowInvalidContainer: true,
+      enableEdgeEvents: edgeEventsEnabled,
       renderEdgeLabels: true,
       defaultEdgeType: 'arrow',
       edgeLabelSize: 10,
@@ -382,6 +393,17 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
         setHoveredNode(null);
       }, 450);
     });
+    if (edgeEventsEnabled) {
+      renderer.on('clickEdge', ({ edge }) => {
+        onEdgeClickRef.current?.(edge);
+      });
+      renderer.on('enterEdge', () => {
+        if (containerRef.current) containerRef.current.style.cursor = 'pointer';
+      });
+      renderer.on('leaveEdge', () => {
+        if (containerRef.current) containerRef.current.style.cursor = '';
+      });
+    }
     renderer.on('clickNode', ({ node }) => {
       // In focus mode a click walks the neighborhood hop by hop
       if (focusRef.current) setFocus({ id: node, depth: focusRef.current.depth });
@@ -391,6 +413,15 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
       (event as any).preventSigmaDefault?.();
       setFocus(prev => ({ id: node, depth: prev?.depth ?? 1 }));
       onNodeDoubleClick?.(node);
+    });
+    renderer.on('downStage', ({ event }) => {
+      stageDownRef.current = { x: event.x, y: event.y };
+    });
+    renderer.on('clickStage', ({ event }) => {
+      const down = stageDownRef.current;
+      stageDownRef.current = null;
+      if (down && Math.hypot(event.x - down.x, event.y - down.y) > 5) return;
+      onStageClickRef.current?.();
     });
     renderer.on('rightClickNode', ({ node, event }) => {
       (event.original as MouseEvent).preventDefault();
@@ -731,8 +762,11 @@ export const WebGLGraphView = forwardRef<WebGLCameraHandle, WebGLGraphViewProps>
 
   // Invariant: an external selection always ends up centered on screen.
   // In focus mode it retargets the neighborhood instead (follow-selection).
+  const lastSelectionRef = useRef<typeof selectedNodeIds | null>(null);
   useEffect(() => {
     if (restoredSelectionRef.current !== undefined && selectedNodeIds === restoredSelectionRef.current) return;
+    if (selectedNodeIds === lastSelectionRef.current) return;
+    lastSelectionRef.current = selectedNodeIds;
     if (selectedNodeIds && selectedNodeIds.size === 1) {
       const [id] = [...selectedNodeIds];
       const f = focusRef.current;

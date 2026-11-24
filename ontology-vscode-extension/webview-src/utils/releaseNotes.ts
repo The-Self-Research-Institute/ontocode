@@ -18,6 +18,18 @@ export interface ReleaseNote {
 export const RELEASE_NOTES: ReleaseNote[] = [
 
   {
+    version: "1.2.11-beta.1",
+    webVersion: "1.2.11",
+    date: "November 17, 2026",
+    title: "Graph View",
+    highlights: [
+      "ONTOCODE-204: Graph View — The Tree view now fits better on screen. Child classes are stacked under their parent and large branches wrap into rows, so big ontologies no longer appear as long straight lines.",
+      "ONTOCODE-204: Graph View — Switching between Network, VOWL and Tree now keeps your place. Each view remembers its zoom and position, and a focused node stays focused when you come back.",
+    ],
+    videoUrl: "",
+  },
+
+  {
     version: "1.2.10-beta.1",
     webVersion: "1.2.10",
     date: "November 16, 2026",
