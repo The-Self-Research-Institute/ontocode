@@ -106,4 +106,40 @@ class CodeViewLineIndexTest {
         assertTrue(index.describes(Files.getLastModifiedTime(file).toMillis(), Files.size(file)));
         assertFalse(index.describes(Files.getLastModifiedTime(file).toMillis(), Files.size(file) + 1));
     }
+
+    @Test
+    void anIndexBuiltWhileCopyingReadsEveryPageLikeOneBuiltAfterwards() throws IOException {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 5000; i++) {
+            text.append("line ").append(i).append(i % 7 == 0 ? "\r\n" : "\n");
+        }
+        Path source = write(text.toString());
+        Path target = Files.createTempFile("line-index-copy-", ".ttl");
+        CodeViewLineIndex.Builder builder = new CodeViewLineIndex.Builder();
+
+        self.research.ontology.owlEditor.util.AtomicFiles.copy(source, target, builder);
+        CodeViewLineIndex whileCopying = builder.finish(Files.getLastModifiedTime(target).toMillis(), Files.size(target));
+        CodeViewLineIndex afterwards = index(target);
+
+        assertEquals(afterwards.totalLines(), whileCopying.totalLines());
+        assertEquals(afterwards.usable(), whileCopying.usable());
+        for (long start : new long[] {0, 1, 1023, 1024, 2500, 4990}) {
+            assertEquals(afterwards.readPage(target, start, 40).content(), whileCopying.readPage(target, start, 40).content());
+        }
+        assertEquals(Files.readString(source), Files.readString(target));
+    }
+
+    @Test
+    void aRegisteredIndexIsHandedBackWithoutRebuildingWhileTheFileIsUnchanged() throws IOException {
+        Path file = write("a\nb\nc\n");
+        CodeViewLineIndex.Builder builder = new CodeViewLineIndex.Builder();
+        byte[] bytes = Files.readAllBytes(file);
+        builder.accept(bytes, bytes.length);
+        long modified = Files.getLastModifiedTime(file).toMillis();
+        CodeViewLineIndex registered = builder.finish(modified, Files.size(file));
+
+        CodeViewLineIndex.register(file, registered);
+
+        assertTrue(registered == CodeViewLineIndex.forFile(file, modified, Files.size(file)));
+    }
 }

@@ -2,13 +2,14 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   resolveSubscriptionPayment,
   BANK_NOT_CONFIRMED_MESSAGE,
+  type StripeActionHandler,
   type StripeLoader,
 } from "../utils/subscriptionPayment";
 
 const SECRET = "pi_123_secret_abc";
 
 const loaderWith = (handleNextAction: ReturnType<typeof vi.fn>): StripeLoader =>
-  vi.fn(async () => ({ handleNextAction }));
+  vi.fn(async () => ({ handleNextAction }) as unknown as StripeActionHandler);
 
 afterEach(() => {
   vi.useRealTimers();

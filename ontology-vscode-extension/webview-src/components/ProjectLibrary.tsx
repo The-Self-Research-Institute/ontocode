@@ -772,7 +772,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
 
     if (file.size > 50 * 1024 * 1024) {
       showToast(
-        `${formatFileSize(file.size)} file — ${fileImportEtaHint(file.size)}`,
+        `${formatFileSize(file.size)} file — ${fileImportEtaHint(file.size, isDesktop())}`,
         "success",
       );
     }

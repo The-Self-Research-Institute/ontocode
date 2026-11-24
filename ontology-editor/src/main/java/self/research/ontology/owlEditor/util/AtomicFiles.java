@@ -3,6 +3,8 @@ package self.research.ontology.owlEditor.util;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -32,10 +34,29 @@ public final class AtomicFiles {
         }
     }
 
+    public interface ChunkListener {
+        void accept(byte[] buffer, int length);
+    }
+
     public static void copy(Path source, Path target) throws IOException {
+        copy(source, target, null);
+    }
+
+    public static void copy(Path source, Path target, ChunkListener listener) throws IOException {
         Path staged = Files.createTempFile(target.getParent(), "content-", STAGED_SUFFIX);
         try {
-            Files.copy(source, staged, StandardCopyOption.REPLACE_EXISTING);
+            if (listener == null) {
+                Files.copy(source, staged, StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                byte[] buffer = new byte[1 << 16];
+                try (InputStream in = Files.newInputStream(source); OutputStream out = Files.newOutputStream(staged)) {
+                    int read;
+                    while ((read = in.read(buffer)) > 0) {
+                        out.write(buffer, 0, read);
+                        listener.accept(buffer, read);
+                    }
+                }
+            }
             replace(staged, target);
         } finally {
             Files.deleteIfExists(staged);

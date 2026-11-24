@@ -521,9 +521,6 @@ public class ProjectImportService {
             log.info("[Import {}] [TIMING] Format detection: {} ms (detected: {})", 
                     projectId, elapsedMillis(stageStart), format.getName());
             
-            // Sanitize the file to fix malformed XML before import
-            // NOTE: For large files (>50MB), sanitizeFileOnDisk uses an optimized path
-            // that skips OWL API re-serialization to avoid loading the entire file into memory.
             stage = "sanitize";
             stageStart = System.nanoTime();
             long fileSizeForSanitize = Files.size(owlFile);
@@ -532,16 +529,19 @@ public class ProjectImportService {
                         projectId, fileSizeForSanitize / (1024 * 1024));
             }
             try {
-                OWLFormatConverter.sanitizeFileOnDisk(owlFile);
+                OWLFormatConverter.sanitizeFileOnDisk(owlFile, owlApiFirst && desktopOntologyLoader != null);
                 log.info("[Import {}] [TIMING] Sanitization: {} ms", projectId, elapsedMillis(stageStart));
             } catch (Exception sanitizeEx) {
                 log.warn("[Import {}] File sanitization failed: {}", projectId, sanitizeEx.getMessage());
-                // Continue anyway - sanitization is best-effort
             }
 
-            // desktop: parse OWLAPI from disk, mark ready immediately, sync Fuseki later.
             if (owlApiFirst && desktopOntologyLoader != null) {
-                if (completeOwlApiFirstImport(projectId, owlFile, filename, format, importStart, importMarkedCompleted)) {
+                boolean opened = completeOwlApiFirstImport(projectId, owlFile, filename, format, importStart, importMarkedCompleted);
+                if (!opened && Files.size(owlFile) <= 50L * 1024 * 1024) {
+                    OWLFormatConverter.sanitizeFileOnDisk(owlFile);
+                    opened = completeOwlApiFirstImport(projectId, owlFile, filename, format, importStart, importMarkedCompleted);
+                }
+                if (opened) {
                     return;
                 }
                 throw new RuntimeException("OWLAPI failed to load ontology — file may be too large or invalid");

@@ -901,7 +901,7 @@ public class SparqlDatasetService {
         try {
             ProjectGraphBinding binding = resolveBinding(projectId, false);
             try (RepositoryConnection conn = binding.repository().getConnection()) {
-                return countGraphTriplesSparql(conn, binding.graphUri()) > 0;
+                return GraphPresence.any(conn, List.of(binding.graphUri()));
             }
         } catch (Exception e) {
             log.warn("[hasGraphData] Could not check graph for project {}: {}", projectId, e.getMessage());
@@ -1212,16 +1212,7 @@ public class SparqlDatasetService {
             // Diagnostic: If no results, check if graphs have any data at all
             if (results.isEmpty()) {
                 try {
-                    List<String> allGraphs = getAllGraphUris(conn, projectId);
-                    long totalSize = 0;
-                    for (String g : allGraphs) {
-                        long gSize = countGraphTriplesSparql(conn, g);
-                        totalSize += gSize;
-                        if (gSize > 0) {
-                            log.warn("[GRAPHDB] Query returned 0 results. Graph {} contains {} triples.", g, gSize);
-                        }
-                    }
-                    if (totalSize == 0) {
+                    if (!GraphPresence.any(conn, getAllGraphUris(conn, projectId))) {
                         log.error("[GRAPHDB] All graphs for project {} are EMPTY!", projectId);
                     }
                 } catch (Exception diagEx) {

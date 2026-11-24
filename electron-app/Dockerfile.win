@@ -66,5 +66,5 @@ RUN cd /project/ontology-vscode-extension/webview-src && npm ci \
 RUN cd /project/electron-app \
     && node scripts/build-desktop.js --full --resources --plugins --win
 
-FROM alpine:3.20 AS artifact
+FROM alpine:3.24 AS artifact
 COPY --from=builder /project/electron-app/dist-electron/ /dist-electron/

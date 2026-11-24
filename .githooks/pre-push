@@ -42,7 +42,7 @@ fi
 
 if echo "$changed_files" | grep -qE '^ontology-vscode-extension/webview-src/'; then
     echo "pre-push: typechecking ontology-vscode-extension/webview-src..." >&2
-    (cd ontology-vscode-extension/webview-src && npx tsc --noEmit) || status=1
+    (cd ontology-vscode-extension/webview-src && npm run -s typecheck) || status=1
 fi
 
 java_modules=$(echo "$changed_files" | grep -E '\.java$' | sed -E 's#^(([^/]+/)?[^/]+)/src/.*#\1#' | sort -u || true)

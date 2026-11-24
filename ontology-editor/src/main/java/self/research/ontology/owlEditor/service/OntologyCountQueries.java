@@ -12,7 +12,7 @@ final class OntologyCountQueries {
 
     private static final String PREFIXES = OntologyMetadataService.PREFIXES;
 
-    private static final String ANNOTATION_PROPERTY_COUNT_QUERY = """
+    static final String ANNOTATION_PROPERTY_COUNT_QUERY = """
         PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -22,8 +22,7 @@ final class OntologyCountQueries {
           }
           UNION
           {
-            ?s ?annProp ?o .
-            FILTER(isLiteral(?o) || isIRI(?o))
+            { SELECT DISTINCT ?annProp WHERE { ?s ?annProp ?o . FILTER(isLiteral(?o) || isIRI(?o)) } }
             FILTER NOT EXISTS { ?annProp a owl:ObjectProperty }
             FILTER NOT EXISTS { ?annProp a owl:DatatypeProperty }
             FILTER NOT EXISTS { ?annProp a owl:Class }
@@ -192,6 +191,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting triple count for predicate type " + type, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -209,6 +209,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting typed axiom counts for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return counts;
     }
@@ -225,6 +226,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting count for type " + type, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -240,6 +242,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting annotation property usage count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -255,6 +258,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting datatype usage count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -286,6 +290,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting GCI count", e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -301,6 +306,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting class assertion count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }
@@ -316,6 +322,7 @@ final class OntologyCountQueries {
             }
         } catch (Exception e) {
             log.error("Error getting annotation assertion count for project {}", projectId, e);
+            CachedMetadataCounts.markFailed();
         }
         return 0;
     }

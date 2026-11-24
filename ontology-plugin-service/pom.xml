@@ -8,7 +8,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.0</version>
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
@@ -17,6 +17,13 @@
     <version>1.0.0</version>
     <name>Ontology Plugin Service</name>
     <description>Plugin marketplace and delivery service for OntoCode</description>
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>21</java.version>
@@ -31,7 +38,7 @@
             <dependency>
                 <groupId>io.zonky.test.postgres</groupId>
                 <artifactId>embedded-postgres-binaries-bom</artifactId>
-                <version>17.11.0</version>
+                <version>17.12.0</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -72,18 +79,18 @@
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>
-            <version>0.12.5</version>
+            <version>0.13.0</version>
         </dependency>
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-impl</artifactId>
-            <version>0.12.5</version>
+            <version>0.13.0</version>
             <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-jackson</artifactId>
-            <version>0.12.5</version>
+            <version>0.13.0</version>
             <scope>runtime</scope>
         </dependency>
 
@@ -115,7 +122,7 @@
         <dependency>
             <groupId>io.zonky.test</groupId>
             <artifactId>embedded-postgres</artifactId>
-            <version>2.1.0</version>
+            <version>2.2.3</version>
             <scope>test</scope>
         </dependency>
 
@@ -149,7 +156,7 @@
         <dependency>
             <groupId>net.sourceforge.owlapi</groupId>
             <artifactId>owlexplanation</artifactId>
-            <version>5.0.0</version>
+            <version>5.0.1</version>
             <exclusions>
                 <exclusion>
                     <groupId>net.sourceforge.owlapi</groupId>
@@ -207,7 +214,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
-                <version>3.5.0</version>
+                <version>3.7.0</version>
                 <executions>
                     <execution>
                         <id>ban-openllet-pellet</id>
@@ -278,7 +285,7 @@
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.12</version>
+                <version>0.8.16</version>
                 <executions>
                     <execution>
                         <id>jacoco-prepare-agent</id>

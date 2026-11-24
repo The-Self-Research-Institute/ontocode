@@ -216,6 +216,7 @@ import { isSaveDisabledInDraft } from "./dashboard-parts/draftSave";
 import { discardDraftMessage, runDraftDiscard } from "./dashboard-parts/discardDraft";
 import { useResizablePanelWidth } from "./dashboard-parts/hooks/useResizablePanelWidth";
 import { CodeViewAskAiSidebar, CodeViewAskAiStatus, CodeViewAskAiToggle } from "./dashboard-parts/CodeViewAskAiSidebar";
+import CodeViewLoadingNotice from "./CodeViewLoadingNotice";
 import { CodeAssistantLabelOverlayProvider } from "./CodeAssistantLabelOverlayContext";
 import { assistantKeyBridge, getStoredShowLabelOverlay, setStoredShowLabelOverlay } from "../services/LlmInsightsService";
 import { userScopedKey } from "../utils/userScopedKey";
@@ -4539,12 +4540,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                 console.debug("[Dashboard] cache-status counts:", e);
               }
             }
-            const res = await apiClient.get<any>(
-              `/api/ontology/metadata/${encodedProjectId}${cacheBuster}${cacheBuster ? "&" : "?"}userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
-              undefined,
-              { signal },
-            );
-            if (!isStaleLoad()) applyMetadataResponse(res);
+            let res: any = null;
+            try {
+              res = await apiClient.get<any>(
+                `/api/ontology/metadata/${encodedProjectId}${cacheBuster}${cacheBuster ? "&" : "?"}userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
+                undefined,
+                { signal },
+              );
+              if (!isStaleLoad()) applyMetadataResponse(res);
+            } catch (e: any) {
+              if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") throw e;
+              console.warn("[Dashboard] Metadata request failed, retrying:", e?.message || e);
+            }
 
             if (!isDesktop() && !isStaleLoad()) {
               const firstCount = Number((res?.data || res)?.classCount ?? (res?.data || res)?.counts?.classes ?? 0);
@@ -14666,9 +14673,7 @@ const updateItemInState = useCallback(
                     )}
                     <CodeViewAskAiStatus recovery={recovery} refreshing={codeViewRefreshing} />
                     {codeViewLoading ? (
-                      <div className="flex items-center justify-center h-64">
-                        <div className="text-gray-500">Loading ontology content...</div>
-                      </div>
+                      <CodeViewLoadingNotice />
                     ) : (
                       <CodeHighlighter
                         ref={codeHighlighterRef}
@@ -17976,7 +17981,8 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   <span>{tab.label}</span>
                   <TabCountBadge
                     loading={
-                      (tab.id === "Classes" && isHierarchyLoading) ||
+                      (tab.id === "Classes" &&
+                        (isHierarchyLoading || (isMetadataLoading && !(Number((metadata as any)?.classCount) > 0)))) ||
                       ((tab.id === "ObjectProperties" || tab.id === "DataProperties") &&
                         isPropertiesLoading) ||
                       (tab.id === "Individuals" && isIndividualsLoading) ||

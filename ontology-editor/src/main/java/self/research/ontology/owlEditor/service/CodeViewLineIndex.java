@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
+import self.research.ontology.owlEditor.util.AtomicFiles;
 
 @Slf4j
 final class CodeViewLineIndex {
@@ -64,44 +65,61 @@ final class CodeViewLineIndex {
         return lastModified == fileLastModified && size == fileSize;
     }
 
+    static final class Builder implements AtomicFiles.ChunkListener {
+        private long[] checkpoints = new long[16];
+        private int checkpointCount = 1;
+        private long newlines;
+        private long offset;
+        private boolean previousWasCarriageReturn;
+        private boolean loneCarriageReturn;
+        private int lastByte = -1;
+
+        @Override
+        public void accept(byte[] buffer, int read) {
+            for (int i = 0; i < read; i++) {
+                byte b = buffer[i];
+                if (previousWasCarriageReturn && b != '\n') {
+                    loneCarriageReturn = true;
+                }
+                previousWasCarriageReturn = b == '\r';
+                if (b == '\n') {
+                    newlines++;
+                    if (newlines % STRIDE == 0) {
+                        if (checkpointCount == checkpoints.length) {
+                            checkpoints = Arrays.copyOf(checkpoints, checkpointCount * 2);
+                        }
+                        checkpoints[checkpointCount++] = offset + i + 1;
+                    }
+                }
+                lastByte = b;
+            }
+            offset += read;
+        }
+
+        CodeViewLineIndex finish(long lastModified, long size) {
+            boolean lone = loneCarriageReturn || previousWasCarriageReturn;
+            long total = newlines + (size > 0 && lastByte != '\n' ? 1 : 0);
+            return new CodeViewLineIndex(lastModified, size, Arrays.copyOf(checkpoints, checkpointCount), total, !lone);
+        }
+    }
+
+    static void register(Path file, CodeViewLineIndex index) {
+        if (CACHE.size() >= Limit.CODE_VIEW_LINE_INDEX_FILES.value()) {
+            CACHE.clear();
+        }
+        CACHE.put(file.toString(), index);
+    }
+
     static CodeViewLineIndex build(Path file, long lastModified, long size) throws IOException {
-        long[] checkpoints = new long[16];
-        int checkpointCount = 1;
-        long newlines = 0;
-        long offset = 0;
-        boolean previousWasCarriageReturn = false;
-        boolean loneCarriageReturn = false;
-        int lastByte = -1;
+        Builder builder = new Builder();
         byte[] buffer = new byte[BUFFER_BYTES];
         try (InputStream in = Files.newInputStream(file)) {
             int read;
             while ((read = in.read(buffer)) > 0) {
-                for (int i = 0; i < read; i++) {
-                    byte b = buffer[i];
-                    if (previousWasCarriageReturn && b != '\n') {
-                        loneCarriageReturn = true;
-                    }
-                    previousWasCarriageReturn = b == '\r';
-                    if (b == '\n') {
-                        newlines++;
-                        if (newlines % STRIDE == 0) {
-                            if (checkpointCount == checkpoints.length) {
-                                checkpoints = Arrays.copyOf(checkpoints, checkpointCount * 2);
-                            }
-                            checkpoints[checkpointCount++] = offset + i + 1;
-                        }
-                    }
-                    lastByte = b;
-                }
-                offset += read;
+                builder.accept(buffer, read);
             }
         }
-        if (previousWasCarriageReturn) {
-            loneCarriageReturn = true;
-        }
-        long total = newlines + (size > 0 && lastByte != '\n' ? 1 : 0);
-        return new CodeViewLineIndex(lastModified, size, Arrays.copyOf(checkpoints, checkpointCount), total,
-                !loneCarriageReturn);
+        return builder.finish(lastModified, size);
     }
 
     StorageManager.CodeViewPage readPage(Path file, long startLine, int lineCount) throws IOException {

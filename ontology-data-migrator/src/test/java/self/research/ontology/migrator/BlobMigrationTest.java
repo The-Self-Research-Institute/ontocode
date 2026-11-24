@@ -189,6 +189,27 @@ class BlobMigrationTest {
     }
 
     @Test
+    void installersTaggedInTheDefaultBucketAreStoredInTheInstallerBucket() {
+        Document tagged = new Document("_id", new org.bson.types.ObjectId(ID_A)).append("filename", "Setup.exe").append("length", 5L)
+                .append("metadata", new Document("platform", "windows-x64").append("bucket", "desktop-installers"));
+        BlobFile installer = BlobFile.fromFilesDocument("fs", tagged);
+        assertEquals("fs", installer.bucket());
+        assertEquals("desktop-installers", installer.targetBucket());
+
+        Document plain = new Document("_id", new org.bson.types.ObjectId(ID_A)).append("filename", "a.owl").append("length", 5L)
+                .append("metadata", new Document("projectId", "p1"));
+        assertEquals("fs", BlobFile.fromFilesDocument("fs", plain).targetBucket());
+
+        Document otherTag = new Document("_id", new org.bson.types.ObjectId(ID_A)).append("filename", "a.owl").append("length", 5L)
+                .append("metadata", new Document("bucket", "../escape"));
+        assertEquals("fs", BlobFile.fromFilesDocument("fs", otherTag).targetBucket());
+
+        Document inPlugins = new Document("_id", new org.bson.types.ObjectId(ID_A)).append("filename", "p.vsix").append("length", 5L)
+                .append("metadata", new Document("bucket", "desktop-installers"));
+        assertEquals("plugins", BlobFile.fromFilesDocument("plugins", inPlugins).targetBucket());
+    }
+
+    @Test
     void filesDocumentsAreReadWithMetadataKeysDecoded() {
         Document d = new Document("_id", new org.bson.types.ObjectId(ID_A)).append("filename", "x.vsix").append("length", 12L)
                 .append("uploadDate", java.util.Date.from(Instant.parse("2026-01-05T10:00:00Z")))

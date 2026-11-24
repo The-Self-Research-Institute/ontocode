@@ -255,6 +255,45 @@ class OntologyMetadataServiceTest {
         verify(datasetService, never()).execSelect(anyString(), anyString());
     }
 
+    @Test
+    void theFirstMetadataLoadOnDesktopDoesNotWaitForOrQueryTheGraphStoreWhenTheLiveModelIsLoaded() throws Exception {
+        var manager = org.semanticweb.owlapi.apibinding.OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(new org.semanticweb.owlapi.model.OWLOntologyID(
+                java.util.Optional.of(org.semanticweb.owlapi.model.IRI.create("http://ex.org/live")),
+                java.util.Optional.of(org.semanticweb.owlapi.model.IRI.create("http://ex.org/live/2.0"))));
+        manager.applyChange(new org.semanticweb.owlapi.model.AddImport(ontology, manager.getOWLDataFactory()
+                .getOWLImportsDeclaration(org.semanticweb.owlapi.model.IRI.create("http://ex.org/other"))));
+        var cache = org.mockito.Mockito.mock(self.research.ontology.owlEditor.cache.ProjectOntologyCache.class);
+        when(cache.get("proj-1")).thenReturn(Optional.of(
+                new self.research.ontology.owlEditor.cache.ProjectOntologyCache.CachedOntology(ontology, null, manager, false)));
+        var desktop = org.mockito.Mockito.mock(DesktopOwlApiMutationService.class);
+        when(desktop.isAuthoritative("proj-1")).thenReturn(true);
+        ReflectionTestUtils.setField(service, "ontologyCache", cache);
+        ReflectionTestUtils.setField(service, "desktopOwlApi", desktop);
+        when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.empty());
+        var format = new org.semanticweb.owlapi.formats.RDFXMLDocumentFormat();
+        format.setPrefix("ex:", "http://ex.org/");
+        manager.setOntologyFormat(ontology, format);
+
+        Map<String, Object> metadata = service.getMetadata("proj-1");
+
+        verify(importService, never()).syncProjectToFuseki(anyString());
+        assertTrue(metadata.get("prefixes").toString().contains("http://ex.org/"));
+        verify(datasetService, never()).execSelect(anyString(), anyString());
+        assertEquals("http://ex.org/live", metadata.get("ontologyIRI"));
+        assertEquals("http://ex.org/live/2.0", metadata.get("versionIRI"));
+        assertEquals(List.of("http://ex.org/other"), metadata.get("imports"));
+    }
+
+    @Test
+    void theFirstMetadataLoadOutsideDesktopStillSyncsAndQueriesTheGraphStore() {
+        givenPublicPrefixes(Map.of("ex", "http://ex.org/"));
+
+        service.getMetadata("proj-1");
+
+        verify(importService).syncProjectToFuseki("proj-1");
+    }
+
     private void givenPublicPrefixes(Map<String, String> prefixes) {
         when(projectMetadataService.readMeta("proj-1")).thenReturn(Optional.of(
                 new java.util.HashMap<String, Object>(Map.of("prefixes", new java.util.HashMap<>(prefixes)))));

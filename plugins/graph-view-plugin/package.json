@@ -54,23 +54,18 @@
     "graphology-layout-forceatlas2": "^0.10.1",
     "graphology-layout-noverlap": "^0.4.2",
     "graphology-types": "^0.24.8",
-    "lucide-react": "^0.263.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "sigma": "^3.0.3",
-    "vis-network": "^9.1.9"
+    "lucide-react": "^1.72.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sigma": "^4.0.6",
+    "vis-network": "^10.1.5"
   },
   "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "ts-loader": "^9.4.0",
-    "typescript": "^5.0.0",
+    "typescript": "~6.0.0",
     "webpack": "^5.88.0",
-    "webpack-cli": "^5.1.0"
-  },
-  "peerDependencies": {
-    "lucide-react": "^0.263.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "webpack-cli": "^7.3.1"
   }
 }

@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.rio.RDFFormat;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
+import self.research.ontology.owlEditor.util.MissingImportStandIns;
 import org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.OBODocumentFormat;
@@ -18,7 +19,6 @@ import org.slf4j.LoggerFactory;
 
 import self.research.ontology.common.disk.DiskSpaceGate;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -182,8 +182,8 @@ final class OntologyExporter {
 
         OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         OWLOntology ontology;
-        try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
-            ontology = manager.loadOntologyFromOntologyDocument(input);
+        try {
+            ontology = MissingImportStandIns.load(manager, rdfXmlContent.getBytes(StandardCharsets.UTF_8));
         } catch (OWLOntologyCreationException e) {
             log.error("OWL API failed to parse RDF/XML for project {}: {}", projectId, e.getMessage());
             throw new IOException("Failed to parse ontology for export: " + projectId + " — " + e.getMessage(), e);
@@ -219,8 +219,8 @@ final class OntologyExporter {
         }
         OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
         OWLOntology ontology;
-        try (ByteArrayInputStream input = new ByteArrayInputStream(rdfXmlContent.getBytes(StandardCharsets.UTF_8))) {
-            ontology = manager.loadOntologyFromOntologyDocument(input);
+        try {
+            ontology = MissingImportStandIns.load(manager, rdfXmlContent.getBytes(StandardCharsets.UTF_8));
         } catch (OWLOntologyCreationException e) {
             throw new IOException("Failed to parse ontology for conversion to " + format + ": " + e.getMessage(), e);
         }

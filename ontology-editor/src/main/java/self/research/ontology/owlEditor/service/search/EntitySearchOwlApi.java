@@ -44,25 +44,31 @@ public final class EntitySearchOwlApi {
                 property, p -> OwlApiQuerySupport.getLabel(ont, IRI.create(p)));
 
         for (EntityType type : request.types()) {
-            List<EntityMatching.Candidate> candidates = new ArrayList<>();
-            for (OWLEntity entity : entities(ont, type, imports)) {
-                String iri = entity.getIRI().toString();
-                if (request.hideBuiltins() && BuiltInEntities.isBuiltIn(type, iri)) {
-                    continue;
-                }
-                EntityMatching.Evaluation evaluation = EntityMatching.evaluate(
-                        iri, annotationValues(ont, entity, imports), request, propertyLabel);
-                if (evaluation.matches().isEmpty() || (request.hideDeprecated() && evaluation.deprecated())) {
-                    continue;
-                }
-                candidates.add(new EntityMatching.Candidate(iri, evaluation.label(), evaluation.matches()));
-            }
+            List<OWLEntity> all = entities(ont, type, imports);
+            List<EntityMatching.Candidate> candidates = all.stream()
+                    .map(entity -> candidateOf(ont, entity, type, imports, request, propertyLabel))
+                    .filter(Objects::nonNull)
+                    .toList();
             EntityMatching.addSorted(out, type, candidates);
         }
 
         EntitySearchResult result = out.build();
         List<String> classHits = result.groups().get(EntityType.CLASS).stream().map(EntityHit::id).toList();
         return result.toResponse(classAncestors(ont, classHits, imports));
+    }
+
+    private static EntityMatching.Candidate candidateOf(OWLOntology ont, OWLEntity entity, EntityType type, Imports imports,
+                                                        SearchRequest request, UnaryOperator<String> propertyLabel) {
+        String iri = entity.getIRI().toString();
+        if (request.hideBuiltins() && BuiltInEntities.isBuiltIn(type, iri)) {
+            return null;
+        }
+        EntityMatching.Evaluation evaluation = EntityMatching.evaluate(
+                iri, annotationValues(ont, entity, imports), request, propertyLabel);
+        if (evaluation.matches().isEmpty() || (request.hideDeprecated() && evaluation.deprecated())) {
+            return null;
+        }
+        return new EntityMatching.Candidate(iri, evaluation.label(), evaluation.matches());
     }
 
     private List<Map<String, Object>> classAncestors(OWLOntology ont, List<String> classHits, Imports imports) {

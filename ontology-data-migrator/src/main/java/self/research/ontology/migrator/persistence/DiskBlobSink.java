@@ -31,7 +31,7 @@ public final class DiskBlobSink implements BlobSink {
 
     @Override
     public Stored store(BlobFile file, InputStream content) {
-        StoredFile stored = store.storeWithId(file.id(), file.bucket(), file.filename(), file.contentType(),
+        StoredFile stored = store.storeWithId(file.id(), file.targetBucket(), file.filename(), file.contentType(),
                 file.metadata(), file.uploadDate(), content);
         return new Stored(stored.length(), stored.sha256());
     }

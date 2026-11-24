@@ -658,8 +658,8 @@ const EntityHierarchy = ({
     return (
       <div style={{ height: total * ROW_HEIGHT, position: 'relative' }}>
         <div style={{ position: 'absolute', top: start * ROW_HEIGHT, left: 0, right: 0 }}>
-          {slice.map(({ item, level }) => (
-            <div key={item.id} style={{ height: ROW_HEIGHT, overflow: 'hidden' }}>
+          {slice.map(({ item, level }, offset) => (
+            <div key={`${start + offset}:${item.id}`} style={{ height: ROW_HEIGHT, overflow: 'hidden' }}>
               {renderRow(item, level)}
             </div>
           ))}

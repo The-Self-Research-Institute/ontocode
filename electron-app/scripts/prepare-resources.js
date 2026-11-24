@@ -34,15 +34,15 @@ const FUSEKI_MIRROR_URL = `https://www.apache.org/dyn/mirrors/mirrors.cgi?action
 const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 const TAR_LOCAL = process.platform === 'win32' ? '--force-local ' : '';
 
-const POSTGRES_VERSION = '17.11.0';
+const POSTGRES_VERSION = '17.12.0';
 const POSTGRES_MAJOR = '17';
 const POSTGRES_MAVEN_BASE = 'https://repo1.maven.org/maven2/io/zonky/test/postgres';
 const POSTGRES_BUILDS = {
-    'win32-x64':    { artifact: 'windows-amd64',  sha256: '98040fae18dd9633ff95932125b0cecf0a45a1a9312e216e2a33ad03a31d4251' },
-    'linux-x64':    { artifact: 'linux-amd64',    sha256: '0dd7b72b6f335b8ecfb355fa24c5781e8a93edd09880bb77eb52ebbf29b3e96d' },
-    'linux-arm64':  { artifact: 'linux-arm64v8',  sha256: '8b042e0ea418b1927d95399207950da0734d27fe01e29503ade3bdc464ad4c2b' },
-    'darwin-x64':   { artifact: 'darwin-amd64',   sha256: 'd464ff178e9860ba204662ac23fa547504b7fd392392ff2fb92e3fd73b5bdb64' },
-    'darwin-arm64': { artifact: 'darwin-arm64v8', sha256: 'a1c2786acb0c398f9b2d76806fc52f5dc8b222cbc8e9383a9b9702084daaf3a5' },
+    'win32-x64':    { artifact: 'windows-amd64',  sha256: 'bebadbe868ed53adb1c12033a381e41005915205ea9fedaa2349f5467fa7016b' },
+    'linux-x64':    { artifact: 'linux-amd64',    sha256: '7a8951dc117490f2d4161600836c8b1055306aff86e0a472aad55457651e5cbd' },
+    'linux-arm64':  { artifact: 'linux-arm64v8',  sha256: 'b1b880df7027b711852b6fb64d8ceb4d149e1d02bc5fc7665b6af881c64d0fdc' },
+    'darwin-x64':   { artifact: 'darwin-amd64',   sha256: 'aa639f96ffc1358a6191364835d93a8739289cee01d95ff1eab54ffe365625a8' },
+    'darwin-arm64': { artifact: 'darwin-arm64v8', sha256: '31fcf0b329fa909e050c1bc615bdb0fd6180add1043c2612f5acd5a086449c0b' },
 };
 
 const JLINK_MODULES = [
@@ -66,6 +66,7 @@ const JLINK_MODULES = [
     'jdk.httpserver',
     'jdk.jfr',
     'jdk.management',
+    'jdk.net',
     'jdk.unsupported',
     'jdk.zipfs',
 ].join(',');

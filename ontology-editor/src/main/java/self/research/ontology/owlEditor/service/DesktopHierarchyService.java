@@ -69,7 +69,7 @@ public class DesktopHierarchyService {
     public List<OntologyDto.TreeNode> topLevelClasses(String projectId, int limit, int offset, Imports importsScope) {
         return ontologyCache.get(projectId)
             .map(c -> c.assertedHierarchyOnly()
-                    ? snapshotBuilder.buildTopLevelAsserted(c.ontology(), limit, offset, importsScope)
+                    ? DesktopChildrenIndex.topLevel(snapshotBuilder, projectId, c.ontology(), limit, offset, importsScope)
                     : snapshotBuilder.buildTopLevel(c.ontology(), c.reasoner(), limit, offset, importsScope))
             .orElse(Collections.emptyList());
     }
@@ -81,7 +81,7 @@ public class DesktopHierarchyService {
     public int topLevelClassTotal(String projectId, Imports importsScope) {
         return ontologyCache.get(projectId)
             .map(c -> c.assertedHierarchyOnly()
-                    ? snapshotBuilder.countTopLevelAsserted(c.ontology(), importsScope)
+                    ? DesktopChildrenIndex.topLevelTotal(snapshotBuilder, projectId, c.ontology(), importsScope)
                     : snapshotBuilder.countTopLevelCandidates(c.ontology(), c.reasoner(), importsScope))
             .orElse(0);
     }
@@ -102,7 +102,7 @@ public class DesktopHierarchyService {
         return ontologyCache.get(projectId)
             .map(c -> {
                 OWLReasoner r = c.structuralReasoner();
-                return snapshotBuilder.buildChildren(c.ontology(), r, parentIri, limit, offset, importsScope);
+                return DesktopChildrenIndex.children(snapshotBuilder, projectId, c.ontology(), r, parentIri, limit, offset, importsScope);
             })
             .orElse(Collections.emptyList());
     }

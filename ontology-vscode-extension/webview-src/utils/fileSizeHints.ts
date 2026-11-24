@@ -6,8 +6,20 @@ export function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function fileImportEtaHint(fileSizeBytes: number): string {
+export function loadingTimeHint(desktop: boolean): string {
+  return desktop
+    ? "Small files: under a minute · Large (100MB+): about 2–4 minutes"
+    : "Small files: ~1 min · Large (100MB+): 15–40 min";
+}
+
+export function fileImportEtaHint(fileSizeBytes: number, desktop = false): string {
   const mb = fileSizeBytes / (1024 * 1024);
+  if (desktop) {
+    if (mb < 5) return "Usually a few seconds";
+    if (mb < 50) return "Usually under a minute";
+    if (mb < 150) return "Typically 1–2 minutes";
+    return "Large file — about 2–4 minutes. The class tree opens when it is ready";
+  }
   if (mb < 5) return "Usually under 1 minute";
   if (mb < 50) return "Typically 1–5 minutes";
   if (mb < 150) return "Typically 5–15 minutes — you can browse as soon as import completes";
