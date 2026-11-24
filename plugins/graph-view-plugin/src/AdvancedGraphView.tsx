@@ -87,6 +87,7 @@ import { GraphToolbar, RELATIONSHIP_VISIBILITY_CONTROLS } from './components/Gra
 import { WebGLGraphView, buildBenchmarkData, type WebGLCameraHandle, type NetworkViewState, type NetworkFocusState } from './renderers/WebGLGraphView';
 import { isWebGLAvailable } from './renderers/graphAdapter';
 import { announceGraphMutation, installGraphCacheInvalidation, subscribeGraphRefresh } from './services/mutationRefresh';
+import { clearEntityDetailsCache } from './hooks/useEntityDetails';
 
 interface D3Node extends OntologyNode, d3.SimulationNodeDatum {
   x?: number;
@@ -624,6 +625,23 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   }, [editMode]);
   const [showPropertyPanel, setShowPropertyPanel] = useState(() => loadUiPrefs()?.showPropertyPanel ?? false);
   const [selectedNodeInfo, setSelectedNodeInfo] = useState<OntologyNode | null>(null);
+  const selectEdgePropertyRef = useRef<(edge: { id: string; metadata?: Record<string, any> }) => void>(() => {});
+  selectEdgePropertyRef.current = (edge) => {
+    const source = (edge as any)?.metadata ? edge : allEdges.find(e => e.id === edge?.id);
+    const propertyIri = (source as any)?.metadata?.propertyIri;
+    if (!propertyIri) return;
+    const found = allNodes.find(n => n.id === propertyIri || (n as any).uri === propertyIri);
+    const propertyType = (source as any)?.metadata?.propertyType === 'dataProperty' ? 'dataProperty' : 'objectProperty';
+    const propertyNode = found ?? ({
+      id: propertyIri,
+      uri: propertyIri,
+      label: (source as any)?.label || propertyIri.split(/[#/]/).pop() || propertyIri,
+      type: propertyType,
+      metadata: {}
+    } as unknown as OntologyNode);
+    setSelectedNodeInfo(propertyNode);
+    setShowPropertyPanel(true);
+  };
   
   const initialViewMemory = useMemo(() => loadLastView(projectId), [projectId]);
   const isFirstEverOpen = initialViewMemory === null;
@@ -1085,13 +1103,15 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
   );
 
   useEffect(() => {
-    const nodeIds = new Set(allNodes.map(n => n.id));
+    const nodeById = new Map(allNodes.map(n => [n.id, n] as const));
     setSelectedNodes(prev => {
       if (prev.size === 0) return prev;
-      const kept = new Set(Array.from(prev).filter(id => nodeIds.has(id)));
+      const kept = new Set(Array.from(prev).filter(id => nodeById.has(id)));
       return kept.size === prev.size ? prev : kept;
     });
-    setSelectedNodeInfo(prev => (prev && !nodeIds.has(prev.id) ? null : prev));
+    setSelectedNodeInfo(prev => (prev ? nodeById.get(prev.id) ?? null : prev));
+    setHierarchyRootNode(prev => (prev ? nodeById.get(prev.id) ?? prev : prev));
+    clearEntityDetailsCache();
   }, [allNodes]);
 
   useEffect(() => {
@@ -2927,6 +2947,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('click', (event, d) => {
         event.stopPropagation();
         setSelectedEdgeId(d.id);
+        selectEdgePropertyRef.current(d);
         onEdgeClickRef.current?.(d.id);
       })
       .on('mouseover', (event, d) => {
@@ -3058,6 +3079,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
       .on('click', (event, d) => {
         event.stopPropagation();
         setSelectedEdgeId(d.id);
+        selectEdgePropertyRef.current(d);
         onEdgeClickRef.current?.(d.id);
       })
       .on('mouseover', (event, d) => {
@@ -4197,6 +4219,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
     let rafId: number | null = null;
     let ticking = false;
+    let hitAreaRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     let tickCount = 0;
     const updateInterval = nodeCount > 5000 ? 5 : nodeCount > 2000 ? 4 : nodeCount > 100 ? 3 : 2;
 
@@ -4455,6 +4478,11 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
 
 
           updateEdgePaths(false);
+          if (hitAreaRefreshTimer) clearTimeout(hitAreaRefreshTimer);
+          hitAreaRefreshTimer = setTimeout(() => {
+            hitAreaRefreshTimer = null;
+            updateEdgePaths(true);
+          }, 150);
 
           if ((visualizationType !== 'vowl' && settings.showLabels !== false) || vowlChipsAlwaysVisible) {
             updateLinkLabelPositions();
@@ -4554,6 +4582,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
         const original = resolveVowlClone(d);
         setSelectedNodes(new Set([d.id]));
         setSelectedNodeInfo(original);
+        setShowPropertyPanel(true);
         if (vowlOptions.isolateOnSelect && visualizationType === 'vowl') {
           enterFocusMode(original.id);
         }
@@ -4906,6 +4935,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     }
     return () => {
       simulation.stop();
+      if (hitAreaRefreshTimer) clearTimeout(hitAreaRefreshTimer);
       if (entranceTimeout) clearTimeout(entranceTimeout);
       if (smoothWheelRaf != null) cancelAnimationFrame(smoothWheelRaf);
     };
@@ -6753,10 +6783,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
     );
   }, [nodeRelationsMap, allNodes, allEdges, expandedNodeIds, selectedNodes, handleExpandParents, handleDialogExpand, startCreateClassAction, startDeleteClassAction, canEdit, classActionLoading]);
 
-  const hierarchyNavigatorBody = useMemo(() => {
-    if (!hierarchyRootNode) return null;
-    return (
-      <>
+  const hierarchyNavigatorHeader = hierarchyRootNode ? (
         <div
           style={{
             padding: '8px 12px',
@@ -6771,7 +6798,12 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             {hierarchyRootNode.id}
           </div>
         </div>
+  ) : null;
 
+  const hierarchyNavigatorBody = useMemo(() => {
+    if (!hierarchyRootNode) return null;
+    return (
+      <>
         <div
           style={{
             flex: 1,
@@ -7151,10 +7183,28 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
                 onNodeClick={(id) => {
                   const found = allNodes.find(n => n.id === id);
                   setSelectedNodes(new Set([id]));
-                  if (found) setSelectedNodeInfo(found);
+                  if (found) {
+                    setSelectedNodeInfo(found);
+                    setShowPropertyPanel(true);
+                    if (found.type === 'class') {
+                      setHierarchyRootNode(found);
+                    }
+                  }
+                }}
+                onEdgeClick={(edgeId) => {
+                  setSelectedEdgeId(edgeId);
+                  selectEdgePropertyRef.current({ id: edgeId });
+                }}
+                onStageClick={() => {
+                  setSelectedNodes(new Set());
+                  setSelectedEdgeId(null);
+                  setSelectedNodeInfo(null);
                 }}
                 onNodeRightClick={(id, pos) => {
                   setContextMenu({ visible: true, x: pos.x, y: pos.y, nodeId: id });
+                  const found = allNodes.find(n => n.id === id);
+                  setSelectedNodes(new Set([id]));
+                  if (found) setSelectedNodeInfo(found);
                 }}
                 hasNodeChildren={(id) => nodeRelationsMap.get(id)?.hasChildren ?? false}
                 isNodeExpanded={(id) => expandedNodeIds.has(id)}
@@ -7768,6 +7818,8 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
             filters={filters}
             onFilterChange={(newFilters) => setFilters(newFilters)}
             projectId={projectId}
+            draftScope={draftScope}
+            isExternalNode={isExternalNode}
             viewMode={visualizationType}
             showFilterSidebar={showFilters}
             showSettings={showSettings}
@@ -7953,6 +8005,7 @@ export const AdvancedGraphView: React.FC<AdvancedGraphViewProps> = ({
               </div>
             </div>
 
+            {!isDialogMinimized && hierarchyNavigatorHeader}
             {!isDialogMinimized && hierarchyNavigatorBody}
             {!isDialogMinimized && (
               <div

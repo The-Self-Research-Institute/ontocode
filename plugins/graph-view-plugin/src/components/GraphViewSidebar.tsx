@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { OntologyNode as BaseOntologyNode, OntologyEdge } from '../types';
 import { ClassHierarchyPanel } from './ClassHierarchyPanel';
+import { SelectionDetailsCard } from './SelectionDetailsCard';
 import { safeHref } from '../utils/safeUrl';
 
 interface OntologyNode extends BaseOntologyNode {
@@ -83,6 +84,8 @@ interface GraphViewSidebarProps {
   hierarchyNavigatorLabel?: string;
   onCloseHierarchyNavigator?: () => void;
   onPopOutHierarchyNavigator?: () => void;
+  draftScope?: boolean;
+  isExternalNode?: (node: OntologyNode) => boolean;
 }
 
 export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
@@ -123,9 +126,16 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
   hierarchyNavigatorContent,
   hierarchyNavigatorLabel,
   onCloseHierarchyNavigator,
-  onPopOutHierarchyNavigator
+  onPopOutHierarchyNavigator,
+  draftScope = false,
+  isExternalNode
 }) => {
   const [sidebarMode, setSidebarMode] = useState<'entities' | 'hierarchy'>('hierarchy');
+  const lastTreeSelectionRef = useRef<string | null>(null);
+  const selectedIsProperty = selectedNode?.type === 'objectProperty' || selectedNode?.type === 'dataProperty';
+  if (!selectedNode) lastTreeSelectionRef.current = null;
+  else if (!selectedIsProperty) lastTreeSelectionRef.current = selectedNode.id;
+  const treeSelectedId = selectedIsProperty ? lastTreeSelectionRef.current : (selectedNode?.id ?? null);
 
   // Auto-switch to the Hierarchy tab when a class is newly focused for the
   // navigator — onNodeSelect (which drives hierarchyNavigatorContent) is also
@@ -501,7 +511,7 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
             <ClassHierarchyPanel
               nodes={nodes}
               edges={edges}
-              selectedNodeId={selectedNode?.id ?? null}
+              selectedNodeId={treeSelectedId}
               onSelect={(node) => onNodeSelect(node)}
               onActivate={(node) => {
                 onNodeSelect(node);
@@ -520,6 +530,27 @@ export const GraphViewSidebar: React.FC<GraphViewSidebarProps> = ({
               readonly
             />
           </div>
+          {selectedNode && (
+            <div
+              style={{
+                flexShrink: 0,
+                maxHeight: hierarchyNavigatorContent ? '40%' : '55%',
+                overflow: 'auto',
+                display: 'flex',
+                flexDirection: 'column'
+              }}
+            >
+              <SelectionDetailsCard
+                node={selectedNode}
+                nodes={nodes}
+                edges={edges}
+                projectId={projectId}
+                draft={draftScope}
+                isExternalNode={isExternalNode}
+                onSelectNode={(node) => onNodeSelect(node)}
+              />
+            </div>
+          )}
           {hierarchyNavigatorContent && (
             <div
               style={{
