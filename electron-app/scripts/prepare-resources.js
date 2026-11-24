@@ -12,6 +12,7 @@ const vcRuntime     = require('./vcRuntime');
 const swrlJar       = require('./swrlJar');
 const peArch        = require('./peArch');
 const pgArm64       = require('./pgArm64Source');
+const pgMarker      = require('./postgresBuildMarker');
 
 const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
@@ -343,6 +344,7 @@ async function copyPostgres() {
     }
     if (fs.existsSync(path.join(destDir, 'bin', exe)) && fs.existsSync(path.join(destDir, 'PG_MAJOR'))
         && fs.readFileSync(path.join(destDir, 'PG_MAJOR'), 'utf8').trim() === POSTGRES_MAJOR
+        && pgMarker.matches(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, POSTGRES_VERSION))
         && postgresPreparedForThisArch(destDir)) {
         console.log(`  ✓  postgres/${TARGET_PLATFORM} already prepared`);
     } else {
@@ -391,6 +393,7 @@ async function downloadPostgres(source, destDir) {
         execFileSync('tar', ['-xJf', txz, '-C', path.relative(extractDir, destDir).replace(/\\/g, '/')],
             { stdio: 'inherit', timeout: 300_000, cwd: extractDir });
         fs.writeFileSync(path.join(destDir, 'PG_MAJOR'), POSTGRES_MAJOR, 'utf8');
+        pgMarker.write(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, POSTGRES_VERSION));
         console.log(`  ✓  Installed PostgreSQL ${POSTGRES_VERSION} into postgres/${TARGET_PLATFORM}`);
         return true;
     } catch (err) {
