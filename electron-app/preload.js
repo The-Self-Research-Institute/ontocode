@@ -120,10 +120,12 @@ async function exportOntologyViaJob(projectId, format, filename) {
     triggerBlobDownload(blob, safeName);
 }
 
+function dispatchImportStatus(status) {
+    window.dispatchEvent(pageMessageEvent({ data: { type: 'importStatusUpdate', status } }));
+}
+
 function dispatchImportCompleted(projectId) {
-    window.dispatchEvent(new CustomEvent('importStatusUpdate', {
-        detail: { type: 'IMPORT_COMPLETED', status: 'COMPLETED', projectId, progress: 100 }
-    }));
+    dispatchImportStatus({ type: 'IMPORT_COMPLETED', status: 'COMPLETED', projectId, progress: 100 });
 }
 
 async function checkImportStatus(projectId) {
@@ -136,10 +138,11 @@ async function checkImportStatus(projectId) {
         if (res.ok) {
             const data = await res.json();
             const status = data.status || 'NOT_IN_QUEUE';
-            if (status === 'COMPLETED' || status === 'NOT_IN_QUEUE') return 'done';
+            if (status === 'COMPLETED') return 'done';
             if (status === 'FAILED') return 'failed';
-
-            return { state: 'progress', progress: data.progress, message: data.statusMessage };
+            if (status !== 'NOT_IN_QUEUE') {
+                return { state: 'progress', progress: data.progress, message: data.statusMessage };
+            }
         }
     } catch (_) {}
 
@@ -183,9 +186,7 @@ function startImportPoller(projectId) {
     checkImportStatus(projectId).then(result => {
         if (result === 'done') { dispatchImportCompleted(projectId); return; }
         if (result === 'failed') {
-            window.dispatchEvent(new CustomEvent('importStatusUpdate', {
-                detail: { type: 'IMPORT_FAILED', status: 'FAILED', projectId }
-            }));
+            dispatchImportStatus({ type: 'IMPORT_FAILED', status: 'FAILED', projectId });
             return;
         }
 
@@ -207,30 +208,24 @@ function schedulePoller(projectId) {
                 clearInterval(poll);
                 _importPollers.delete(projectId);
             } else if (result === 'failed') {
-                window.dispatchEvent(new CustomEvent('importStatusUpdate', {
-                    detail: { type: 'IMPORT_FAILED', status: 'FAILED', projectId }
-                }));
+                dispatchImportStatus({ type: 'IMPORT_FAILED', status: 'FAILED', projectId });
                 clearInterval(poll);
                 _importPollers.delete(projectId);
             } else if (result && typeof result === 'object' && result.state === 'progress') {
 
-                window.dispatchEvent(new CustomEvent('importStatusUpdate', {
-                    detail: {
-                        type: 'IMPORT_PROGRESS', status: 'PROCESSING', projectId,
-                        progress: result.progress || 0,
-                        metadata: { message: result.message || 'Importing…' }
-                    }
-                }));
+                dispatchImportStatus({
+                    type: 'IMPORT_PROGRESS', status: 'PROCESSING', projectId,
+                    progress: result.progress || 0,
+                    metadata: { message: result.message || 'Importing…' }
+                });
             } else if (ticks > 400) {
 
-                window.dispatchEvent(new CustomEvent('importStatusUpdate', {
-                    detail: {
-                        type: 'IMPORT_FAILED',
-                        status: 'FAILED',
-                        projectId,
-                        statusMessage: 'Import timed out after 10 minutes. The file may be too large or the editor is busy.',
-                    },
-                }));
+                dispatchImportStatus({
+                    type: 'IMPORT_FAILED',
+                    status: 'FAILED',
+                    projectId,
+                    statusMessage: 'Import timed out after 10 minutes. The file may be too large or the editor is busy.',
+                });
                 clearInterval(poll);
                 _importPollers.delete(projectId);
             }
@@ -664,12 +659,6 @@ case 'uploadOntologyContent':
             case 'getQueueStatus':
 
                 if (message.projectId) startImportPoller(message.projectId);
-                window.dispatchEvent(pageMessageEvent({
-                    data: {
-                        type: 'queueStatusUpdate',
-                        status: { projectId: message.projectId, status: 'IN_PROGRESS', position: 1 },
-                    }
-                }));
                 break;
 
             case 'apiGet':

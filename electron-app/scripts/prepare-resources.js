@@ -12,6 +12,8 @@ const vcRuntime     = require('./vcRuntime');
 const swrlJar       = require('./swrlJar');
 const peArch        = require('./peArch');
 const pgArm64       = require('./pgArm64Source');
+const pgMarker      = require('./postgresBuildMarker');
+const jreModules    = require('./jreModules');
 
 const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
@@ -130,6 +132,7 @@ function restoreJreFromCache(marker, destDir, javaBinRelPath) {
     const cacheDir = jreCacheDir(marker);
     const cachedJavaBin = path.join(cacheDir, javaBinRelPath);
     if (!fs.existsSync(cachedJavaBin)) return false;
+    if (jreModules.missingModules(cacheDir, JLINK_MODULES.split(',')).length > 0) return false;
 
     removeDir(destDir);
     fs.cpSync(cacheDir, destDir, { recursive: true });
@@ -343,6 +346,7 @@ async function copyPostgres() {
     }
     if (fs.existsSync(path.join(destDir, 'bin', exe)) && fs.existsSync(path.join(destDir, 'PG_MAJOR'))
         && fs.readFileSync(path.join(destDir, 'PG_MAJOR'), 'utf8').trim() === POSTGRES_MAJOR
+        && pgMarker.matches(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, POSTGRES_VERSION))
         && postgresPreparedForThisArch(destDir)) {
         console.log(`  ✓  postgres/${TARGET_PLATFORM} already prepared`);
     } else {
@@ -391,6 +395,7 @@ async function downloadPostgres(source, destDir) {
         execFileSync('tar', ['-xJf', txz, '-C', path.relative(extractDir, destDir).replace(/\\/g, '/')],
             { stdio: 'inherit', timeout: 300_000, cwd: extractDir });
         fs.writeFileSync(path.join(destDir, 'PG_MAJOR'), POSTGRES_MAJOR, 'utf8');
+        pgMarker.write(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, POSTGRES_VERSION));
         console.log(`  ✓  Installed PostgreSQL ${POSTGRES_VERSION} into postgres/${TARGET_PLATFORM}`);
         return true;
     } catch (err) {
@@ -458,6 +463,9 @@ async function bundleJre() {
             removeDir(JRE_DIR);
         } else if (major < REQUIRED_JRE_MAJOR) {
             console.warn(`  ⚠  Existing bundled JRE is Java ${major}, need >=${REQUIRED_JRE_MAJOR} — re-creating`);
+            removeDir(JRE_DIR);
+        } else if (jreModules.missingModules(JRE_DIR, JLINK_MODULES.split(',')).length > 0) {
+            console.warn(`  ⚠  Existing bundled JRE lacks ${jreModules.missingModules(JRE_DIR, JLINK_MODULES.split(',')).join(', ')} — re-creating`);
             removeDir(JRE_DIR);
         } else {
             console.log(`  ✓  Bundled JRE already present: Java ${major}`);
@@ -610,6 +618,9 @@ async function bundleSwrlJre() {
             removeDir(JRE17_DIR);
         } else if (major !== 17) {
             console.warn(`  ⚠  Existing bundled SWRL JRE is Java ${major}, need exactly 17 — re-creating`);
+            removeDir(JRE17_DIR);
+        } else if (jreModules.missingModules(JRE17_DIR, JLINK_MODULES.split(',')).length > 0) {
+            console.warn(`  ⚠  Existing bundled SWRL JRE lacks ${jreModules.missingModules(JRE17_DIR, JLINK_MODULES.split(',')).join(', ')} — re-creating`);
             removeDir(JRE17_DIR);
         } else {
             console.log(`  ✓  Bundled SWRL JRE already present: Java ${major}`);

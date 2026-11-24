@@ -7,6 +7,7 @@ import self.research.ontology.owlEditor.hierarchy.HierarchySnapshotBuilder;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyChange;
 import org.semanticweb.owlapi.model.OWLOntologyChangeListener;
+import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.parameters.Imports;
 
 import java.lang.ref.WeakReference;
@@ -26,26 +27,20 @@ final class DesktopChildrenIndex {
 
     private static final class Holder implements OWLOntologyChangeListener {
         private final WeakReference<OWLOntology> owner;
+        private final WeakReference<OWLOntologyManager> manager;
         private final AtomicLong version = new AtomicLong();
         private final Map<Imports, Snapshot> snapshots = new ConcurrentHashMap<>();
 
-        Holder(OWLOntology ontology) {
+        Holder(OWLOntology ontology, OWLOntologyManager manager) {
             this.owner = new WeakReference<>(ontology);
+            this.manager = new WeakReference<>(manager);
         }
 
         @Override
         public void ontologiesChanged(List<? extends OWLOntologyChange> changes) {
-            OWLOntology ontology = owner.get();
-            if (ontology == null) {
-                return;
-            }
-            for (OWLOntologyChange change : changes) {
-                OWLOntology changed = change.getOntology();
-                if (changed == ontology || ontology.importsClosure().anyMatch(o -> o == changed)) {
-                    version.incrementAndGet();
-                    snapshots.clear();
-                    return;
-                }
+            if (owner.get() != null && !changes.isEmpty()) {
+                version.incrementAndGet();
+                snapshots.clear();
             }
         }
     }
@@ -93,11 +88,12 @@ final class DesktopChildrenIndex {
         if (holder != null && holder.owner.get() == ontology) {
             return holder;
         }
+        OWLOntologyManager manager = ontology.getOWLOntologyManager();
         if (holder != null) {
             drop(holder);
         }
-        holder = new Holder(ontology);
-        ontology.getOWLOntologyManager().addOntologyChangeListener(holder);
+        holder = new Holder(ontology, manager);
+        manager.addOntologyChangeListener(holder);
         HOLDERS.put(projectId, holder);
         while (HOLDERS.size() > MAX_PROJECTS) {
             String eldest = HOLDERS.keySet().iterator().next();
@@ -107,9 +103,9 @@ final class DesktopChildrenIndex {
     }
 
     private static void drop(Holder holder) {
-        OWLOntology ontology = holder.owner.get();
-        if (ontology != null) {
-            ontology.getOWLOntologyManager().removeOntologyChangeListener(holder);
+        OWLOntologyManager manager = holder.manager.get();
+        if (manager != null) {
+            manager.removeOntologyChangeListener(holder);
         }
         holder.snapshots.clear();
     }
