@@ -96,6 +96,34 @@ class DesktopChildrenIndexTest {
     }
 
     @Test
+    void anOntologyRemovedFromItsManagerDoesNotBreakTheNextModelForTheProject() throws Exception {
+        OWLOntology first = ontologyWith("B", "A");
+        assertEquals(List.of("B"), children(first, "A"));
+        manager.removeOntology(first);
+
+        OWLOntology second = ontologyWith("C", "A");
+        sub(second, "D", "A");
+
+        assertEquals(List.of("C", "D"), children(second, "A"));
+        assertEquals(1, DesktopChildrenIndex.topLevelTotal(builder, project, second, Imports.EXCLUDED));
+    }
+
+    @Test
+    void aModelFromANewManagerReplacesOneWhoseManagerLetItGo() throws Exception {
+        OWLOntology first = ontologyWith("B", "A");
+        assertEquals(1, DesktopChildrenIndex.topLevelTotal(builder, project, first, Imports.EXCLUDED));
+        manager.removeOntology(first);
+
+        OWLOntologyManager reloaded = OWLManager.createOWLOntologyManager();
+        OWLOntology second = reloaded.createOntology(IRI.create("http://ex.org/t" + UUID.randomUUID()));
+        reloaded.addAxiom(second, df.getOWLSubClassOfAxiom(cls("C"), cls("A")));
+        reloaded.addAxiom(second, df.getOWLSubClassOfAxiom(cls("E"), cls("D")));
+
+        assertEquals(2, DesktopChildrenIndex.topLevelTotal(builder, project, second, Imports.EXCLUDED));
+        assertEquals(2, DesktopChildrenIndex.topLevel(builder, project, second, 100, 0, Imports.EXCLUDED).size());
+    }
+
+    @Test
     void topLevelAndTotalFollowEdits() throws Exception {
         ontology = ontologyWith("B", "A");
         var reasoner = new StructuralReasonerFactory().createNonBufferingReasoner(ontology);
