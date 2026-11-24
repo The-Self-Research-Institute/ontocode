@@ -47,7 +47,7 @@
         <spring-cloud.version>2025.0.3</spring-cloud.version>
 
         <!-- OWLAPI 5.5.0 for main services (Java 21 compatible) -->
-        <owlapi.version>5.5.0</owlapi.version>
+        <owlapi.version>5.5.1</owlapi.version>
         <!-- SWRLAPI versions - only used by ontology-swrl module which has its own OWLAPI -->
         <swrlapi.version>2.1.4</swrlapi.version>
         <lombok.version>1.18.48</lombok.version>
@@ -158,7 +158,7 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.6.1</version>
                     <configuration>
-                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+                        <argLine>@{argLine} -Djdk.net.URLClassPath.disableClassPathURLCheck=true -Dhttp://apache.org/xml/features/disallow-doctype-decl=false</argLine>
                     </configuration>
                 </plugin>
                 <plugin>

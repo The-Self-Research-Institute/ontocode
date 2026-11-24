@@ -312,7 +312,6 @@
     "buffer": "^6.0.3",
     "copy-webpack-plugin": "^14.0.0",
     "cross-env": "^10.1.0",
-    "crypto-browserify": "^3.12.1",
     "css-loader": "^7.1.2",
     "css-minimizer-webpack-plugin": "^8.0.0",
     "eslint": "^10.15.0",
@@ -348,5 +347,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/The-Self-Research-Institute/ontocode.git"
+  },
+  "overrides": {
+    "minimatch@^10.0.0": "11.0.1"
   }
 }

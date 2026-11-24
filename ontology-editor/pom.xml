@@ -18,14 +18,33 @@
     
     <properties>
         <java.version>21</java.version>
-        <rdf4j.version>4.3.7</rdf4j.version>
+        <rdf4j.version>5.3.2</rdf4j.version>
         <jena.version>6.2.0</jena.version>
-        <owlapi.version>5.5.0</owlapi.version>
+        <owlapi.version>5.5.1</owlapi.version>
         <git.commit>unknown</git.commit>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.rdf4j</groupId>
+                <artifactId>rdf4j-bom</artifactId>
+                <version>${rdf4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.rdf4j</groupId>
+                <artifactId>rdf4j-rio-hdt</artifactId>
+                <version>${rdf4j.version}</version>
+            </dependency>
             <dependency>
                 <groupId>io.zonky.test.postgres</groupId>
                 <artifactId>embedded-postgres-binaries-bom</artifactId>
