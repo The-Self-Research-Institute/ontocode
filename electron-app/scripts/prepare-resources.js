@@ -13,6 +13,7 @@ const swrlJar       = require('./swrlJar');
 const peArch        = require('./peArch');
 const pgArm64       = require('./pgArm64Source');
 const pgMarker      = require('./postgresBuildMarker');
+const jreModules    = require('./jreModules');
 
 const REPO_ROOT  = path.resolve(__dirname, '..', '..');
 const RESOURCES  = path.resolve(__dirname, '..', 'resources', 'backend');
@@ -131,6 +132,7 @@ function restoreJreFromCache(marker, destDir, javaBinRelPath) {
     const cacheDir = jreCacheDir(marker);
     const cachedJavaBin = path.join(cacheDir, javaBinRelPath);
     if (!fs.existsSync(cachedJavaBin)) return false;
+    if (jreModules.missingModules(cacheDir, JLINK_MODULES.split(',')).length > 0) return false;
 
     removeDir(destDir);
     fs.cpSync(cacheDir, destDir, { recursive: true });
@@ -462,6 +464,9 @@ async function bundleJre() {
         } else if (major < REQUIRED_JRE_MAJOR) {
             console.warn(`  ⚠  Existing bundled JRE is Java ${major}, need >=${REQUIRED_JRE_MAJOR} — re-creating`);
             removeDir(JRE_DIR);
+        } else if (jreModules.missingModules(JRE_DIR, JLINK_MODULES.split(',')).length > 0) {
+            console.warn(`  ⚠  Existing bundled JRE lacks ${jreModules.missingModules(JRE_DIR, JLINK_MODULES.split(',')).join(', ')} — re-creating`);
+            removeDir(JRE_DIR);
         } else {
             console.log(`  ✓  Bundled JRE already present: Java ${major}`);
             return;
@@ -613,6 +618,9 @@ async function bundleSwrlJre() {
             removeDir(JRE17_DIR);
         } else if (major !== 17) {
             console.warn(`  ⚠  Existing bundled SWRL JRE is Java ${major}, need exactly 17 — re-creating`);
+            removeDir(JRE17_DIR);
+        } else if (jreModules.missingModules(JRE17_DIR, JLINK_MODULES.split(',')).length > 0) {
+            console.warn(`  ⚠  Existing bundled SWRL JRE lacks ${jreModules.missingModules(JRE17_DIR, JLINK_MODULES.split(',')).join(', ')} — re-creating`);
             removeDir(JRE17_DIR);
         } else {
             console.log(`  ✓  Bundled SWRL JRE already present: Java ${major}`);
