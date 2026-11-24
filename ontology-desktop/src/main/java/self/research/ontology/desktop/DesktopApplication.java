@@ -11,6 +11,7 @@ import self.research.ontology.auth.AuthApplication;
 import self.research.ontology.owlEditor.OwlEditorApplication;
 import self.research.ontology.owlEditor.controller.DesktopController;
 import self.research.ontology.owlEditor.controller.ProjectController;
+import self.research.ontology.owlEditor.util.RdfXmlDefaults;
 import self.research.ontology.plugins.OntologyPluginServiceApplication;
 import self.research.ontology.plugins.config.SecurityConfig;
 
@@ -38,6 +39,7 @@ import self.research.ontology.plugins.config.SecurityConfig;
 public class DesktopApplication {
 
     public static void main(String[] args) {
+        RdfXmlDefaults.apply();
         SpringApplication app = new SpringApplication(DesktopApplication.class);
         app.setBeanNameGenerator(new FullyQualifiedAnnotationBeanNameGenerator());
         app.run(args);
