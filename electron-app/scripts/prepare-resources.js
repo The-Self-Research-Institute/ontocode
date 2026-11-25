@@ -36,10 +36,19 @@ const FUSEKI_MIRROR_URL = `https://www.apache.org/dyn/mirrors/mirrors.cgi?action
 const FUSEKI_ARCHIVE_URL = `https://archive.apache.org/dist/jena/binaries/apache-jena-fuseki-${FUSEKI_VERSION}.tar.gz`;
 const TAR_LOCAL = process.platform === 'win32' ? '--force-local ' : '';
 
-const POSTGRES_VERSION = '17.12.0';
-const POSTGRES_MAJOR = '17';
+const POSTGRES_VERSION = '19.0.0';
+const POSTGRES_MAJOR = '19';
 const POSTGRES_MAVEN_BASE = 'https://repo1.maven.org/maven2/io/zonky/test/postgres';
 const POSTGRES_BUILDS = {
+    'win32-x64':    { artifact: 'windows-amd64',  sha256: '538f61803fb19e959f57831af9e81102ba0e41f782387cfc60a8e55e2fec1bb1' },
+    'linux-x64':    { artifact: 'linux-amd64',    sha256: '61dda90676c519d27ad2e0fa080e1ff94b16b01871337cbaf5eb446e16bda147' },
+    'linux-arm64':  { artifact: 'linux-arm64v8',  sha256: '2550ff0550957ba530ae638f77d32444883d5e3fcdfc54ea315c8014b5c87534' },
+    'darwin-x64':   { artifact: 'darwin-amd64',   sha256: '99a17c697cd3be22e3ea40fcabc5a1453c79889bef4620f4f3a85dcb3de12e2c' },
+    'darwin-arm64': { artifact: 'darwin-arm64v8', sha256: 'b1792b1bf3a8e36bd245e14095cdabb34eae93d8fe55e27a2d44938846efe1e7' },
+};
+const POSTGRES_LEGACY_VERSION = '17.12.0';
+const POSTGRES_LEGACY_MAJOR = '17';
+const POSTGRES_LEGACY_BUILDS = {
     'win32-x64':    { artifact: 'windows-amd64',  sha256: 'bebadbe868ed53adb1c12033a381e41005915205ea9fedaa2349f5467fa7016b' },
     'linux-x64':    { artifact: 'linux-amd64',    sha256: '7a8951dc117490f2d4161600836c8b1055306aff86e0a472aad55457651e5cbd' },
     'linux-arm64':  { artifact: 'linux-arm64v8',  sha256: 'b1b880df7027b711852b6fb64d8ceb4d149e1d02bc5fc7665b6af881c64d0fdc' },
@@ -337,6 +346,7 @@ async function copyPostgres() {
     if (key === 'win32-arm64') {
         if (!(await copyPostgresWinArm64(destDir))) return false;
         await buildPostgresClusterTemplate(destDir);
+        removeDir(legacyPostgresDir());
         return true;
     }
     const source = POSTGRES_BUILDS[key];
@@ -344,32 +354,57 @@ async function copyPostgres() {
         console.error(`  ✗  No bundled PostgreSQL build for ${key}`);
         return false;
     }
-    if (fs.existsSync(path.join(destDir, 'bin', exe)) && fs.existsSync(path.join(destDir, 'PG_MAJOR'))
-        && fs.readFileSync(path.join(destDir, 'PG_MAJOR'), 'utf8').trim() === POSTGRES_MAJOR
-        && pgMarker.matches(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, POSTGRES_VERSION))
-        && postgresPreparedForThisArch(destDir)) {
+    if (postgresAlreadyPrepared(destDir, exe, POSTGRES_MAJOR, POSTGRES_VERSION)) {
         console.log(`  ✓  postgres/${TARGET_PLATFORM} already prepared`);
     } else {
-        const ok = await downloadPostgres(source, destDir);
+        const ok = await downloadPostgres(source, destDir, POSTGRES_VERSION, POSTGRES_MAJOR);
         if (!ok) return false;
     }
     await buildPostgresClusterTemplate(destDir);
-    return true;
+    return copyLegacyPostgres();
 }
 
-async function downloadPostgres(source, destDir) {
-    const jarName = `embedded-postgres-binaries-${source.artifact}-${POSTGRES_VERSION}.jar`;
+function postgresAlreadyPrepared(destDir, exe, major, version) {
+    return fs.existsSync(path.join(destDir, 'bin', exe)) && fs.existsSync(path.join(destDir, 'PG_MAJOR'))
+        && fs.readFileSync(path.join(destDir, 'PG_MAJOR'), 'utf8').trim() === major
+        && pgMarker.matches(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, version))
+        && postgresPreparedForThisArch(destDir);
+}
+
+function legacyPostgresDir() {
+    return path.join(RESOURCES, 'postgres-legacy', TARGET_PLATFORM);
+}
+
+async function copyLegacyPostgres() {
+    const key = `${TARGET_PLATFORM}-${TARGET_ARCH}`;
+    const destDir = legacyPostgresDir();
+    const source = POSTGRES_LEGACY_BUILDS[key];
+    if (!source) {
+        console.log(`  ℹ  No previous PostgreSQL for ${key}; existing ${POSTGRES_LEGACY_MAJOR} databases there are not upgraded`);
+        removeDir(destDir);
+        return true;
+    }
+    const exe = TARGET_PLATFORM === 'win32' ? 'postgres.exe' : 'postgres';
+    if (postgresAlreadyPrepared(destDir, exe, POSTGRES_LEGACY_MAJOR, POSTGRES_LEGACY_VERSION)) {
+        console.log(`  ✓  postgres-legacy/${TARGET_PLATFORM} (PostgreSQL ${POSTGRES_LEGACY_MAJOR}, for upgrading old databases) already prepared`);
+        return true;
+    }
+    return downloadPostgres(source, destDir, POSTGRES_LEGACY_VERSION, POSTGRES_LEGACY_MAJOR);
+}
+
+async function downloadPostgres(source, destDir, version, major) {
+    const jarName = `embedded-postgres-binaries-${source.artifact}-${version}.jar`;
     const localJar = path.join(os.homedir(), '.m2', 'repository', 'io', 'zonky', 'test', 'postgres',
-        `embedded-postgres-binaries-${source.artifact}`, POSTGRES_VERSION, jarName);
+        `embedded-postgres-binaries-${source.artifact}`, version, jarName);
     const jarPath = path.join(RESOURCES, jarName);
-    const extractDir = path.join(RESOURCES, `_postgres-extract-${TARGET_PLATFORM}`);
+    const extractDir = path.join(RESOURCES, `_postgres-extract-${TARGET_PLATFORM}-${major}`);
     ensureDir(RESOURCES);
     try {
         if (fs.existsSync(localJar)) {
             fs.copyFileSync(localJar, jarPath);
         } else {
-            console.log(`  → Downloading PostgreSQL ${POSTGRES_VERSION} (${source.artifact}) from Maven Central…`);
-            await downloadFile(`${POSTGRES_MAVEN_BASE}/embedded-postgres-binaries-${source.artifact}/${POSTGRES_VERSION}/${jarName}`, jarPath);
+            console.log(`  → Downloading PostgreSQL ${version} (${source.artifact}) from Maven Central…`);
+            await downloadFile(`${POSTGRES_MAVEN_BASE}/embedded-postgres-binaries-${source.artifact}/${version}/${jarName}`, jarPath);
         }
         const actual = crypto.createHash('sha256').update(fs.readFileSync(jarPath)).digest('hex');
         if (actual !== source.sha256) {
@@ -394,9 +429,9 @@ async function downloadPostgres(source, destDir) {
         ensureDir(destDir);
         execFileSync('tar', ['-xJf', txz, '-C', path.relative(extractDir, destDir).replace(/\\/g, '/')],
             { stdio: 'inherit', timeout: 300_000, cwd: extractDir });
-        fs.writeFileSync(path.join(destDir, 'PG_MAJOR'), POSTGRES_MAJOR, 'utf8');
-        pgMarker.write(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, POSTGRES_VERSION));
-        console.log(`  ✓  Installed PostgreSQL ${POSTGRES_VERSION} into postgres/${TARGET_PLATFORM}`);
+        fs.writeFileSync(path.join(destDir, 'PG_MAJOR'), major, 'utf8');
+        pgMarker.write(destDir, pgMarker.label(TARGET_PLATFORM, TARGET_ARCH, version));
+        console.log(`  ✓  Installed PostgreSQL ${version} into ${path.relative(RESOURCES, destDir).replace(/\\/g, '/')}`);
         return true;
     } catch (err) {
         console.error(`  ✗  PostgreSQL preparation failed: ${err.message}`);
@@ -885,13 +920,20 @@ function postgresBinDir() {
     return path.join(RESOURCES, 'postgres', TARGET_PLATFORM, 'bin');
 }
 
+function postgresBinDirs() {
+    const legacyBin = path.join(legacyPostgresDir(), 'bin');
+    return fs.existsSync(legacyBin) ? [postgresBinDir(), legacyBin] : [postgresBinDir()];
+}
+
 function copyVcRuntimeForPostgres() {
     if (TARGET_PLATFORM !== 'win32') return;
     console.log('\n[PostgreSQL] Visual C++ runtime next to postgres.exe (a clean Windows does not have it)');
-    const result = vcRuntime.bundleVcRuntime(postgresBinDir(), [path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')], vcRuntime.requiredFor(TARGET_ARCH));
-    result.copied.forEach((name) => console.log(`  ✓  copied ${name}`));
-    result.present.forEach((name) => console.log(`  ✓  ${name} already there`));
-    result.missing.forEach((name) => console.error(`  ✗  ${name} not found in the bundled JREs`));
+    for (const binDir of postgresBinDirs()) {
+        const result = vcRuntime.bundleVcRuntime(binDir, [path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')], vcRuntime.requiredFor(TARGET_ARCH));
+        result.copied.forEach((name) => console.log(`  ✓  copied ${name}`));
+        result.present.forEach((name) => console.log(`  ✓  ${name} already there`));
+        result.missing.forEach((name) => console.error(`  ✗  ${name} not found in the bundled JREs`));
+    }
 }
 
 function requiredResourcesPresent() {
@@ -908,11 +950,17 @@ function requiredResourcesPresent() {
         console.log(`  ${ok ? '✓' : '✗'}  ${label}`);
         if (!ok) allOk = false;
     }
+    const legacyExpected = Boolean(POSTGRES_LEGACY_BUILDS[`${TARGET_PLATFORM}-${TARGET_ARCH}`]);
+    const legacyOk = fs.existsSync(path.join(legacyPostgresDir(), 'bin', `postgres${TARGET_PLATFORM === 'win32' ? '.exe' : ''}`));
+    if (legacyExpected) {
+        console.log(`  ${legacyOk ? '✓' : '✗'}  PostgreSQL ${POSTGRES_LEGACY_MAJOR} for upgrading existing databases`);
+        if (!legacyOk) allOk = false;
+    }
     if (TARGET_PLATFORM === 'win32') {
-        const lacking = vcRuntime.missingVcRuntime(postgresBinDir(), vcRuntime.requiredFor(TARGET_ARCH));
+        const lacking = postgresBinDirs().flatMap((dir) => vcRuntime.missingVcRuntime(dir, vcRuntime.requiredFor(TARGET_ARCH)));
         console.log(`  ${lacking.length ? '✗' : '✓'}  Visual C++ runtime next to postgres.exe${lacking.length ? ` — missing ${lacking.join(', ')}` : ''}`);
         if (lacking.length) allOk = false;
-        const wrongArch = peArch.findArchMismatches([postgresBinDir(), path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')], TARGET_ARCH);
+        const wrongArch = peArch.findArchMismatches([...postgresBinDirs(), path.join(JRE_DIR, 'bin'), path.join(JRE17_DIR, 'bin')], TARGET_ARCH);
         if (wrongArch.length) {
             wrongArch.slice(0, 5).forEach((w) => console.log(`  ${TARGET_ARCH === 'arm64' ? '✗' : '⚠'}  ${path.basename(w.file)} is ${w.arch}, not ${TARGET_ARCH}`));
             if (TARGET_ARCH === 'arm64') allOk = false;

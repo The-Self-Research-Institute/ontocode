@@ -8,6 +8,7 @@ import org.springframework.context.annotation.FilterType;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import self.research.ontology.auth.AuthApplication;
+import self.research.ontology.common.db.upgrade.DatabaseUpgradeCommand;
 import self.research.ontology.owlEditor.OwlEditorApplication;
 import self.research.ontology.owlEditor.controller.DesktopController;
 import self.research.ontology.owlEditor.controller.ProjectController;
@@ -39,6 +40,9 @@ import self.research.ontology.plugins.config.SecurityConfig;
 public class DesktopApplication {
 
     public static void main(String[] args) {
+        if (DatabaseUpgradeCommand.requested(args)) {
+            System.exit(DatabaseUpgradeCommand.run(System.getenv(), System.out));
+        }
         RdfXmlDefaults.apply();
         SpringApplication app = new SpringApplication(DesktopApplication.class);
         app.setBeanNameGenerator(new FullyQualifiedAnnotationBeanNameGenerator());

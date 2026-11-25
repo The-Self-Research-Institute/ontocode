@@ -230,7 +230,7 @@ function portableLockHint(portableDir) {
 function buildJava(quick) {
     run('mvn install -N -q', REPO_ROOT, 'Maven: install root POM');
     run(
-        'mvn install -pl shared/common-models,shared/common-utils -DskipTests -q',
+        'mvn install -pl shared/common-models,shared/common-utils,shared/common-db -DskipTests -q',
         REPO_ROOT,
         'Maven: shared modules',
     );
