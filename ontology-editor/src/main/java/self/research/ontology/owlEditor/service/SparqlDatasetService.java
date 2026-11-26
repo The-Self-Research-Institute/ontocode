@@ -668,16 +668,14 @@ public class SparqlDatasetService {
         String queryUrl = fusekiBase + "/" + dsName + "/query";
         String updateUrl = fusekiBase + "/" + dsName + "/update";
         SPARQLRepository repo = new SPARQLRepository(queryUrl, updateUrl);
+        BasicCredentialsProvider credentials = new BasicCredentialsProvider();
+        String authHeader = null;
         if (fusekiAdminUser != null && !fusekiAdminUser.isBlank()) {
-            BasicCredentialsProvider creds = new BasicCredentialsProvider();
-            creds.setCredentials(AuthScope.ANY,
+            credentials.setCredentials(AuthScope.ANY,
                     new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
-            CloseableHttpClient httpClient = FusekiHttpClients.pooled(creds,
-                    FusekiHttpClients.basicAuth(fusekiAdminUser, fusekiAdminPassword));
-            SharedHttpClientSessionManager sm = new SharedHttpClientSessionManager();
-            sm.setHttpClient(httpClient);
-            repo.setHttpClientSessionManager(sm);
+            authHeader = FusekiHttpClients.basicAuth(fusekiAdminUser, fusekiAdminPassword);
         }
+        repo.setHttpClient(FusekiHttpClients.pooled(credentials, authHeader));
         repo.init();
         return repo;
     }
@@ -2812,6 +2810,10 @@ public class SparqlDatasetService {
     }
 
     private long countProjectTriples(String projectId) {
+        return FusekiHttpClients.boundedCount(() -> countBoundProjectTriples(projectId));
+    }
+
+    private long countBoundProjectTriples(String projectId) {
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long sizeStart = System.nanoTime();
@@ -2974,6 +2976,7 @@ public class SparqlDatasetService {
      */
     @PreDestroy
     public void shutdown() {
+        graphSizes.shutdown();
         if (repository != null && repository.isInitialized()) {
             log.info("Shutting down GraphDB repository connection");
             repository.shutDown();
@@ -3446,8 +3449,12 @@ public class SparqlDatasetService {
      * because it scans the entire index. A SPARQL COUNT query is orders of magnitude faster.
      */
     private long countGraphTriplesSparql(RepositoryConnection conn, String graphUri) {
-        String query = "SELECT (COUNT(*) AS ?count) FROM <" + graphUri + "> WHERE { ?s ?p ?o }";
-        try (TupleQueryResult result = conn.prepareTupleQuery(query).evaluate()) {
+        var query = conn.prepareTupleQuery("SELECT (COUNT(*) AS ?count) FROM <" + graphUri + "> WHERE { ?s ?p ?o }");
+        int timeoutSeconds = FusekiHttpClients.countQueryTimeoutSeconds();
+        if (timeoutSeconds > 0) {
+            query.setMaxExecutionTime(timeoutSeconds);
+        }
+        try (TupleQueryResult result = query.evaluate()) {
             if (result.hasNext()) {
                 BindingSet bs = result.next();
                 if (bs.hasBinding("count")) {

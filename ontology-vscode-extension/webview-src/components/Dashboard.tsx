@@ -2033,6 +2033,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     "rdfxml" | "turtle" | "ntriples" | "owlxml" | "manchester" | "functional" | "jsonld"
   >("rdfxml");
   const [codeViewContent, setCodeViewContent] = useState<string>("");
+  const citationViewRef = useRef({ projectId, codeViewFormat, codeViewContent });
+  citationViewRef.current = { projectId, codeViewFormat, codeViewContent };
   const [codeViewLoading, setCodeViewLoading] = useState(false);
   const [highlightedLineNumbers, setHighlightedLineNumbers] = useState<Map<number, { startCol: number; endCol: number } | "full"> | undefined>(undefined);
   const [codeViewRefreshing, setCodeViewRefreshing] = useState(false);
@@ -12411,6 +12413,12 @@ const updateItemInState = useCallback(
         return;
       }
 
+      const citationCacheScope = draftBodyFields();
+      const isCurrentCitationView = () => {
+        const view = citationViewRef.current;
+        return view.projectId === projectId && view.codeViewFormat === codeViewFormat
+          && draftBodyFields().userId === citationCacheScope.userId;
+      };
       notificationService.info("Inserting Citation", "Adding citation to all formats...");
 
       let insertAtIndex = 0;
@@ -13044,10 +13052,6 @@ const updateItemInState = useCallback(
         }
         console.log("[Dashboard] Modified content length:", modifiedContent.length, "bytes");
 
-        setCodeViewContent(modifiedContent);
-        setHasLocalCodeViewChanges(true);
-        console.log("[Dashboard] Code view updated locally with full citation at line", insertAtIndex);
-
         console.log(
           "[Dashboard] Inserting citation - current format at line",
           insertAtIndex,
@@ -13266,18 +13270,7 @@ const updateItemInState = useCallback(
         }
 
         const citationUrn = `urn:citation:${citationKey.replace(/[^a-zA-Z0-9]/g, "")}`;
-        try {
-          await codeViewCacheService.store(projectId, {
-            content: modifiedContent,
-            format: codeViewFormat,
-            citationUrn: citationUrn,
-            referencedEntity: referencedEntity || "",
-          });
-          console.log("[Dashboard] Current format cache stored:", codeViewFormat);
-          console.log("[Dashboard] Stored citation-entity mapping:", citationUrn, "->", referencedEntity || "(none)");
-        } catch (e) {
-          console.warn("[Dashboard] Failed to store current format cache:", e);
-        }
+        const formatContents = new Map<string, string>([[codeViewFormat, modifiedContent]]);
 
         function findEntityLocation(content: string, entity: string): number {
           if (!entity) {
@@ -13520,7 +13513,7 @@ const updateItemInState = useCallback(
           return startLine + 1;
         }
 
-        const succeededFormats: string[] = [codeViewFormat];
+        const succeededFormats: string[] = [];
         const failedFormats: string[] = [];
 
         for (const fmt of otherFormats) {
@@ -13564,14 +13557,7 @@ const updateItemInState = useCallback(
               });
               const jsonLdBase = fmtContent || JSON.stringify({ "@context": DEFAULT_JSONLD_CONTEXT, "@graph": [] });
               const fmtModifiedContent = insertCitationNodeIntoJsonLd(jsonLdBase, jsonLdCitationNode);
-              await codeViewCacheService.store(projectId, {
-                content: fmtModifiedContent,
-                format: fmt,
-                citationUrn: citationUrn,
-                referencedEntity: referencedEntity || "",
-              });
-              console.log("[Dashboard] JSON-LD format cache stored with citation node");
-              succeededFormats.push(fmt);
+              formatContents.set(fmt, fmtModifiedContent);
               continue;
             }
 
@@ -13686,14 +13672,7 @@ const updateItemInState = useCallback(
               fmtLines.splice(fmtInsertIndex, 0, ...fmtCitationLines);
 
               const fmtModifiedContent = fmtLines.join("\n");
-              await codeViewCacheService.store(projectId, {
-                content: fmtModifiedContent,
-                format: fmt,
-                citationUrn: citationUrn,
-                referencedEntity: referencedEntity || "",
-              });
-              console.log("[Dashboard] Format cache stored with citation near entity:", fmt);
-              succeededFormats.push(fmt);
+              formatContents.set(fmt, fmtModifiedContent);
             }
           } catch (fmtError) {
             console.warn(`[Dashboard] Failed to update format ${fmt}:`, fmtError);
@@ -13701,13 +13680,33 @@ const updateItemInState = useCallback(
           }
         }
 
-        if (failedFormats.length > 0) {
-          console.warn(`[Dashboard] Citation sync failed for formats: ${failedFormats.join(", ")}`);
-        }
-        console.log(`[Dashboard] Citation inserted in formats: ${succeededFormats.join(", ")}`);
-        setHasLocalCodeViewChanges(false);
-
+        if (!isCurrentCitationView() || citationViewRef.current.codeViewContent !== codeViewContent) return;
         await recordCitationOnServer(projectId, generateTurtleCitationBlock(), { title }, resolveMutationActor(user?.userId, user?.username));
+        const updateEditor = isCurrentCitationView() && citationViewRef.current.codeViewContent === codeViewContent;
+        if (updateEditor) {
+          setCodeViewContent(modifiedContent);
+          setHasLocalCodeViewChanges(true);
+        }
+
+        for (const [format, content] of formatContents) {
+          try {
+            await codeViewCacheService.store(projectId, {
+              content,
+              format,
+              citationUrn,
+              referencedEntity: referencedEntity || "",
+            }, citationCacheScope);
+            succeededFormats.push(format);
+          } catch (error) {
+            console.warn(`[Dashboard] Failed to store citation in the ${format} cache:`, error);
+            failedFormats.push(format);
+          }
+        }
+
+        if (updateEditor && isCurrentCitationView() && succeededFormats.includes(codeViewFormat)
+          && citationViewRef.current.codeViewContent === modifiedContent) {
+          setHasLocalCodeViewChanges(false);
+        }
 
         console.log("[Dashboard] ========== CITATION INSERTION SUMMARY ==========");
         console.log("[Dashboard] Current format:", codeViewFormat);

@@ -5,7 +5,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -16,7 +18,7 @@ final class GraphSizeEstimates {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GraphSizeEstimates.class);
 
     static final long WAIT_MILLIS = 8_000;
-    static final long EXACT_WAIT_MILLIS = 300_000;
+    static final long EXACT_WAIT_MILLIS = 30_000;
     static final long UNKNOWN_TTL_MILLIS = 300_000;
     static final long REFRESH_AFTER_WRITE_MILLIS = 30_000;
 
@@ -39,7 +41,8 @@ final class GraphSizeEstimates {
     private final long waitMillis;
 
     GraphSizeEstimates() {
-        this(Executors.newFixedThreadPool(2, daemonThreads()), System::currentTimeMillis, WAIT_MILLIS);
+        this(new ThreadPoolExecutor(2, 2, 0, TimeUnit.MILLISECONDS, new SynchronousQueue<>(), daemonThreads()),
+                System::currentTimeMillis, WAIT_MILLIS);
     }
 
     GraphSizeEstimates(ExecutorService pool, LongSupplier clock, long waitMillis) {
@@ -122,7 +125,19 @@ final class GraphSizeEstimates {
 
     private CompletableFuture<Long> start(String projectId, Counter counter) {
         return counting.compute(projectId, (id, running) ->
-                running != null && !running.isDone() ? running : launch(id, counter));
+                running != null && !running.isDone() ? running : tryLaunch(id, counter));
+    }
+
+    void shutdown() {
+        pool.shutdownNow();
+    }
+
+    private CompletableFuture<Long> tryLaunch(String projectId, Counter counter) {
+        try {
+            return launch(projectId, counter);
+        } catch (RejectedExecutionException e) {
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
     private CompletableFuture<Long> launch(String projectId, Counter counter) {
@@ -151,6 +166,9 @@ final class GraphSizeEstimates {
             rememberUnknown(projectId);
             return -1;
         } catch (java.util.concurrent.ExecutionException e) {
+            if (e.getCause() instanceof RejectedExecutionException) {
+                return -1;
+            }
             log.warn("[GraphSize] Could not count project {}: {}", projectId, e.getCause() != null ? e.getCause().getMessage() : e.getMessage());
             rememberUnknown(projectId);
             return -1;

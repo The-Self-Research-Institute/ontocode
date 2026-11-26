@@ -3210,6 +3210,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
             <ControlPanel
               projectId={projectId}
               draftMode={draftMode}
+              draftUserId={draftUserId}
               session={controlSession}
               onAddInferred={handleAddInferred}
               result={executionResult}

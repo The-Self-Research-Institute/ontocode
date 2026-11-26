@@ -1082,8 +1082,8 @@ export interface TransferSummary {
   elapsedMs: number;
 }
 
-export function transferSummaryPath(projectId: string, draftMode: boolean): string {
-  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/transfer-summary`, draftMode);
+export function transferSummaryPath(projectId: string, draftMode: boolean, userId?: string): string {
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/transfer-summary`, draftMode, userId);
 }
 
 function countLine(n: number, label: string): string {

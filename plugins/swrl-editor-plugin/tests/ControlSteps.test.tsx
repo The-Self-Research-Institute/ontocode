@@ -199,15 +199,25 @@ describe('the three step buttons', () => {
     expect(api.post.mock.calls[0][0]).toContain('/api/swrl/p1/execute/selected');
   });
 
-  it('asks for the draft copy when editing a private draft', async () => {
+  it('loads and runs the same private draft in the Control panel', async () => {
     routes();
+    const scope = '?draft=true&userId=draft%40example.org';
+    const loadUrl = '/api/swrl/p1/transfer-summary' + scope;
+    api.get.mockImplementation((url: string) => {
+      if (url === loadUrl) return Promise.resolve(SUMMARY);
+      if (url.includes('/transfer-summary')) return Promise.reject(new Error('userId is required'));
+      return Promise.resolve({ rules: RULES });
+    });
     api.post.mockResolvedValue(RUN);
     await act(async () => {
-      root.render(<SWRLEditor projectId="p1" draftMode />);
+      root.render(<SWRLEditor projectId="p1" draftMode draftUserId="draft@example.org" />);
     });
     await click(button('Control'));
     await load();
-    expect(api.get.mock.calls.some(c => c[0] === '/api/swrl/p1/transfer-summary?draft=true')).toBe(true);
+    expect(api.get).toHaveBeenCalledWith(loadUrl);
+    expect(button(/Run rules \(/).disabled).toBe(false);
+    await run();
+    expect(api.post).toHaveBeenCalledWith('/api/ontology/p1/rules/execute' + scope);
   });
 });
 

@@ -3,6 +3,7 @@ package self.research.ontology.owlEditor.service;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class GraphSizeEstimatesTest {
@@ -140,6 +143,38 @@ class GraphSizeEstimatesTest {
             callers.shutdownNow();
         }
         assertEquals(1, counts.get());
+    }
+
+    @Test
+    void anUnrelatedProjectGetsAQuickRetryWhenBothWorkersAreBusy() throws Exception {
+        GraphSizeEstimates shared = new GraphSizeEstimates();
+        CountDownLatch started = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        GraphSizeEstimates.Counter slow = projectId -> {
+            started.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return 77;
+        };
+
+        try (ExecutorService callers = Executors.newFixedThreadPool(2)) {
+            Future<Long> first = callers.submit(() -> shared.exact("first", slow));
+            Future<Long> second = callers.submit(() -> shared.exact("second", slow));
+            assertTrue(started.await(5, TimeUnit.SECONDS));
+            try {
+                assertTimeoutPreemptively(Duration.ofSeconds(2),
+                        () -> assertEquals(-1, shared.exact("small", counting(4))));
+                assertFalse(shared.looksLarge("small", 10));
+                assertEquals(0, counts.get());
+            } finally {
+                release.countDown();
+            }
+            assertEquals(77L, first.get(5, TimeUnit.SECONDS));
+            assertEquals(77L, second.get(5, TimeUnit.SECONDS));
+            waitUntil(() -> shared.estimate("small", counting(4)) == 4);
+            assertEquals(4, shared.known("small").orElseThrow());
+        } finally {
+            shared.shutdown();
+        }
     }
 
     @Test

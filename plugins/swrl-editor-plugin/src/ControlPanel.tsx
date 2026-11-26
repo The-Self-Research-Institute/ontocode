@@ -61,6 +61,7 @@ export type AddOutcome = { ok: boolean; message: string; added?: number };
 interface ControlPanelProps {
   projectId?: string;
   draftMode?: boolean;
+  draftUserId?: string;
   session?: ControlSession;
   onAddInferred?: (includeStructure: boolean) => Promise<AddOutcome>;
   result: ExecutionResponse | null;
@@ -87,7 +88,7 @@ function stepError(e: any, what: string): string {
 }
 
 export function ControlPanel({
-  projectId = '', draftMode = false, session, onAddInferred,
+  projectId = '', draftMode = false, draftUserId, session, onAddInferred,
   result, isExecuting, enabledCount, selectedCount, onRunAll, onRunSelected, onClear,
   rules = [], selectedIds = new Set<string>(), onToggleRule, onSelectAllEnabled, onSelectNone, ranAt = null,
 }: ControlPanelProps) {
@@ -137,7 +138,7 @@ export function ControlPanel({
     if (!startStep('load')) return;
     log.append(['Checking the ontology and the rules...']);
     try {
-      const summary = await apiClient.get<TransferSummary>(transferSummaryPath(projectId, draftMode));
+      const summary = await apiClient.get<TransferSummary>(transferSummaryPath(projectId, draftMode, draftUserId));
       log.append(loadLogLines(summary));
       log.setLoaded(true);
     } catch (e: any) {
