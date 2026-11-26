@@ -83,6 +83,8 @@ import { isDesktop, warmOntologyInMemory, ensureDesktopFusekiSync, scheduleSilen
 import { cancelOntologyExport } from "../services/exportService";
 import { warnAboutRulesInExport } from "../services/exportRulesWarning";
 import { adviceAfterSlowFailure, adviceBeforeRun } from "../utils/slowReasonerAdvice";
+import { pickFileToOpen, starterOntology } from "../utils/editorEntryFile";
+import { recordCitationOnServer } from "../utils/citationServer";
 import {
   cancelReasonerSnapshots,
   invalidateReasonerSnapshots,
@@ -6261,31 +6263,13 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
     autoCreateRanForProjectRef.current = initialProjectId;
 
     fetchProjectFiles(initialProjectId).then(async (files) => {
-      const existingNames = new Set(files.map((f) => f.filename.toLowerCase()));
-      const baseSlug =
-        (initialProjectName || "")
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, "") || "untitled-ontology";
-
-      let fileName = `${baseSlug}.owl`;
-      for (let n = 2; existingNames.has(fileName.toLowerCase()); n++) {
-        fileName = `${baseSlug}-${n}.owl`;
+      const existingFile = pickFileToOpen(files, initialProjectId, localStorage.getItem("ontocode_lastProjectId"));
+      if (existingFile) {
+        autoCreateRanForProjectRef.current = null;
+        handleLoadProjectFile(existingFile.id, existingFile.filename);
+        return;
       }
-
-      const ontologyIRI = `http://example.org/ontologies/${fileName.replace(/\.owl$/, "")}`;
-      const content = `<?xml version="1.0"?>
-<rdf:RDF xmlns="${ontologyIRI}#"
-     xml:base="${ontologyIRI}"
-     xmlns:owl="http://www.w3.org/2002/07/owl#"
-     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-     xmlns:xml="http://www.w3.org/XML/1998/namespace"
-     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
-     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
-    <owl:Ontology rdf:about="${ontologyIRI}"/>
-    <owl:Class rdf:about="http://www.w3.org/2002/07/owl#Thing"/>
-</rdf:RDF>`;
+      const { fileName, content } = starterOntology(initialProjectName, files.map((f) => f.filename));
       const file = new File([content], fileName, { type: "application/rdf+xml" });
       const formData = new FormData();
       formData.append("file", file, fileName);
@@ -6326,9 +6310,9 @@ if (shouldRestoreLastOpenedFile && storedProjectId && !hasUserSelectedFileRef.cu
 
   const shouldDeferHierarchyDuringFileOpen = useCallback(() => {
     if (fileLoadingRef.current) return true;
-    if (initialProjectId && activeFileId && projectId === initialProjectId) return true;
+    if (initialProjectId && projectId === initialProjectId && (activeFileId || !selectedFileId || selectedFileId === "__editor__")) return true;
     return false;
-  }, [initialProjectId, activeFileId, projectId]);
+  }, [initialProjectId, activeFileId, projectId, selectedFileId]);
 
   const fetchAbortControllerRef = useRef<AbortController | null>(null);
   const fetchDataGenerationRef = useRef(0);
@@ -9283,7 +9267,7 @@ const updateItemInState = useCallback(
         }
 
         if (isViewOnlyMember) {
-          notificationService.error("Not Available", "This file hasn't been loaded yet. Ask the project owner to open it first.");
+          notificationService.error("Not Available", isProjectViewerRole ? "This file hasn't been opened in the editor yet. Ask the project owner to open it once, then you can view it." : "This file hasn't been opened in the editor yet. On a free or expired workspace plan only the workspace owner can open new files. Ask the workspace owner to open it once, or to renew the plan.");
           setIsInitialLoading(false);
           setIsHierarchyLoading(false);
           setIsMetadataLoading(false);
@@ -13721,7 +13705,7 @@ const updateItemInState = useCallback(
         console.log(`[Dashboard] Citation inserted in formats: ${succeededFormats.join(", ")}`);
         setHasLocalCodeViewChanges(false);
 
-        console.log("[Dashboard] Citations stored in cache for all formats, GraphDB will be updated on save/export");
+        await recordCitationOnServer(projectId, generateTurtleCitationBlock(), { title }, resolveMutationActor(user?.userId, user?.username));
 
         console.log("[Dashboard] ========== CITATION INSERTION SUMMARY ==========");
         console.log("[Dashboard] Current format:", codeViewFormat);
@@ -13762,7 +13746,7 @@ const updateItemInState = useCallback(
         console.log("[Dashboard] Citation insertion mode reset due to error");
       }
     },
-    [pendingCitation, projectId, codeViewFormat, codeViewContent],
+    [pendingCitation, projectId, codeViewFormat, codeViewContent, user],
   );
 
   const syncCitationRemovalToOtherFormats = useCallback(
@@ -13988,16 +13972,6 @@ const updateItemInState = useCallback(
                 console.warn("[Dashboard] Failed to store jsonld cache after removal:", e);
               }
 
-              if (window.vscode) {
-                window.vscode.postMessage({
-                  type: "uploadOntologyContent",
-                  content: modifiedContent,
-                  format: "jsonld",
-                  projectId: projectId,
-                });
-                await new Promise((resolve) => setTimeout(resolve, 500));
-              }
-
               await syncCitationRemovalToOtherFormats(citationUri, "jsonld");
 
               console.log("[Dashboard] Removing citation from GraphDB:", citationUri);
@@ -14209,17 +14183,6 @@ const updateItemInState = useCallback(
               console.log("[Dashboard] Current format cache stored after removal");
             } catch (e) {
               console.warn("[Dashboard] Failed to store current format cache:", e);
-            }
-
-            if (window.vscode) {
-              window.vscode.postMessage({
-                type: "uploadOntologyContent",
-                content: modifiedContent,
-                format: codeViewFormat,
-                projectId: projectId,
-              });
-
-              await new Promise((resolve) => setTimeout(resolve, 500));
             }
 
             await syncCitationRemovalToOtherFormats(citationUri, codeViewFormat);

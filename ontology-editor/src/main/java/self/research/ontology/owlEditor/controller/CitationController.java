@@ -40,8 +40,10 @@ public class CitationController {
     public ResponseEntity<?> insertCitation(
             @PathVariable String projectId,
             @RequestBody InsertCitationRequest request,
+            @org.springframework.web.bind.annotation.RequestParam(required = false) String draft,
             jakarta.servlet.http.HttpServletRequest httpRequest) {
-        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, false);
+        boolean inDraft = RequestActor.draftRequested(httpRequest, draft);
+        ResponseEntity<Map<String, Object>> publicEditOff = PublicEditGate.refuse(publicEditGate, projectId, inDraft);
         if (publicEditOff != null) {
             return publicEditOff;
         }
@@ -66,12 +68,17 @@ public class CitationController {
                 ));
             }
 
-            // Insert citation into GraphDB
-            int lineNumber = request.lineNumber() != null ? request.lineNumber() : 0;
-            citationService.insertCitation(projectId, request.citation(), request.format(), request.metadata(), lineNumber,
-                RequestActor.of(httpRequest, request.userId(), request.username()));
-
-            log.info("[CitationController] Successfully inserted citation for project: {} at line: {}", projectId, lineNumber);
+            RequestActor actor = inDraft
+                    ? new RequestActor(RequestActor.forScope(httpRequest, request.userId(), true),
+                        RequestActor.displayName(httpRequest, request.username()))
+                    : RequestActor.of(httpRequest, request.userId(), request.username());
+            if (inDraft && (actor.userId() == null || actor.userId().isBlank())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "userId is required to add a citation to a draft"
+                ));
+            }
+            citationService.insertCitation(projectId, request.citation(), request.format(), request.metadata(), actor, inDraft);
 
             return ResponseEntity.ok(Map.of(
                 "success", true,

@@ -13,7 +13,7 @@
  *  Lifecycle:    webviewReady, fileLoaded, setApiBaseUrl
  *  File I/O:     downloadOntology, downloadFile, downloadCurrentOntology,
  *                openLocalFile, createNewFile, importLocalFile
- *  Upload:       uploadOntology, uploadFileToProject, uploadOntologyContent
+ *  Upload:       uploadOntology, uploadFileToProject
  *  API proxy:    apiGet, apiPost, apiPut, apiPatch, apiDelete, proxyRequest
  *  Collab:       requestCollaborationStatus, cursorMoved, broadcastCursor
  *  Notifications: showNotification, error, notification
@@ -1110,23 +1110,6 @@ function handleBrowserMessage(message: any) {
                     } else {
                         notificationService.error('Upload Failed', errData?.error || err?.message || 'File upload failed');
                     }
-                }
-            })();
-            break;
-        }
-
-        case 'uploadOntologyContent': {
-            (async () => {
-                try {
-                    await apiClient.post(`/api/ontology/${message.projectId}/content`, {
-                        content: message.content,
-                        format: message.format,
-                    });
-                    console.log('[BrowserBridge] uploadOntologyContent success');
-                    postToSelf({ type: 'uploadOntologyContentDone', success: true, projectId: message.projectId });
-                } catch (err: any) {
-                    console.error('[BrowserBridge] uploadOntologyContent error:', err);
-                    postToSelf({ type: 'uploadOntologyContentDone', success: false, projectId: message.projectId });
                 }
             })();
             break;

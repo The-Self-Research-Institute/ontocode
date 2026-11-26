@@ -20,6 +20,7 @@ public final class DraftRecords {
     public static final String DELETE_GCI = "deleteGCI";
     public static final String ADD_AXIOM_ANNOTATION = "addAxiomAnnotation";
     public static final String DELETE_AXIOM_ANNOTATION = "deleteAxiomAnnotation";
+    public static final String ADD_CITATION = "addCitation";
     public static final String DELETE_CITATION = "deleteCitation";
 
     private DraftRecords() {
