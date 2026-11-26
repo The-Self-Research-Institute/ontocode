@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { computeEntityIriPreview } from '../../utils/entityIri';
+import { computeEntityIriPreview, type EntityIriPreferences } from '../../utils/entityIri';
 import { IriPreviewField } from './IriPreviewField';
 import { CreateButton } from './CreateButton';
 import { isDesktop } from '../../utils/desktop';
@@ -7,12 +7,13 @@ import { isDesktop } from '../../utils/desktop';
 interface AddClassDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string, computedIri: string) => void;
   type: 'subclass' | 'sibling';
   parentLabel: string;
   syncMode?: 'private' | 'public';
   /** Ontology base IRI, used to compute the live IRI preview (matches backend's {ontologyIri}#{name} convention). */
   ontologyIri?: string;
+  iriPreferences?: EntityIriPreferences;
   /** Every existing class IRI in the ontology, used to block duplicate creation before it reaches the backend. */
   existingIris?: string[];
 }
@@ -25,6 +26,7 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
   parentLabel,
   syncMode = 'private',
   ontologyIri,
+  iriPreferences,
   existingIris = [],
 }) => {
   const [name, setName] = useState('');
@@ -36,11 +38,12 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
     ontologyIri,
     name,
     existingIris,
+    iriPreferences,
   );
 
   const handleCreate = () => {
     if (canCreate) {
-      onCreate(trimmedName);
+      onCreate(trimmedName, computedIri);
       setName('');
       onClose();
     }

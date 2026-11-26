@@ -1,6 +1,7 @@
 package self.research.ontology.swrl.service;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnnotation;
@@ -70,6 +71,21 @@ class ExecuteHonoursDisabledTest {
                 .allMatch(s -> s.reason().contains("SQWRL")));
         assertTrue(result.getSkippedRules().stream().filter(s -> s.ruleName().endsWith("off rule"))
                 .allMatch(s -> s.reason().contains("disabled")));
+    }
+
+    @Test
+    void executeSelectedFindsADraftOnlyRuleWithoutReadingThePublicOntology() throws Exception {
+        TriageHarness draft = harness();
+        Mockito.when(draft.client.fetchOntology("p1")).thenAnswer(invocation -> TriageHarness.bare());
+
+        ExecutionResult draftResult = draft.service.executeSelectedRules("p1", List.of("Normal rule"), "owner");
+        assertTrue(draftResult.isSuccess(), String.valueOf(draftResult.getErrorMessage()));
+        assertEquals(List.of("Normal rule"), draftResult.getExecutedRuleNames());
+        Mockito.verify(draft.client).fetchOntologyWithStamp("p1", "owner");
+        Mockito.verify(draft.client, Mockito.never()).fetchOntology("p1");
+
+        ExecutionResult live = draft.service.executeSelectedRules("p1", List.of("Normal rule"));
+        assertFalse(live.isSuccess());
     }
 
     @Test

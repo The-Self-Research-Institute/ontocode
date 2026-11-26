@@ -2283,7 +2283,10 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
               <AxiomSubsection
                 title="SubClass Of (Anonymous Ancestor)"
-                axioms={classDetails?.anonymousAncestorAxioms || []}
+                axioms={(classDetails?.anonymousAncestorAxioms || []).filter(axiom =>
+                  (axiom as Axiom & { ancestorIri?: string }).ancestorIri !== item.id
+                  || !(classDetails?.subClassOfAxioms || item.subClassOfAxioms || []).some(direct => direct.id === axiom.id)
+                )}
                 onAdd={() => {}}
                 onDelete={(id) => {
                   const anc = (classDetails?.anonymousAncestorAxioms || []).find((a: any) => a.id === id);

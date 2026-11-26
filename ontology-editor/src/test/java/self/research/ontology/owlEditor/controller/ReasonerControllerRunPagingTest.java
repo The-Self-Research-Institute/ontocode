@@ -49,6 +49,7 @@ class ReasonerControllerRunPagingTest {
         assertTrue(store.find((String) body.get("runId")).isPresent());
         Map<String, Object> counts = (Map<String, Object>) body.get("counts");
         assertEquals(body.get("conclusionCount"), counts.get("conclusions"));
+        assertEquals(0, counts.get("ruleConclusions"));
         assertEquals(body.get("structureCount"), counts.get("structure"));
         assertEquals(body.get("omittedTrivialCount"), counts.get("omittedTrivial"));
         for (String key : new String[]{"inferredAxioms", "truncated", "executedRuleNames", "executedRuleIds", "inferredAxiomsCount", "status"}) {

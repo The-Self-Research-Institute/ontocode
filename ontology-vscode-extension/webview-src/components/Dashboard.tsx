@@ -1777,6 +1777,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [hasUserSelectedFile]);
 
   const { preferences, updatePreferences } = useEntityPreferences();
+  const [swrlDraftRevision, setSwrlDraftRevision] = useState(0);
 
   const [isClassSelectorOpen, setIsClassSelectorOpen] = useState(false);
   const [isPropertyExpressionDialogOpen, setIsPropertyExpressionDialogOpen] = useState(false);
@@ -10532,13 +10533,13 @@ const updateItemInState = useCallback(
   );
 
   const handleCreateClass = useCallback(
-    async (name: string) => {
+    async (name: string, computedIri?: string) => {
       if (!projectId) return;
 
       const type = addClassType;
 
       try {
-        const newIri = buildEntityIri(effectiveOntologyIri, name);
+        const newIri = computedIri ?? buildEntityIri(effectiveOntologyIri, name);
 
         let parentIri = "http://www.w3.org/2002/07/owl#Thing";
 
@@ -10698,13 +10699,13 @@ const updateItemInState = useCallback(
   );
 
   const handleCreateObjectProperty = useCallback(
-    async (name: string) => {
+    async (name: string, computedIri?: string) => {
       if (!projectId) return;
 
       const type = addPropertyType;
 
       try {
-        const newIri = buildEntityIri(effectiveOntologyIri, name);
+        const newIri = computedIri ?? buildEntityIri(effectiveOntologyIri, name);
 
         let parentIri = "http://www.w3.org/2002/07/owl#topObjectProperty";
         if (type === "subproperty" && selectedItem?.id) {
@@ -10766,13 +10767,13 @@ const updateItemInState = useCallback(
   );
 
   const handleCreateDataProperty = useCallback(
-    async (name: string) => {
+    async (name: string, computedIri?: string) => {
       if (!projectId) return;
 
       const type = addPropertyType;
 
       try {
-        const newIri = buildEntityIri(effectiveOntologyIri, name);
+        const newIri = computedIri ?? buildEntityIri(effectiveOntologyIri, name);
 
         let parentIri = "http://www.w3.org/2002/07/owl#topDataProperty";
         if (type === "subproperty" && selectedItem?.id) {
@@ -10834,11 +10835,11 @@ const updateItemInState = useCallback(
   );
 
   const handleCreateDatatype = useCallback(
-    async (name: string) => {
+    async (name: string, computedIri?: string) => {
       if (!projectId) return;
 
       try {
-        const newIri = buildEntityIri(effectiveOntologyIri, name);
+        const newIri = computedIri ?? buildEntityIri(effectiveOntologyIri, name);
 
         await ontologyMutationService.createDatatype(
           projectId,
@@ -10868,11 +10869,11 @@ const updateItemInState = useCallback(
   );
 
   const handleCreateAnnotationProperty = useCallback(
-    async (name: string) => {
+    async (name: string, computedIri?: string) => {
       if (!projectId) return;
 
       try {
-        const newIri = buildEntityIri(effectiveOntologyIri, name);
+        const newIri = computedIri ?? buildEntityIri(effectiveOntologyIri, name);
 
         const linkedParentIri: string | null =
           addPropertyType === "subproperty" && selectedItem?.id ? selectedItem.id : null;
@@ -10916,7 +10917,7 @@ const updateItemInState = useCallback(
   );
 
   const handleAddIndividual = useCallback(
-    async (name: string) => {
+    async (name: string, computedIri?: string) => {
       if (!projectId) {
         showNotification("No project loaded.", "error");
         return;
@@ -10926,7 +10927,7 @@ const updateItemInState = useCallback(
         return;
       }
 
-      const id = buildEntityIri(effectiveOntologyIri, name);
+      const id = computedIri ?? buildEntityIri(effectiveOntologyIri, name);
 
       const classIri =
         entitiesTab === "Classes" && selectedItem?.id ? selectedItem.id : "http://www.w3.org/2002/07/owl#Thing";
@@ -12003,6 +12004,7 @@ const updateItemInState = useCallback(
           discard: (id, actor) => draftTrackingService.discardDrafts(id, actor),
           onDiscarded: () => {
             setDraftCount(0);
+            setSwrlDraftRevision(revision => revision + 1);
             setHasUnsavedChanges(false);
             codeViewDirtyRef.current = false;
             fetchData(projectId, false);
@@ -14854,7 +14856,8 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
+          return <PluginComponent key={swrlDraftRevision} projectId={projectId} draftMode={pluginDraftMode}
+            draftUserId={pluginDraftMode ? readerUserId(user) : undefined} />;
         }
 
         return (
@@ -16855,15 +16858,16 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         onClose={() => setCreateIndividualModalOpen(false)}
         onCreate={handleAddIndividual}
         ontologyIri={effectiveOntologyIri}
+        iriPreferences={preferences}
         existingIris={individualExistingIris}
       />
       <CreateIndividualModal
         isOpen={isCreateIndividualForClassOpen}
         onClose={() => setCreateIndividualForClassOpen(false)}
-        onCreate={async (name: string) => {
+        onCreate={async (name: string, computedIri: string) => {
           if (!projectId || !selectedClassForIndividuals) return;
           try {
-            await ontologyMutationService.addIndividual(projectId, name, selectedClassForIndividuals.id);
+            await ontologyMutationService.createIndividual(projectId, computedIri, name, selectedClassForIndividuals.id);
             await loadClassInstances();
             setCreateIndividualForClassOpen(false);
           } catch (error) {
@@ -16872,6 +16876,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           }
         }}
         ontologyIri={effectiveOntologyIri}
+        iriPreferences={preferences}
         existingIris={individualExistingIris}
       />
       <AddClassDialog
@@ -16882,6 +16887,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         parentLabel={classParentLabel}
         syncMode={syncMode}
         ontologyIri={effectiveOntologyIri}
+        iriPreferences={preferences}
         existingIris={classExistingIris}
       />
       <AddObjectPropertyDialog
@@ -16900,6 +16906,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
           entitiesTab === "ObjectProperties" ? "object" : entitiesTab === "DataProperties" ? "data" : "annotation"
         }
         ontologyIri={effectiveOntologyIri}
+        iriPreferences={preferences}
         existingIris={
           entitiesTab === "ObjectProperties"
             ? objectPropertyExistingIris
@@ -16913,6 +16920,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         onClose={() => setAddDatatypeDialogOpen(false)}
         onCreate={handleCreateDatatype}
         ontologyIri={effectiveOntologyIri}
+        iriPreferences={preferences}
         existingIris={datatypeExistingIris}
       />
       <AddAnnotationDialog
@@ -17936,6 +17944,7 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   title={tab.label}
                   className={`flex items-center gap-2 px-3 py-1 text-xs font-medium border-t-2 mt-px whitespace-nowrap flex-shrink-0 ${entitiesTab === tab.id ? "bg-white text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent hover:bg-gray-200 rounded-t"}`}
                   onClick={() => {
+                    if (tab.id !== entitiesTab) setSearchQuery("");
                     setEntitiesTab(tab.id);
                     setSelectedItem(null);
                   }}

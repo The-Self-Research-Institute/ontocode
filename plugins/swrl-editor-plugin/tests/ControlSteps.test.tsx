@@ -441,7 +441,7 @@ describe('inferred axioms summary and labels', () => {
 
   it('shows one summary line under the stats and uses the same two labels in the filter chips', async () => {
     await inferredTab({ ...RUN, inferredAxiomsCount: 1108, conclusionCount: 118, structureCount: 945, omittedTrivialCount: 45 });
-    expect(summary()).toBe('1,108 produced: 118 facts about individuals from your rules, 945 class relationships from standard reasoning, 45 trivial ones hidden.');
+    expect(summary()).toBe('1,108 produced: 118 inferred facts about individuals, 945 class relationships from standard reasoning, 45 trivial ones hidden.');
     expect(button(/Facts about individuals \(118\)/)).toBeTruthy();
     expect(button(/Class relationships \(945\)/)).toBeTruthy();
     expect(button('Everything')).toBeTruthy();
@@ -451,12 +451,12 @@ describe('inferred axioms summary and labels', () => {
 
   it('leaves out the hidden part when nothing was hidden and handles singulars', async () => {
     await inferredTab({ ...RUN, inferredAxiomsCount: 2, conclusionCount: 1, structureCount: 1 });
-    expect(summary()).toBe('2 produced: 1 fact about an individual from your rules, 1 class relationship from standard reasoning.');
+    expect(summary()).toBe('2 produced: 1 inferred fact about individuals, 1 class relationship from standard reasoning.');
   });
 
   it('says there are no class relationships when only facts were produced', async () => {
     await inferredTab({ ...RUN, inferredAxioms: [fact(1), fact(2)], inferredAxiomsCount: 2, conclusionCount: 2, structureCount: 0 });
-    expect(summary()).toBe('2 produced: 2 facts about individuals from your rules, no class relationships.');
+    expect(summary()).toBe('2 produced: 2 inferred facts about individuals, no class relationships.');
   });
 
   it('omits the facts part when only class relationships were produced', async () => {
@@ -465,8 +465,8 @@ describe('inferred axioms summary and labels', () => {
   });
 
   it('uses the response counts, not the preview length, for a paged run', async () => {
-    await inferredTab({ ...RUN, inferredAxioms: [fact(1)], inferredAxiomsCount: 7300, conclusionCount: 6200, structureCount: 1000, omittedTrivialCount: 100, runId: 'run1', counts: { conclusions: 6200, structure: 1000, omittedTrivial: 100 } });
-    expect(summary()).toBe('7,300 produced: 6,200 facts about individuals from your rules, 1,000 class relationships from standard reasoning, 100 trivial ones hidden.');
+    await inferredTab({ ...RUN, inferredAxioms: [fact(1)], inferredAxiomsCount: 7300, conclusionCount: 6200, structureCount: 1000, omittedTrivialCount: 100, runId: 'run1', counts: { conclusions: 6200, ruleConclusions: 0, structure: 1000, omittedTrivial: 100 } });
+    expect(summary()).toBe('7,300 produced: 0 facts from your rules, 6,200 facts from standard reasoning, 1,000 class relationships from standard reasoning, 100 trivial ones hidden.');
     expect(button(/Facts about individuals \(6,200\)/)).toBeTruthy();
     expect(button(/Class relationships \(1,000\)/)).toBeTruthy();
   });

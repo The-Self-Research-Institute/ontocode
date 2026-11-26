@@ -298,10 +298,12 @@ test('isPagedRun needs a run id and counts', () => {
 });
 
 test('derivedSummary words facts, class relationships and hidden trivial ones', () => {
-  assert.equal(derivedSummary({ conclusions: 118, structure: 945, omittedTrivial: 45 }), '1,108 produced: 118 facts about individuals from your rules, 945 class relationships from standard reasoning, 45 trivial ones hidden.');
-  assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 produced: 1 fact about an individual from your rules, no class relationships.');
+  assert.equal(derivedSummary({ conclusions: 118, structure: 945, omittedTrivial: 45 }), '1,108 produced: 118 inferred facts about individuals, 945 class relationships from standard reasoning, 45 trivial ones hidden.');
+  assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 produced: 1 inferred fact about individuals, no class relationships.');
   assert.equal(derivedSummary({ conclusions: 0, structure: 1, omittedTrivial: 1 }), '2 produced: 1 class relationship from standard reasoning, 1 trivial one hidden.');
   assert.equal(derivedSummary({ conclusions: 0, structure: 0 }), '');
+  assert.equal(derivedSummary({ conclusions: 671, ruleConclusions: 0, structure: 0 }), '671 produced: 0 facts from your rules, 671 facts from standard reasoning, no class relationships.');
+  assert.equal(derivedSummary({ conclusions: 3, ruleConclusions: 1, structure: 0 }), '3 produced: 1 fact from your rules, 2 facts from standard reasoning, no class relationships.');
 });
 
 test('page math and range text', () => {

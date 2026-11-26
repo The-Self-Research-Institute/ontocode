@@ -26,13 +26,13 @@ public final class RuleRunPager {
         for (OWLAxiom axiom : source) {
             Map<String, Object> item = null;
             if (!needle.isEmpty()) {
-                item = RuleExecutionPresenter.toJson(axiom, category);
+                item = RuleExecutionPresenter.toJson(axiom, category, run.ruleConclusions());
                 if (!matchesQuery(item, needle)) {
                     continue;
                 }
             }
             if (total >= offset && matches.size() < limit) {
-                matches.add(item != null ? item : RuleExecutionPresenter.toJson(axiom, category));
+                matches.add(item != null ? item : RuleExecutionPresenter.toJson(axiom, category, run.ruleConclusions()));
             }
             total++;
         }

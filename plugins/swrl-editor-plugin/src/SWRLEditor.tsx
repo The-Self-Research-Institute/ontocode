@@ -1004,6 +1004,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): ParsedAxiom => {
 interface GroupedAxiomItem {
   formatted: string;
   subject: string;
+  predicate?: string;
   object?: string;
   rawReadable: string;
   axiomType: string;
@@ -1024,6 +1025,7 @@ const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomIte
     groups.get(type)!.push({
       formatted: parsed.formatted,
       subject: parsed.subject || '(unknown)',
+      predicate: parsed.predicate,
       object: parsed.object,
       rawReadable: axiom.readable || axiom.description || '',
       axiomType: axiom.axiomType || type,
@@ -1061,6 +1063,8 @@ const axiomHeadKey = (ax: InferredAxiom): { name: string; literal: string | null
 
 const sectionOf = (ax: InferredAxiom, names: Set<string>): FactSection => {
   if (ax.category !== 'conclusion') return 'structure';
+  if (ax.origin === 'RULE_ENGINE') return 'rules';
+  if (ax.origin === 'OWL_REASONER') return 'standard';
   const { name } = axiomHeadKey(ax);
   return name && names.has(name) ? 'rules' : 'standard';
 };
@@ -1144,7 +1148,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
         </span>
         {item.object && (
           <>
-            <span className="font-bold" style={rt.label}>→</span>
+            <span className="font-bold" style={rt.label}>{item.predicate || '→'}</span>
             <span className="font-semibold truncate max-w-[200px]" style={rt.value} title={item.object}>
               {item.object}
             </span>
@@ -1353,6 +1357,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
     structure: paged ? (results.counts?.structure ?? 0) : (results.structureCount ?? structureTotal),
     omittedTrivial: results.omittedTrivialCount ?? results.counts?.omittedTrivial ?? 0,
+    ruleConclusions: results.counts?.ruleConclusions,
   });
 
   return (
@@ -1877,9 +1882,10 @@ interface SWRLEditorProps {
   projectId: string;
   context?: PluginContext;
   draftMode?: boolean;
+  draftUserId?: string;
 }
 
-export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draftMode = false }) => {
+export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draftMode = false, draftUserId }) => {
 
   const rulesVersionRef = useRef(0);
   const [rules, setRules] = useState<SwrlRule[]>([]);
@@ -2434,7 +2440,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
-      const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode));
+      const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode, draftUserId));
       setExecutionResult(res);
       return res;
     } catch (e) {
@@ -2466,7 +2472,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     try {
       const ruleIds = Array.from(selectedRuleIds);
       const res = await apiClient.post<ExecutionResponse>(
-        withDraft(`/api/swrl/${projectId}/execute/selected`, draftMode),
+        withDraft(`/api/swrl/${projectId}/execute/selected`, draftMode, draftUserId),
         { ruleIds }
       );
       setExecutionResult(res);

@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -27,7 +28,7 @@ public class RuleRunStore {
     public static final int MAX_STORED_AXIOMS = 150_000;
 
     public record Run(String id, String projectId, String ownerId, boolean draft, Instant createdAt,
-                      List<OWLAxiom> conclusions, List<OWLAxiom> structure, boolean capped) {
+                      List<OWLAxiom> conclusions, List<OWLAxiom> structure, boolean capped, Set<OWLAxiom> ruleConclusions) {
     }
 
     private final Clock clock;
@@ -66,6 +67,11 @@ public class RuleRunStore {
 
     public synchronized String put(String projectId, String ownerId, boolean draft,
                                    List<OWLAxiom> conclusions, List<OWLAxiom> structure) {
+        return put(projectId, ownerId, draft, conclusions, structure, null);
+    }
+
+    public synchronized String put(String projectId, String ownerId, boolean draft,
+                                   List<OWLAxiom> conclusions, List<OWLAxiom> structure, Set<OWLAxiom> ruleConclusions) {
         purgeExpired();
         boolean capped = conclusions.size() > conclusionCap || structure.size() > structureCap;
         int conclusionCount = Math.min(conclusions.size(), Math.min(conclusionCap, axiomBudget));
@@ -77,7 +83,9 @@ public class RuleRunStore {
         evictOldest(r -> true, total - 1);
         evictUntilFits(keptConclusions.size() + keptStructure.size());
         String id = UUID.randomUUID().toString();
-        Run run = new Run(id, projectId, ownerId, draft, clock.instant(), keptConclusions, keptStructure, capped);
+        Set<OWLAxiom> keptRuleConclusions = ruleConclusions == null ? null : keptConclusions.stream()
+                .filter(ruleConclusions::contains).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        Run run = new Run(id, projectId, ownerId, draft, clock.instant(), keptConclusions, keptStructure, capped, keptRuleConclusions);
         runs.put(id, run);
         RetainedMemory.retainUntilCollected(account, run,
                 RetainedMemory.saturatingMultiply(keptConclusions.size() + keptStructure.size(),

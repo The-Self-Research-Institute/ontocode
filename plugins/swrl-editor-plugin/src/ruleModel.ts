@@ -383,9 +383,10 @@ export interface UnmigratedListedRule {
   error?: string;
 }
 
-export function withDraft(path: string, draftMode: boolean): string {
+export function withDraft(path: string, draftMode: boolean, userId?: string): string {
   if (!draftMode) return path;
-  return path + (path.includes('?') ? '&draft=true' : '?draft=true');
+  const scope = path + (path.includes('?') ? '&draft=true' : '?draft=true');
+  return userId ? `${scope}&userId=${encodeURIComponent(userId)}` : scope;
 }
 
 export function normalizeRulesResponse(res: unknown): { rules: ListedRule[]; unmigrated: UnmigratedListedRule[] } {
@@ -678,6 +679,7 @@ export type AxiomKind = 'conclusions' | 'structure';
 
 export interface RunCounts {
   conclusions: number;
+  ruleConclusions?: number;
   structure: number;
   omittedTrivial?: number;
 }
@@ -707,7 +709,14 @@ export function derivedSummary(counts: RunCounts): string {
   const total = facts + relations + omitted;
   if (total <= 0) return '';
   const parts: string[] = [];
-  if (facts > 0) parts.push(`${formatCount(facts)} ${pluralize(facts, 'fact about an individual', 'facts about individuals')} from your rules`);
+  if (counts.ruleConclusions === undefined) {
+    if (facts > 0) parts.push(`${formatCount(facts)} ${pluralize(facts, 'inferred fact', 'inferred facts')} about individuals`);
+  } else {
+    const ruleFacts = counts.ruleConclusions;
+    const standardFacts = facts - ruleFacts;
+    parts.push(`${formatCount(ruleFacts)} ${pluralize(ruleFacts, 'fact', 'facts')} from your rules`);
+    if (standardFacts > 0) parts.push(`${formatCount(standardFacts)} ${pluralize(standardFacts, 'fact', 'facts')} from standard reasoning`);
+  }
   parts.push(relations > 0 ? `${formatCount(relations)} ${pluralize(relations, 'class relationship', 'class relationships')} from standard reasoning` : 'no class relationships');
   if (omitted > 0) parts.push(`${formatCount(omitted)} trivial ${pluralize(omitted, 'one', 'ones')} hidden`);
   return `${formatCount(total)} produced: ${parts.join(', ')}.`;

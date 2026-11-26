@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEntityIri, labelForNewEntity } from "../utils/entityIri";
+import { buildEntityIri, computeEntityIriPreview, labelForNewEntity } from "../utils/entityIri";
 
 describe("buildEntityIri", () => {
   it("adds a hash after an ontology IRI that has none", () => {
@@ -12,6 +12,15 @@ describe("buildEntityIri", () => {
 
   it("appends straight after a trailing slash", () => {
     expect(buildEntityIri("http://example.org/onto/", "Cat")).toBe("http://example.org/onto/Cat");
+  });
+
+  it("uses the saved pattern for the preview and duplicate check", () => {
+    const preferences = { autoGenerateIRI: true, iriGenerationPattern: "custom", customPattern: "{namespace}/term/{entity}" } as const;
+    const iri = "http://example.org/onto/term/Pizza_topping";
+    expect(computeEntityIriPreview("http://example.org/onto#", "Pizza topping", [iri], preferences))
+      .toMatchObject({ computedIri: iri, isDuplicate: true, canCreate: false });
+    expect(buildEntityIri("http://example.org/onto#", "http://other.org/x#Cat", preferences))
+      .toBe("http://other.org/x#Cat");
   });
 
   it("turns spaces in the name into underscores and keeps a full IRI as it is", () => {

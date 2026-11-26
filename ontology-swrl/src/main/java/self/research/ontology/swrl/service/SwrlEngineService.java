@@ -746,11 +746,16 @@ public class SwrlEngineService {
      */
     @CacheEvict(value = "executionResults", key = "#projectId")
     public ExecutionResult executeSelectedRules(String projectId, List<String> ruleIds) {
+        return executeSelectedRules(projectId, ruleIds, null);
+    }
+
+    @CacheEvict(value = "executionResults", key = "#projectId")
+    public ExecutionResult executeSelectedRules(String projectId, List<String> ruleIds, String draftUserId) {
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
         long startTime = System.currentTimeMillis();
 
         try {
-            return admitted(() -> runSelectedRules(projectId, ruleIds, startTime, sample));
+            return admitted(() -> runSelectedRules(projectId, ruleIds, draftUserId, startTime, sample));
 
         } catch (TimeoutException e) {
             logger.error("Selected rules execution timed out for project: {}", projectId);
@@ -767,8 +772,11 @@ public class SwrlEngineService {
         }
     }
 
-    private ExecutionResult runSelectedRules(String projectId, List<String> ruleIds, long startTime, Timer.Sample sample) throws Exception {
-        OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+    private ExecutionResult runSelectedRules(String projectId, List<String> ruleIds, String draftUserId,
+                                             long startTime, Timer.Sample sample) throws Exception {
+        OWLOntology ontology = draftUserId == null
+                ? ontologyClient.fetchOntology(projectId)
+                : ontologyClient.fetchOntologyWithStamp(projectId, draftUserId).ontology();
         ensureNamespacePrefixes(projectId, ontology);
         Set<String> requested = new LinkedHashSet<>(ruleIds);
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology,

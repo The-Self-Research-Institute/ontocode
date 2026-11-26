@@ -449,7 +449,12 @@ public class SwrlController {
     @PostMapping("/{projectId}/execute/selected")
     public ResponseEntity<?> executeSelectedRules(
             @PathVariable String projectId,
-            @RequestBody Map<String, List<String>> request) {
+            @RequestBody Map<String, List<String>> request,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to run on a private draft"));
+        }
         
         try {
             List<String> ruleIds = request.get("ruleIds");
@@ -458,7 +463,9 @@ public class SwrlController {
                     .body(createErrorResponse("Rule IDs are required"));
             }
             
-            ExecutionResult result = swrlEngineService.executeSelectedRules(projectId, ruleIds);
+            ExecutionResult result = draft
+                    ? swrlEngineService.executeSelectedRules(projectId, ruleIds, userId)
+                    : swrlEngineService.executeSelectedRules(projectId, ruleIds);
             
             ExecutionResponse response = new ExecutionResponse(
                 result.isSuccess(),

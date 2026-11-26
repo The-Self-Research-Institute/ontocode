@@ -1,3 +1,7 @@
+import type { EntityPreferences } from '../contexts/EntityPreferencesContext';
+
+export type EntityIriPreferences = Pick<EntityPreferences, 'autoGenerateIRI' | 'iriGenerationPattern' | 'customPattern'>;
+
 export const DEFAULT_ONTOLOGY_BASE_IRI = 'http://example.com/onto';
 
 const FULL_IRI_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
@@ -16,13 +20,23 @@ export function labelForNewEntity(rawName: string): string {
   return sanitizeIriFragment(trimmed) === trimmed ? '' : trimmed;
 }
 
-export function buildEntityIri(ontologyBaseIri: string | undefined, rawName: string): string {
+export function buildEntityIri(ontologyBaseIri: string | undefined, rawName: string, preferences?: EntityIriPreferences): string {
   const trimmed = rawName.trim();
   if (!trimmed) return '';
   if (isFullIriString(trimmed)) return trimmed;
   const base = (ontologyBaseIri || DEFAULT_ONTOLOGY_BASE_IRI).trim();
+  const fragment = sanitizeIriFragment(trimmed);
+  if (preferences?.autoGenerateIRI) {
+    const namespace = base.replace(/[#/]$/, '');
+    if (preferences.iriGenerationPattern === 'namespace_slash_entity') return `${namespace}/${fragment}`;
+    if (preferences.iriGenerationPattern === 'namespace_entity') return `${namespace}${fragment}`;
+    if (preferences.iriGenerationPattern === 'custom' && preferences.customPattern?.trim()) {
+      return preferences.customPattern.trim().replace(/\{(namespace|entity)\}/g,
+        (_, key) => key === 'namespace' ? namespace : fragment);
+    }
+  }
   const separator = base.endsWith('#') || base.endsWith('/') ? '' : '#';
-  return `${base}${separator}${sanitizeIriFragment(trimmed)}`;
+  return `${base}${separator}${fragment}`;
 }
 
 export interface EntityIriPreview {
@@ -36,9 +50,10 @@ export function computeEntityIriPreview(
   ontologyBaseIri: string | undefined,
   rawName: string,
   existingIris: string[],
+  preferences?: EntityIriPreferences,
 ): EntityIriPreview {
   const trimmedName = rawName.trim();
-  const computedIri = buildEntityIri(ontologyBaseIri, trimmedName);
+  const computedIri = buildEntityIri(ontologyBaseIri, trimmedName, preferences);
   const isDuplicate = !!computedIri && existingIris.includes(computedIri);
   const canCreate = !!trimmedName && !isDuplicate;
   return { trimmedName, computedIri, isDuplicate, canCreate };
