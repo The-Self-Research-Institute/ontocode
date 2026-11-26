@@ -100,7 +100,7 @@ class ProjectLoadControllerQuickUnsatTest {
         Files.writeString(exportFile, ONTOLOGY);
         when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(7L);
         when(storageManager.exportOntology("proj-1", "rdfxml")).thenReturn(exportFile);
-        when(datasetService.getDatasetSizeOrUnknown("proj-1")).thenReturn(10L);
+        when(datasetService.getGraphTripleCount("proj-1")).thenReturn(10L);
         when(reasonerService.withoutSwrlRules(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -239,8 +239,21 @@ class ProjectLoadControllerQuickUnsatTest {
     }
 
     @Test
+    void aTooLargeProjectIsNotSizedAgainOnEveryClickUntilItChanges() {
+        when(datasetService.getGraphTripleCount("proj-1")).thenReturn(2_000_000L);
+
+        assertEquals("TOO_LARGE", check().get("reason"));
+        assertEquals("TOO_LARGE", check().get("reason"));
+        verify(datasetService, times(1)).getGraphTripleCount("proj-1");
+
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(8L);
+        assertEquals("TOO_LARGE", check().get("reason"));
+        verify(datasetService, times(2)).getGraphTripleCount("proj-1");
+    }
+
+    @Test
     void unknownSizeIsSkippedWithAReason() {
-        when(datasetService.getDatasetSizeOrUnknown("proj-1")).thenReturn(-1L);
+        when(datasetService.getGraphTripleCount("proj-1")).thenReturn(-1L);
 
         Map<String, Object> body = check();
 

@@ -140,7 +140,7 @@ public class OntologyMetadataService {
             });
 
             metadata.putAll(backgroundCounts.collect(projectId,
-                    FastPathCounts.tasks(metrics, projectId, cached, liveModel(projectId).isPresent())));
+                    FastPathCounts.tasks(metrics, projectId, cached, liveModel(projectId).isPresent(), datasetService.graphLooksLarge(projectId, FastPathCounts.LARGE_TRIPLES))));
 
             metrics.overlayLiveDesktopEntityCounts(projectId, metadata, ontologyCache);
             LiveOntologyHeaderOverlay.apply(metadata, projectId, ontologyCache, desktopOwlApi);

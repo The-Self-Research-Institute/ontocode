@@ -574,7 +574,7 @@ public class OntologyQueryService {
         // Same large-graph threshold as children(): GO/Mondo-scale datasets stay on the
         // fast path — set-operator decoration is a visualization nicety, never worth
         // multi-second path-expression traversals there.
-        if (datasetService.getGraphTripleCount(projectId) >= 500_000L) {
+        if (datasetService.isLargeOrUnknownGraph(projectId, 500_000L)) {
             log.info("⏭️ [PERF] attachClassExpressions skipped for large graph (>=500k triples), project {}", projectId);
             return;
         }
@@ -713,7 +713,7 @@ public class OntologyQueryService {
         safeIri(parentIri);
         long startTime = System.currentTimeMillis();
 
-        boolean largeGraph = datasetService.getGraphTripleCount(projectId) >= 500_000L;
+        boolean largeGraph = datasetService.isLargeOrUnknownGraph(projectId, 500_000L);
 
         if (largeGraph) {
             // Phase 1: fast PSO index scan — no path expressions, Fuseki stream-stops at LIMIT.
