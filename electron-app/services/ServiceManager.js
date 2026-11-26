@@ -12,6 +12,7 @@ const guard = require('./SharedGuard');
 const policy = require('./ResourcePolicy');
 const pg = require('./PostgresRuntime');
 const pgElevated = require('./PostgresElevated');
+const pgUpgrade = require('./PostgresUpgrade');
 const logHygiene = require('./LogHygiene');
 
 function jvmHeaps() {
@@ -409,13 +410,68 @@ function log(level, msg) {
 }
 
 let stagedPostgresRoot = null;
+let legacyPostgresActiveRoot = null;
 
 function bundledPostgresRoot() {
     return path.join(RESOURCES_DIR, 'postgres', process.platform);
 }
 
 function postgresRoot() {
-    return stagedPostgresRoot || bundledPostgresRoot();
+    return legacyPostgresActiveRoot || stagedPostgresRoot || bundledPostgresRoot();
+}
+
+async function legacyPostgresRoot(elevated) {
+    const bundled = pgUpgrade.legacyRootFor(RESOURCES_DIR);
+    if (!pgElevated.needsOwnCopy(elevated, bundled)) return bundled;
+    try {
+        return await pgElevated.stageRuntime(bundled, path.join(DATA_DIR, 'pg-runtime-legacy'));
+    } catch (err) {
+        log('warn', `Could not copy the previous PostgreSQL to the data folder (${err.message}); using the installed files`);
+        return bundled;
+    }
+}
+
+async function upgradePostgresIfNeeded(elevated) {
+    pgUpgrade.recover({ dataDir: POSTGRES_DATA_DIR, log });
+    const decision = pgUpgrade.decide({
+        dataDir: POSTGRES_DATA_DIR,
+        bundledRoot: postgresRoot(),
+        legacyRoot: pgUpgrade.legacyRootFor(RESOURCES_DIR),
+    });
+    if (decision.action === 'start') {
+        await pgUpgrade.discardLeftover({ dataDir: POSTGRES_DATA_DIR, bundledRoot: postgresRoot(), log });
+        return;
+    }
+    if (decision.action === 'refuse') {
+        throw new Error(`The local database in ${POSTGRES_DATA_DIR} was created by PostgreSQL ${decision.from} but this version of OntoCode Studio ships PostgreSQL ${decision.to}. Your data has not been changed. Please install the OntoCode Studio version that matches it.`);
+    }
+    const legacyRoot = await legacyPostgresRoot(elevated);
+    let outcome;
+    try {
+        outcome = await pgUpgrade.run({
+            dataDir: POSTGRES_DATA_DIR,
+            bundledRoot: postgresRoot(),
+            legacyRoot,
+            password: requireDesktopSecrets().dbPassword,
+            javaBin: javaBin(),
+            desktopJar: path.join(RESOURCES_DIR, 'jars', 'desktop.jar'),
+            sharedBuffers: jvmHeaps().postgresBuffers,
+            logsDir: LOGS_DIR,
+            from: decision.from,
+            to: decision.to,
+            elevated,
+            log,
+        });
+    } catch (err) {
+        outcome = { ok: false, reason: 'error', message: err.message, logFile: path.join(LOGS_DIR, 'database-upgrade.log') };
+    }
+    if (outcome.ok) {
+        log('ok', `Local database upgraded to PostgreSQL ${decision.to}; the previous copy is kept in ${outcome.backupDir}`);
+        return;
+    }
+    legacyPostgresActiveRoot = legacyRoot;
+    log('warn', `Database upgrade postponed (${outcome.reason}); running on PostgreSQL ${decision.from} for now`);
+    emitEvent({ kind: 'database-upgrade', name: 'Database', message: pgUpgrade.describe(outcome, outcome.logFile) });
 }
 
 async function useStagedPostgres() {
@@ -551,11 +607,8 @@ async function startPostgres() {
     log('info', 'Starting PostgreSQL…');
     const elevated = await pgElevated.isElevatedAdmin();
     if (pgElevated.needsOwnCopy(elevated, bundledPostgresRoot())) await useStagedPostgres();
+    await upgradePostgresIfNeeded(elevated);
     const root = postgresRoot();
-    const version = pg.checkVersion(root, POSTGRES_DATA_DIR);
-    if (!version.ok) {
-        throw new Error(`The local database in ${POSTGRES_DATA_DIR} was created by PostgreSQL ${version.dataMajor} but this version of OntoCode Studio ships PostgreSQL ${version.bundledMajor}. Your data has not been changed. Please install the OntoCode Studio version that matches it.`);
-    }
     if (pg.clusterState(POSTGRES_DATA_DIR) !== 'present') log('info', 'Creating the local database (first start only)…');
     await pg.prepareCluster(root, POSTGRES_DATA_DIR, requireDesktopSecrets().dbPassword,
         { log, elevated, templateRoot: bundledPostgresRoot() });

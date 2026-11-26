@@ -21,11 +21,22 @@
 services:
   # PostgreSQL Database
   postgres:
-    image: postgres:17
+    image: postgres:19
     container_name: ontocode-postgres
     restart: unless-stopped
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ ! -s "$${PGDATA}/PG_VERSION" ] && [ -s /old-pgdata/PG_VERSION ]; then
+          echo "The PostgreSQL $$(cat /old-pgdata/PG_VERSION) database in the old volume has not been moved to PostgreSQL 19 yet. Run scripts/postgres-upgrade-19.sh; an empty database is not started." >&2
+          exit 1
+        fi
+        exec docker-entrypoint.sh "$$@"
+      - --
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata19:/var/lib/postgresql
+      - pgdata:/old-pgdata:ro
     environment:
       POSTGRES_DB: ontocode
       POSTGRES_USER: ontocode
@@ -456,6 +467,7 @@ services:
 
 volumes:
   pgdata:
+  pgdata19:
   blobs:
   fuseki-data:
   editor-data:

@@ -422,7 +422,8 @@ app.whenReady().then(async () => {
         const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
         const options = {
             type: 'warning',
-            title: event.kind === 'low-disk' ? 'Low disk space' : 'A service stopped',
+            title: event.kind === 'low-disk' ? 'Low disk space'
+                : event.kind === 'database-upgrade' ? 'Local database' : 'A service stopped',
             message: event.message,
             buttons: ['OK'],
         };
