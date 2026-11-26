@@ -56,7 +56,7 @@ class DisabledRulesExportTest {
         HttpHeaders headers = DisabledRulesHeader.into(new HttpHeaders(), service, "p", false, null);
 
         assertNull(headers.getFirst("X-Ontocode-Disabled-Rules"));
-        assertFalse(headers.containsKey("X-Ontocode-Disabled-Rules"));
+        assertFalse(headers.containsHeader("X-Ontocode-Disabled-Rules"));
     }
 
     @Test

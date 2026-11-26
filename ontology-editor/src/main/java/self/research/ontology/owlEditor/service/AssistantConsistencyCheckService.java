@@ -462,7 +462,7 @@ public class AssistantConsistencyCheckService {
     private void publish(String serverGroupId, ConsistencyCheckState state, String detail) {
         try {
             messagingTemplate.convertAndSend("/topic/assistant/consistency-check/" + serverGroupId,
-                    Map.of("serverGroupId", serverGroupId, "state", state.name(), "detail", detail == null ? "" : detail));
+                    (Object) Map.of("serverGroupId", serverGroupId, "state", state.name(), "detail", detail == null ? "" : detail));
         } catch (Exception e) {
             log.warn("[Assistant] Failed to publish consistency-check update for group {}: {}",
                     serverGroupId, e.getMessage());

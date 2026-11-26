@@ -60,7 +60,7 @@ public class GatewayAuthFilter implements GlobalFilter, Ordered {
         // busting the plugin service's cache). An external caller must never be able to
         // inject it and masquerade as an internal service, so it's stripped here no
         // matter what else this filter decides about the request.
-        if (exchange.getRequest().getHeaders().containsKey(INTERNAL_TOKEN_HEADER)) {
+        if (exchange.getRequest().getHeaders().containsHeader(INTERNAL_TOKEN_HEADER)) {
             exchange = exchange.mutate()
                     .request(exchange.getRequest().mutate().headers(h -> h.remove(INTERNAL_TOKEN_HEADER)).build())
                     .build();

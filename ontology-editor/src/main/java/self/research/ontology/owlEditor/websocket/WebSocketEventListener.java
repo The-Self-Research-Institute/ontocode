@@ -64,7 +64,7 @@ public class WebSocketEventListener {
                     
                     messagingTemplate.convertAndSend(
                         "/topic/presence/" + projectId, 
-                        message
+                        (Object) message
                     );
                     
                     log.info("User {} disconnected from project {}", 

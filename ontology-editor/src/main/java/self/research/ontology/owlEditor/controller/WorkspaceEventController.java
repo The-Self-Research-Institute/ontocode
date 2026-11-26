@@ -24,7 +24,7 @@ public class WorkspaceEventController {
             event.put("workspaceId", workspaceId);
             event.put("timestamp", System.currentTimeMillis());
             String topic = "/topic/workspace/" + workspaceId;
-            messagingTemplate.convertAndSend(topic, event);
+            messagingTemplate.convertAndSend(topic, (Object) event);
             log.info("[WorkspaceEvent] Broadcast {} to {}", event.get("type"), topic);
             return ResponseEntity.ok(Map.of("ok", true));
         } catch (Exception e) {

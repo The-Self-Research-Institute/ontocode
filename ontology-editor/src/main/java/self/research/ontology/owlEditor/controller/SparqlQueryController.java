@@ -343,7 +343,7 @@ public class SparqlQueryController {
             "timestamp", System.currentTimeMillis(),
             "message", "SPARQL update executed - please refresh"
         );
-        messagingTemplate.convertAndSend("/topic/ontology/" + projectId, sparqlUpdateNotification);
+        messagingTemplate.convertAndSend("/topic/ontology/" + projectId, (Object) sparqlUpdateNotification);
         return ResponseEntity.ok(Map.of("success", true));
         } catch (self.research.ontology.owlEditor.service.BusyException busy) {
             throw busy;

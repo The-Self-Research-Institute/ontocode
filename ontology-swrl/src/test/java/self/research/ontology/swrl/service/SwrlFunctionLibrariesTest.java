@@ -11,7 +11,7 @@ import org.mockito.Mockito;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.io.StringDocumentSource;
 import org.semanticweb.owlapi.model.OWLOntology;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.swrlapi.core.SWRLRuleEngine;
 import self.research.ontology.swrl.builtin.BuiltInLibraries;

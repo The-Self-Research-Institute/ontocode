@@ -4,7 +4,7 @@ import org.semanticweb.owlapi.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.cache.annotation.CacheConfig;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.HttpStatus;
@@ -64,8 +64,8 @@ public class OntologyClientService {
         // ~13k classes took 105s+ to export), even though the fetch itself was succeeding.
         this.restTemplate = restTemplateBuilder
             .rootUri(editorServiceUrl)
-            .setConnectTimeout(Duration.ofSeconds(10))
-            .setReadTimeout(Duration.ofSeconds(300))
+            .connectTimeout(Duration.ofSeconds(10))
+            .readTimeout(Duration.ofSeconds(300))
             .build();
             
         logger.info("Initialized OntologyClientService with URL: {}", editorServiceUrl);

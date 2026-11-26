@@ -1311,7 +1311,7 @@ public class ProjectLoadController {
                     "timestamp", System.currentTimeMillis(),
                     "message", (username != null ? username : "Someone") + " saved the project with " + draftResult.getAppliedCount() + " changes"
                 );
-                messagingTemplate.convertAndSend("/topic/ontology/" + projectId, saveNotification);
+                messagingTemplate.convertAndSend("/topic/ontology/" + projectId, (Object) saveNotification);
                 log.info("[SAVE] Notified collaborators of save completion");
             }
             

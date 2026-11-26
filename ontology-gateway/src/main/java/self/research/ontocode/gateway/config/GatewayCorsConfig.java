@@ -1,6 +1,6 @@
 package self.research.ontocode.gateway.config;
 
-import org.springframework.boot.web.reactive.error.ErrorWebExceptionHandler;
+import org.springframework.boot.webflux.error.ErrorWebExceptionHandler;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,8 +27,8 @@ public class GatewayCorsConfig {
             String origin = exchange.getRequest().getHeaders().getOrigin();
 
             boolean isPreflight = HttpMethod.OPTIONS.equals(exchange.getRequest().getMethod())
-                    && exchange.getRequest().getHeaders().containsKey(HttpHeaders.ORIGIN)
-                    && exchange.getRequest().getHeaders().containsKey(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD);
+                    && exchange.getRequest().getHeaders().containsHeader(HttpHeaders.ORIGIN)
+                    && exchange.getRequest().getHeaders().containsHeader(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD);
             if (isPreflight) {
                 ServerHttpResponse res = exchange.getResponse();
                 res.setStatusCode(HttpStatus.NO_CONTENT);
