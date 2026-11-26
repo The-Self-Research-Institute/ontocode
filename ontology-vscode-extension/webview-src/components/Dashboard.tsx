@@ -85,6 +85,7 @@ import { warnAboutRulesInExport } from "../services/exportRulesWarning";
 import { adviceAfterSlowFailure, adviceBeforeRun } from "../utils/slowReasonerAdvice";
 import { pickFileToOpen, starterOntology } from "../utils/editorEntryFile";
 import { recordCitationOnServer } from "../utils/citationServer";
+import { metadataStillSettling } from "../utils/metadataSettling";
 import {
   cancelReasonerSnapshots,
   invalidateReasonerSnapshots,
@@ -4558,25 +4559,21 @@ const Dashboard: React.FC<DashboardProps> = ({
               console.warn("[Dashboard] Metadata request failed, retrying:", e?.message || e);
             }
 
-            if (!isDesktop() && !isStaleLoad()) {
-              const firstCount = Number((res?.data || res)?.classCount ?? (res?.data || res)?.counts?.classes ?? 0);
-              if (!(firstCount > 0)) {
-                for (let i = 0; i < 20 && !signal.aborted; i++) {
-                  await new Promise((r) => setTimeout(r, 3000));
-                  if (isStaleLoad()) return;
-                  try {
-                    const again = await apiClient.get<any>(
-                      `/api/ontology/metadata/${encodedProjectId}?_t=${Date.now()}&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
-                      undefined,
-                      { signal },
-                    );
-                    const againCount = Number((again?.data || again)?.classCount ?? (again?.data || again)?.counts?.classes ?? 0);
-                    if (againCount > 0) {
-                      if (!isStaleLoad()) applyMetadataResponse(again);
-                      break;
-                    }
-                  } catch {
+            if (!isDesktop() && !isStaleLoad() && metadataStillSettling(res)) {
+              for (let i = 0; i < 20 && !signal.aborted; i++) {
+                await new Promise((r) => setTimeout(r, 3000));
+                if (isStaleLoad()) return;
+                try {
+                  const again = await apiClient.get<any>(
+                    `/api/ontology/metadata/${encodedProjectId}?_t=${Date.now()}&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
+                    undefined,
+                    { signal },
+                  );
+                  if (!metadataStillSettling(again)) {
+                    if (!isStaleLoad()) applyMetadataResponse(again);
+                    break;
                   }
+                } catch {
                 }
               }
             }
