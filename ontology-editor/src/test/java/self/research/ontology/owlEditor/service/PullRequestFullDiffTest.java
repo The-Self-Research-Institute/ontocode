@@ -110,7 +110,8 @@ class PullRequestFullDiffTest {
 
     private String publishedMain() {
         ArgumentCaptor<String> rdf = ArgumentCaptor.forClass(String.class);
-        verify(datasetService).replaceMainGraphFromRdf(eq("p1"), rdf.capture(), eq(RDFFormat.RDFXML));
+        verify(datasetService).replaceMainGraphAndClearDraft(eq("p1"), eq("author1"), rdf.capture(), eq(RDFFormat.RDFXML));
+        verify(datasetService, never()).clearDraftGraph(anyString(), anyString());
         return rdf.getValue();
     }
 
@@ -195,7 +196,7 @@ class PullRequestFullDiffTest {
         Map<String, Object> conflicts = (Map<String, Object>) response.getBody().get("conflicts");
         assertEquals(1, conflicts.get("conflictCount"));
         assertEquals(DraftPullRequest.Status.OPEN, pr.getStatus());
-        verify(datasetService, never()).replaceMainGraphFromRdf(anyString(), anyString(), any());
+        verify(datasetService, never()).replaceMainGraphAndClearDraft(anyString(), anyString(), anyString(), any());
         verify(datasetService, never()).moveDraftToMain(anyString(), anyString());
     }
 
@@ -212,6 +213,20 @@ class PullRequestFullDiffTest {
         assertTrue(published.contains(EX + "Food"));
         assertFalse(published.contains("merge-scratch"));
         verify(datasetService, never()).moveDraftToMain(anyString(), anyString());
+    }
+
+    @Test
+    void aPublishThatFailsLeavesThePullRequestOpenAndPublishesNoPrefixes() throws Exception {
+        given(ontology(EX + "o", ""), ontology(EX + "o", parentOfA("Food")), ontology(EX + "o", parentOfA("Dish")), true);
+        org.mockito.Mockito.doThrow(new RuntimeException("fuseki down")).when(datasetService)
+                .replaceMainGraphAndClearDraft(anyString(), anyString(), anyString(), any());
+
+        ResponseEntity<Map<String, Object>> response = approve(Map.of(EX + "A", "keep_draft"));
+
+        org.junit.jupiter.api.Assertions.assertNotEquals(200, response.getStatusCode().value());
+        assertEquals(DraftPullRequest.Status.OPEN, pr.getStatus());
+        verify(datasetService, never()).publishDraftPrefixesToPublic(anyString(), anyString());
+        verify(datasetService, never()).clearDraftGraph(anyString(), anyString());
     }
 
     @Test
@@ -252,7 +267,7 @@ class PullRequestFullDiffTest {
 
         assertEquals(200, response.getStatusCode().value());
         verify(datasetService).moveDraftToMain("p1", "author1");
-        verify(datasetService, never()).replaceMainGraphFromRdf(anyString(), anyString(), any());
+        verify(datasetService, never()).replaceMainGraphAndClearDraft(anyString(), anyString(), anyString(), any());
     }
 
     @Test

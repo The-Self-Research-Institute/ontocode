@@ -22,7 +22,6 @@ import org.eclipse.rdf4j.rio.RDFWriter;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
-import org.eclipse.rdf4j.rio.helpers.StatementCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -1632,11 +1631,28 @@ public class SparqlDatasetService {
         replaceNamedGraphFromRdf(projectId, getGraphUri(projectId), rdfContent, format);
     }
 
+    public void replaceMainGraphAndClearDraft(String projectId, String userId, String rdfContent,
+                                              org.eclipse.rdf4j.rio.RDFFormat format) {
+        String draftGraph = getDraftGraphUri(projectId, userId);
+        replaceGraph(projectId, getGraphUri(projectId), rdfContent, format, List.of(draftGraph));
+        noteGraphWritten(draftGraph);
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
+        OwlApiMutationCoordinator mutationCoordinator = mutationCoordinatorProvider.getIfAvailable();
+        if (mutationCoordinator != null) {
+            mutationCoordinator.afterMutation(projectId, MutationContext.getAndClear());
+        }
+        evictDraftReadyCache(projectId, userId);
+    }
+
     public void replaceNamedGraphFromRdf(String projectId, String graphUri, String rdfContent,
                                          org.eclipse.rdf4j.rio.RDFFormat format) {
-        if (rdfContent == null || rdfContent.isBlank()) {
-            throw new IllegalArgumentException("RDF content is empty");
-        }
+        replaceGraph(projectId, graphUri, rdfContent, format, List.of());
+    }
+
+    private void replaceGraph(String projectId, String graphUri, String rdfContent,
+                              org.eclipse.rdf4j.rio.RDFFormat format, List<String> graphsToClear) {
         // Parse locally and re-emit as a plain "CLEAR GRAPH; INSERT DATA" SPARQL Update string,
         // executed the same way every other mutation in this class is (conn.prepareUpdate().execute()).
         // RDF4J's SPARQLConnection.add(InputStream, format, graphIri) — a different RDF4J API that
@@ -1644,32 +1660,14 @@ public class SparqlDatasetService {
         // string — silently fails ("error executing transaction", no useful detail) for some
         // ontologies produced by the merge/publish pipeline, even though the identical triples
         // load fine via a raw SPARQL INSERT DATA or the Graph Store Protocol. Sidestep it entirely.
-        List<Statement> statements = new ArrayList<>();
-        RDFParser parser = Rio.createParser(format);
-        parser.setRDFHandler(new StatementCollector(statements));
-        try (ByteArrayInputStream in = new ByteArrayInputStream(rdfContent.getBytes(StandardCharsets.UTF_8))) {
-            parser.parse(in, graphUri);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to parse RDF content for graph " + graphUri, e);
-        }
-
-        java.io.StringWriter triplesOut = new java.io.StringWriter();
-        RDFWriter writer = Rio.createWriter(org.eclipse.rdf4j.rio.RDFFormat.NTRIPLES, triplesOut);
-        writer.startRDF();
-        for (Statement st : statements) {
-            writer.handleStatement(st);
-        }
-        writer.endRDF();
-
-        String updateText = "CLEAR SILENT GRAPH <" + graphUri + ">;\n"
-                + "INSERT DATA { GRAPH <" + graphUri + "> {\n" + triplesOut + "\n} }";
-
+        GraphReplaceUpdate update = GraphReplaceUpdate.of(graphUri, rdfContent, format, graphsToClear);
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
-            conn.prepareUpdate(updateText).execute();
+            conn.prepareUpdate(update.text()).execute();
             noteGraphWritten(graphUri);
             invalidateDerivedCachesAfterUpdate(projectId);
-            log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} triples)", graphUri, projectId, statements.size());
+            log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} triples, cleared {})",
+                    graphUri, projectId, update.triples(), graphsToClear);
         } catch (Exception e) {
             log.error("Failed to replace graph {} for project {}", graphUri, projectId, e);
             throw new RuntimeException("Failed to replace named graph", e);

@@ -161,7 +161,7 @@ class PullOntologyHeaderTest {
 
     private String publishedMain() {
         ArgumentCaptor<String> rdf = ArgumentCaptor.forClass(String.class);
-        verify(datasetService).replaceMainGraphFromRdf(eq("p1"), rdf.capture(), eq(RDFFormat.RDFXML));
+        verify(datasetService).replaceMainGraphAndClearDraft(eq("p1"), eq("u1"), rdf.capture(), eq(RDFFormat.RDFXML));
         return rdf.getValue();
     }
 

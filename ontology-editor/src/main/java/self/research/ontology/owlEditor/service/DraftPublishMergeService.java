@@ -139,9 +139,8 @@ public class DraftPublishMergeService {
                 baseline, ours, theirs, conflictIris, resolutions);
 
         String mergedRdf = mergeService.saveOntologyToRdfXml(merged);
-        datasetService.replaceMainGraphFromRdf(projectId, mergedRdf, RDFFormat.RDFXML);
+        datasetService.replaceMainGraphAndClearDraft(projectId, userId, mergedRdf, RDFFormat.RDFXML);
         datasetService.publishDraftPrefixesToPublic(projectId, userId);
-        datasetService.clearDraftGraph(projectId, userId);
 
         log.info("[DRAFT-MERGE] Published project {} user {} via three-way merge ({} conflict IRIs)",
                 projectId, userId, conflictIris.size());
@@ -193,9 +192,9 @@ public class DraftPublishMergeService {
 
         OWLOntology merged = mergeService.mergeDraftPublishThreeWay(
                 mainCopy, draft, main, differing, effective, headerBaseline);
-        datasetService.replaceMainGraphFromRdf(projectId, mergeService.saveOntologyToRdfXml(merged), RDFFormat.RDFXML);
+        datasetService.replaceMainGraphAndClearDraft(projectId, userId, mergeService.saveOntologyToRdfXml(merged),
+                RDFFormat.RDFXML);
         datasetService.publishDraftPrefixesToPublic(projectId, userId);
-        datasetService.clearDraftGraph(projectId, userId);
 
         log.info("[DRAFT-MERGE] Published project {} user {} by direct comparison ({} differing IRIs)",
                 projectId, userId, differing.size());
