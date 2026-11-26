@@ -105,6 +105,20 @@ class UndoOperationsTest {
     }
 
     @Test
+    void aFailureAfterSomeBatchesWentThroughNeedsAttentionAndRemembersWhere() {
+        operations.around(request("op-1", "cs-1", false), () -> {
+            UndoOperationContext.batchApplied("e1", 2, 5_000);
+            return new Result(500, false, false, ChangeRollbackService.UNDO, "cs", List.of(), List.of(), null, "Stopped part-way");
+        });
+
+        UndoIntentDocument intent = fake.only().orElseThrow();
+        assertEquals(Status.NEEDS_ATTENTION, intent.getStatus());
+        assertEquals("e1", intent.getBatchChangeId());
+        assertEquals(2, intent.getAppliedBatches());
+        assertEquals(5_000, intent.getBatchTriples());
+    }
+
+    @Test
     void anExceptionNeedsAttentionAndStillReachesTheCaller() {
         assertThrows(IllegalStateException.class, () -> operations.around(request("op-1", "cs-1", false), () -> {
             throw new IllegalStateException("store offline");

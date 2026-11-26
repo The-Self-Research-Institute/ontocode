@@ -24,7 +24,7 @@ public class JdbcUndoIntentRepository implements UndoIntentRepository {
 
     private static final String[] COLUMN_LIST = {"id", "project_id", "op_id", "direction", "actor", "draft", "change_ids",
             "audit_id", "undo_audit_id", "scope_key", "stage", "applied_count", "status", "failure_reason", "created_at",
-            "updated_at"};
+            "updated_at", "batch_change_id", "applied_batches", "batch_triples"};
 
     private static final String COLUMNS = String.join(", ", COLUMN_LIST);
 
@@ -92,7 +92,7 @@ public class JdbcUndoIntentRepository implements UndoIntentRepository {
                 u.getChangeIds(), u.getAuditId(), u.getUndoAuditId(), u.getScopeKey(),
                 u.getStage() == null ? null : u.getStage().name(), u.getAppliedCount(),
                 u.getStatus() == null ? null : u.getStatus().name(), u.getFailureReason(), Instants.toDb(u.getCreatedAt()),
-                Instants.toDb(u.getUpdatedAt())};
+                Instants.toDb(u.getUpdatedAt()), u.getBatchChangeId(), u.getAppliedBatches(), u.getBatchTriples()};
     }
 
     private static UndoIntentDocument read(ResultSet rs) throws SQLException {
@@ -115,6 +115,9 @@ public class JdbcUndoIntentRepository implements UndoIntentRepository {
                 .failureReason(rs.getString("failure_reason"))
                 .createdAt(Instants.read(rs, "created_at"))
                 .updatedAt(Instants.read(rs, "updated_at"))
+                .batchChangeId(rs.getString("batch_change_id"))
+                .appliedBatches(rs.getInt("applied_batches"))
+                .batchTriples(rs.getInt("batch_triples"))
                 .build();
     }
 }

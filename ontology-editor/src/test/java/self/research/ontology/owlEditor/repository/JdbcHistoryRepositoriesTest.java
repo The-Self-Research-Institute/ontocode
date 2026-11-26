@@ -407,6 +407,26 @@ class JdbcHistoryRepositoriesTest {
     }
 
     @Test
+    void anUndoThatStoppedBetweenBatchesKeepsItsProgress() {
+        UndoIntentDocument fresh = intents.save(intent("p1", "op-new"));
+        UndoIntentDocument stored = intents.findById(fresh.getId()).orElseThrow();
+        assertNull(stored.getBatchChangeId());
+        assertEquals(0, stored.getAppliedBatches());
+
+        fresh.setBatchChangeId("c1");
+        fresh.setAppliedBatches(3);
+        fresh.setBatchTriples(5_000);
+        fresh.setStatus(UndoIntentDocument.Status.NEEDS_ATTENTION);
+        intents.save(fresh);
+
+        UndoIntentDocument read = intents.findByProjectIdAndStatusIn("p1",
+                List.of(UndoIntentDocument.Status.NEEDS_ATTENTION)).get(0);
+        assertEquals("c1", read.getBatchChangeId());
+        assertEquals(3, read.getAppliedBatches());
+        assertEquals(5_000, read.getBatchTriples());
+    }
+
+    @Test
     void theSameOperationIdInAProjectIsRejectedButBlankOnesAreNot() {
         intents.save(intent("p1", "op1"));
 

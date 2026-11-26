@@ -45,6 +45,18 @@ final class UndoOperationContext {
         }
     }
 
+    static void batchApplied(String changeId, int applied, int batchTriples) {
+        Holder holder = CURRENT.get();
+        if (holder != null) {
+            holder.intents().recordBatches(holder.intent(), changeId, applied, batchTriples);
+        }
+    }
+
+    static boolean partlyApplied() {
+        Holder holder = CURRENT.get();
+        return holder != null && holder.intent().getAppliedBatches() > 0;
+    }
+
     static boolean blocked(String entryId) {
         Holder holder = CURRENT.get();
         return holder != null && entryId != null && holder.blocked().contains(entryId);
