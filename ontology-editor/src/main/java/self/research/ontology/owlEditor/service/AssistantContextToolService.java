@@ -73,11 +73,6 @@ public class AssistantContextToolService {
         }
     }
 
-    private static StorageManager.ContentScope scopeFor(AssistantSessionDocument session) {
-        return session.isDraft() ? new StorageManager.ContentScope(true, session.getDraftUserId())
-                                 : StorageManager.ContentScope.publicScope();
-    }
-
     private ContextToolResult readAdmitted(String sessionId, AssistantSessionDocument session,
                                            List<Target> targets, String kind) {
         if ("guidance".equals(kind)) {
@@ -88,13 +83,9 @@ public class AssistantContextToolService {
                     .message("Retrieval budget exhausted for this session").build();
         }
 
-        StorageManager.ContentScope scope = scopeFor(session);
-        SparqlQueryContext.setUserId(scope.userId());
-        SparqlQueryContext.setWantsDraft(scope.draft());
-        try {
+        StorageManager.ContentScope scope = AssistantReadScope.of(session);
+        try (AssistantReadScope ignored = AssistantReadScope.enter(scope)) {
             return readAdmittedInScope(sessionId, session, targets, kind, scope);
-        } finally {
-            SparqlQueryContext.clear();
         }
     }
 

@@ -92,7 +92,7 @@ public class AssistantSparqlToolService {
                     .retrievalAttemptsRemaining(0).build();
         }
 
-        try {
+        try (AssistantReadScope ignored = AssistantReadScope.enter(AssistantReadScope.of(session))) {
             String effectiveQuery = injectPrefixes(query, session.getProjectId());
             Optional<SparqlDatasetService.CappedSparqlResult> readResult = lockRegistry.runShared(session.getProjectId(), () -> {
                 SparqlDatasetService.CappedSparqlResult read =

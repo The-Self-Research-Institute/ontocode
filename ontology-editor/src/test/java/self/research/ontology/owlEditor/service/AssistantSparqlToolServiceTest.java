@@ -315,6 +315,47 @@ class AssistantSparqlToolServiceTest {
         assertEquals(1, sent.getValue().split("PREFIX owl:", -1).length - 1);
     }
 
+    @Test
+    void aDraftSessionQueriesTheDraftAndLeavesTheThreadAsItFoundIt() {
+        AssistantSessionDocument session = activeSession();
+        session.setDraft(true);
+        session.setDraftUserId("user-7");
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(session));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        java.util.List<String> seen = new java.util.ArrayList<>();
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenAnswer(call -> {
+                    seen.add(SparqlQueryContext.wantsDraft() + ":" + SparqlQueryContext.getUserId());
+                    return new CappedSparqlResult(List.of("s"), List.of(), false, null);
+                });
+        SparqlQueryContext.setUserId("caller");
+        try {
+            assertTrue(toolService.runSparql("s1", "u@x.com", "SELECT ?s WHERE { ?s ?p ?o }").isOk());
+
+            assertEquals(List.of("true:user-7"), seen);
+            assertEquals("caller", SparqlQueryContext.getUserId());
+            assertFalse(SparqlQueryContext.wantsDraft());
+        } finally {
+            SparqlQueryContext.clear();
+        }
+    }
+
+    @Test
+    void aPublicSessionQueriesThePublicGraph() {
+        when(sessionService.getActiveSession("s1", "u@x.com")).thenReturn(Optional.of(activeSession()));
+        when(sessionService.tryConsumeRetrievalAttempt("s1")).thenReturn(true);
+        java.util.List<Boolean> seen = new java.util.ArrayList<>();
+        when(datasetService.execSelectCapped(eq("proj-1"), anyString(), anyInt(), anyInt(), anyLong()))
+                .thenAnswer(call -> {
+                    seen.add(SparqlQueryContext.wantsDraft());
+                    return new CappedSparqlResult(List.of("s"), List.of(), false, null);
+                });
+
+        assertTrue(toolService.runSparql("s1", "u@x.com", "SELECT ?s WHERE { ?s ?p ?o }").isOk());
+
+        assertEquals(List.of(false), seen);
+    }
+
     private AssistantSessionDocument activeSession() {
         return AssistantSessionDocument.builder()
                 .id("s1")
