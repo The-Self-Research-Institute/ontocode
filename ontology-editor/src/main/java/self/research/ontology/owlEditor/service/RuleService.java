@@ -224,7 +224,7 @@ public class RuleService {
                 }
             }
             Path export = storageManager.exportOntology(projectId, "rdfxml");
-            return OWLFormatConverter.createManagerWithSilentImports().loadOntologyFromOntologyDocument(export.toFile());
+            return OWLFormatConverter.createManagerWithSilentImports().loadOntologyFromOntologyDocument(self.research.ontology.owlEditor.util.SharedFileDocumentSource.of(export));
         };
     }
 

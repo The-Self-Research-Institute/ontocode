@@ -9,6 +9,7 @@ import self.research.ontology.owlEditor.util.OwlAxiomSparqlWriter;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
+import self.research.ontology.owlEditor.util.SharedFileDocumentSource;
 
 @Service
 @Slf4j
@@ -196,6 +197,6 @@ public class AxiomAnnotationService {
         importService.syncProjectToFuseki(projectId);
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
         OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
-        return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
+        return manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(exportPath));
     }
 }

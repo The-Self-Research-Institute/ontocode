@@ -28,6 +28,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.ConcurrentHashMap;
+import self.research.ontology.owlEditor.util.SharedFileDocumentSource;
 
 @Component
 @Conditional(FastOpenCondition.class)
@@ -108,7 +109,7 @@ public class InMemorySparqlOntologyMutator {
                             .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                             .setLoadAnnotationAxioms(true));
             OWLFormatConverter.blockRemoteImports(manager);
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(temp.toFile());
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(temp));
 
             OWLReasoner reasoner = null;
             if (!previous.assertedHierarchyOnly()) {

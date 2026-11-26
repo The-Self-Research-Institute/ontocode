@@ -72,7 +72,7 @@ public class OWLFormatConverter {
             OWLOntologyManager manager = createManagerWithSilentImports();
             
             // Try to load and detect format
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(filePath.toFile());
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(filePath));
             OWLDocumentFormat format = manager.getOntologyFormat(ontology);
             
             if (format == null) {
@@ -143,7 +143,7 @@ public class OWLFormatConverter {
         try {
             ontology = CompletableFuture.supplyAsync(() -> {
                 try {
-                    return manager.loadOntologyFromOntologyDocument(fileToLoad.toFile());
+                    return manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(fileToLoad));
                 } catch (OWLOntologyCreationException e) {
                     throw new java.util.concurrent.CompletionException(e);
                 }

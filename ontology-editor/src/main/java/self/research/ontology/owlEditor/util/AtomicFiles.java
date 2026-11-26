@@ -4,18 +4,22 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.UUID;
 
 @Slf4j
 public final class AtomicFiles {
 
     private static final String STAGED_SUFFIX = ".staged";
+    static final long MAX_WAIT_MILLIS = 30_000;
+    private static final long FIRST_PAUSE_MILLIS = 25;
+    private static final long MAX_PAUSE_MILLIS = 1_000;
 
     private AtomicFiles() {
     }
@@ -63,12 +67,68 @@ public final class AtomicFiles {
         }
     }
 
-    private static void replace(Path staged, Path target) throws IOException {
+    public static void replace(Path staged, Path target) throws IOException {
+        replace(staged, target, MAX_WAIT_MILLIS);
+    }
+
+    static void replace(Path staged, Path target, long maxWaitMillis) throws IOException {
+        long waited = 0;
+        long pause = FIRST_PAUSE_MILLIS;
+        while (true) {
+            try {
+                Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return;
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(staged, target, StandardCopyOption.REPLACE_EXISTING);
+                return;
+            } catch (IOException e) {
+                if (swapAside(staged, target)) {
+                    return;
+                }
+                if (waited >= maxWaitMillis) {
+                    throw new IOException("Could not replace " + target.getFileName()
+                            + " because another program has it open; the previous version was kept", e);
+                }
+                pause(pause);
+                waited += pause;
+                pause = Math.min(pause * 2, MAX_PAUSE_MILLIS);
+            }
+        }
+    }
+
+    private static boolean swapAside(Path staged, Path target) throws IOException {
+        Path aside = target.resolveSibling(target.getFileName() + "." + UUID.randomUUID() + ".old" + STAGED_SUFFIX);
         try {
-            Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException | AccessDeniedException e) {
-            log.warn("Atomic replace of {} not possible ({}); overwriting in place", target, e.getClass().getSimpleName());
-            Files.copy(staged, target, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(target, aside, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            return false;
+        }
+        try {
+            Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException e) {
+            try {
+                Files.move(aside, target, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException restore) {
+                e.addSuppressed(restore);
+                throw new IOException("Could not put " + target.getFileName() + " back; the previous version is "
+                        + aside.getFileName(), e);
+            }
+            return false;
+        }
+        try {
+            Files.deleteIfExists(aside);
+        } catch (IOException e) {
+            log.warn("Could not remove the replaced copy {}: {}", aside.getFileName(), e.getMessage());
+        }
+        return true;
+    }
+
+    private static void pause(long millis) throws IOException {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new InterruptedIOException("Interrupted while replacing a file");
         }
     }
 }

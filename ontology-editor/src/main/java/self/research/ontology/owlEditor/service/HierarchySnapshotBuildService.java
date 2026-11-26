@@ -18,6 +18,7 @@ import self.research.ontology.owlEditor.hierarchy.OntologyMetricsComputer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import self.research.ontology.owlEditor.util.SharedFileDocumentSource;
 
 @Service
 public class HierarchySnapshotBuildService {
@@ -87,7 +88,7 @@ public class HierarchySnapshotBuildService {
                             .setLoadAnnotationAxioms(true));
 
             OWLFormatConverter.blockRemoteImports(manager);
-            ontology = manager.loadOntologyFromOntologyDocument(path.toFile());
+            ontology = manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(path));
             reasoner = new StructuralReasonerFactory().createNonBufferingReasoner(ontology);
             reasoner.precomputeInferences();
 
