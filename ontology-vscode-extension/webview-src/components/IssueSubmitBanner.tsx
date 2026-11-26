@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { AlertCircle, Bug, CheckCircle, Flag, ListOrdered } from "lucide-react";
 import type { SubmitResult } from "../utils/issueSubmit";
 import type { FeedbackType } from "../utils/feedback";
@@ -26,9 +26,14 @@ export const IssueSubmitBanner: React.FC<Props> = ({ result, kind, priority }) =
       : { box: "from-red-50 to-pink-50 border-red-300", icon: "bg-red-100", text: "text-red-900" };
   const Icon = result.success && !partial ? CheckCircle : AlertCircle;
   const TypeIcon = kind === "feature" ? ListOrdered : Bug;
+  const box = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    box.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [result]);
 
   return (
-    <div role="alert" className={`mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md bg-gradient-to-r border-2 ${tone.box}`}>
+    <div ref={box} role="alert" className={`scroll-mt-4 mx-6 mt-6 p-5 rounded-lg flex items-start gap-4 shadow-md bg-gradient-to-r border-2 ${tone.box}`}>
       <div className={`flex-shrink-0 p-2 rounded-full ${tone.icon}`}>
         <Icon className={tone.text} size={24} />
       </div>

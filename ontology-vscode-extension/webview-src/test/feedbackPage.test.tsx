@@ -146,4 +146,36 @@ describe("FeedbackHost page", () => {
     await settle();
     expect(button("Submit Bug Report").disabled).toBe(true);
   });
+
+  const type = (field: HTMLInputElement | HTMLTextAreaElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")?.set;
+    setter?.call(field, value);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it.each([
+    ["bug", "Submit Bug Report", "Bug reported successfully!"],
+    ["feature", "Submit Feature Request", "Feature request submitted successfully!"],
+  ] as const)("shows the %s confirmation where the person can see it", async (kind, submitLabel, message) => {
+    const scrolled = vi.fn();
+    const originalScroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrolled;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ json: async () => ({ success: true }) }) as any;
+    try {
+      await render();
+      await act(async () => openFeedbackPage(kind, context));
+      await settle();
+      await act(async () => {
+        type(host.querySelector("input[type=text]") as HTMLInputElement, "Title");
+        type(host.querySelector("textarea") as HTMLTextAreaElement, "Description");
+      });
+      await act(async () => button(submitLabel).click());
+      await until(() => (host.textContent || "").includes(message));
+      expect(scrolled).toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll;
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
