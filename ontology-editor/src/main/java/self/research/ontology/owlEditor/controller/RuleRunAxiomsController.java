@@ -49,8 +49,8 @@ public class RuleRunAxiomsController {
         if (found.isEmpty()) {
             return ResponseEntity.status(410).body(Map.of("message", EXPIRED));
         }
-        if (!"conclusions".equals(kind) && !"structure".equals(kind)) {
-            return ResponseEntity.badRequest().body(Map.of("message", "kind must be conclusions or structure"));
+        if (!"rules".equals(kind) && !"conclusions".equals(kind) && !"structure".equals(kind)) {
+            return ResponseEntity.badRequest().body(Map.of("message", "kind must be rules, conclusions or structure"));
         }
         if (offset < 0) {
             return ResponseEntity.badRequest().body(Map.of("message", "offset must be 0 or more"));

@@ -17,13 +17,17 @@ public final class RuleRunPager {
     }
 
     public static Map<String, Object> page(RuleRunStore.Run run, String kind, String query, int offset, int limit) {
-        boolean conclusions = "conclusions".equals(kind);
+        boolean rulesOnly = "rules".equals(kind);
+        boolean conclusions = rulesOnly || "conclusions".equals(kind);
         List<OWLAxiom> source = conclusions ? run.conclusions() : run.structure();
         String category = conclusions ? "conclusion" : "structure";
         String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         List<Map<String, Object>> matches = new ArrayList<>();
         int total = 0;
         for (OWLAxiom axiom : source) {
+            if (rulesOnly && (run.ruleConclusions() == null || !run.ruleConclusions().contains(axiom))) {
+                continue;
+            }
             Map<String, Object> item = null;
             if (!needle.isEmpty()) {
                 item = RuleExecutionPresenter.toJson(axiom, category, run.ruleConclusions());

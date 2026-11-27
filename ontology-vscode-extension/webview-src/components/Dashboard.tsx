@@ -14814,7 +14814,8 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
+          return <PluginComponent key={swrlDraftRevision} projectId={projectId} draftMode={pluginDraftMode}
+            draftUserId={pluginDraftMode ? readerUserId(user) : undefined} />;
         }
 
         return (
@@ -14847,8 +14848,7 @@ const updateItemInState = useCallback(
 
         if (plugin?.component && projectId) {
           const PluginComponent = plugin.component;
-          return <PluginComponent key={swrlDraftRevision} projectId={projectId} draftMode={pluginDraftMode}
-            draftUserId={pluginDraftMode ? readerUserId(user) : undefined} />;
+          return <PluginComponent projectId={projectId} draftMode={pluginDraftMode} />;
         }
 
         return (
@@ -18727,15 +18727,11 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         />
       )}
 
-      <div className="fixed top-4 right-4 z-[9999] space-y-2">
-        {collaboration.state.notifications.map((notification) => (
-          <ToastNotification
-            key={notification.id}
-            toasts={[{ id: notification.id, type: notification.type, message: notification.message, username: notification.username, color: notification.userColor, duration: notification.durationMs }]}
-            onDismiss={() => collaboration.removeNotification(notification.id)}
-          />
-        ))}
-      </div>
+      <ToastNotification
+        toasts={collaboration.state.notifications.map((notification) => ({ id: notification.id, type: notification.type,
+          message: notification.message, username: notification.username, color: notification.userColor, duration: notification.durationMs }))}
+        onDismiss={collaboration.removeNotification}
+      />
 
 
       <PluginMarketplace

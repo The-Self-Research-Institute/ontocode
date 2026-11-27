@@ -20,7 +20,10 @@ afterEach(() => {
 });
 
 const wait = (ms: number) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
-const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  status,
+  headers: { "Content-Type": "application/json" },
+});
 const buttonByText = (text: string) => Array.from(host.querySelectorAll("button")).find((el) => el.textContent?.trim() === text) as HTMLButtonElement | undefined;
 const buttonStarting = (text: string) => Array.from(host.querySelectorAll("button")).find((el) => el.textContent?.trim().startsWith(text)) as HTMLButtonElement | undefined;
 
@@ -31,16 +34,17 @@ const makeAxioms = (kind: string, offset: number, count: number) =>
       axiomType: "ClassAssertion",
       description: `${kind}-${n}`,
       readable: `ClassAssertion(:${kind}${n} :Thing)`,
-      category: kind === "conclusions" ? "conclusion" : "structure",
+      category: kind === "structure" ? "structure" : "conclusion",
       subjectIri: `http://x/${kind}${n}`,
       predicateIri: "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
       objectIri: "http://x/Thing",
+      origin: kind === "rules" ? "RULE_ENGINE" : undefined,
     };
   });
 
-const TOTALS: Record<string, number> = { conclusions: 120, structure: 7 };
+const TOTALS: Record<string, number> = { rules: 90, conclusions: 120, structure: 7 };
 
-const setup = async (opts: { expireOnPage2?: boolean } = {}) => {
+const setup = async (opts: { expireOnPage2?: boolean; attributionComplete?: boolean } = {}) => {
   const pageUrls: string[] = [];
   const posts: any[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: any) => {
@@ -59,7 +63,8 @@ const setup = async (opts: { expireOnPage2?: boolean } = {}) => {
       return reply({
         success: true, executionTimeMs: 5, inferredAxiomsCount: 127, totalRulesExecuted: 1,
         inferredAxioms: makeAxioms("conclusions", 0, 3), errorMessage: null,
-        runId: "run1", counts: { conclusions: 120, structure: 7, omittedTrivial: 0 }, truncated: false,
+        runId: "run1", counts: { conclusions: 120, ruleConclusions: 90, structure: 7, omittedTrivial: 0 }, truncated: false,
+        attributionComplete: opts.attributionComplete,
       });
     }
     if (u.endsWith("/api/ontology/p1/rules")) {
@@ -76,9 +81,20 @@ const setup = async (opts: { expireOnPage2?: boolean } = {}) => {
 };
 
 describe("SWRL results paging", () => {
+  it("defaults to rule-dependent facts and switches to all facts when requested", async () => {
+    const { pageUrls } = await setup({ attributionComplete: true });
+    expect(pageUrls[0]).toContain("kind=rules");
+    expect(host.textContent).toContain("Showing 1-50 of 90");
+
+    await act(async () => buttonByText("All facts about individuals (120)")!.click());
+    await wait(50);
+    expect(pageUrls.at(-1)).toContain("kind=conclusions");
+    expect(host.textContent).toContain("Showing 1-50 of 120");
+  });
+
   it("shows the summary, pages with Next and Previous, and switches tabs", async () => {
     const { pageUrls } = await setup();
-    expect(host.textContent).toContain("127 derived: 120 rule conclusions, 7 structure");
+    expect(host.textContent).toContain("127 produced: 90 facts from your rules, 30 facts from standard reasoning, 7 class relationships from standard reasoning.");
     expect(host.textContent).toContain("Showing 1-50 of 120");
     expect(buttonByText("Previous")!.disabled).toBe(true);
 
@@ -93,7 +109,7 @@ describe("SWRL results paging", () => {
     expect(host.textContent).toContain("Showing 1-50 of 120");
     expect(pageUrls.length).toBe(fetched);
 
-    await act(async () => buttonStarting("Structure (")!.click());
+    await act(async () => buttonStarting("Class relationships (")!.click());
     await wait(50);
     expect(host.textContent).toContain("Showing 1-7 of 7");
     expect(pageUrls.some((u) => u.includes("kind=structure"))).toBe(true);
@@ -111,12 +127,12 @@ describe("SWRL results paging", () => {
     await act(async () => buttonStarting("Select all on this page")!.click());
     expect(host.textContent).toContain("100 selected");
 
-    await act(async () => buttonStarting("Structure (")!.click());
+    await act(async () => buttonStarting("Class relationships (")!.click());
     await wait(50);
     expect(host.textContent).toContain("100 selected");
     expect(buttonStarting("Add 100 selected")).toBeTruthy();
 
-    await act(async () => buttonStarting("Rule conclusions (")!.click());
+    await act(async () => buttonStarting("Facts about individuals (")!.click());
     await wait(50);
     await act(async () => buttonByText("Clear selection")!.click());
     expect(host.textContent).toContain("0 selected");

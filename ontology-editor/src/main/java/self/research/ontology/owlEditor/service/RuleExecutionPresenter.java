@@ -42,10 +42,12 @@ public final class RuleExecutionPresenter {
         return out;
     }
 
-    public static Map<String, Object> counts(Full full, int ruleConclusions) {
+    public static Map<String, Object> counts(Full full, Integer ruleConclusions) {
         Map<String, Object> counts = new LinkedHashMap<>();
         counts.put("conclusions", full.conclusions().size());
-        counts.put("ruleConclusions", ruleConclusions);
+        if (ruleConclusions != null) {
+            counts.put("ruleConclusions", ruleConclusions);
+        }
         counts.put("structure", full.structure().size());
         counts.put("omittedTrivial", full.omittedTrivial());
         if (full.conclusions().size() > RuleRunStore.MAX_CONCLUSIONS || full.structure().size() > RuleRunStore.MAX_STRUCTURE) {

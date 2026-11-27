@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { CheckCircle, AlertCircle, Info, X } from 'lucide-react';
+import { readingTimeMs } from '../services/notificationService';
 import './ToastNotification.css';
 
 export interface Toast {
@@ -17,19 +18,36 @@ interface ToastNotificationProps {
 }
 
 export const ToastNotification: React.FC<ToastNotificationProps> = ({ toasts = [], onDismiss }) => {
+    const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+    const dismiss = useRef(onDismiss);
+    dismiss.current = onDismiss;
+
     useEffect(() => {
-
-        if (!toasts || toasts.length === 0) return;
-
+        const showing = new Set(toasts.map(toast => toast.id));
         toasts.forEach(toast => {
-            const duration = toast.duration || 5000;
-            const timer = setTimeout(() => {
-                onDismiss(toast.id);
-            }, duration);
-
-            return () => clearTimeout(timer);
+            if (!timers.current.has(toast.id)) {
+                const duration = toast.duration || readingTimeMs(toast.message, toast.type);
+                timers.current.set(toast.id, setTimeout(() => {
+                    timers.current.delete(toast.id);
+                    dismiss.current(toast.id);
+                }, duration));
+            }
         });
-    }, [toasts, onDismiss]);
+        timers.current.forEach((timer, id) => {
+            if (!showing.has(id)) {
+                clearTimeout(timer);
+                timers.current.delete(id);
+            }
+        });
+    }, [toasts]);
+
+    useEffect(() => {
+        const running = timers.current;
+        return () => {
+            running.forEach(timer => clearTimeout(timer));
+            running.clear();
+        };
+    }, []);
 
     const getIcon = (type: Toast['type']) => {
         switch (type) {
@@ -54,8 +72,8 @@ export const ToastNotification: React.FC<ToastNotificationProps> = ({ toasts = [
             {toasts.map(toast => (
                 <div key={toast.id} className={`toast toast-${toast.type}`}>
                     {toast.username && toast.color && (
-                        <div 
-                            className="toast-avatar" 
+                        <div
+                            className="toast-avatar"
                             style={{ backgroundColor: toast.color }}
                         >
                             {toast.username.charAt(0).toUpperCase()}
@@ -63,8 +81,8 @@ export const ToastNotification: React.FC<ToastNotificationProps> = ({ toasts = [
                     )}
                     <div className="toast-icon">{getIcon(toast.type)}</div>
                     <div className="toast-message">{toast.message}</div>
-                    <button 
-                        className="toast-close" 
+                    <button
+                        className="toast-close"
                         onClick={() => onDismiss(toast.id)}
                         aria-label="Dismiss"
                     >

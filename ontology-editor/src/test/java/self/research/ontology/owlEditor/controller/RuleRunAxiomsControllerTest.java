@@ -98,6 +98,22 @@ class RuleRunAxiomsControllerTest {
     }
 
     @Test
+    void ruleFactsAreFilteredBeforePaginationAndSearchCounts() {
+        List<OWLAxiom> rows = conclusions(120);
+        String id = store.put("p", "ann", false, rows, List.of(), Set.of(rows.get(89), rows.get(119)));
+        var first = ann(id, 0, 1, "rules", null).getBody();
+        var second = ann(id, 1, 1, "rules", null).getBody();
+
+        assertEquals(2, first.get("total"));
+        assertEquals(2, second.get("total"));
+        assertTrue(first.get("axioms").toString().contains("person89"));
+        assertTrue(second.get("axioms").toString().contains("person119"));
+        assertEquals(0, ann(id, 0, 50, "rules", "person0").getBody().get("total"));
+        assertEquals(1, ann(id, 0, 50, "rules", "person119").getBody().get("total"));
+        assertEquals(120, ann(id, 0, 50, "conclusions", null).getBody().get("total"));
+    }
+
+    @Test
     void unauthenticatedGets401() {
         assertEquals(401, get("p", publicRun, 0, 50, "conclusions", null, false, as(null, null)).getStatusCode().value());
     }

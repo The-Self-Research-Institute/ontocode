@@ -104,6 +104,7 @@ export interface InferredAxiom {
 }
 
 export interface ExecutionResponse {
+  attributionComplete?: boolean;
   success: boolean;
   executionTimeMs: number;
   inferredAxiomsCount: number;
@@ -116,6 +117,7 @@ export interface ExecutionResponse {
   conclusionCount?: number;
   status?: string;
   statusLabel?: string;
+  completion?: string;
   message?: string;
   limitations?: string[];
   consistencyStatement?: string;

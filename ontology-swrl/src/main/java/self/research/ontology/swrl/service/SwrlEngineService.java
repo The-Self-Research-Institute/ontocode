@@ -854,7 +854,16 @@ public class SwrlEngineService {
         applyPresentation(result, presented);
         result.setCompletion(skipped.isEmpty() ? "completed" : "completed_with_warnings");
         result.setExecutionMode("selected");
+        warnAboutPropertyChains(ontology, result);
         return result;
+    }
+
+    private static void warnAboutPropertyChains(OWLOntology ontology, ExecutionResult result) {
+        if (!ontology.getAxioms(org.semanticweb.owlapi.model.AxiomType.SUB_PROPERTY_CHAIN_OF,
+                org.semanticweb.owlapi.model.parameters.Imports.INCLUDED).isEmpty()) {
+            result.setLimitations(List.of("This run does not infer OWL property-chain facts. Use Execute All for rules that depend on those facts."));
+            result.setCompletion("completed_with_warnings");
+        }
     }
 
     public record RulesExport(String text, List<SkippedRule> skipped, String fingerprint) {
@@ -1365,7 +1374,7 @@ public class SwrlEngineService {
     public ExecutionResult testSingleRule(String projectId, String ruleText) {
         long startTime = System.currentTimeMillis();
         try {
-            return admitted(() -> runSingleRule(projectId, ruleText, startTime));
+            return admitted(() -> runSingleRule(projectId, ruleText, null, startTime));
         } catch (SwrlBusyException e) {
             throw e;
         } catch (TimeoutException e) {
@@ -1380,15 +1389,15 @@ public class SwrlEngineService {
         }
     }
 
-    private ExecutionResult runSingleRule(String projectId, String ruleText, long startTime) throws Exception {
+    private ExecutionResult runSingleRule(String projectId, String ruleText, String draftUserId, long startTime) throws Exception {
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
-        ValidationResult validation = validate(projectId, ruleText, null, null, false);
+        ValidationResult validation = validate(projectId, ruleText, draftUserId, null, false);
         if (!validation.isValid()) {
             return new ExecutionResult(false, 0, 0, Collections.emptyList(),
                     validation.getErrorMessage());
         }
 
-        OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+        OWLOntology ontology = fetch(projectId, draftUserId);
         ensureNamespacePrefixes(projectId, ontology);
         OntologyRules.removeAll(ontology);
         SWRLRuleEngine engine = BuiltInLibraries.createRuleEngine(ontology);
@@ -1421,13 +1430,18 @@ public class SwrlEngineService {
         result.setOmittedTrivialCount(0);
         result.setTruncated(truncated);
         result.setExecutionMode("test");
+        warnAboutPropertyChains(ontology, result);
         return result;
     }
 
     public ExecutionResult testSingleRuleById(String projectId, String ruleId) throws Exception {
+        return testSingleRuleById(projectId, ruleId, null);
+    }
+
+    public ExecutionResult testSingleRuleById(String projectId, String ruleId, String draftUserId) throws Exception {
         long startTime = System.currentTimeMillis();
         try {
-            return admitted(() -> runSingleRuleById(projectId, ruleId, startTime));
+            return admitted(() -> runSingleRuleById(projectId, ruleId, draftUserId, startTime));
         } catch (TimeoutException e) {
             return failure("timeout", "Execution timed out after " + taskBudgetSeconds() + " seconds");
         } catch (OntologyTooLargeException e) {
@@ -1435,9 +1449,9 @@ public class SwrlEngineService {
         }
     }
 
-    private ExecutionResult runSingleRuleById(String projectId, String ruleId, long startTime) throws Exception {
+    private ExecutionResult runSingleRuleById(String projectId, String ruleId, String draftUserId, long startTime) throws Exception {
         OntologyRules.Entry found = null;
-        for (OntologyRules.Entry entry : listEntries(projectId, null)) {
+        for (OntologyRules.Entry entry : listEntries(projectId, draftUserId)) {
             if (entry.id().equals(ruleId)) {
                 found = entry;
                 break;
@@ -1446,7 +1460,7 @@ public class SwrlEngineService {
         if (found == null) {
             throw new IllegalArgumentException("Rule not found: " + ruleId);
         }
-        ExecutionResult result = runSingleRule(projectId, found.ruleText(), startTime);
+        ExecutionResult result = runSingleRule(projectId, found.ruleText(), draftUserId, startTime);
         result.setExecutedRuleNames(List.of(found.name()));
         result.setExecutedRuleIds(List.of(found.id()));
         return result;

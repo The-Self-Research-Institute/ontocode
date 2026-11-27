@@ -212,7 +212,7 @@ test('friendlyRuleError', () => {
 test('friendlyRuleError explains that public editing is off', () => {
   const refusal = { status: 403, data: { code: 'PUBLIC_EDIT_DISABLED', error: 'x', draftAllowed: true } };
   assert.equal(friendlyRuleError(refusal, 'x'), 'The project owner turned off public editing. Switch to Draft Mode to make your changes.');
-  assert.equal(friendlyRuleError({ status: 403, data: { viewOnly: true, error: 'View only' } }, 'x'), 'x');
+  assert.match(friendlyRuleError({ status: 403, data: { viewOnly: true, error: 'View only' } }, 'x'), /Your account can run rules but cannot change this ontology/);
 });
 
 test('import summary line wording and plurals', () => {
@@ -302,7 +302,7 @@ test('derivedSummary words facts, class relationships and hidden trivial ones', 
   assert.equal(derivedSummary({ conclusions: 1, structure: 0 }), '1 produced: 1 inferred fact about individuals, no class relationships.');
   assert.equal(derivedSummary({ conclusions: 0, structure: 1, omittedTrivial: 1 }), '2 produced: 1 class relationship from standard reasoning, 1 trivial one hidden.');
   assert.equal(derivedSummary({ conclusions: 0, structure: 0 }), '');
-  assert.equal(derivedSummary({ conclusions: 671, ruleConclusions: 0, structure: 0 }), '671 produced: 0 facts from your rules, 671 facts from standard reasoning, no class relationships.');
+  assert.equal(derivedSummary({ conclusions: 671, ruleConclusions: 0, structure: 0 }), '671 produced: 671 facts from standard reasoning, no class relationships.');
   assert.equal(derivedSummary({ conclusions: 3, ruleConclusions: 1, structure: 0 }), '3 produced: 1 fact from your rules, 2 facts from standard reasoning, no class relationships.');
   assert.equal(derivedSummary({ conclusions: 0, ruleConclusions: 0, structure: 5 }), '5 produced: 5 class relationships from standard reasoning.');
 });

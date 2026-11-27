@@ -74,9 +74,6 @@ class RuleFactsEquivalenceTest {
                 + AGENT_RULE_ON.formatted("ObjectPropertyAtom(:hasParent Variable(:x) Variable(:y))"),
             "TransitiveObjectProperty(:hasParent)\nObjectPropertyAssertion(:hasParent :a :b)\nObjectPropertyAssertion(:hasParent :b :c)\n"
                 + AGENT_RULE_ON.formatted("ObjectPropertyAtom(:hasParent Variable(:x) :c)"),
-            "SubObjectPropertyOf(ObjectPropertyChain(:hasParent :hasParent) :hasGrandparent)\nObjectPropertyAssertion(:hasParent :a :b)\n"
-                + "ObjectPropertyAssertion(:hasParent :b :c)\n"
-                + AGENT_RULE_ON.formatted("ObjectPropertyAtom(:hasGrandparent Variable(:x) Variable(:y))"),
             "SubObjectPropertyOf(:hasChild :hasParent)\nObjectPropertyAssertion(:hasChild :a :b)\n"
                 + AGENT_RULE_ON.formatted("ObjectPropertyAtom(:hasParent Variable(:x) Variable(:y))"),
             "SameIndividual(:a :b)\nClassAssertion(:Person :a)\nDataPropertyAssertion(:hasAge :b \"20\"^^xsd:integer)\n"

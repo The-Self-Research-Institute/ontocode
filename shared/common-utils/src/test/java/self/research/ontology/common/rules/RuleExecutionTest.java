@@ -56,6 +56,86 @@ class RuleExecutionTest {
         return result.derived().stream().map(d -> RuleExecution.canonical(d.axiom())).collect(Collectors.toCollection(TreeSet::new));
     }
 
+    @Test
+    void nativeRuleCanMatchAnInferredPropertyChainFact() throws Exception {
+        OWLOntology ontology = inline("""
+                Declaration(Class(:Grandparent))
+                Declaration(ObjectProperty(:parent))
+                Declaration(ObjectProperty(:grandparent))
+                Declaration(NamedIndividual(:a))
+                Declaration(NamedIndividual(:b))
+                Declaration(NamedIndividual(:c))
+                SubObjectPropertyOf(ObjectPropertyChain(:parent :parent) :grandparent)
+                ObjectPropertyAssertion(:parent :a :b)
+                ObjectPropertyAssertion(:parent :b :c)
+                DLSafeRule(Body(ObjectPropertyAtom(:grandparent Variable(:x) Variable(:y))) Head(ClassAtom(:Grandparent Variable(:x))))
+                """);
+
+        RuleExecutionResult result = run(ontology, null);
+
+        assertEquals(Status.COMPLETED, result.status());
+        assertTrue(derives(result, "ClassAssertion(<http://example.org/rc#Grandparent> <http://example.org/rc#a>)"));
+        assertEquals(0, ontology.getAxiomCount(org.semanticweb.owlapi.model.AxiomType.CLASS_ASSERTION));
+    }
+
+    @Test
+    void nativeRuleCanUseASuperPropertyOfAChainResult() throws Exception {
+        var ontology = chainAliasFixture("""
+                SubObjectPropertyOf(:grandparent :middle)
+                SubObjectPropertyOf(:middle :alias)
+                """, true);
+        var result = run(ontology, null);
+
+        assertEquals(Status.COMPLETED, result.status());
+        assertTrue(derives(result, "ClassAssertion(<http://example.org/rc#Reached> <http://example.org/rc#a>)"));
+    }
+
+    @Test
+    void nativeRuleCanUseAnEquivalentPropertyOfAChainResult() throws Exception {
+        var ontology = chainAliasFixture("EquivalentObjectProperties(:alias :grandparent)", true);
+        var result = run(ontology, null);
+
+        assertEquals(Status.COMPLETED, result.status());
+        assertTrue(derives(result, "ClassAssertion(<http://example.org/rc#Reached> <http://example.org/rc#a>)"));
+    }
+
+    @Test
+    void nativeRuleUsesTheCorrectDirectionForAnInverseProperty() throws Exception {
+        var ontology = chainAliasFixture("InverseObjectProperties(:grandparent :alias)", true);
+        var result = run(ontology, null);
+
+        assertEquals(Status.COMPLETED, result.status());
+        assertTrue(derives(result, "ClassAssertion(<http://example.org/rc#Reached> <http://example.org/rc#c>)"));
+        assertFalse(derives(result, "ClassAssertion(<http://example.org/rc#Reached> <http://example.org/rc#a>)"));
+    }
+
+    @Test
+    void nativeRuleDoesNotFireWhenALinkInTheChainIsMissing() throws Exception {
+        var ontology = chainAliasFixture("EquivalentObjectProperties(:alias :grandparent)", false);
+        var result = run(ontology, null);
+
+        assertEquals(Status.COMPLETED, result.status());
+        assertFalse(derives(result, "ClassAssertion(<http://example.org/rc#Reached> "));
+    }
+
+    private static OWLOntology chainAliasFixture(String propertyAxiom, boolean completeChain) throws Exception {
+        return inline("""
+                Declaration(Class(:Reached))
+                Declaration(ObjectProperty(:parent))
+                Declaration(ObjectProperty(:grandparent))
+                Declaration(ObjectProperty(:middle))
+                Declaration(ObjectProperty(:alias))
+                Declaration(NamedIndividual(:a))
+                Declaration(NamedIndividual(:b))
+                Declaration(NamedIndividual(:c))
+                SubObjectPropertyOf(ObjectPropertyChain(:parent :parent) :grandparent)
+                ObjectPropertyAssertion(:parent :a :b)
+                %s
+                %s
+                DLSafeRule(Body(ObjectPropertyAtom(:alias Variable(:x) Variable(:y))) Head(ClassAtom(:Reached Variable(:x))))
+                """.formatted(propertyAxiom, completeChain ? "ObjectPropertyAssertion(:parent :b :c)" : ""));
+    }
+
     static boolean derives(RuleExecutionResult result, String fragment) {
         return derivedKeys(result).stream().anyMatch(k -> k.contains(fragment));
     }

@@ -1,0 +1,13 @@
+measurement,source_verified,ready_for_review,unexpected_outcome
+hr_01,true,true,false
+hr_02,true,true,false
+sbp_01,true,true,false
+sbp_02,true,true,false
+dbp_01,true,true,false
+dbp_02,true,true,false
+hr_low,true,false,false
+sbp_unlisted_vendor,true,false,false
+hr_missing_source,false,false,false
+sbp_unapproved,false,false,false
+dbp_wrong_unit,false,false,false
+hr_outside_pilot,false,false,false

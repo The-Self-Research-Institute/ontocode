@@ -21,7 +21,10 @@ afterEach(() => {
 });
 
 const wait = (ms: number) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
-const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  status,
+  headers: { "Content-Type": "application/json" },
+});
 const buttonByText = (text: string) => Array.from(host.querySelectorAll("button")).find((el) => el.textContent?.trim() === text) as HTMLButtonElement | undefined;
 const buttonStarting = (text: string) => Array.from(host.querySelectorAll("button")).find((el) => el.textContent?.trim().startsWith(text)) as HTMLButtonElement | undefined;
 const bodyRows = () => Array.from(host.querySelectorAll("tbody tr")).map((tr) => Array.from(tr.querySelectorAll("td")).slice(1).map((td) => td.textContent));

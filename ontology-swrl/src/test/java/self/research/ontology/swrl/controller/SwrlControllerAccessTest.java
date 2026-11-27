@@ -147,14 +147,24 @@ class SwrlControllerAccessTest {
     @Test
     void executeSelectedReportsSkippedRulesAndCompletion() {
         self.research.ontology.swrl.model.ExecutionResult result = new self.research.ontology.swrl.model.ExecutionResult(true, 5L, 0, List.of(), null);
+        result.setExecutedRuleIds(List.of("ours"));
         result.setSkippedRules(List.of(new self.research.ontology.swrl.model.SkippedRule("theirs", "This rule was not found in this project.")));
         result.setCompletion("completed_with_warnings");
-        Mockito.when(engine.executeSelectedRules("p1", List.of("theirs"))).thenReturn(result);
+        Mockito.when(engine.executeSelectedRules("p1", List.of("ours", "theirs"))).thenReturn(result);
 
-        ResponseEntity<?> response = controller.executeSelectedRules("p1", Map.of("ruleIds", List.of("theirs")), false, null);
+        ResponseEntity<?> response = controller.executeSelectedRules("p1", Map.of("ruleIds", List.of("ours", "theirs")), false, null);
 
         self.research.ontology.swrl.dto.ExecutionResponse body = (self.research.ontology.swrl.dto.ExecutionResponse) response.getBody();
         assertEquals("completed_with_warnings", body.getCompletion());
         assertEquals("theirs", body.getSkippedRules().get(0).ruleName());
+        assertEquals(1, body.getTotalRulesExecuted());
+    }
+
+    @Test
+    void testRuleUsesTheDraftScope() throws Exception {
+        assertEquals(400, controller.testRule("p1", "r1", true, null).getStatusCode().value());
+        assertEquals(200, controller.testRule("p1", "r1", true, "owner").getStatusCode().value());
+        Mockito.verify(engine).testSingleRuleById("p1", "r1", "owner");
+        Mockito.verifyNoMoreInteractions(engine);
     }
 }

@@ -425,6 +425,7 @@ public class SwrlController {
             response.setOmittedTrivialCount(result.getOmittedTrivialCount());
             response.setTruncated(result.isTruncated());
             response.setCompletion(result.getCompletion());
+            response.setLimitations(result.getLimitations());
             
             return ResponseEntity.ok(response);
             
@@ -465,7 +466,7 @@ public class SwrlController {
                 result.isSuccess(),
                 result.getExecutionTimeMs(),
                 result.getInferredAxiomsCount(),
-                ruleIds.size(),
+                result.getExecutedRuleIds() == null ? 0 : result.getExecutedRuleIds().size(),
                 result.getInferredAxioms(),
                 result.getErrorMessage()
             );
@@ -479,6 +480,7 @@ public class SwrlController {
             response.setOmittedTrivialCount(result.getOmittedTrivialCount());
             response.setTruncated(result.isTruncated());
             response.setCompletion(result.getCompletion());
+            response.setLimitations(result.getLimitations());
             
             return ResponseEntity.ok(response);
             
@@ -497,10 +499,14 @@ public class SwrlController {
     @PostMapping("/{projectId}/rules/{ruleId}/test")
     public ResponseEntity<?> testRule(
             @PathVariable String projectId,
-            @PathVariable String ruleId) {
-        
+            @PathVariable String ruleId,
+            @RequestParam(defaultValue = "false") boolean draft,
+            @RequestParam(required = false) String userId) {
+        if (draft && (userId == null || userId.isBlank())) {
+            return ResponseEntity.badRequest().body(createErrorResponse("userId is required to test a rule on a private draft"));
+        }
         try {
-            ExecutionResult result = swrlEngineService.testSingleRuleById(projectId, ruleId);
+            ExecutionResult result = swrlEngineService.testSingleRuleById(projectId, ruleId, draft ? userId : null);
             return ResponseEntity.ok(result);
             
         } catch (IllegalArgumentException e) {
