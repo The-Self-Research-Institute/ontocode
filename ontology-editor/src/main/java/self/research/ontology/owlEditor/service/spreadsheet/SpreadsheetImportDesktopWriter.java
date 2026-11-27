@@ -6,14 +6,13 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
+import self.research.ontology.owlEditor.service.DesktopDraftSaver;
 import self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler;
-import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.InMemorySparqlOntologyMutator;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
 import self.research.ontology.owlEditor.service.StorageManager;
 
-import java.io.IOException;
 import java.util.List;
 
 @Component
@@ -23,7 +22,7 @@ public class SpreadsheetImportDesktopWriter {
 
     private final ObjectProvider<ProjectOntologyCache> cache;
     private final ObjectProvider<InMemorySparqlOntologyMutator> mutator;
-    private final ObjectProvider<DesktopOntologyLoader> loader;
+    private final ObjectProvider<DesktopDraftSaver> draftSaver;
     private final ObjectProvider<ProjectImportService> projectImports;
     private final ObjectProvider<DesktopFusekiSyncScheduler> syncScheduler;
     private final ObjectProvider<OntologyMutationService> mutations;
@@ -37,14 +36,14 @@ public class SpreadsheetImportDesktopWriter {
 
     public SpreadsheetImportDesktopWriter(ObjectProvider<ProjectOntologyCache> cache,
                                           ObjectProvider<InMemorySparqlOntologyMutator> mutator,
-                                          ObjectProvider<DesktopOntologyLoader> loader,
+                                          ObjectProvider<DesktopDraftSaver> draftSaver,
                                           ObjectProvider<ProjectImportService> projectImports,
                                           ObjectProvider<DesktopFusekiSyncScheduler> syncScheduler,
                                           ObjectProvider<OntologyMutationService> mutations,
                                           StorageManager storageManager) {
         this.cache = cache;
         this.mutator = mutator;
-        this.loader = loader;
+        this.draftSaver = draftSaver;
         this.projectImports = projectImports;
         this.syncScheduler = syncScheduler;
         this.mutations = mutations;
@@ -63,13 +62,9 @@ public class SpreadsheetImportDesktopWriter {
         if (!sparql.tryApply(projectId, String.join(" ;\n", updates))) {
             return false;
         }
-        try {
-            DesktopOntologyLoader desktop = loader.getIfAvailable();
-            if (desktop != null) {
-                desktop.persistToDisk(projectId);
-            }
-        } catch (IOException e) {
-            log.warn("[SpreadsheetImport] Could not write the desktop draft file for {}: {}", projectId, e.getMessage());
+        DesktopDraftSaver saver = draftSaver.getIfAvailable();
+        if (saver != null) {
+            saver.save(projectId);
         }
         ProjectImportService imports = projectImports.getIfAvailable();
         if (imports != null) {

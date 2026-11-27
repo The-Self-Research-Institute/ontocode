@@ -159,7 +159,7 @@ class DesktopExactUndoTest {
         StorageManager storage = mock(StorageManager.class);
         when(mutator.tryApply("p", "DELETE { } WHERE { }")).thenReturn(true);
         DesktopOwlApiMutationService real = new DesktopOwlApiMutationService(cache, mock(OwlApiMutationPatcher.class), mutator,
-                storage, loader, mock(ProjectImportService.class), scheduler);
+                storage, mock(ProjectImportService.class), scheduler, new DesktopDraftSaver(loader, cache));
         ReflectionTestUtils.setField(real, "owlApiFirst", true);
         when(cache.has("p")).thenReturn(true);
 
@@ -175,7 +175,7 @@ class DesktopExactUndoTest {
         InMemorySparqlOntologyMutator mutator = mock(InMemorySparqlOntologyMutator.class);
         DesktopOntologyLoader loader = mock(DesktopOntologyLoader.class);
         DesktopOwlApiMutationService real = new DesktopOwlApiMutationService(cache, mock(OwlApiMutationPatcher.class), mutator,
-                mock(StorageManager.class), loader, null, null);
+                mock(StorageManager.class), null, null, new DesktopDraftSaver(loader, cache));
         when(cache.has("p")).thenReturn(true);
 
         assertFalse(real.tryApplyRaw("p", "DELETE { } WHERE { }"));

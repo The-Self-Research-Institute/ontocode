@@ -80,6 +80,9 @@ public class ExactChangeRecorder {
                                Supplier<String> record) {
         List<MutationOp> eligible = ExactSeeds.eligible(ops);
         boolean inMemory = !draft && !eligible.isEmpty() && inMemoryIsAuthoritative(projectId);
+        if (inMemory && EnactedChanges.tooLargeToCompare(ontologyCache, projectId)) {
+            return recordWithoutCopies(projectId, apply, record);
+        }
         Optional<Model> memoryBefore = inMemory ? OwlApiModelSnapshot.of(ontologyCache, projectId) : Optional.empty();
         Optional<DeltaCapture> capture = inMemory ? Optional.empty() : begin(projectId, draft, userId, eligible);
         apply.run();
@@ -94,6 +97,19 @@ public class ExactChangeRecorder {
             attach(projectId, changeSetId, ExactSeeds.groupIris(eligible), delta.get());
         }
         return changeSetId;
+    }
+
+    private String recordWithoutCopies(String projectId, Runnable apply, Supplier<String> record) {
+        Optional<EnactedChanges> watched = EnactedChanges.watch(ontologyCache, projectId);
+        try {
+            apply.run();
+        } finally {
+            watched.ifPresent(EnactedChanges::close);
+        }
+        if (watched.map(EnactedChanges::nothingChanged).orElse(false)) {
+            return null;
+        }
+        return record.get();
     }
 
     private boolean inMemoryIsAuthoritative(String projectId) {
