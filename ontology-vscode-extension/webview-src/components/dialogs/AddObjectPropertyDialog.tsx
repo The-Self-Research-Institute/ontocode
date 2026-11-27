@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
-import { computeEntityIriPreview } from '../../utils/entityIri';
+import { computeEntityIriPreview, type EntityIriPreferences } from '../../utils/entityIri';
 import { IriPreviewField } from './IriPreviewField';
 import { CreateButton } from './CreateButton';
 
 interface AddObjectPropertyDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string, computedIri: string) => void;
   type: 'subproperty' | 'sibling' | 'root';
   parentLabel: string;
   propertyType?: 'object' | 'data' | 'annotation';
   /** Ontology base IRI, used to compute the live IRI preview (matches backend's {ontologyIri}#{name} convention). */
   ontologyIri?: string;
+  iriPreferences?: EntityIriPreferences;
   /** Every existing IRI for this property type, used to block duplicate creation before it reaches the backend. */
   existingIris?: string[];
 }
@@ -24,6 +25,7 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
   parentLabel,
   propertyType = 'object',
   ontologyIri,
+  iriPreferences,
   existingIris = [],
 }) => {
   const [name, setName] = useState('');
@@ -34,11 +36,12 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
     ontologyIri,
     name,
     existingIris,
+    iriPreferences,
   );
 
   const handleCreate = () => {
     if (canCreate) {
-      onCreate(trimmedName);
+      onCreate(trimmedName, computedIri);
       setName('');
       onClose();
     }

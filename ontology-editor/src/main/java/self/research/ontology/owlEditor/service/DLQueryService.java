@@ -220,10 +220,10 @@ public class DLQueryService {
 
         importService.syncProjectToFuseki(projectId);
         try {
-            long tripleCount = datasetService.getDatasetSize(projectId);
-            if (tripleCount > maxReasonerTriples) {
-                throw new IllegalArgumentException(
-                        "This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.");
+            long tripleCount = datasetService.getDatasetSizeOrUnknown(projectId);
+            if (tripleCount < 0 || tripleCount > maxReasonerTriples) {
+                throw new IllegalArgumentException(tripleCount < 0 ? "This ontology's size could not be determined right now. Try DL Query again in a moment."
+                        : "This ontology is too large for DL Query. Try a simpler expression or use the SPARQL tab instead.");
             }
             log.info("DL Query size check passed for {}: {} triples", projectId, tripleCount);
             held[0] = heavyWork.admitLoad(draftUserId, self.research.ontology.common.admission.WorkKind.DL_QUERY,

@@ -197,4 +197,18 @@ describe('why dialog for a fact no rule produced', () => {
     expect(count(text(), PLAIN)).toBe(1);
     expect(text()).not.toContain('cannot evaluate');
   });
+
+  it('asks for the explanation on the private draft of the user who is looking', async () => {
+    api.post.mockImplementation((url: string) =>
+      url.includes('/explain') ? Promise.resolve({ status: 'origin_only', justifications: [], notes: [NEW_NOTE] }) : Promise.resolve(RESULT)
+    );
+    await act(async () => {
+      root.render(<SWRLEditor projectId="p1" draftMode draftUserId="u1" />);
+    });
+    await click(button(/Execute All/));
+    await click(button(/^Everything/));
+    await click(whys()[0]);
+    const explainUrls = api.post.mock.calls.map(call => String(call[0])).filter(url => url.includes('/explain'));
+    expect(explainUrls).toEqual(['/api/swrl/p1/explain?draft=true&userId=u1']);
+  });
 });

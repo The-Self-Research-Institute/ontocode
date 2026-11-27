@@ -3,7 +3,7 @@ package self.research.ontology.owlEditor.service;
 import self.research.ontology.owlEditor.util.StandardVocabulary;
 import self.research.ontology.owlEditor.util.OWLFormatConverter;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
-import org.semanticweb.owlapi.io.FileDocumentSource;
+import self.research.ontology.owlEditor.util.SharedFileDocumentSource;
 import org.semanticweb.owlapi.io.StringDocumentSource;
 import org.semanticweb.owlapi.model.*;
 import org.semanticweb.owlapi.util.OWLEntityRenamer;
@@ -124,7 +124,7 @@ public class OntologyMergeService {
         
         // Load source ontology from file without resolving imports
         OWLOntology loadedSourceOntology = manager.loadOntologyFromOntologyDocument(
-            new FileDocumentSource(sourceFile.toFile()),
+            SharedFileDocumentSource.of(sourceFile),
             config
         );
         OWLOntology sourceOntology = cloneAsAnonymousOntology(manager, loadedSourceOntology);
@@ -333,7 +333,7 @@ public class OntologyMergeService {
         
         // Load both ontologies without resolving imports
         OWLOntology loadedSourceOntology = manager.loadOntologyFromOntologyDocument(
-            new FileDocumentSource(sourceFile.toFile()),
+            SharedFileDocumentSource.of(sourceFile),
             config
         );
         OWLOntology sourceOntology = cloneAsAnonymousOntology(manager, loadedSourceOntology);
@@ -667,7 +667,7 @@ public class OntologyMergeService {
         log.info("[MERGE] Merge target for project '{}' is the {} ({})", projectId,
                 live != null ? "live ontology" : "stored file", source.getFileName());
         try {
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(new FileDocumentSource(source.toFile()), config);
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(source), config);
             return new LoadedTarget(ontology, live != null);
         } finally {
             if (live != null) {

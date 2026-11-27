@@ -52,7 +52,7 @@ public final class MissingImportStandIns {
         } catch (Exception e) {
             log.debug("Import stand-in scan skipped for {}: {}", file.getFileName(), e.getMessage());
         }
-        return loadWith(manager, scan, () -> manager.loadOntologyFromOntologyDocument(file.toFile()));
+        return loadWith(manager, scan, () -> manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(file)));
     }
 
     public static OWLOntology load(OWLOntologyManager manager, byte[] rdfXml) throws OWLOntologyCreationException {

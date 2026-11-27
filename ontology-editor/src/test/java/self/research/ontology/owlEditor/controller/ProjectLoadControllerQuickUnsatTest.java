@@ -100,7 +100,7 @@ class ProjectLoadControllerQuickUnsatTest {
         Files.writeString(exportFile, ONTOLOGY);
         when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(7L);
         when(storageManager.exportOntology("proj-1", "rdfxml")).thenReturn(exportFile);
-        when(datasetService.getDatasetSizeOrUnknown("proj-1")).thenReturn(10L);
+        when(datasetService.freshGraphSizeOrUnknown("proj-1")).thenReturn(10L);
         when(reasonerService.withoutSwrlRules(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -239,13 +239,58 @@ class ProjectLoadControllerQuickUnsatTest {
     }
 
     @Test
+    void aTooLargeProjectIsNotSizedAgainOnEveryClickUntilItChanges() {
+        when(datasetService.freshGraphSizeOrUnknown("proj-1")).thenReturn(2_000_000L);
+
+        assertEquals("TOO_LARGE", check().get("reason"));
+        assertEquals("TOO_LARGE", check().get("reason"));
+        verify(datasetService, times(1)).freshGraphSizeOrUnknown("proj-1");
+
+        when(storageManager.getPublicGraphVersion("proj-1")).thenReturn(8L);
+        assertEquals("TOO_LARGE", check().get("reason"));
+        verify(datasetService, times(2)).freshGraphSizeOrUnknown("proj-1");
+    }
+
+    @Test
     void unknownSizeIsSkippedWithAReason() {
-        when(datasetService.getDatasetSizeOrUnknown("proj-1")).thenReturn(-1L);
+        when(datasetService.freshGraphSizeOrUnknown("proj-1")).thenReturn(-1L);
 
         Map<String, Object> body = check();
 
         assertEquals(true, body.get("success"));
         assertEquals(true, body.get("skipped"));
         assertEquals("SIZE_UNKNOWN", body.get("reason"));
+    }
+
+    @Test
+    void anUnknownSizeIsNotRememberedAsTooLargeForThatVersion() {
+        when(datasetService.freshGraphSizeOrUnknown("proj-1")).thenReturn(-1L);
+        assertEquals("SIZE_UNKNOWN", check().get("reason"));
+        when(datasetService.freshGraphSizeOrUnknown("proj-1")).thenReturn(10L);
+        when(reasonerService.getUnsatisfiableClassesQuickWithoutSwrl(any(), eq(ReasonerType.HERMIT), any()))
+                .thenReturn(new ReasonerService.QuickUnsatResult(List.of("http://example.org/quick#A"), false));
+        assertEquals(List.of("http://example.org/quick#A"), check().get("unsatisfiableClasses"));
+    }
+
+    @Test
+    void aDraftEditMakesTheNextCheckRunAgainInsteadOfReturningTheOldAnswer() throws Exception {
+        OWLOntology draft = OWLManager.createOWLOntologyManager()
+                .loadOntologyFromOntologyDocument(new ByteArrayInputStream(ONTOLOGY.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        when(storageManager.getDraftGraphVersion("proj-1", "u1")).thenReturn(3L);
+        when(datasetService.countDraftTriples("proj-1", "u1")).thenReturn(10L);
+        when(datasetService.loadDraftAsOntology(eq("proj-1"), eq("u1"), org.mockito.ArgumentMatchers.anyLong())).thenReturn(draft);
+        when(datasetService.getDraftWriteStamp("proj-1", "u1")).thenReturn(1L);
+        when(reasonerService.getUnsatisfiableClassesQuickWithoutSwrl(any(), eq(ReasonerType.HERMIT), any()))
+                .thenReturn(new ReasonerService.QuickUnsatResult(List.of("http://example.org/quick#A"), false),
+                        new ReasonerService.QuickUnsatResult(List.of("http://example.org/quick#B"), false));
+
+        assertEquals(List.of("http://example.org/quick#A"), draftCheck().get("unsatisfiableClasses"));
+        assertEquals(List.of("http://example.org/quick#A"), draftCheck().get("unsatisfiableClasses"));
+        when(datasetService.getDraftWriteStamp("proj-1", "u1")).thenReturn(2L);
+        assertEquals(List.of("http://example.org/quick#B"), draftCheck().get("unsatisfiableClasses"));
+    }
+
+    private Map<String, Object> draftCheck() {
+        return controller.getUnsatisfiableClassesQuick("proj-1", "u1", true, new MockHttpServletRequest()).getBody();
     }
 }

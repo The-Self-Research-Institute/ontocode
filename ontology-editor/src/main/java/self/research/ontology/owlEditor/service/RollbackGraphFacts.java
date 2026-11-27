@@ -18,7 +18,9 @@ import self.research.ontology.owlEditor.service.delta.ExactDelta;
 import self.research.ontology.owlEditor.service.delta.ExactReversal;
 import self.research.ontology.owlEditor.util.SparqlSafety;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.function.BiFunction;
 
 @Slf4j
 @Component
@@ -100,48 +102,61 @@ public class RollbackGraphFacts {
         return blankSubject ? clauses + " FILTER(!isBlank(?s))" : clauses.toString();
     }
 
+    public record BatchState(boolean edited, boolean original) {
+    }
+
+    private interface GraphAsk {
+        boolean ask(String query);
+    }
+
     public boolean deltaHolds(String projectId, HistoryChange entry, boolean undo) {
-        if (!entry.isDraft() && inMemoryIsAuthoritative(projectId)) {
-            return deltaHoldsInMemory(projectId, entry, undo);
-        }
-        boolean draft = entry.isDraft() && entry.getUserId() != null && !entry.getUserId().isBlank();
-        String graph = draft ? datasetService.getDraftGraphUri(projectId, entry.getUserId())
-                : datasetService.getGraphUri(projectId);
-        for (ExactDelta whole : ExactReversal.checkedDeltaOf(entry).stream().toList()) {
-            for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {
-                for (String query : DeltaSparql.holds(delta, undo, graph)) {
-                    if (!datasetService.execAskInGraph(projectId, graph, query)) {
+        return inGraph(projectId, entry, (graph, ask) -> {
+            for (ExactDelta whole : ExactReversal.checkedDeltaOf(entry).stream().toList()) {
+                for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {
+                    if (!all(DeltaSparql.holds(delta, undo, graph), ask)) {
                         return false;
                     }
                 }
+            }
+            return true;
+        }).orElse(true);
+    }
+
+    public Optional<List<BatchState>> batchStates(String projectId, HistoryChange entry, List<ExactDelta> batches) {
+        return inGraph(projectId, entry, (graph, ask) -> batches.stream()
+                .map(batch -> new BatchState(all(DeltaSparql.holds(batch, true, graph), ask),
+                        all(DeltaSparql.holds(batch, false, graph), ask)))
+                .toList());
+    }
+
+    private static boolean all(List<String> queries, GraphAsk ask) {
+        for (String query : queries) {
+            if (!ask.ask(query)) {
+                return false;
             }
         }
         return true;
     }
 
-    private boolean deltaHoldsInMemory(String projectId, HistoryChange entry, boolean undo) {
-        Optional<Model> snapshot = OwlApiModelSnapshot.of(ontologyCache, projectId);
-        if (snapshot.isEmpty()) {
-            return true;
-        }
-        SailRepository repository = new SailRepository(new MemoryStore());
-        repository.init();
-        try (RepositoryConnection connection = repository.getConnection()) {
-            org.eclipse.rdf4j.model.IRI graph = SimpleValueFactory.getInstance().createIRI(SNAPSHOT_GRAPH);
-            connection.add(snapshot.get(), graph);
-            for (ExactDelta whole : ExactReversal.checkedDeltaOf(entry).stream().toList()) {
-                for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {
-                    for (String query : DeltaSparql.holds(delta, undo, SNAPSHOT_GRAPH)) {
-                        if (!connection.prepareBooleanQuery(query).evaluate()) {
-                            return false;
-                        }
-                    }
-                }
+    private <T> Optional<T> inGraph(String projectId, HistoryChange entry, BiFunction<String, GraphAsk, T> work) {
+        if (!entry.isDraft() && inMemoryIsAuthoritative(projectId)) {
+            Optional<Model> snapshot = OwlApiModelSnapshot.of(ontologyCache, projectId);
+            if (snapshot.isEmpty()) {
+                return Optional.empty();
             }
-            return true;
-        } finally {
-            repository.shutDown();
+            SailRepository repository = new SailRepository(new MemoryStore());
+            repository.init();
+            try (RepositoryConnection connection = repository.getConnection()) {
+                connection.add(snapshot.get(), SimpleValueFactory.getInstance().createIRI(SNAPSHOT_GRAPH));
+                return Optional.ofNullable(work.apply(SNAPSHOT_GRAPH, query -> connection.prepareBooleanQuery(query).evaluate()));
+            } finally {
+                repository.shutDown();
+            }
         }
+        boolean draft = entry.isDraft() && entry.getUserId() != null && !entry.getUserId().isBlank();
+        String graph = draft ? datasetService.getDraftGraphUri(projectId, entry.getUserId())
+                : datasetService.getGraphUri(projectId);
+        return Optional.ofNullable(work.apply(graph, query -> datasetService.execAskInGraph(projectId, graph, query)));
     }
 
     public boolean laterUsesNewName(String projectId, HistoryChange entry) {

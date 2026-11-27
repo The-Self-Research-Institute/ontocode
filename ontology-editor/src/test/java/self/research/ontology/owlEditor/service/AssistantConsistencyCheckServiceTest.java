@@ -137,7 +137,7 @@ class AssistantConsistencyCheckServiceTest {
 
     @Test
     void gateCheckMarksPendingWhenAnAxiomTokenIsPresent() {
-        when(datasetService.getDatasetSize("proj-1")).thenReturn(500L);
+        when(datasetService.getDatasetSizeOrUnknown("proj-1")).thenReturn(500L);
         EditInput edit = new EditInput("turtle", new EditRange(0, 1), "", ":A rdfs:subClassOf :B .");
 
         CheckResult result = service.gateCheck("proj-1", "turtle", List.of(edit));
@@ -147,13 +147,25 @@ class AssistantConsistencyCheckServiceTest {
 
     @Test
     void gateCheckSkipsWhenTheOntologyIsTooLargeForALiveCheck() {
-        when(datasetService.getDatasetSize("proj-1")).thenReturn(5_000_000L);
+        when(datasetService.getDatasetSizeOrUnknown("proj-1")).thenReturn(5_000_000L);
         EditInput edit = new EditInput("turtle", new EditRange(0, 1), "", ":A rdfs:subClassOf :B .");
 
         CheckResult result = service.gateCheck("proj-1", "turtle", List.of(edit));
 
         assertTrue(result.passed());
         assertNull(result.status());
+    }
+
+    @Test
+    void gateCheckSkipsWhenTheOntologySizeIsNotKnownYetInsteadOfTreatingItAsSmall() {
+        when(datasetService.getDatasetSizeOrUnknown("proj-1")).thenReturn(-1L);
+        EditInput edit = new EditInput("turtle", new EditRange(0, 1), "", ":A rdfs:subClassOf :B .");
+
+        CheckResult result = service.gateCheck("proj-1", "turtle", List.of(edit));
+
+        assertTrue(result.passed());
+        assertNull(result.status());
+        assertTrue(result.detail().contains("size not known yet"), result.detail());
     }
 
     @Test

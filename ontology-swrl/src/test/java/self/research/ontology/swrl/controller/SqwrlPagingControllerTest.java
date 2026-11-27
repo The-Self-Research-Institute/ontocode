@@ -58,7 +58,7 @@ class SqwrlPagingControllerTest {
     void setUp() {
         clock = new MutableClock();
         service = Mockito.mock(SwrlEngineService.class);
-        SwrlController controller = new SwrlController();
+        SqwrlController controller = new SqwrlController();
         ReflectionTestUtils.setField(controller, "swrlEngineService", service);
         ReflectionTestUtils.setField(controller, "sqwrlResults", new SqwrlResultStore(clock, Duration.ofMinutes(15), 5, 50, 64L << 20));
         mvc = MockMvcBuilders.standaloneSetup(controller).build();
@@ -72,8 +72,8 @@ class SqwrlPagingControllerTest {
             row.put("age", String.valueOf((i * 7) % 90));
             rows.add(row);
         }
-        Mockito.when(service.executeSqwrlQuery(Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any()))
-                .thenReturn(new SwrlEngineService.SqwrlQueryResult(true, "q", "x", 5, List.of("p", "age"), rows, null,
+        Mockito.when(service.executeSqwrlQuery(Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any(), Mockito.any()))
+                .thenReturn(new self.research.ontology.swrl.service.SqwrlQueryResult(true, "q", "x", 5, List.of("p", "age"), rows, null,
                         total, exact, total > stored, stored, false));
     }
 
@@ -149,12 +149,36 @@ class SqwrlPagingControllerTest {
 
     @Test
     void aBusyEngineAnswers429WithTheSharedBusyMessage() throws Exception {
-        Mockito.when(service.executeSqwrlQuery(Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any()))
+        Mockito.when(service.executeSqwrlQuery(Mockito.anyString(), Mockito.anyString(), Mockito.any(), Mockito.any(), Mockito.any()))
                 .thenThrow(new SwrlBusyException("queue_full", 5, "The rule engine is busy. Try again in a moment."));
         var response = mvc.perform(post("/api/swrl/p1/sqwrl/query").contentType(MediaType.APPLICATION_JSON).content("{\"queryText\":\"x\"}"))
                 .andReturn().getResponse();
         assertEquals(429, response.getStatus());
         assertEquals("5", response.getHeader("Retry-After"));
         assertTrue(response.getContentAsString().contains("The rule engine is busy. Try again in a moment."));
+    }
+
+    @Test
+    void aDraftQueryRunsOnTheDraftOfTheUserWhoAsked() throws Exception {
+        answerWithRows(3, 3, true);
+        var response = mvc.perform(post("/api/swrl/p1/sqwrl/query?draft=true&userId=u1").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"queryText\":\"x\"}")).andReturn().getResponse();
+        assertEquals(200, response.getStatus());
+        Mockito.verify(service).executeSqwrlQuery(Mockito.eq("p1"), Mockito.eq("x"), Mockito.any(), Mockito.any(), Mockito.eq("u1"));
+    }
+
+    @Test
+    void aPublicQueryDoesNotPassADraftUserEvenWhenOneIsSent() throws Exception {
+        answerWithRows(3, 3, true);
+        run("{\"queryText\":\"x\"}");
+        Mockito.verify(service).executeSqwrlQuery(Mockito.eq("p1"), Mockito.eq("x"), Mockito.any(), Mockito.any(), Mockito.isNull());
+    }
+
+    @Test
+    void aDraftQueryWithoutAUserIsRefused() throws Exception {
+        var response = mvc.perform(post("/api/swrl/p1/sqwrl/query?draft=true").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"queryText\":\"x\"}")).andReturn().getResponse();
+        assertEquals(400, response.getStatus());
+        Mockito.verifyNoInteractions(service);
     }
 }

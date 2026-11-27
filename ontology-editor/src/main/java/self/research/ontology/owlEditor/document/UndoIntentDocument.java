@@ -31,6 +31,10 @@ public class UndoIntentDocument {
     private String scopeKey;
     private Stage stage;
     private int appliedCount;
+    private String batchChangeId;
+    private int appliedBatches;
+    private int batchTriples;
+    private boolean batchInFlight;
     private Status status;
     private String failureReason;
     private Instant createdAt;

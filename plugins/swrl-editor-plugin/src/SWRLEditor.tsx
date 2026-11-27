@@ -470,7 +470,7 @@ interface ResultsPanelProps {
 }
 
 
-const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; draftMode?: boolean }> = ({ projectId, context, draftMode = false }) => {
+const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; draftMode?: boolean; draftUserId?: string }> = ({ projectId, context, draftMode = false, draftUserId }) => {
   const [query, setQuery] = useState('Person(?p) ^ hasAge(?p, ?age) -> sqwrl:select(?p, ?age)');
   const [results, setResults] = useState<SqwrlQueryResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -509,7 +509,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
     setCopyNote('');
     try {
       const res = await apiClient.post<SqwrlQueryResponse>(
-        withDraft(`/api/swrl/${projectId}/sqwrl/query`, draftMode),
+        withDraft(`/api/swrl/${projectId}/sqwrl/query`, draftMode, draftUserId),
         { queryText: query, pageSize }
       );
       if (res.runId) {
@@ -767,7 +767,7 @@ const SQWRLQueryPanel: React.FC<{ projectId: string; context: PluginContext; dra
 
 interface ResultsPanelProps {
   projectId: string;
-  draftMode?: boolean;
+  draftMode?: boolean; draftUserId?: string;
   results: ExecutionResponse | null;
   isExecuting: boolean;
   onAdd?: (axioms: InferredAxiom[]) => Promise<{ ok: boolean; message: string }>;
@@ -1004,6 +1004,7 @@ const formatInferredAxiom = (axiom: InferredAxiom): ParsedAxiom => {
 interface GroupedAxiomItem {
   formatted: string;
   subject: string;
+  predicate?: string;
   object?: string;
   rawReadable: string;
   axiomType: string;
@@ -1024,6 +1025,7 @@ const groupAxiomsByType = (axioms: InferredAxiom[]): Map<string, GroupedAxiomIte
     groups.get(type)!.push({
       formatted: parsed.formatted,
       subject: parsed.subject || '(unknown)',
+      predicate: parsed.predicate,
       object: parsed.object,
       rawReadable: axiom.readable || axiom.description || '',
       axiomType: axiom.axiomType || type,
@@ -1061,6 +1063,8 @@ const axiomHeadKey = (ax: InferredAxiom): { name: string; literal: string | null
 
 const sectionOf = (ax: InferredAxiom, names: Set<string>): FactSection => {
   if (ax.category !== 'conclusion') return 'structure';
+  if (ax.origin === 'RULE_ENGINE') return 'rules';
+  if (ax.origin === 'OWL_REASONER') return 'standard';
   const { name } = axiomHeadKey(ax);
   return name && names.has(name) ? 'rules' : 'standard';
 };
@@ -1144,7 +1148,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
         </span>
         {item.object && (
           <>
-            <span className="font-bold" style={rt.label}>→</span>
+            <span className="font-bold" style={rt.label}>{item.predicate || '→'}</span>
             <span className="font-semibold truncate max-w-[200px]" style={rt.value} title={item.object}>
               {item.object}
             </span>
@@ -1165,7 +1169,7 @@ const AxiomCard: React.FC<{ item: GroupedAxiomItem; index: number; selected?: bo
   );
 };
 
-const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, rules = [], draftMode = false }) => {
+const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecuting, onAdd, onRerun, rules = [], draftMode = false, draftUserId }) => {
   const ruleHeads = useMemo(() => parseRuleHeads(rules), [rules]);
   const [explained, setExplained] = useState<InferredAxiom | null>(null);
   const toggleWhy = (ax: InferredAxiom) => setExplained(prev => (prev === ax ? null : ax));
@@ -1353,6 +1357,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
     structure: paged ? (results.counts?.structure ?? 0) : (results.structureCount ?? structureTotal),
     omittedTrivial: results.omittedTrivialCount ?? results.counts?.omittedTrivial ?? 0,
+    ruleConclusions: results.counts?.ruleConclusions,
   });
 
   return (
@@ -1700,7 +1705,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                         </div>
                         {explained && items.some(it => it.axiom === explained) && (
                           <div className="mt-2">
-                            <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={explained} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} draftUserId={draftUserId} ruleless={sec.key !== 'rules'} axiom={explained} onClose={() => setExplained(null)} />
                           </div>
                         )}
                       </div>
@@ -1773,7 +1778,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                       {explained === ax && (
                         <tr>
                           <td colSpan={onAdd ? 7 : 6} className="px-4 py-2">
-                            <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
+                            <ExplainPanel projectId={projectId} draftMode={draftMode} draftUserId={draftUserId} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
                           </td>
                         </tr>
                       )}
@@ -1845,7 +1850,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                     <pre className="text-sm font-mono p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all" style={rt.code}>{ax.readable}</pre>
                     {explained === ax && (
                       <div className="mt-2">
-                        <ExplainPanel projectId={projectId} draftMode={draftMode} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
+                        <ExplainPanel projectId={projectId} draftMode={draftMode} draftUserId={draftUserId} ruleless={sec.key !== 'rules'} axiom={ax} onClose={() => setExplained(null)} />
                       </div>
                     )}
                   </div>
@@ -1877,9 +1882,10 @@ interface SWRLEditorProps {
   projectId: string;
   context?: PluginContext;
   draftMode?: boolean;
+  draftUserId?: string;
 }
 
-export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draftMode = false }) => {
+export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draftMode = false, draftUserId }) => {
 
   const rulesVersionRef = useRef(0);
   const [rules, setRules] = useState<SwrlRule[]>([]);
@@ -2133,7 +2139,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     const validate = async (attempt: number) => {
       try {
         const res = await apiClient.post<SwrlValidationResult>(
-          withDraft(`/api/swrl/${projectId}/validate`, draftMode),
+          withDraft(`/api/swrl/${projectId}/validate`, draftMode, draftUserId),
           { ruleText: debouncedRuleText }
         );
         if (!cancelled) setValidationResult(res);
@@ -2434,7 +2440,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     setActivePanel(p => (p === 'control' ? p : 'results'));
 
     try {
-      const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode));
+      const res = await apiClient.post<ExecutionResponse>(withDraft(`/api/ontology/${projectId}/rules/execute`, draftMode, draftUserId));
       setExecutionResult(res);
       return res;
     } catch (e) {
@@ -2466,7 +2472,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     try {
       const ruleIds = Array.from(selectedRuleIds);
       const res = await apiClient.post<ExecutionResponse>(
-        withDraft(`/api/swrl/${projectId}/execute/selected`, draftMode),
+        withDraft(`/api/swrl/${projectId}/execute/selected`, draftMode, draftUserId),
         { ruleIds }
       );
       setExecutionResult(res);
@@ -3140,7 +3146,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                   ) : selectedRule && isImportedRule(selectedRule) ? (
                     <div className="flex flex-col gap-3 pt-2">
                       <div className="text-sm text-gray-600">{sourceLabel(selectedRule)}. This rule is read-only here.</div>
-                      <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} draftMode={draftMode} />
+                      <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} draftMode={draftMode} draftUserId={draftUserId} />
                       <div className="flex items-center gap-3">
                         <div className="flex-1" />
                         <button
@@ -3162,7 +3168,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
                     </div>
                   ) : selectedRule && (
                     <div className="flex flex-col gap-3 pt-2">
-                    <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} draftMode={draftMode} />
+                    <WhyNotPanel projectId={projectId} ruleId={selectedRule.id} draftMode={draftMode} draftUserId={draftUserId} />
                     <div className="flex items-center gap-3">
                       <button
                         onClick={() => setConfirmDialog({ isOpen: true, ruleName: selectedRule.ruleName, ruleId: selectedRule.id })}
@@ -3199,11 +3205,12 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               )}
             </div>
           ) : activePanel === 'results' ? (
-            <ResultsPanel projectId={projectId} draftMode={draftMode} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} rules={rules} />
+            <ResultsPanel projectId={projectId} draftMode={draftMode} draftUserId={draftUserId} results={executionResult} isExecuting={isExecuting} onAdd={handleAddConclusions} onRerun={executionResult?.executionMode === 'selected' ? handleExecuteSelected : handleExecuteAll} rules={rules} />
           ) : activePanel === 'control' ? (
             <ControlPanel
               projectId={projectId}
               draftMode={draftMode}
+              draftUserId={draftUserId}
               session={controlSession}
               onAddInferred={handleAddInferred}
               result={executionResult}
@@ -3221,11 +3228,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
               ranAt={ranAt}
             />
           ) : activePanel === 'asserted' ? (
-            <AssertedAxiomsPanel key={assertedVersion} projectId={projectId} draftMode={draftMode} />
+            <AssertedAxiomsPanel key={assertedVersion} projectId={projectId} draftMode={draftMode} draftUserId={draftUserId} />
           ) : activePanel === 'owl2rl' ? (
-            <Owl2RlPanel projectId={projectId} draftMode={draftMode} />
+            <Owl2RlPanel projectId={projectId} draftMode={draftMode} draftUserId={draftUserId} />
           ) : activePanel === 'query' ? (
-            <SQWRLQueryPanel projectId={projectId} context={context!} draftMode={draftMode} />
+            <SQWRLQueryPanel projectId={projectId} context={context!} draftMode={draftMode} draftUserId={draftUserId} />
           ) : (
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <div className="text-sm text-gray-600 mb-4">

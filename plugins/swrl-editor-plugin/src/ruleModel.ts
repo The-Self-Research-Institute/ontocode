@@ -383,9 +383,10 @@ export interface UnmigratedListedRule {
   error?: string;
 }
 
-export function withDraft(path: string, draftMode: boolean): string {
+export function withDraft(path: string, draftMode: boolean, userId?: string): string {
   if (!draftMode) return path;
-  return path + (path.includes('?') ? '&draft=true' : '?draft=true');
+  const scope = path + (path.includes('?') ? '&draft=true' : '?draft=true');
+  return userId ? `${scope}&userId=${encodeURIComponent(userId)}` : scope;
 }
 
 export function normalizeRulesResponse(res: unknown): { rules: ListedRule[]; unmigrated: UnmigratedListedRule[] } {
@@ -678,6 +679,7 @@ export type AxiomKind = 'conclusions' | 'structure';
 
 export interface RunCounts {
   conclusions: number;
+  ruleConclusions?: number;
   structure: number;
   omittedTrivial?: number;
 }
@@ -707,7 +709,14 @@ export function derivedSummary(counts: RunCounts): string {
   const total = facts + relations + omitted;
   if (total <= 0) return '';
   const parts: string[] = [];
-  if (facts > 0) parts.push(`${formatCount(facts)} ${pluralize(facts, 'fact about an individual', 'facts about individuals')} from your rules`);
+  if (counts.ruleConclusions === undefined) {
+    if (facts > 0) parts.push(`${formatCount(facts)} ${pluralize(facts, 'inferred fact', 'inferred facts')} about individuals`);
+  } else if (facts > 0) {
+    const ruleFacts = counts.ruleConclusions;
+    const standardFacts = facts - ruleFacts;
+    parts.push(`${formatCount(ruleFacts)} ${pluralize(ruleFacts, 'fact', 'facts')} from your rules`);
+    if (standardFacts > 0) parts.push(`${formatCount(standardFacts)} ${pluralize(standardFacts, 'fact', 'facts')} from standard reasoning`);
+  }
   parts.push(relations > 0 ? `${formatCount(relations)} ${pluralize(relations, 'class relationship', 'class relationships')} from standard reasoning` : 'no class relationships');
   if (omitted > 0) parts.push(`${formatCount(omitted)} trivial ${pluralize(omitted, 'one', 'ones')} hidden`);
   return `${formatCount(total)} produced: ${parts.join(', ')}.`;
@@ -810,7 +819,7 @@ export const ASSERTED_TYPES = ['ClassAssertion', 'ObjectPropertyAssertion', 'Dat
 export function assertedAxiomsPath(
   projectId: string,
   opts: { page: number; pageSize: number; search: string; type: string },
-  draftMode: boolean
+  draftMode: boolean, userId?: string
 ): string {
   const params = new URLSearchParams();
   params.set('page', String(opts.page));
@@ -818,7 +827,7 @@ export function assertedAxiomsPath(
   const q = opts.search.trim();
   if (q) params.set('search', q);
   if (opts.type) params.set('type', opts.type);
-  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/axioms/asserted?${params.toString()}`, draftMode);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/axioms/asserted?${params.toString()}`, draftMode, userId);
 }
 
 export function canGoNextAssertedPage(page: number, pageSize: number, total: number): boolean {
@@ -856,21 +865,21 @@ export const OWL2RL_EXPIRED_MESSAGE = 'These results have expired. Compute the c
 export function owl2rlStartPath(
   projectId: string,
   opts: { pageSize: number; type: string; filter: string },
-  draftMode: boolean
+  draftMode: boolean, userId?: string
 ): string {
   const params = new URLSearchParams();
   params.set('pageSize', String(opts.pageSize));
   if (opts.type) params.set('type', opts.type);
   const f = opts.filter.trim();
   if (f) params.set('filter', f);
-  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl?${params.toString()}`, draftMode);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl?${params.toString()}`, draftMode, userId);
 }
 
 export function owl2rlRunPath(
   projectId: string,
   runId: string,
   opts: { page: number; pageSize: number; type: string; filter: string },
-  draftMode: boolean
+  draftMode: boolean, userId?: string
 ): string {
   const params = new URLSearchParams();
   params.set('page', String(opts.page));
@@ -878,7 +887,7 @@ export function owl2rlRunPath(
   if (opts.type) params.set('type', opts.type);
   const f = opts.filter.trim();
   if (f) params.set('filter', f);
-  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl/runs/${encodeURIComponent(runId)}?${params.toString()}`, draftMode);
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/owl2rl/runs/${encodeURIComponent(runId)}?${params.toString()}`, draftMode, userId);
 }
 
 export function owl2rlErrorMessage(e: any): string {
@@ -1073,8 +1082,8 @@ export interface TransferSummary {
   elapsedMs: number;
 }
 
-export function transferSummaryPath(projectId: string, draftMode: boolean): string {
-  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/transfer-summary`, draftMode);
+export function transferSummaryPath(projectId: string, draftMode: boolean, userId?: string): string {
+  return withDraft(`/api/swrl/${encodeURIComponent(projectId)}/transfer-summary`, draftMode, userId);
 }
 
 function countLine(n: number, label: string): string {

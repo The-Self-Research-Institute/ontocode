@@ -34,7 +34,6 @@ public class FreeViewOnlyInterceptor implements HandlerInterceptor {
         "/api/sparql/query/**",
         "/api/sparql/*/queries",
         "/api/v1/issues/report",
-        "/api/sqwrl/**",
         "/**/reasoner/**",
         "/**/validate",
         "/**/reload/**",

@@ -20,6 +20,7 @@ import self.research.ontology.owlEditor.util.OwlAxiomSparqlWriter;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.Set;
+import self.research.ontology.owlEditor.util.SharedFileDocumentSource;
 
 /**
  * Shared Manchester OWL Syntax parse + persist for class expressions and GCAs.
@@ -294,13 +295,13 @@ private void deleteAxioms(String projectId, Set<? extends OWLAxiom> axioms, bool
         log.info("[Manchester] OWLAPI cache miss for project {} — exporting from Fuseki (slow path)", projectId);
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
         OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
-        return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
+        return manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(exportPath));
     }
 
     public OWLOntology loadFreshOntology(String projectId) throws Exception {
         Path exportPath = storageManager.exportOntology(projectId, "rdfxml");
         OWLOntologyManager manager = OWLFormatConverter.createManagerWithSilentImports();
-        return manager.loadOntologyFromOntologyDocument(exportPath.toFile());
+        return manager.loadOntologyFromOntologyDocument(SharedFileDocumentSource.of(exportPath));
     }
 
     // Matches a bare http(s)/urn IRI that isn't already wrapped in <...> — same rule already

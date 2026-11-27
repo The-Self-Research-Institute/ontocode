@@ -1891,13 +1891,15 @@ public class ReasonerController {
             Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
             List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
             RuleExecutionPresenter.Full full = RuleExecutionPresenter.partition(derived, asserted);
-            String runId = storeRun(projectId, isDraft, request, full);
+            Set<OWLAxiom> ruleConclusions = RuleExecutionPresenter.ruleConclusions(full, result.derived());
+            String runId = storeRun(projectId, isDraft, request, full, ruleConclusions);
             RuleExecutionPresenter.Presented presented = runId != null
                     ? RuleExecutionPresenter.firstPage(full, RuleExecutionPresenter.FIRST_PAGE)
                     : RuleExecutionPresenter.limited(full, RuleExecutionPresenter.MAX_INFERRED);
             List<Map<String, Object>> axioms = new ArrayList<>();
             for (OWLAxiom axiom : presented.ordered()) {
-                axioms.add(RuleExecutionPresenter.toJson(axiom, presented.conclusions().contains(axiom) ? "conclusion" : "structure"));
+                String category = presented.conclusions().contains(axiom) ? "conclusion" : "structure";
+                axioms.add(RuleExecutionPresenter.toJson(axiom, category, ruleConclusions));
             }
 
             List<Map<String, String>> skipped = new ArrayList<>();
@@ -1932,7 +1934,7 @@ public class ReasonerController {
             body.put("omittedTrivialCount", presented.omittedTrivial());
             body.put("truncated", presented.truncated());
             body.put("runId", runId);
-            body.put("counts", runCounts(full));
+            body.put("counts", RuleExecutionPresenter.counts(full, ruleConclusions.size()));
             body.put("executionMode", "all");
             body.put("status", status.name());
             body.put("statusLabel", status.label());
@@ -1962,24 +1964,14 @@ public class ReasonerController {
         }
     }
 
-    private String storeRun(String projectId, boolean isDraft, HttpServletRequest request, RuleExecutionPresenter.Full full) {
+    private String storeRun(String projectId, boolean isDraft, HttpServletRequest request, RuleExecutionPresenter.Full full,
+                            Set<OWLAxiom> ruleConclusions) {
         if (ruleRunStore == null || ruleRunAccess == null) {
             return null;
         }
         Optional<String> owner = ruleRunAccess.identity(request);
-        return owner.map(id -> ruleRunStore.put(projectId, id, isDraft, full.conclusions(), full.structure())).orElse(null);
-    }
-
-    private static Map<String, Object> runCounts(RuleExecutionPresenter.Full full) {
-        Map<String, Object> counts = new LinkedHashMap<>();
-        counts.put("conclusions", full.conclusions().size());
-        counts.put("structure", full.structure().size());
-        counts.put("omittedTrivial", full.omittedTrivial());
-        if (full.conclusions().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_CONCLUSIONS
-                || full.structure().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_STRUCTURE) {
-            counts.put("capped", true);
-        }
-        return counts;
+        return owner.map(id -> ruleRunStore.put(projectId, id, isDraft, full.conclusions(), full.structure(), ruleConclusions))
+                .orElse(null);
     }
 
     private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {

@@ -11,7 +11,6 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
 import org.eclipse.rdf4j.http.client.SharedHttpClientSessionManager;
 import org.eclipse.rdf4j.repository.sparql.SPARQLRepository;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -23,7 +22,6 @@ import org.eclipse.rdf4j.rio.RDFWriter;
 import org.eclipse.rdf4j.rio.Rio;
 import org.eclipse.rdf4j.rio.helpers.AbstractRDFHandler;
 import org.eclipse.rdf4j.rio.helpers.BasicParserSettings;
-import org.eclipse.rdf4j.rio.helpers.StatementCollector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -68,7 +66,6 @@ import java.util.LinkedHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -205,6 +202,7 @@ public class SparqlDatasetService {
     // Gives each file its own Fuseki dataset so buffer-pool / GC pressure from large ontologies
     // (GO-plus, NCBITaxon) cannot degrade queries against smaller co-resident files.
     private final Map<String, Repository> perFileRepositories = new ConcurrentHashMap<>();
+    private final PerFileClients perFileClients = new PerFileClients();
 
     // Projects whose dedicated dataset exists but is empty while the shared named graph has data
     // (legacy split-brain from chunked imports). Cached to avoid re-running expensive COUNT/ASK
@@ -257,41 +255,8 @@ public class SparqlDatasetService {
                 BasicCredentialsProvider credsProvider = new BasicCredentialsProvider();
                 credsProvider.setCredentials(AuthScope.ANY,
                         new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
-                // Preemptive Basic Auth — RDF4J's SPARQLProtocolSession intercepts 401 and
-                // throws UnauthorizedException before HttpClient can retry with credentials,
-                // so we must send the Authorization header on every request upfront.
-                String encodedCreds = java.util.Base64.getEncoder().encodeToString(
-                        (fusekiAdminUser + ":" + fusekiAdminPassword)
-                                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                final String basicAuthHeader = "Basic " + encodedCreds;
-                // 2-hour socket timeout matches the gateway and tomcat timeouts — prevents
-                // QueryInterruptedException (SocketTimeoutException) on large ontology commits.
-                // connectionRequestTimeout reduced to 10s: fail fast when pool is saturated
-                // (default Apache HttpClient pool is maxTotal=20 / defaultMaxPerRoute=2 — we
-                // override below so classDetails' 20 parallel queries don't starve children).
-                org.apache.http.client.config.RequestConfig requestConfig =
-                        org.apache.http.client.config.RequestConfig.custom()
-                                .setConnectTimeout(30_000)
-                                .setSocketTimeout(7_200_000)
-                                .setConnectionRequestTimeout(10_000)
-                                .build();
-                // Single Fuseki host — set per-route limit equal to total so all parallel
-                // classDetails futures (up to 20) plus concurrent children/properties queries
-                // can each hold a connection without queuing.
-                org.apache.http.impl.conn.PoolingHttpClientConnectionManager connManager =
-                        new org.apache.http.impl.conn.PoolingHttpClientConnectionManager();
-                connManager.setMaxTotal(60);
-                connManager.setDefaultMaxPerRoute(60);
-                CloseableHttpClient httpClient = HttpClients.custom()
-                        .setConnectionManager(connManager)
-                        .setDefaultCredentialsProvider(credsProvider)
-                        .setDefaultRequestConfig(requestConfig)
-                        .addInterceptorFirst((org.apache.http.HttpRequestInterceptor) (request, context) -> {
-                            if (!request.containsHeader("Authorization")) {
-                                request.addHeader("Authorization", basicAuthHeader);
-                            }
-                        })
-                        .build();
+                CloseableHttpClient httpClient = FusekiHttpClients.pooled(credsProvider,
+                        FusekiHttpClients.basicAuth(fusekiAdminUser, fusekiAdminPassword));
                 SPARQLRepository sparqlRepo = new SPARQLRepository(fusekiQueryEndpoint, fusekiUpdateEndpoint);
                 java.util.concurrent.ScheduledExecutorService scheduler =
                         java.util.concurrent.Executors.newScheduledThreadPool(1);
@@ -546,22 +511,19 @@ public class SparqlDatasetService {
      */
     @EventListener(ApplicationReadyEvent.class)
     public void warmupFusekiAsync() {
-        // Seed tripleCountCache from MongoDB metadata immediately — avoids the first
-        // status poll per project running a slow COUNT(*) on cold TDB2.
         if (projectRepository != null) {
             try {
+                java.util.concurrent.atomic.AtomicInteger seeded = new java.util.concurrent.atomic.AtomicInteger();
                 projectRepository.findByStatusIn(java.util.List.of("COMPLETED")).forEach(p -> {
-                    if (p.getMetadata() != null) {
-                        Object stored = p.getMetadata().get("tripleCount");
-                        if (stored instanceof Number n && n.longValue() > 0) {
-                            tripleCountCache.put(p.getId(), n.longValue());
-                        }
+                    long stored = GraphSizeEstimates.storedTriples(p.getMetadata());
+                    if (stored > 0) {
+                        graphSizes.seed(p.getId(), stored);
+                        seeded.incrementAndGet();
                     }
                 });
-                log.info("[WARMUP] Seeded tripleCountCache for {} COMPLETED projects from MongoDB",
-                    tripleCountCache.size());
+                log.info("[WARMUP] Seeded graph sizes for {} completed projects from saved metadata", seeded.get());
             } catch (Exception e) {
-                log.warn("[WARMUP] tripleCountCache seed failed (non-fatal): {}", e.getMessage());
+                log.warn("[WARMUP] Graph size seed failed (non-fatal): {}", e.getMessage());
             }
         }
         CompletableFuture.runAsync(() -> {
@@ -706,16 +668,16 @@ public class SparqlDatasetService {
         String queryUrl = fusekiBase + "/" + dsName + "/query";
         String updateUrl = fusekiBase + "/" + dsName + "/update";
         SPARQLRepository repo = new SPARQLRepository(queryUrl, updateUrl);
+        BasicCredentialsProvider credentials = new BasicCredentialsProvider();
+        String authHeader = null;
         if (fusekiAdminUser != null && !fusekiAdminUser.isBlank()) {
-            BasicCredentialsProvider creds = new BasicCredentialsProvider();
-            creds.setCredentials(AuthScope.ANY,
+            credentials.setCredentials(AuthScope.ANY,
                     new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
-            CloseableHttpClient httpClient = HttpClients.custom()
-                    .setDefaultCredentialsProvider(creds).build();
-            SharedHttpClientSessionManager sm = new SharedHttpClientSessionManager();
-            sm.setHttpClient(httpClient);
-            repo.setHttpClientSessionManager(sm);
+            authHeader = FusekiHttpClients.basicAuth(fusekiAdminUser, fusekiAdminPassword);
         }
+        CloseableHttpClient client = FusekiHttpClients.pooled(credentials, authHeader);
+        repo.setHttpClient(client);
+        perFileClients.register(repo, client);
         repo.init();
         return repo;
     }
@@ -740,17 +702,19 @@ public class SparqlDatasetService {
         boolean datasetExists = fusekiDatasetExists(fusekiBase, dsName);
 
         if (datasetExists || createIfAbsent) {
+            SPARQLRepository repo = null;
             try {
                 if (createIfAbsent && !datasetExists) {
                     ensureFusekiDataset(fusekiBase, dsName);
                 }
-                SPARQLRepository repo = connectPerFileRepository(fusekiBase, dsName);
+                repo = connectPerFileRepository(fusekiBase, dsName);
 
                 // Legacy split-brain: an empty dedicated dataset was created while chunked import
                 // wrote to the shared named graph. Prefer shared when dedicated has no triples.
                 if (!createIfAbsent && datasetExists) {
                     // Fast path: cached decision from a prior call avoids repeated SPARQL on every poll.
                     if (sharedFallbackProjects.contains(projectId)) {
+                        perFileClients.closeNow(repo);
                         return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
                     }
                     try (RepositoryConnection dedicatedConn = repo.getConnection()) {
@@ -763,6 +727,7 @@ public class SparqlDatasetService {
                                     log.info("[PerFileDS] Dedicated dataset '{}' is empty but shared graph has data — using shared for {}",
                                             dsName, projectId);
                                     sharedFallbackProjects.add(projectId);
+                                    perFileClients.closeNow(repo);
                                     return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
                                 }
                             }
@@ -773,11 +738,16 @@ public class SparqlDatasetService {
                     }
                 }
 
-                perFileRepositories.put(projectId, repo);
+                Repository existing = perFileRepositories.putIfAbsent(projectId, repo);
+                if (existing != null) {
+                    perFileClients.closeNow(repo);
+                    return new ProjectGraphBinding(existing, projectId, graphUri, getPerFileGspEndpoint(projectId), true);
+                }
                 log.info("[PerFileDS] Using dedicated Fuseki dataset '{}' for project {} (existed={}, created={})",
                         dsName, projectId, datasetExists, createIfAbsent && !datasetExists);
                 return new ProjectGraphBinding(repo, projectId, graphUri, getPerFileGspEndpoint(projectId), true);
             } catch (Exception e) {
+                perFileClients.closeNow(repo);
                 if (createIfAbsent) {
                     log.warn("[PerFileDS] Could not use dedicated dataset for {} — shared fallback: {}",
                             projectId, e.getMessage());
@@ -793,7 +763,7 @@ public class SparqlDatasetService {
         if (projectId == null || projectId.isBlank()) {
             return;
         }
-        perFileRepositories.remove(projectId);
+        perFileClients.closeAfterGrace(perFileRepositories.remove(projectId));
         partitionGraphCache.remove(projectId);
         sharedFallbackProjects.remove(projectId);
         log.info("[PerFileDS] Evicted cached repository for project {}", projectId);
@@ -918,9 +888,6 @@ public class SparqlDatasetService {
             String graphUri = graphBinding.graphUri();
 
             try (RepositoryConnection conn = graphBinding.repository().getConnection()) {
-                // Check 1: Check if there are any triples in the graph (basic duplicate prevention)
-                long graphSize = countGraphTriplesSparql(conn, graphUri);
-
                 // Check 2: Query for file metadata if the system stores it
                 // This checks for triples that might indicate a file was already loaded
                 String checkQuery = String.format(
@@ -936,8 +903,9 @@ public class SparqlDatasetService {
                 long askStart = System.nanoTime();
                 boolean hasData = boolQuery.evaluate();
                 log.info("[TIMING] checkFileExistsInGraphDB ASK query for project {}: {} ms", projectId, elapsedMillis(askStart));
+                long graphSize = hasData ? Math.max(1L, getGraphTripleCount(projectId)) : 0L;
 
-                if (hasData && graphSize > 0) {
+                if (hasData) {
                     // Graph has data - check if it's from a file with the same name
                     // Try to find ontology IRI or file identifier
                     String detailQuery = String.format(
@@ -971,10 +939,7 @@ public class SparqlDatasetService {
                     result.put("exists", true);
                     result.put("graphSize", graphSize);
                     result.put("ontologyIRIs", ontologyIRIs);
-                    result.put("message", String.format(
-                        "Project graph already contains %d triples. Loading this file may create duplicate data.",
-                        graphSize
-                    ));
+                    result.put("message", "Project graph already contains data. Loading this file may create duplicate data.");
 
                     log.info("[GraphDB Duplicate Check] Project {} graph contains {} triples. File: {}, FileId: {}",
                         projectId, graphSize, fileName, fileId);
@@ -1056,28 +1021,7 @@ public class SparqlDatasetService {
                 return getGraphUri(pid);
             }
             @Override public long estimateTripleCount(String pid) {
-                // Run COUNT with a 8-second timeout so cold TDB2 doesn't block
-                // the request thread for 60+ seconds and hit the ALB timeout.
-                // On timeout we return -1 (unknown) → caller proceeds to cache load.
-                try {
-                    return CompletableFuture.supplyAsync(() -> {
-                        try {
-                            ProjectGraphBinding binding = resolveBinding(pid, false);
-                            try (RepositoryConnection conn = binding.repository().getConnection()) {
-                                return countGraphTriplesSparql(conn, binding.graphUri());
-                            }
-                        } catch (Exception e) {
-                            log.debug("[MEMCACHE] estimateTripleCount inner error for {}: {}", pid, e.getMessage());
-                            return -1L;
-                        }
-                    }).get(8, TimeUnit.SECONDS);
-                } catch (TimeoutException te) {
-                    log.warn("[MEMCACHE] estimateTripleCount timed out for {} (>8s) — skipping cache threshold check", pid);
-                    return -1L;
-                } catch (Exception e) {
-                    log.debug("[MEMCACHE] estimateTripleCount failed for {}: {}", pid, e.getMessage());
-                    return -1L;
-                }
+                return graphSizes.estimate(pid, SparqlDatasetService.this::countProjectTriples);
             }
         };
     }
@@ -1698,11 +1642,28 @@ public class SparqlDatasetService {
         replaceNamedGraphFromRdf(projectId, getGraphUri(projectId), rdfContent, format);
     }
 
+    public void replaceMainGraphAndClearDraft(String projectId, String userId, String rdfContent,
+                                              org.eclipse.rdf4j.rio.RDFFormat format) {
+        String draftGraph = getDraftGraphUri(projectId, userId);
+        replaceGraph(projectId, getGraphUri(projectId), rdfContent, format, List.of(draftGraph));
+        noteGraphWritten(draftGraph);
+        if (projectRepoCache != null) {
+            projectRepoCache.evict(projectId);
+        }
+        OwlApiMutationCoordinator mutationCoordinator = mutationCoordinatorProvider.getIfAvailable();
+        if (mutationCoordinator != null) {
+            mutationCoordinator.afterMutation(projectId, MutationContext.getAndClear());
+        }
+        evictDraftReadyCache(projectId, userId);
+    }
+
     public void replaceNamedGraphFromRdf(String projectId, String graphUri, String rdfContent,
                                          org.eclipse.rdf4j.rio.RDFFormat format) {
-        if (rdfContent == null || rdfContent.isBlank()) {
-            throw new IllegalArgumentException("RDF content is empty");
-        }
+        replaceGraph(projectId, graphUri, rdfContent, format, List.of());
+    }
+
+    private void replaceGraph(String projectId, String graphUri, String rdfContent,
+                              org.eclipse.rdf4j.rio.RDFFormat format, List<String> graphsToClear) {
         // Parse locally and re-emit as a plain "CLEAR GRAPH; INSERT DATA" SPARQL Update string,
         // executed the same way every other mutation in this class is (conn.prepareUpdate().execute()).
         // RDF4J's SPARQLConnection.add(InputStream, format, graphIri) — a different RDF4J API that
@@ -1710,32 +1671,14 @@ public class SparqlDatasetService {
         // string — silently fails ("error executing transaction", no useful detail) for some
         // ontologies produced by the merge/publish pipeline, even though the identical triples
         // load fine via a raw SPARQL INSERT DATA or the Graph Store Protocol. Sidestep it entirely.
-        List<Statement> statements = new ArrayList<>();
-        RDFParser parser = Rio.createParser(format);
-        parser.setRDFHandler(new StatementCollector(statements));
-        try (ByteArrayInputStream in = new ByteArrayInputStream(rdfContent.getBytes(StandardCharsets.UTF_8))) {
-            parser.parse(in, graphUri);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to parse RDF content for graph " + graphUri, e);
-        }
-
-        java.io.StringWriter triplesOut = new java.io.StringWriter();
-        RDFWriter writer = Rio.createWriter(org.eclipse.rdf4j.rio.RDFFormat.NTRIPLES, triplesOut);
-        writer.startRDF();
-        for (Statement st : statements) {
-            writer.handleStatement(st);
-        }
-        writer.endRDF();
-
-        String updateText = "CLEAR SILENT GRAPH <" + graphUri + ">;\n"
-                + "INSERT DATA { GRAPH <" + graphUri + "> {\n" + triplesOut + "\n} }";
-
+        GraphReplaceUpdate update = GraphReplaceUpdate.of(graphUri, rdfContent, format, graphsToClear);
         ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
-            conn.prepareUpdate(updateText).execute();
+            conn.prepareUpdate(update.text()).execute();
             noteGraphWritten(graphUri);
             invalidateDerivedCachesAfterUpdate(projectId);
-            log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} triples)", graphUri, projectId, statements.size());
+            log.info("[DRAFT-GRAPH] Replaced graph {} for project {} ({} triples, cleared {})",
+                    graphUri, projectId, update.triples(), graphsToClear);
         } catch (Exception e) {
             log.error("Failed to replace graph {} for project {}", graphUri, projectId, e);
             throw new RuntimeException("Failed to replace named graph", e);
@@ -2378,17 +2321,12 @@ public class SparqlDatasetService {
             log.info("═══════════════════════════════════════════════════════════");
             log.info("✓ DIRECT HTTP UPLOAD COMPLETE for project: {}", projectId);
             log.info("  Verified triples: {}", verifiedSize);
-            // Re-seed tripleCountCache immediately so that the first topLevelClasses()
-            // call after import doesn't hit the 8-second COUNT timeout (which returns -1).
-            // invalidateContextCaches() above just cleared this entry.
             if (verifiedSize > 0) {
-                tripleCountCache.put(projectId, verifiedSize);
+                graphSizes.seed(projectId, verifiedSize);
                 if (verifiedSize >= 1_000_000L && projectRepoCache != null) {
                     projectRepoCache.markKnownLarge(projectId);
-                    log.info("  [tripleCountCache] Seeded {} triples, marked knownLarge", verifiedSize);
-                } else {
-                    log.info("  [tripleCountCache] Seeded {} triples", verifiedSize);
                 }
+                log.info("  [GraphSize] Seeded {} triples", verifiedSize);
             }
             log.info("  TIMING BREAKDOWN:");
             log.info("    • HTTP upload + Fuseki indexing: {} ms ({} sec)", uploadMs, uploadMs / 1000);
@@ -2877,8 +2815,15 @@ public class SparqlDatasetService {
     }
 
     public long getDatasetSizeOrUnknown(String projectId) {
-        ProjectGraphBinding binding = resolveBinding(projectId, false);
+        return graphSizes.exact(projectId, this::countProjectTriples);
+    }
 
+    private long countProjectTriples(String projectId) {
+        return FusekiHttpClients.boundedCount(() -> countBoundProjectTriples(projectId));
+    }
+
+    private long countBoundProjectTriples(String projectId) {
+        ProjectGraphBinding binding = resolveBinding(projectId, false);
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             long sizeStart = System.nanoTime();
             List<String> graphs = getAllGraphUris(conn, projectId);
@@ -2889,9 +2834,6 @@ public class SparqlDatasetService {
             log.info("[TIMING] getDatasetSize for project {}: {} ms ({} triples across {} graphs)",
                      projectId, elapsedMillis(sizeStart), total, graphs.size());
             return total;
-        } catch (Exception e) {
-            log.error("Failed to get dataset size for project: {}", projectId, e);
-            return -1;
         }
     }
 
@@ -3043,6 +2985,7 @@ public class SparqlDatasetService {
      */
     @PreDestroy
     public void shutdown() {
+        graphSizes.shutdown();
         if (repository != null && repository.isInitialized()) {
             log.info("Shutting down GraphDB repository connection");
             repository.shutDown();
@@ -3128,41 +3071,28 @@ public class SparqlDatasetService {
         return verifiedSize;
     }
 
-    // Triple counts only change on import/mutation, but the UI polls status every ~2s.
-    // Without this cache each poll runs COUNT(*) — 10-60s on large cold TDB2 graphs,
-    // stacking polls until the gateway 504s and the import looks failed to the user.
-    private final Map<String, Long> tripleCountCache = new ConcurrentHashMap<>();
+    private final GraphSizeEstimates graphSizes = new GraphSizeEstimates();
 
-    /**
-     * Triple count for a project's named graph (-1 if Fuseki is unreachable).
-     * Lightweight helper for status polling during long imports.
-     */
     public long getGraphTripleCount(String projectId) {
-        Long cached = tripleCountCache.get(projectId);
-        if (cached != null) {
-            return cached;
-        }
-        try {
-            return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                try {
-                    ProjectGraphBinding binding = resolveBinding(projectId, false);
-                    try (RepositoryConnection conn = binding.repository().getConnection()) {
-                        long count = countGraphTriplesSparql(conn, binding.graphUri());
-                        if (count > 0) tripleCountCache.put(projectId, count);
-                        return count;
-                    }
-                } catch (Exception e) {
-                    log.debug("[getGraphTripleCount] inner error for {}: {}", projectId, e.getMessage());
-                    return -1L;
-                }
-            }).get(8, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (java.util.concurrent.TimeoutException te) {
-            log.warn("[getGraphTripleCount] COUNT timed out for {} (>8s) — returning -1", projectId);
-            return -1;
-        } catch (Exception e) {
-            log.debug("[getGraphTripleCount] Could not count triples for {}: {}", projectId, e.getMessage());
-            return -1;
-        }
+        return graphSizes.estimate(projectId, this::countProjectTriples);
+    }
+
+    public java.util.OptionalLong knownGraphSize(String projectId) {
+        return graphSizes.known(projectId);
+    }
+
+    public long freshGraphSizeOrUnknown(String projectId) {
+        getGraphTripleCount(projectId);
+        return graphSizes.fresh(projectId).orElse(-1L);
+    }
+
+    public boolean graphLooksLarge(String projectId, long threshold) {
+        return graphSizes.looksLarge(projectId, threshold);
+    }
+
+    public boolean isLargeOrUnknownGraph(String projectId, long threshold) {
+        long triples = getGraphTripleCount(projectId);
+        return triples < 0 || triples >= threshold;
     }
 
     private int resolveBatchSize(long fileSizeBytes) {
@@ -3533,8 +3463,12 @@ public class SparqlDatasetService {
      * because it scans the entire index. A SPARQL COUNT query is orders of magnitude faster.
      */
     private long countGraphTriplesSparql(RepositoryConnection conn, String graphUri) {
-        String query = "SELECT (COUNT(*) AS ?count) FROM <" + graphUri + "> WHERE { ?s ?p ?o }";
-        try (TupleQueryResult result = conn.prepareTupleQuery(query).evaluate()) {
+        var query = conn.prepareTupleQuery("SELECT (COUNT(*) AS ?count) FROM <" + graphUri + "> WHERE { ?s ?p ?o }");
+        int timeoutSeconds = FusekiHttpClients.countQueryTimeoutSeconds();
+        if (timeoutSeconds > 0) {
+            query.setMaxExecutionTime(timeoutSeconds);
+        }
+        try (TupleQueryResult result = query.evaluate()) {
             if (result.hasNext()) {
                 BindingSet bs = result.next();
                 if (bs.hasBinding("count")) {
@@ -3638,7 +3572,6 @@ public class SparqlDatasetService {
      * Deliberately does NOT touch the partition graph cache (partitions only change on import).
      */
     private void invalidateDerivedCachesAfterUpdate(String projectId) {
-        tripleCountCache.remove(projectId);
         String userId = SparqlQueryContext.getUserId();
         // userId alone doesn't mean "this was a draft mutation" — it's resolvable via
         // header/JWT on every authenticated request, draft or public alike. The mutation
@@ -3652,6 +3585,7 @@ public class SparqlDatasetService {
                 springCacheEviction.evictForProjectAndUser(projectId, userId);
             }
         } else {
+            graphSizes.noteWrite(projectId);
             // Public mutation: evict all project-scoped cache entries (all users see updated data).
             if (topLevelCacheService != null) {
                 topLevelCacheService.evict(projectId);
@@ -3712,7 +3646,7 @@ public class SparqlDatasetService {
      */
     private void invalidateContextCaches(String projectId) {
         partitionGraphCache.remove(projectId);
-        tripleCountCache.remove(projectId);
+        graphSizes.reset(projectId);
         // Correct only for callers that resync the on-disk ontology.original.*/current.* file
         // to match this same import (ProjectImportService copies the uploaded file to disk
         // separately). bulkLoadChunked() is also the reimport path behind code-view-save, which

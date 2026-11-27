@@ -99,7 +99,7 @@ export const IssueReportForm: React.FC<IssueReportFormProps> = ({
     if (desktop && !signedIn) {
       (window as any).electronAPI?.saveProfile({ ...localProfile, email: email.trim() }).catch(() => undefined);
     }
-    if (!result.trackerFailureReason) {setTimeout(onBack, 3000);}
+    if (!result.trackerFailureReason) {setTimeout(onBack, 5000);}
   };
 
   return (

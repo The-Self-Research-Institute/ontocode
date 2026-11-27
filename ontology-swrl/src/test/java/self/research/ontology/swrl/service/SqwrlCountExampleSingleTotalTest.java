@@ -10,13 +10,13 @@ class SqwrlCountExampleSingleTotalTest {
     @Test
     void countExampleReturnsOneRowWithTheTotal() throws Exception {
         TriageHarness harness = new TriageHarness();
-        SwrlEngineService.SqwrlQueryResult listed = harness.service.executeSqwrlQuery(
+        SqwrlQueryResult listed = harness.service.executeSqwrlQuery(
                 TriageHarness.PROJECT, "Patient(?p) -> sqwrl:select(?p)", "q", null);
         assertTrue(listed.isSuccess(), String.valueOf(listed.getErrorMessage()));
         int patients = listed.getRowCount();
         assertTrue(patients > 1);
 
-        SwrlEngineService.SqwrlQueryResult counted = harness.service.executeSqwrlQuery(
+        SqwrlQueryResult counted = harness.service.executeSqwrlQuery(
                 TriageHarness.PROJECT, "Patient(?p) -> sqwrl:count(?p)", "q", null);
 
         assertTrue(counted.isSuccess(), String.valueOf(counted.getErrorMessage()));

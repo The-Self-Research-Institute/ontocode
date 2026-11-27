@@ -746,11 +746,16 @@ public class SwrlEngineService {
      */
     @CacheEvict(value = "executionResults", key = "#projectId")
     public ExecutionResult executeSelectedRules(String projectId, List<String> ruleIds) {
+        return executeSelectedRules(projectId, ruleIds, null);
+    }
+
+    @CacheEvict(value = "executionResults", key = "#projectId")
+    public ExecutionResult executeSelectedRules(String projectId, List<String> ruleIds, String draftUserId) {
         Timer.Sample sample = meterRegistry != null ? Timer.start(meterRegistry) : null;
         long startTime = System.currentTimeMillis();
 
         try {
-            return admitted(() -> runSelectedRules(projectId, ruleIds, startTime, sample));
+            return admitted(() -> runSelectedRules(projectId, ruleIds, draftUserId, startTime, sample));
 
         } catch (TimeoutException e) {
             logger.error("Selected rules execution timed out for project: {}", projectId);
@@ -767,8 +772,9 @@ public class SwrlEngineService {
         }
     }
 
-    private ExecutionResult runSelectedRules(String projectId, List<String> ruleIds, long startTime, Timer.Sample sample) throws Exception {
-        OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+    private ExecutionResult runSelectedRules(String projectId, List<String> ruleIds, String draftUserId,
+                                             long startTime, Timer.Sample sample) throws Exception {
+        OWLOntology ontology = fetch(projectId, draftUserId);
         ensureNamespacePrefixes(projectId, ontology);
         Set<String> requested = new LinkedHashSet<>(ruleIds);
         List<OntologyRules.Entry> entries = OntologyRules.prepare(ontology,
@@ -1450,6 +1456,11 @@ public class SwrlEngineService {
      * Execute a SQWRL query and return tabular results
      */
     public SqwrlQueryResult executeSqwrlQuery(String projectId, String queryText, String queryName, Integer maxResults) {
+        return executeSqwrlQuery(projectId, queryText, queryName, maxResults, null);
+    }
+
+    public SqwrlQueryResult executeSqwrlQuery(String projectId, String queryText, String queryName, Integer maxResults,
+                                              String draftUserId) {
         long startTime = System.currentTimeMillis();
         
         if (queryName == null || queryName.isBlank()) {
@@ -1463,7 +1474,7 @@ public class SwrlEngineService {
             final String runName = queryName;
             SqwrlRun run;
             try {
-                run = admitted(() -> runSqwrl(projectId, queryText, runName, limit));
+                run = admitted(() -> runSqwrl(projectId, draftUserId, queryText, runName, limit));
             } catch (TimeoutException e) {
                 logger.error("SQWRL query timed out for project: {}", projectId);
                 return new SqwrlQueryResult(false, queryName, queryText, 0, null, null,
@@ -1508,8 +1519,8 @@ public class SwrlEngineService {
     private record SqwrlRun(List<String> columnNames, SqwrlRead read) {
     }
 
-    private SqwrlRun runSqwrl(String projectId, String queryText, String runName, int limit) throws Exception {
-        OWLOntology ontology = ontologyClient.fetchOntology(projectId);
+    private SqwrlRun runSqwrl(String projectId, String draftUserId, String queryText, String runName, int limit) throws Exception {
+        OWLOntology ontology = fetch(projectId, draftUserId);
         ensureNamespacePrefixes(projectId, ontology);
         OntologyRules.prepare(ontology, OntologyRules.Entry::enabled);
         if (PlainLiteralNormalizer.needsDoubleNumbers(queryText)) {
@@ -1976,62 +1987,5 @@ public class SwrlEngineService {
         }
         
         return value.toString();
-    }
-    
-    /**
-     * Inner class for SQWRL query results
-     */
-    public static class SqwrlQueryResult {
-        private boolean success;
-        private String queryName;
-        private String queryText;
-        private long executionTimeMs;
-        private List<String> columnNames;
-        private List<Map<String, String>> rows;
-        private String errorMessage;
-        
-        private int totalRows;
-        private boolean totalRowsExact = true;
-        private boolean truncated;
-        private int rowLimit;
-        private boolean bytesCapped;
-
-        public SqwrlQueryResult(boolean success, String queryName, String queryText,
-                               long executionTimeMs, List<String> columnNames,
-                               List<Map<String, String>> rows, String errorMessage,
-                               int totalRows, boolean totalRowsExact, boolean truncated, int rowLimit, boolean bytesCapped) {
-            this(success, queryName, queryText, executionTimeMs, columnNames, rows, errorMessage);
-            this.totalRows = totalRows;
-            this.totalRowsExact = totalRowsExact;
-            this.truncated = truncated;
-            this.rowLimit = rowLimit;
-            this.bytesCapped = bytesCapped;
-        }
-
-        public SqwrlQueryResult(boolean success, String queryName, String queryText, 
-                               long executionTimeMs, List<String> columnNames, 
-                               List<Map<String, String>> rows, String errorMessage) {
-            this.success = success;
-            this.queryName = queryName;
-            this.queryText = queryText;
-            this.executionTimeMs = executionTimeMs;
-            this.columnNames = columnNames;
-            this.rows = rows;
-            this.errorMessage = errorMessage;
-        }
-        
-        public boolean isSuccess() { return success; }
-        public String getQueryName() { return queryName; }
-        public String getQueryText() { return queryText; }
-        public long getExecutionTimeMs() { return executionTimeMs; }
-        public List<String> getColumnNames() { return columnNames; }
-        public List<Map<String, String>> getRows() { return rows; }
-        public int getRowCount() { return rows != null ? rows.size() : 0; }
-        public String getErrorMessage() { return errorMessage; }
-        public int getTotalRows() { return totalRows; }
-        public boolean isTotalRowsExact() { return totalRowsExact; }
-        public boolean isTruncated() { return truncated; }
-        public int getRowLimit() { return rowLimit; }
-        public boolean isBytesCapped() { return bytesCapped; }
     }
 }

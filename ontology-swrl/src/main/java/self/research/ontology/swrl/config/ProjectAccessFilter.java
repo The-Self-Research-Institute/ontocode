@@ -6,7 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -46,8 +46,8 @@ public class ProjectAccessFilter extends OncePerRequestFilter {
                                @Value("${ontology.editor.service.url}") String editorServiceUrl,
                                @Value("${swrl.access-check.enabled:true}") boolean enabled,
                                @Value("${ontocode.internal.token:ontocode-internal}") String internalToken) {
-        this(builder.rootUri(editorServiceUrl).setConnectTimeout(Duration.ofSeconds(5))
-                .setReadTimeout(Duration.ofSeconds(15)).build(), enabled, internalToken);
+        this(builder.rootUri(editorServiceUrl).connectTimeout(Duration.ofSeconds(5))
+                .readTimeout(Duration.ofSeconds(15)).build(), enabled, internalToken);
     }
 
     public ProjectAccessFilter(RestTemplate editor, boolean enabled, String internalToken) {

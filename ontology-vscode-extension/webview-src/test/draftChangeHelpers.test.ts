@@ -61,6 +61,8 @@ describe("readable draft change text", () => {
       property: "http://www.w3.org/2000/01/rdf-schema#comment", value: "why" }))
       .toEqual({ label: "Pizza", lines: ["Added axiom annotation rdfs:comment \"why\" on SubClassOf Food"] });
     expect(describeChange("deleteCitation", { value: "urn:citation:x" })).toEqual({ label: "Citation", lines: ["Removed urn:citation:x"] });
+    expect(describeChange("addCitation", { iri: "urn:citation:y", value: "urn:citation:y" }))
+      .toEqual({ label: "Citation", lines: ["Added urn:citation:y"] });
     expect(describeChange("bulkGraphEdit", { label: "12 statements", value: "10 added, 2 removed" }))
       .toEqual({ label: "12 statements", lines: ["10 added, 2 removed"] });
     expect(describeChange("createClass", { iri: "http://ex.org#A" })).toBeNull();

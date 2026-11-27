@@ -105,7 +105,7 @@ function AxiomRow({ item, id, extraBadge }: { item: AssertedItem; id: string; ex
   );
 }
 
-export function AssertedAxiomsPanel({ projectId, draftMode }: { projectId: string; draftMode: boolean }) {
+export function AssertedAxiomsPanel({ projectId, draftMode, draftUserId }: { projectId: string; draftMode: boolean; draftUserId?: string }) {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [type, setType] = useState('');
@@ -121,7 +121,7 @@ export function AssertedAxiomsPanel({ projectId, draftMode }: { projectId: strin
     setLoading(true);
     setError(null);
     apiClient
-      .get<AssertedResponse>(assertedAxiomsPath(projectId, { page, pageSize: ASSERTED_PAGE_SIZE, search, type }, draftMode))
+      .get<AssertedResponse>(assertedAxiomsPath(projectId, { page, pageSize: ASSERTED_PAGE_SIZE, search, type }, draftMode, draftUserId))
       .then(res => {
         if (requestRef.current === mine) setData(res);
       })
@@ -131,7 +131,7 @@ export function AssertedAxiomsPanel({ projectId, draftMode }: { projectId: strin
       .finally(() => {
         if (requestRef.current === mine) setLoading(false);
       });
-  }, [projectId, draftMode, page, search, type, attempt]);
+  }, [projectId, draftMode, draftUserId, page, search, type, attempt]);
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -224,7 +224,7 @@ export function AssertedAxiomsPanel({ projectId, draftMode }: { projectId: strin
   );
 }
 
-export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draftMode: boolean }) {
+export function Owl2RlPanel({ projectId, draftMode, draftUserId }: { projectId: string; draftMode: boolean; draftUserId?: string }) {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Owl2RlResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -245,7 +245,7 @@ export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draft
     setFilterInput('');
     try {
       const res = await apiClient.post<Owl2RlResponse>(
-        owl2rlStartPath(projectId, { pageSize: OWL2RL_PAGE_SIZE, type: '', filter: '' }, draftMode)
+        owl2rlStartPath(projectId, { pageSize: OWL2RL_PAGE_SIZE, type: '', filter: '' }, draftMode, draftUserId)
       );
       setResult(res);
     } catch (e: any) {
@@ -254,7 +254,7 @@ export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draft
       inFlightRef.current = false;
       setRunning(false);
     }
-  }, [projectId, draftMode]);
+  }, [projectId, draftMode, draftUserId]);
 
   const loadPage = async (page: number, type: string, filter: string) => {
     const runId = result?.runId;
@@ -263,7 +263,7 @@ export function Owl2RlPanel({ projectId, draftMode }: { projectId: string; draft
     setError(null);
     try {
       const res = await apiClient.get<Owl2RlResponse>(
-        owl2rlRunPath(projectId, runId, { page, pageSize: result?.pageSize ?? OWL2RL_PAGE_SIZE, type, filter }, draftMode)
+        owl2rlRunPath(projectId, runId, { page, pageSize: result?.pageSize ?? OWL2RL_PAGE_SIZE, type, filter }, draftMode, draftUserId)
       );
       setResult(prev => ({ ...(prev as Owl2RlResponse), ...res, runId: res.runId ?? runId }));
     } catch (e: any) {

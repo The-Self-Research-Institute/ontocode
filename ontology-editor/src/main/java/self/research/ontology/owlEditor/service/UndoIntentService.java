@@ -87,6 +87,14 @@ public class UndoIntentService {
         save(intent);
     }
 
+    public void recordBatches(UndoIntentDocument intent, String changeId, int applied, int batchTriples, boolean inFlight) {
+        intent.setBatchChangeId(changeId);
+        intent.setAppliedBatches(applied);
+        intent.setBatchTriples(batchTriples);
+        intent.setBatchInFlight(inFlight);
+        save(intent);
+    }
+
     public void attachAudit(UndoIntentDocument intent, String auditId) {
         intent.setAuditId(auditId);
         save(intent);

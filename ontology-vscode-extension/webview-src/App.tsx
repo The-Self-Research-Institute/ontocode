@@ -21,6 +21,7 @@ import ForgotPasswordForm from "./components/ForgotPasswordForm";
 import ResetPasswordForm from "./components/ResetPasswordForm";
 import { Loader2, RefreshCw } from "lucide-react";
 import { useRouter, RouteState } from "./hooks/useRouter";
+import { usePlanFreshness } from "./hooks/usePlanFreshness";
 import { clearLastOpenedProjectState, SUPPRESS_WORKSPACE_AUTO_OPEN_KEY } from "./utils/sessionCleanup";
 import {
   loadDesktopActiveFile,
@@ -99,6 +100,7 @@ const AppContent = () => {
     resendVerification,
     verifyEmailAndLogin,
   } = useAuth();
+  usePlanFreshness(user?.token, user?.workspaceId, refreshPermissions);
   console.log(
     "[App] 🔄 AppContent render - user:",
     user?.email,

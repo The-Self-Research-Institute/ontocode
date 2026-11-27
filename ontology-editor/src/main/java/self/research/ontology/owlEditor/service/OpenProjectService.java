@@ -1,5 +1,6 @@
 package self.research.ontology.owlEditor.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -17,6 +18,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.util.retry.Retry;
 
+import java.io.UncheckedIOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -120,9 +122,10 @@ public class OpenProjectService {
                     .uri(hostUrl() + "/api/v3/projects/" + encode(projectId) + "/work_packages?notify=false")
                     .headers(this::setAuthHeaders)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(payload)
+                    .bodyValue(objectMapper.writeValueAsString(payload))
                     .retrieve()
-                    .bodyToMono(JsonNode.class)
+                    .bodyToMono(String.class)
+                    .map(this::readJson)
                     .block(Duration.ofSeconds(createTimeoutSeconds));
 
             if (response == null) {
@@ -261,9 +264,18 @@ public class OpenProjectService {
                 .uri(url)
                 .headers(this::setAuthHeaders)
                 .retrieve()
-                .bodyToMono(JsonNode.class)
+                .bodyToMono(String.class)
+                .map(this::readJson)
                 .retryWhen(Retry.backoff(retryMaxAttempts, Duration.ofMillis(300)).filter(OpenProjectService::isTransient))
                 .block(Duration.ofSeconds(lookupTimeoutSeconds));
+    }
+
+    private JsonNode readJson(String body) {
+        try {
+            return objectMapper.readTree(body);
+        } catch (JsonProcessingException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     private static boolean isTransient(Throwable e) {

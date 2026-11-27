@@ -50,7 +50,7 @@ public class ChangeSetBroadcaster {
             }
             event.put("username", username);
             event.put("timestamp", System.currentTimeMillis());
-            messaging.convertAndSend("/topic/ontology/" + projectId, event);
+            messaging.convertAndSend("/topic/ontology/" + projectId, (Object) event);
         } catch (Exception e) {
             log.warn("[CHANGESET] Could not broadcast change set {} for project {}: {}",
                     origin.changeSetId(), projectId, e.getMessage());

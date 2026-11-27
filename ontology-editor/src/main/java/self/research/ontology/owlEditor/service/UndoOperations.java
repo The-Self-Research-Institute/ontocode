@@ -66,7 +66,8 @@ public class UndoOperations {
     private void settle(UndoIntentDocument intent, Result result) {
         if (result.ok()) {
             intents.commit(intent, result.auditId(), result.applied() == null ? 0 : result.applied().size());
-        } else if (intent.getStage() == null || intent.getStage() == Stage.STARTED) {
+        } else if ((intent.getStage() == null || intent.getStage() == Stage.STARTED) && intent.getAppliedBatches() == 0
+                && !intent.isBatchInFlight()) {
             intents.fail(intent, result.message());
         } else {
             intents.needsAttention(intent, result.message() != null ? result.message() : "It stopped part-way");

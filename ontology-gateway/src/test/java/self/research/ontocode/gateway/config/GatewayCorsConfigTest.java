@@ -3,6 +3,7 @@ package self.research.ontocode.gateway.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
@@ -14,10 +15,11 @@ import java.util.concurrent.TimeoutException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureWebTestClient
 @TestPropertySource(properties = {
-    "spring.cloud.gateway.routes[0].id=test-route",
-    "spring.cloud.gateway.routes[0].uri=http://httpbin.org:80",
-    "spring.cloud.gateway.routes[0].predicates[0]=Path=/test/**"
+    "spring.cloud.gateway.server.webflux.routes[0].id=test-route",
+    "spring.cloud.gateway.server.webflux.routes[0].uri=http://httpbin.org:80",
+    "spring.cloud.gateway.server.webflux.routes[0].predicates[0]=Path=/test/**"
 })
 class GatewayCorsConfigTest {
 

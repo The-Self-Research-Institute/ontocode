@@ -15,14 +15,15 @@ final class FastPathCounts {
 
     static boolean large(Map<String, Object> saved) {
         return number(saved, "axiomCount") > LARGE_AXIOMS
-                || number(saved, "tripleCount") > LARGE_TRIPLES
+                || GraphSizeEstimates.storedTriples(saved) > LARGE_TRIPLES
                 || number(saved, "classCount") > LARGE_CLASSES;
     }
 
     static Map<String, Supplier<Map<String, Object>>> tasks(OntologyMetrics metrics, String projectId,
-                                                           Map<String, Object> saved, boolean liveModel) {
+                                                           Map<String, Object> saved, boolean liveModel,
+                                                           boolean sizeLooksLarge) {
         Map<String, Supplier<Map<String, Object>>> tasks = new LinkedHashMap<>();
-        if (!liveModel && large(saved)) {
+        if (!liveModel && (sizeLooksLarge || large(saved))) {
             return tasks;
         }
         tasks.put("annotationPropertyCount", () -> Map.of("annotationPropertyCount", metrics.annotationPropertyCount(projectId)));

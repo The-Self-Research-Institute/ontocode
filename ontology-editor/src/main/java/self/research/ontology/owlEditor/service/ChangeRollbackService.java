@@ -279,12 +279,12 @@ public class ChangeRollbackService {
         List<Item> partial = new ArrayList<>();
         done.forEach(work -> partial.addAll(appliedItems(work)));
         String keptAuditId = auditId;
-        if (done.isEmpty()) {
+        if (done.isEmpty() && !UndoOperationContext.partlyApplied()) {
             if (auditId != null) {
                 audits.deleteById(auditId);
             }
             keptAuditId = null;
-        } else {
+        } else if (!done.isEmpty()) {
             List<HistoryChange> doneEntries = done.stream().map(Work::entry).toList();
             String description = recorder.recordHistory(req, doneEntries, partial, auditId);
             recorder.broadcast(req, auditId, doneEntries, description);
@@ -491,9 +491,7 @@ public class ChangeRollbackService {
         boolean appliedOnDesktop = !draft && isSpreadsheetImport(entry)
                 && spreadsheetImports.applyOnDesktop(req.projectId(), work.plan().rawUpdates());
         if (!appliedOnDesktop) {
-            for (String raw : work.plan().rawUpdates()) {
-                mutations.applyRawUpdate(req.projectId(), raw, draft, entry.getUserId());
-            }
+            UndoBatches.apply(mutations, req.projectId(), entry, work.plan().rawUpdates(), draft, req.subChangeId() == null);
         }
         UndoOperationContext.stage(UndoIntentDocument.Stage.GRAPH_APPLIED);
         for (RollbackAction action : work.plan().actions()) {

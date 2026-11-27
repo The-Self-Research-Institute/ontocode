@@ -95,6 +95,7 @@ export interface InferredAxiom {
   description: string;
   readable: string;
   category?: 'conclusion' | 'structure';
+  origin?: 'RULE_ENGINE' | 'OWL_REASONER';
   subjectIri?: string | null;
   predicateIri?: string | null;
   objectIri?: string | null;
@@ -125,7 +126,7 @@ export interface ExecutionResponse {
   omittedTrivialCount?: number;
   truncated?: boolean;
   runId?: string;
-  counts?: { conclusions: number; structure: number; omittedTrivial?: number };
+  counts?: { conclusions: number; ruleConclusions?: number; structure: number; omittedTrivial?: number };
   skippedRules?: Array<string | { ruleName?: string; name?: string; ruleId?: string; reason?: string }>;
 }
 

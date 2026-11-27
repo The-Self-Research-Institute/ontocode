@@ -100,7 +100,7 @@ const JustificationView: React.FC<{ j: Justification; index: number }> = ({ j, i
   );
 };
 
-export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; onClose: () => void; draftMode?: boolean; ruleless?: boolean }> = ({ projectId, axiom, onClose, draftMode = false, ruleless = false }) => {
+export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; onClose: () => void; draftMode?: boolean; draftUserId?: string; ruleless?: boolean }> = ({ projectId, axiom, onClose, draftMode = false, draftUserId, ruleless = false }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExplainResult | null>(null);
@@ -128,7 +128,7 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
       return;
     }
     apiClient
-      .post<ExplainResult>(withDraft(`/api/swrl/${projectId}/explain`, draftMode), body)
+      .post<ExplainResult>(withDraft(`/api/swrl/${projectId}/explain`, draftMode, draftUserId), body)
       .then(res => {
         if (!cancelled) setResult(res);
       })
@@ -141,7 +141,7 @@ export const ExplainPanel: React.FC<{ projectId: string; axiom: InferredAxiom; o
     return () => {
       cancelled = true;
     };
-  }, [projectId, axiom, ruleless, draftMode]);
+  }, [projectId, axiom, ruleless, draftMode, draftUserId]);
 
   const justifications = result?.justifications || [];
   const visible = showAll ? justifications : justifications.slice(0, COLLAPSE_AFTER);
@@ -234,7 +234,7 @@ const atomStatusText = (s: string): string => {
 
 const isFullIri = (s: string): boolean => /^[A-Za-z][A-Za-z0-9+.-]*:\/\/\S+$/.test(s) || /^urn:\S+$/.test(s);
 
-export const WhyNotPanel: React.FC<{ projectId: string; ruleId: string; individuals?: string[]; draftMode?: boolean }> = ({ projectId, ruleId, individuals, draftMode = false }) => {
+export const WhyNotPanel: React.FC<{ projectId: string; ruleId: string; individuals?: string[]; draftMode?: boolean; draftUserId?: string }> = ({ projectId, ruleId, individuals, draftUserId, draftMode = false }) => {
   const [open, setOpen] = useState(false);
   const [individual, setIndividual] = useState('');
   const [loading, setLoading] = useState(false);
@@ -258,7 +258,7 @@ export const WhyNotPanel: React.FC<{ projectId: string; ruleId: string; individu
     setError(null);
     setLoading(true);
     try {
-      const res = await apiClient.post<WhyNotResult>(withDraft(`/api/swrl/${projectId}/rules/${ruleId}/why-not`, draftMode), { individual: value });
+      const res = await apiClient.post<WhyNotResult>(withDraft(`/api/swrl/${projectId}/rules/${ruleId}/why-not`, draftMode, draftUserId), { individual: value });
       setResult(res);
       setAsked(value);
     } catch (e) {

@@ -78,7 +78,7 @@ public class OntologyMetadataController {
             msg.put("userId", userId);
             msg.put("username", username);
             msg.put("timestamp", System.currentTimeMillis());
-            messagingTemplate.convertAndSend("/topic/ontology/" + projectId, msg);
+            messagingTemplate.convertAndSend("/topic/ontology/" + projectId, (Object) msg);
         } catch (Exception e) {
             log.debug("Failed to broadcast metadata change: {}", e.getMessage());
         }

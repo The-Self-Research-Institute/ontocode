@@ -3,7 +3,6 @@ package self.research.ontology.owlEditor.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.rdf4j.model.Model;
-import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.query.BindingSet;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -57,134 +56,45 @@ public class CitationService {
         .connectTimeout(Duration.ofSeconds(10))
         .build();
 
-    /**
-     * Insert citation RDF data into the project's GraphDB repository at a specific line
-     * 
-     * @param projectId - the project ID
-     * @param citationContent - the RDF content (Turtle or RDF/XML)
-     * @param format - "turtle" or "rdfxml"
-     * @param metadata - optional metadata about the citation (title, authors, etc.)
-     * @param lineNumber - line number where citation should be inserted (0 = end of file)
-     */
-    public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata, int lineNumber) {
-        insertCitation(projectId, citationContent, format, metadata, lineNumber, new RequestActor("system", "Citation Manager"));
-    }
-
-    public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata, int lineNumber,
-                               RequestActor actor) {
+    public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata,
+                               RequestActor actor, boolean draft) {
+        String project = projectId.replaceAll("\\$.*", "");
         try {
-            log.info("[CitationService] Inserting citation into project: {} at line: {}", projectId, lineNumber);
-
-            // Parse the RDF content
-            RDFFormat rdfFormat = format.equalsIgnoreCase("turtle") ? RDFFormat.TURTLE : RDFFormat.RDFXML;
-            
             Model citationModel;
             try (StringReader reader = new StringReader(citationContent)) {
-                citationModel = Rio.parse(reader, "", rdfFormat);
+                citationModel = Rio.parse(reader, "", format.equalsIgnoreCase("turtle") ? RDFFormat.TURTLE : RDFFormat.RDFXML);
             }
-
-            log.info("[CitationService] Parsed {} RDF statements from citation", citationModel.size());
-
-            String title = metadata != null && metadata.containsKey("title") 
-                ? metadata.get("title").toString() 
-                : "Citation";
+            String title = metadata != null && metadata.containsKey("title") ? metadata.get("title").toString() : "Citation";
+            String citationIri = CitationSparql.citationIri(citationModel);
             List<String> seeds = citationModel.subjects().stream()
                 .filter(subject -> subject instanceof org.eclipse.rdf4j.model.IRI)
                 .map(org.eclipse.rdf4j.model.Value::stringValue)
                 .toList();
-            citationHistory.around(projectId, actor,
-                new CitationHistory.Entry("INSERT_CITATION", getCitationIRI(citationModel), title, null, citationContent,
-                    "Inserted citation at line " + lineNumber + ": " + title),
-                seeds, List.of(), () -> {
-                    try {
-                        if (lineNumber > 0) {
-                            insertCitationAtLine(projectId, citationContent, format, citationModel, lineNumber);
-                        } else {
-                            insertCitationAtEnd(projectId, citationModel, format);
-                        }
-                    } catch (Exception e) {
-                        throw new IllegalStateException(e);
-                    }
-                });
-
-            log.info("[CitationService] Successfully inserted citation into project: {}", projectId);
-
+            CitationHistory.Entry entry = new CitationHistory.Entry("INSERT_CITATION", citationIri, title, null, citationContent,
+                "Inserted citation: " + title);
+            write(project, actor, draft, entry, seeds, List.of(), DraftRecords.ADD_CITATION, CitationSparql.insertData(citationModel));
+            log.info("[CitationService] Inserted citation {} into project {} (draft={})", citationIri, project, draft);
         } catch (Exception e) {
-            log.error("[CitationService] Error inserting citation into project: {}", projectId, e);
+            log.error("[CitationService] Error inserting citation into project: {}", project, e);
             throw new RuntimeException("Failed to insert citation: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * Insert citation at a specific line position
-     * Note: RDF triples are inserted into the graph at the semantic layer.
-     * Line numbers are a syntactic property of the serialized format.
-     * The file persistence (with citations at specific lines) is handled by the frontend upload.
-     * This method ensures the citation triples are in the graph regardless of file position.
-     */
-    private void insertCitationAtLine(String projectId, String citationContent, String format, Model citationModel, int lineNumber) throws Exception {
-        log.info("[CitationService] Insert citation at line {} - storing RDF triples in graph", lineNumber);
-        
-        // Insert RDF triples into the graph (line positioning is handled by frontend file upload)
-        insertCitationAtEnd(projectId, citationModel, format);
-        
-        log.info("[CitationService] Citation RDF triples inserted into graph (file line positioning handled by frontend)");
-    }
-
-    /**
-     * Insert citation at the end of the ontology
-     */
-    private void insertCitationAtEnd(String projectId, Model citationModel, String format) throws Exception {
-        // Convert model to SPARQL INSERT query
-        StringBuilder insertQuery = new StringBuilder();
-        insertQuery.append("PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\n");
-        insertQuery.append("PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n");
-        insertQuery.append("PREFIX owl: <http://www.w3.org/2002/07/owl#>\n");
-        insertQuery.append("PREFIX dc: <http://purl.org/dc/elements/1.1/>\n");
-        insertQuery.append("PREFIX dcterms: <http://purl.org/dc/terms/>\n");
-        insertQuery.append("PREFIX bibo: <http://purl.org/ontology/bibo/>\n");
-        insertQuery.append("PREFIX foaf: <http://xmlns.com/foaf/0.1/>\n");
-        insertQuery.append("PREFIX prov: <http://www.w3.org/ns/prov#>\n");
-        insertQuery.append("PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\n");
-        insertQuery.append("\n");
-        insertQuery.append("INSERT DATA {\n");
-
-        for (Statement st : citationModel) {
-            insertQuery.append("  ");
-            insertQuery.append(formatValue(st.getSubject().toString()));
-            insertQuery.append(" ");
-            insertQuery.append(formatValue(st.getPredicate().toString()));
-            insertQuery.append(" ");
-            
-            if (st.getObject() instanceof org.eclipse.rdf4j.model.Literal) {
-                org.eclipse.rdf4j.model.Literal literal = (org.eclipse.rdf4j.model.Literal) st.getObject();
-                insertQuery.append("\"\"\"").append(escapeLiteral(literal.stringValue())).append("\"\"\"");
-                
-                if (literal.getLanguage().isPresent()) {
-                    insertQuery.append("@").append(literal.getLanguage().get());
-                } else if (literal.getDatatype() != null) {
-                    insertQuery.append("^^").append(formatValue(literal.getDatatype().toString()));
-                }
-            } else {
-                insertQuery.append(formatValue(st.getObject().toString()));
-            }
-            
-            insertQuery.append(" .\n");
+    private void write(String projectId, RequestActor actor, boolean draft, CitationHistory.Entry entry, List<String> seeds,
+                       List<String> incoming, String draftRecord, String sparqlUpdate) {
+        if (!draft) {
+            citationHistory.around(projectId, actor, entry, seeds, incoming, () -> datasetService.execUpdate(projectId, sparqlUpdate));
+            return;
         }
-
-        insertQuery.append("}");
-
-        // Execute SPARQL update
-        String sparqlUpdate = insertQuery.toString();
-        log.debug("[CitationService] SPARQL Update:\n{}", sparqlUpdate);
-        datasetService.execUpdate(projectId.replaceAll("\\$.*", ""), sparqlUpdate);
-    }
-
-    /**
-     * Overloaded method for backward compatibility - inserts at end of file (lineNumber = 0)
-     */
-    public void insertCitation(String projectId, String citationContent, String format, Map<String, Object> metadata) {
-        insertCitation(projectId, citationContent, format, metadata, 0);
+        if (mutationService == null) {
+            throw new IllegalStateException("Draft editing is not available");
+        }
+        String changeSetId = citationHistory.around(projectId, actor, entry, seeds, incoming, true, actor.userId(),
+                () -> mutationService.applyRawUpdate(projectId, sparqlUpdate, true, actor.userId()));
+        if (changeSetId != null && draftTracking != null) {
+            draftTracking.recordDescribed(projectId, actor.userId(), actor.username(), draftRecord,
+                    DraftRecords.citation(entry.citationIri()), List.of(changeSetId));
+        }
     }
 
     public Map<String, Object> validateDoi(String rawDoi, String expectedTitle, String expectedPublicationTitle, String expectedYear) {
@@ -366,20 +276,8 @@ public class CitationService {
 
             CitationHistory.Entry entry = new CitationHistory.Entry("DELETE_CITATION", citationIRI, "Citation", citationIRI, null,
                     "Deleted citation: " + citationIRI);
-            if (draft) {
-                if (mutationService == null) {
-                    throw new IllegalStateException("Draft editing is not available");
-                }
-                String changeSetId = citationHistory.around(projectId, actor, entry, List.of(citationIRI), List.of(citationIRI),
-                        true, actor.userId(), () -> mutationService.applyRawUpdate(projectId, sparqlUpdate, true, actor.userId()));
-                if (changeSetId != null && draftTracking != null) {
-                    draftTracking.recordDescribed(projectId, actor.userId(), actor.username(), DraftRecords.DELETE_CITATION,
-                            DraftRecords.citation(citationIRI), List.of(changeSetId));
-                }
-            } else {
-                citationHistory.around(projectId, actor, entry, List.of(citationIRI), List.of(citationIRI),
-                        () -> datasetService.execUpdate(projectId, sparqlUpdate));
-            }
+            write(projectId, actor, draft, entry, List.of(citationIRI), List.of(citationIRI), DraftRecords.DELETE_CITATION,
+                    sparqlUpdate);
 
             log.info("[CitationService] Successfully deleted citation from project: {}", projectId);
 
@@ -389,50 +287,6 @@ public class CitationService {
         }
     }
 
-    /**
-     * Format an RDF value for SPARQL (wrap in angle brackets if IRI)
-     */
-    private String formatValue(String value) {
-        if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("urn:")) {
-            return "<" + value + ">";
-        }
-        return value;
-    }
-
-    /**
-     * Escape special characters in literals
-     */
-    private String escapeLiteral(String value) {
-        return value
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
-    }
-
-    /**
-     * Extract the main citation IRI from the RDF model
-     */
-    private String getCitationIRI(Model model) {
-        // Find the first subject that's a bibliographic resource
-        for (Statement st : model) {
-            if (st.getPredicate().toString().contains("type") && 
-                (st.getObject().toString().contains("Article") || 
-                 st.getObject().toString().contains("Book") ||
-                 st.getObject().toString().contains("Document") ||
-                 st.getObject().toString().contains("Entity"))) {
-                return st.getSubject().toString();
-            }
-        }
-        
-        // Fallback: return first subject
-        if (!model.isEmpty()) {
-            return model.iterator().next().getSubject().toString();
-        }
-        
-        return "unknown";
-    }
 
     private DoiMetadata resolveDoiMetadata(String normalizedDoi) throws Exception {
         String encodedDoi = URLEncoder.encode(normalizedDoi, StandardCharsets.UTF_8);

@@ -543,7 +543,7 @@ public class DesktopOntologyLoader {
             );
             OWLFormatConverter.blockRemoteImports(manager);
 
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(owlFilePath.toFile());
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(self.research.ontology.owlEditor.util.SharedFileDocumentSource.of(owlFilePath));
             long parseMs = System.currentTimeMillis() - start;
             long classCount = ontology.classesInSignature().count();
             log.info("[Desktop] OWLAPI parsed {} classes in {}ms", classCount, parseMs);
@@ -678,11 +678,7 @@ public class DesktopOntologyLoader {
             Files.deleteIfExists(tmp);
             throw new java.io.IOException("Failed to save ontology: " + e.getMessage(), e);
         }
-        try {
-            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+        self.research.ontology.owlEditor.util.AtomicFiles.replace(tmp, target);
     }
 
     private void completeWarmWaiters(String projectId, boolean success) {

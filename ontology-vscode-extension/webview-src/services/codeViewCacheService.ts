@@ -13,8 +13,8 @@ function cacheUrl(projectId: string): string {
 }
 
 export const codeViewCacheService = {
-  store(projectId: string, entry: CodeViewCacheEntry) {
-    return apiClient.post(cacheUrl(projectId), { ...entry, ...draftBodyFields() });
+  store(projectId: string, entry: CodeViewCacheEntry, scope = draftBodyFields()) {
+    return apiClient.post(cacheUrl(projectId), { ...entry, ...scope });
   },
 
   clear(projectId: string) {

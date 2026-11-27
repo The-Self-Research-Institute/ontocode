@@ -114,7 +114,7 @@ final class RollbackRecorder {
         }
         event.put("timestamp", System.currentTimeMillis());
         try {
-            messaging.convertAndSend("/topic/ontology/" + req.projectId(), event);
+            messaging.convertAndSend("/topic/ontology/" + req.projectId(), (Object) event);
         } catch (Exception e) {
             log.warn("[ROLLBACK] Could not broadcast rollback event for project {}: {}", req.projectId(), e.getMessage());
         }

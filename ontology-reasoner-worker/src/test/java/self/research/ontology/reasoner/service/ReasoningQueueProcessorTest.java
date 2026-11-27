@@ -2,7 +2,7 @@ package self.research.ontology.reasoner.service;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.health.contributor.Status;
 import self.research.ontology.reasoner.model.ReasoningJob;
 
 import java.util.Map;

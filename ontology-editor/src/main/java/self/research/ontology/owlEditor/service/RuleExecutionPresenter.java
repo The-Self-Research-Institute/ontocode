@@ -8,6 +8,8 @@ import org.semanticweb.owlapi.model.OWLObjectPropertyAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLSameIndividualAxiom;
 import org.semanticweb.owlapi.model.parameters.Imports;
+import self.research.ontology.common.rules.RuleExecutionResult.DerivedFact;
+import self.research.ontology.common.rules.RuleExecutionResult.Origin;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,6 +42,18 @@ public final class RuleExecutionPresenter {
         return out;
     }
 
+    public static Map<String, Object> counts(Full full, int ruleConclusions) {
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("conclusions", full.conclusions().size());
+        counts.put("ruleConclusions", ruleConclusions);
+        counts.put("structure", full.structure().size());
+        counts.put("omittedTrivial", full.omittedTrivial());
+        if (full.conclusions().size() > RuleRunStore.MAX_CONCLUSIONS || full.structure().size() > RuleRunStore.MAX_STRUCTURE) {
+            counts.put("capped", true);
+        }
+        return counts;
+    }
+
     public static Full partition(Iterable<OWLAxiom> derived, Set<OWLAxiom> asserted) {
         List<OWLAxiom> conclusions = new ArrayList<>();
         List<OWLAxiom> structure = new ArrayList<>();
@@ -59,6 +73,17 @@ public final class RuleExecutionPresenter {
         conclusions.sort(order);
         structure.sort(order);
         return new Full(conclusions, structure, trivial);
+    }
+
+    public static Set<OWLAxiom> ruleConclusions(Full full, List<DerivedFact> derived) {
+        Set<OWLAxiom> conclusions = new HashSet<>(full.conclusions());
+        Set<OWLAxiom> fromRules = new HashSet<>();
+        for (DerivedFact fact : derived) {
+            if (fact.origin() == Origin.RULE_ENGINE && conclusions.contains(fact.axiom())) {
+                fromRules.add(fact.axiom());
+            }
+        }
+        return fromRules;
     }
 
     public static Presented present(Iterable<OWLAxiom> derived, Set<OWLAxiom> asserted, int limit) {
@@ -90,6 +115,14 @@ public final class RuleExecutionPresenter {
         List<OWLAxiom> kept = new ArrayList<>(keptConclusions);
         kept.addAll(keptStructure);
         return new Presented(kept, new HashSet<>(conclusions), conclusions.size(), structure.size(), trivial, truncated);
+    }
+
+    public static Map<String, Object> toJson(OWLAxiom axiom, String category, Set<OWLAxiom> ruleConclusions) {
+        Map<String, Object> item = toJson(axiom, category);
+        if (ruleConclusions != null && "conclusion".equals(category)) {
+            item.put("origin", ruleConclusions.contains(axiom) ? Origin.RULE_ENGINE.name() : Origin.OWL_REASONER.name());
+        }
+        return item;
     }
 
     public static Map<String, Object> toJson(OWLAxiom axiom, String category) {

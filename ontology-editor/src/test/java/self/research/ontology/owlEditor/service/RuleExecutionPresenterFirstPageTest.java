@@ -6,9 +6,13 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLDataFactory;
+import self.research.ontology.common.rules.RuleExecutionResult.DerivedFact;
+import self.research.ontology.common.rules.RuleExecutionResult.Origin;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +51,26 @@ class RuleExecutionPresenterFirstPageTest {
         assertEquals(4, page.omittedTrivial());
         assertTrue(page.truncated());
         assertEquals(50, page.conclusions().size());
+    }
+
+    @Test
+    void ruleOriginsSurvivePaginationAndOnlyVisibleConclusionsAreCounted() {
+        List<OWLAxiom> axioms = conclusions(3);
+        OWLAxiom fromOwl = axioms.get(0);
+        OWLAxiom fromRule = axioms.get(1);
+        OWLAxiom asserted = axioms.get(2);
+        List<DerivedFact> derived = List.of(new DerivedFact(fromOwl, Origin.OWL_REASONER, 1),
+                new DerivedFact(fromRule, Origin.RULE_ENGINE, 2), new DerivedFact(asserted, Origin.RULE_ENGINE, 2));
+        var full = RuleExecutionPresenter.partition(axioms, Set.of(asserted));
+        var ruleFacts = RuleExecutionPresenter.ruleConclusions(full, derived);
+
+        assertEquals(Set.of(fromRule), ruleFacts);
+        assertEquals("OWL_REASONER", RuleExecutionPresenter.toJson(fromOwl, "conclusion", ruleFacts).get("origin"));
+        var store = new RuleRunStore();
+        String id = store.put("p", "owner", false, full.conclusions(), full.structure(), ruleFacts);
+        var page = RuleRunPager.page(store.find(id).orElseThrow(), "conclusions", null, 1, 1);
+        Map<?, ?> row = (Map<?, ?>) ((List<?>) page.get("axioms")).get(0);
+        assertEquals("RULE_ENGINE", row.get("origin"));
     }
 
     @Test

@@ -133,13 +133,25 @@ class SwrlControllerAccessTest {
     }
 
     @Test
+    void executeSelectedUsesTheRequestedDraftScope() {
+        var result = new self.research.ontology.swrl.model.ExecutionResult(true, 5L, 0, List.of(), null);
+        Mockito.when(engine.executeSelectedRules("p1", List.of("draft-only"), "owner")).thenReturn(result);
+
+        var request = Map.of("ruleIds", List.of("draft-only"));
+        assertEquals(200, controller.executeSelectedRules("p1", request, true, "owner").getStatusCode().value());
+        assertEquals(400, controller.executeSelectedRules("p1", request, true, null).getStatusCode().value());
+        Mockito.verify(engine).executeSelectedRules("p1", List.of("draft-only"), "owner");
+        Mockito.verify(engine, Mockito.never()).executeSelectedRules("p1", List.of("draft-only"));
+    }
+
+    @Test
     void executeSelectedReportsSkippedRulesAndCompletion() {
         self.research.ontology.swrl.model.ExecutionResult result = new self.research.ontology.swrl.model.ExecutionResult(true, 5L, 0, List.of(), null);
         result.setSkippedRules(List.of(new self.research.ontology.swrl.model.SkippedRule("theirs", "This rule was not found in this project.")));
         result.setCompletion("completed_with_warnings");
         Mockito.when(engine.executeSelectedRules("p1", List.of("theirs"))).thenReturn(result);
 
-        ResponseEntity<?> response = controller.executeSelectedRules("p1", Map.of("ruleIds", List.of("theirs")));
+        ResponseEntity<?> response = controller.executeSelectedRules("p1", Map.of("ruleIds", List.of("theirs")), false, null);
 
         self.research.ontology.swrl.dto.ExecutionResponse body = (self.research.ontology.swrl.dto.ExecutionResponse) response.getBody();
         assertEquals("completed_with_warnings", body.getCompletion());

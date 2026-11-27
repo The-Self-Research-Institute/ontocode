@@ -47,7 +47,7 @@ class SqwrlAdmissionTest {
         ExecutionGate gate = new ExecutionGate(1, 1, 10, 10, 10000);
         ReflectionTestUtils.setField(harness.service, "executionGate", gate);
 
-        SwrlEngineService.SqwrlQueryResult failed = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, "not a query", "bad", null);
+        SqwrlQueryResult failed = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, "not a query", "bad", null);
         assertFalse(failed.isSuccess());
         assertDrained(gate);
 
@@ -64,7 +64,7 @@ class SqwrlAdmissionTest {
         ExecutionGate gate = slowGate(1, 1, 3000);
         ReflectionTestUtils.setField(harness.service, "executionGate", gate);
 
-        SwrlEngineService.SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "slow", null);
+        SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "slow", null);
         assertFalse(result.isSuccess());
         assertTrue(result.getErrorMessage().contains("timed out"));
         assertDrained(gate);

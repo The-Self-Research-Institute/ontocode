@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import self.research.ontology.owlEditor.util.AtomicFiles;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -11,7 +12,6 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -237,11 +237,7 @@ public class StorageManager {
         }
         Path target = projectDir(projectId).resolve("ontology.current.owl");
         Files.createDirectories(target.getParent());
-        try {
-            Files.move(draft, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-            Files.move(draft, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+        AtomicFiles.replace(draft, target);
         deleteDraft(projectId);
         log.info("Draft promoted to saved ontology for project {}", projectId);
         return true;
