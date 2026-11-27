@@ -1,6 +1,7 @@
 package self.research.ontology.owlEditor.service;
 
 import self.research.ontology.common.disk.DiskSpaceGate;
+import self.research.ontology.owlEditor.util.AtomicFiles;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -44,7 +45,7 @@ final class MergeCheckpointStore {
             try (InputStream in = new GZIPInputStream(Files.newInputStream(source))) {
                 Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
             }
-            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.replace(temp, target);
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -54,17 +55,15 @@ final class MergeCheckpointStore {
         Path file = fileOf(projectId, checkpointId, side);
         Files.createDirectories(file.getParent());
         DiskSpaceGate.defaults().requireFree(file.getParent(), Files.size(source));
-        boolean written = false;
+        Path staged = Files.createTempFile(file.getParent(), "checkpoint-", ".staged");
         try {
             try (InputStream in = Files.newInputStream(source);
-                 OutputStream out = new GZIPOutputStream(Files.newOutputStream(file))) {
+                 OutputStream out = new GZIPOutputStream(Files.newOutputStream(staged))) {
                 in.transferTo(out);
             }
-            written = true;
+            AtomicFiles.replace(staged, file);
         } finally {
-            if (!written) {
-                Files.deleteIfExists(file);
-            }
+            Files.deleteIfExists(staged);
         }
         enforceCap(projectId, checkpointId);
     }

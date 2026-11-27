@@ -400,7 +400,7 @@ public class OWLFormatConverter {
 
         Path stripped = stripBinaryPrefix(filePath);
         if (!stripped.equals(filePath)) {
-            Files.move(stripped, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.replaceOrDiscard(stripped, filePath);
             log.info("Sanitized file in place: {}", filePath.getFileName());
         }
         
@@ -455,7 +455,7 @@ public class OWLFormatConverter {
 
         if (!content.equals(original)) {
             log.info("Fixed malformed RDF/XML structure in: {}", filePath.getFileName());
-            Files.writeString(filePath, content);
+            AtomicFiles.writeString(filePath, content);
         }
     }
 
@@ -931,7 +931,7 @@ public class OWLFormatConverter {
             try (OutputStream out = Files.newOutputStream(tempOut)) {
                 saveOntologyLargeStack(manager, ontology, rdfXmlFormat, out);
             }
-            Files.move(tempOut, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.replace(tempOut, filePath);
 
             log.info("Successfully re-serialized file as clean RDF/XML: {}", filePath.getFileName());
 
@@ -1110,7 +1110,7 @@ public class OWLFormatConverter {
         }
         
         if (fixedCount > 0) {
-            Files.move(tempFile, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            AtomicFiles.replaceOrDiscard(tempFile, filePath);
             log.info("✓ Sanitized {} IRIs with encoding issues in: {}", fixedCount, filePath.getFileName());
         } else {
             Files.deleteIfExists(tempFile);
