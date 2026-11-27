@@ -1435,33 +1435,19 @@ public class OntologyMetadataService {
             return ontologyIriCache.get(projectId);
         }
 
-        // 2. Try to find an explicit owl:Ontology declaration
-        String query = PREFIXES + "SELECT ?ont WHERE { ?ont a owl:Ontology } LIMIT 1";
-        try {
-            TupleQueryResult rs = datasetService.execSelect(projectId, query);
-            if (rs.hasNext()) {
-                BindingSet sol = rs.next();
-                if (sol.hasBinding("ont")) {
-                    String iri = sol.getValue("ont").stringValue();
-                    rememberOntologyIri(projectId, iri, useCache);
-                    return iri;
-                }
-            }
-            
-            // 3. Try to find something that imports other ontologies
-            query = PREFIXES + "SELECT ?ont WHERE { ?ont owl:imports ?any } LIMIT 1";
-            rs = datasetService.execSelect(projectId, query);
-            if (rs.hasNext()) {
-                BindingSet sol = rs.next();
-                if (sol.hasBinding("ont")) {
-                    String iri = sol.getValue("ont").stringValue();
-                    rememberOntologyIri(projectId, iri, useCache);
-                    return iri;
-                }
-            }
-
-            // 4. Try to find something with common ontology metadata
-            query = PREFIXES + """
+        String declaredHeader = """
+                SELECT ?ont WHERE {
+                  ?ont a owl:Ontology .
+                  FILTER(isIRI(?ont))
+                  BIND(EXISTS {
+                    ?source owl:imports ?target .
+                    FILTER(?source != ?ont && (?target = ?ont || EXISTS { ?ont owl:versionIRI ?target }))
+                  } AS ?imported)
+                  BIND(EXISTS { ?ont owl:imports ?dependency } AS ?hasImports)
+                } ORDER BY ?imported DESC(?hasImports) STR(?ont) LIMIT 1
+                """;
+        String importingHeader = "SELECT ?ont WHERE { ?ont owl:imports ?any . FILTER(isIRI(?ont)) } LIMIT 1";
+        String metadataHeader = """
                 SELECT ?ont WHERE { 
                   ?ont ?p ?o . 
                   FILTER(?p IN (rdfs:label, rdfs:comment, dc:title, dc:creator, owl:versionInfo)) 
@@ -1470,13 +1456,14 @@ public class OntologyMetadataService {
                   FILTER(!EXISTS { ?ont a owl:Class } && !EXISTS { ?ont a owl:ObjectProperty })
                 } LIMIT 1
                 """;
-            rs = datasetService.execSelect(projectId, query);
-            if (rs.hasNext()) {
-                BindingSet sol = rs.next();
-                if (sol.hasBinding("ont")) {
-                    String iri = sol.getValue("ont").stringValue();
-                    rememberOntologyIri(projectId, iri, useCache);
-                    return iri;
+        try {
+            for (String query : List.of(declaredHeader, importingHeader, metadataHeader)) {
+                try (TupleQueryResult rows = datasetService.execSelect(projectId, PREFIXES + query)) {
+                    if (rows.hasNext() && rows.next().getValue("ont") instanceof org.eclipse.rdf4j.model.IRI ontologyIri) {
+                        String iri = ontologyIri.stringValue();
+                        rememberOntologyIri(projectId, iri, useCache);
+                        return iri;
+                    }
                 }
             }
         } catch (Exception e) {

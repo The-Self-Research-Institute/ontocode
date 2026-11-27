@@ -1367,6 +1367,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   });
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [importDialogData, setImportDialogData] = useState({ iri: "", isEdit: false, originalIri: "" });
+  const [isSavingImport, setIsSavingImport] = useState(false);
   const [showImportClosure, setShowImportClosure] = useState(false);
   const [expandedImports, setExpandedImports] = useState<Set<string>>(new Set());
   const [isOntologyAnnotationDialogOpen, setIsOntologyAnnotationDialogOpen] = useState(false);
@@ -1381,7 +1382,13 @@ const Dashboard: React.FC<DashboardProps> = ({
     datatype?: string;
   } | null>(null);
   const [mainTab, setMainTab] = useState("Entities");
-  const [entitiesTab, setEntitiesTab] = useState("Classes");
+  const [{ entitiesTab, searchQuery }, setEntitySearch] = useState({ entitiesTab: "Classes", searchQuery: "" });
+  const setEntitiesTab = useCallback((tab: string) => {
+    setEntitySearch(current => current.entitiesTab === tab ? current : { entitiesTab: tab, searchQuery: "" });
+  }, []);
+  const setSearchQuery = useCallback((query: string) => {
+    setEntitySearch(current => current.searchQuery === query ? current : { ...current, searchQuery: query });
+  }, []);
   const [selectedItem, setSelectedItem] = useState<SelectableItem | null>(null);
   const [expandedNodes, setExpandedNodes] = useState<string[]>(["http://www.w3.org/2002/07/owl#Thing"]);
   const expandedNodesRef = useRef<string[]>(["http://www.w3.org/2002/07/owl#Thing"]);
@@ -1466,7 +1473,6 @@ const Dashboard: React.FC<DashboardProps> = ({
       return [];
     }
   }, []);
-  const [searchQuery, setSearchQuery] = useState("");
   const [searchMatchSubtreeDepth, setSearchMatchSubtreeDepth] = useState(5);
   const [serverSearch, setServerSearch] = useState<{ key: string; ids: Set<string> } | null>(null);
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -5133,7 +5139,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const handleSaveImport = async (iri: string, isEdit: boolean, originalIri: string) => {
-    if (!projectId || !iri.trim()) return;
+    if (isSavingImport || !iri.trim()) return;
+    if (!projectId) {
+      notificationService.error("Import Failed", "Open an ontology before adding an import.");
+      return;
+    }
+    setIsSavingImport(true);
     let importResolution: { status?: string; tripleCount?: number; reason?: string } | null = null;
     try {
       const isUrl = iri.startsWith("http://") || iri.startsWith("https://") || iri.startsWith("ftp://");
@@ -5177,20 +5188,12 @@ const Dashboard: React.FC<DashboardProps> = ({
       if (!isEdit || originalIri !== importIriForBackend) {
         console.log("[Dashboard] Posting import IRI to backend:", importIriForBackend);
 
-        if (isEdit && originalIri !== importIriForBackend) {
-          setOntologyImports((prev) => {
-            const filtered = prev.filter((i) => i !== originalIri);
-            return [...filtered, importIriForBackend];
-          });
-        } else if (!isEdit) {
-          setOntologyImports((prev) => [...prev, importIriForBackend]);
-        }
-        console.log("[Dashboard] ⚡ Optimistically added import to UI");
-
         const addImportRes = await apiClient.post(withDraftScope(`/api/ontology/metadata/${projectId}/imports`), {
           importIri: importIriForBackend,
           ...draftBodyFields(),
         });
+        if (addImportRes?.success === false) throw new Error(addImportRes.error || "Could not save import.");
+        setOntologyImports(prev => [...new Set([...prev.filter(value => !isEdit || value !== originalIri), importIriForBackend])]);
         importResolution = addImportRes?.resolution ?? null;
         console.log("[Dashboard] ✅ Import IRI saved to backend, resolution:", importResolution);
       }
@@ -5250,6 +5253,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       });
       const errorMsg = error?.response?.data?.message || error?.message || "Could not save import.";
       notificationService.error("Import Failed", errorMsg);
+      void refreshOntologyImports();
+    } finally {
+      setIsSavingImport(false);
     }
   };
 
@@ -10162,7 +10168,7 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddObjectProperty] Creating property:", name, "type:", type, "parentId:", parentId);
-        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewObjectProperty");
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewObjectProperty", preferences);
         if (flattenTree(objectPropertyHierarchy).some((n) => n.id === newIri)) {
           showNotification(`An object property with IRI "${newIri}" already exists.`, "error");
           return;
@@ -10200,7 +10206,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, effectiveOntologyIri, flattenTree, objectPropertyHierarchy, user, refreshProperties, showNotification],
+    [projectId, effectiveOntologyIri, preferences, flattenTree, objectPropertyHierarchy, user, refreshProperties, showNotification],
   );
 
   const handleAddDataProperty = useCallback(
@@ -10213,7 +10219,7 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddDataProperty] Creating property:", name, "type:", type, "parentId:", parentId);
-        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewDataProperty");
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewDataProperty", preferences);
         if (flattenTree(dataPropertyHierarchy).some((n) => n.id === newIri)) {
           showNotification(`A data property with IRI "${newIri}" already exists.`, "error");
           return;
@@ -10251,7 +10257,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, effectiveOntologyIri, flattenTree, dataPropertyHierarchy, user, refreshProperties, showNotification],
+    [projectId, effectiveOntologyIri, preferences, flattenTree, dataPropertyHierarchy, user, refreshProperties, showNotification],
   );
 
   const handleAddClassInline = useCallback(
@@ -10264,7 +10270,7 @@ const updateItemInState = useCallback(
 
       try {
         console.log("[handleAddClassInline] Creating class:", name, "type:", type, "parentId:", parentId);
-        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewClass");
+        const newIri = buildEntityIri(effectiveOntologyIri, name || "NewClass", preferences);
         if (flattenTree(classHierarchy).some((n) => n.id === newIri)) {
           showNotification(`A class with IRI "${newIri}" already exists.`, "error");
           return;
@@ -10355,7 +10361,7 @@ const updateItemInState = useCallback(
         throw error;
       }
     },
-    [projectId, effectiveOntologyIri, flattenTree, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
+    [projectId, effectiveOntologyIri, preferences, flattenTree, classHierarchy, user, loadChildren, showNotification, expandedNodes, markAsUnsaved],
   );
 
   const handleAddItem = useCallback(
@@ -17882,6 +17888,12 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   )}
                 </button>
               )}
+              <ToastNotification
+                showHistory
+                toasts={collaboration.state.notifications.map((notification) => ({ id: notification.id, type: notification.type,
+                  message: notification.message, username: notification.username, color: notification.userColor, duration: notification.durationMs }))}
+                onDismiss={collaboration.removeNotification}
+              />
               <button
                 onClick={() => setShowThemeSettings(true)}
                 className="ontocode-icon-hover-accent cursor-pointer disabled:cursor-not-allowed flex items-center gap-1.5 text-xs p-2 rounded-md"
@@ -17935,7 +17947,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                   title={tab.label}
                   className={`flex items-center gap-2 px-3 py-1 text-xs font-medium border-t-2 mt-px whitespace-nowrap flex-shrink-0 ${entitiesTab === tab.id ? "bg-white text-purple-600 border-purple-600" : "text-gray-500 hover:text-gray-800 border-transparent hover:bg-gray-200 rounded-t"}`}
                   onClick={() => {
-                    if (tab.id !== entitiesTab) setSearchQuery("");
                     setEntitiesTab(tab.id);
                     setSelectedItem(null);
                   }}
@@ -18727,13 +18738,6 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
         />
       )}
 
-      <ToastNotification
-        toasts={collaboration.state.notifications.map((notification) => ({ id: notification.id, type: notification.type,
-          message: notification.message, username: notification.username, color: notification.userColor, duration: notification.durationMs }))}
-        onDismiss={collaboration.removeNotification}
-      />
-
-
       <PluginMarketplace
         isOpen={showPluginMarketplace}
         onClose={() => setShowPluginMarketplace(false)}
@@ -18994,11 +18998,12 @@ const handleManchesterConfirm = async (expression: string, restrictionData?: any
                       }
                       handleSaveImport(importDialogData.iri, importDialogData.isEdit, importDialogData.originalIri);
                     }}
-                    className="px-4 py-2 text-xs rounded transition-colors flex items-center gap-1.5"
+                    disabled={isSavingImport}
+                    className="px-4 py-2 text-xs rounded transition-colors flex items-center gap-1.5 disabled:opacity-60"
                     style={{ backgroundColor: "var(--accent)", color: "var(--on-accent)" }}
                   >
                     <Download size={12} />
-                    {importDialogData.isEdit ? "Update Import" : "Import Ontology"}
+                    {isSavingImport ? "Saving import…" : importDialogData.isEdit ? "Update Import" : "Import Ontology"}
                   </button>
                 </div>
               </div>

@@ -1,5 +1,9 @@
 package self.research.ontology.owlEditor.service;
 
+import org.eclipse.rdf4j.query.QueryResults;
+import org.eclipse.rdf4j.repository.sail.SailRepository;
+import org.eclipse.rdf4j.rio.RDFFormat;
+import org.eclipse.rdf4j.sail.memory.MemoryStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.io.StringReader;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +64,28 @@ class OntologyMetadataServiceTest {
     @AfterEach
     void tearDown() {
         SparqlQueryContext.clear();
+    }
+
+    @Test
+    void readsTheRootHeaderEvenIfAnImportWasLoadedFirstAndUsesAVersionIri() throws Exception {
+        var repository = new SailRepository(new MemoryStore());
+        try (var connection = repository.getConnection()) {
+            connection.add(new StringReader("""
+                    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                    <http://ex.org/bfo> a owl:Ontology ; owl:versionIRI <http://ex.org/bfo/v1> ;
+                      owl:imports <http://ex.org/external> .
+                    <http://ex.org/external> a owl:Ontology .
+                    <http://ex.org/project> a owl:Ontology ; owl:imports <http://ex.org/bfo/v1> .
+                    """), "", RDFFormat.TURTLE);
+            when(datasetService.execSelect(eq("fresh-project"), anyString())).thenAnswer(call -> {
+                try (var rows = connection.prepareTupleQuery(call.getArgument(1, String.class)).evaluate()) {
+                    return new SimpleTupleQueryResult(rows.getBindingNames(), QueryResults.asList(rows));
+                }
+            });
+            assertEquals("http://ex.org/project", service.currentOntologyIri("fresh-project", false, null));
+        } finally {
+            repository.shutDown();
+        }
     }
 
     @Test

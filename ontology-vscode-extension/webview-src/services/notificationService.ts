@@ -68,7 +68,9 @@ class NotificationService {
 
   private showWebNotification(options: NotificationOptions): void {
 
-    if ('Notification' in window && Notification.permission === 'granted') {
+    if (this.toastCallbacks.length) {
+      this.toastCallbacks.forEach(callback => callback(options));
+    } else if ('Notification' in window && Notification.permission === 'granted') {
       const notification = new Notification(options.title, {
         body: options.message,
         icon: this.getIconForType(options.type),
@@ -83,10 +85,6 @@ class NotificationService {
       if (options.duration) {
         setTimeout(() => notification.close(), options.duration);
       }
-    } 
-    // Fallback to toast notifications
-    else {
-      this.toastCallbacks.forEach(callback => callback(options));
     }
   }
 

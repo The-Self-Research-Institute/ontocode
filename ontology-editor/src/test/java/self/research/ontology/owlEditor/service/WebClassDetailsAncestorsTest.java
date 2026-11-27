@@ -31,6 +31,7 @@ class WebClassDetailsAncestorsTest {
             @prefix : <http://example.org/anc#> .
             @prefix owl: <http://www.w3.org/2002/07/owl#> .
             @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+            @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
             :hasTopping a owl:ObjectProperty ; rdfs:label "hasTopping" .
             :hasSpice a owl:ObjectProperty ; rdfs:label "hasSpice" .
             :Cheese a owl:Class ; rdfs:label "Cheese" .
@@ -43,7 +44,18 @@ class WebClassDetailsAncestorsTest {
               owl:equivalentClass [ a owl:Class ; owl:intersectionOf ( :Pizza [ a owl:Restriction ; owl:onProperty :hasSpice ; owl:someValuesFrom :Pepper ] ) ] .
             :HotPepperPizza a owl:Class ; rdfs:label "HotPepperPizza" ; rdfs:subClassOf :PepperPizza .
             :Own a owl:Class ; rdfs:label "Own" ;
-              rdfs:subClassOf [ a owl:Class ; owl:unionOf ( :Cheese :Pepper ) ] .
+              rdfs:subClassOf :Cycle , [ a owl:Class ; owl:unionOf ( :Cheese :Pepper ) ] .
+            :Cycle a owl:Class ; rdfs:subClassOf :Own .
+            :Alison a owl:NamedIndividual ; rdfs:label "Alison" ; :age 40 .
+            :age a owl:DatatypeProperty ; rdfs:label "age" .
+            :Person a owl:Class ; rdfs:subClassOf
+              [ a owl:Restriction ; owl:onProperty :age ; owl:cardinality "1"^^xsd:nonNegativeInteger ] ,
+              [ a owl:Restriction ; owl:onProperty :age ; owl:minQualifiedCardinality "2"^^xsd:nonNegativeInteger ;
+                owl:onDataRange xsd:integer ] ;
+              owl:equivalentClass [ a owl:Restriction ; owl:onProperty :age ; owl:someValuesFrom [
+                a rdfs:Datatype ; owl:onDatatype xsd:integer ;
+                owl:withRestrictions ( [ xsd:minInclusive 18 ] [ xsd:maxExclusive 65 ] )
+              ] ] .
             """;
 
     @Mock
@@ -84,6 +96,36 @@ class WebClassDetailsAncestorsTest {
     }
 
     @Test
+    void aSubclassCycleDoesNotMakeTheClassItsOwnAncestor() {
+        assertTrue(ancestors("Own").stream().noneMatch(e -> (NS + "Own").equals(e.get("ancestorIri"))));
+    }
+
+    @Test
+    void theBuiltinLabelIsAnAnnotationAndOnlyAgeIsAPropertyAssertion() {
+        var details = service.getIndividualDetails("p", NS + "Alison");
+        assertEquals("Alison", details.get("label"));
+        assertEquals(1, ((List<?>) details.get("propertyAssertions")).size());
+        assertTrue(details.get("propertyAssertions").toString().contains("propertyIri=" + NS + "age"));
+    }
+
+    @Test
+    void unqualifiedDataCardinalityOmitsTheFillerAndQualifiedStillShowsIt() {
+        var details = service.classDetails("p", NS + "Person");
+        var axioms = (List<?>) details.get("subClassOfAxioms");
+        var definitions = axioms.stream().map(axiom -> ((Map<?, ?>) axiom).get("definition")).toList();
+        assertTrue(definitions.contains("age exactly 1"), definitions.toString());
+        assertTrue(definitions.contains("age min 2 xsd:integer"), definitions.toString());
+    }
+
+    @Test
+    void equivalentDatatypeRestrictionShowsItsDatatypeAndBothBounds() {
+        var details = service.classDetails("p", NS + "Person");
+        var axioms = (List<?>) details.get("equivalentClassesAxioms");
+        var definitions = axioms.stream().map(axiom -> ((Map<?, ?>) axiom).get("definition")).toList();
+        assertEquals(List.of("age some xsd:integer[< 65, >= 18]"), definitions);
+    }
+
+    @Test
     void inheritedRestrictionComesFromTheParentAndFillerIsNotAParent() {
         List<Map<String, String>> list = ancestors("Margherita");
         assertTrue(list.stream().anyMatch(e -> e.get("ancestorIri").equals(NS + "CheesyPizza")
@@ -106,8 +148,9 @@ class WebClassDetailsAncestorsTest {
 
     @Test
     void directComplexSuperclassIsListedForTheClassItself() {
-        List<Map<String, String>> list = ancestors("Own");
-        assertTrue(list.stream().anyMatch(e -> e.get("ancestorIri").equals(NS + "Own")
-                && "false".equals(e.get("navigable")) && e.get("definition").contains(" or ")), list.toString());
+        var details = service.classDetails("p", NS + "Own");
+        var axioms = (List<?>) details.get("subClassOfAxioms");
+        assertTrue(axioms.stream().anyMatch(axiom -> ((Map<?, ?>) axiom).get("definition").toString().contains(" or ")),
+                axioms.toString());
     }
 }

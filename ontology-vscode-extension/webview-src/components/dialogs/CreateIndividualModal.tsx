@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { computeEntityIriPreview, type EntityIriPreferences } from '../../utils/entityIri';
+import { computeEntityIriPreview, isFullIriString, type EntityIriPreferences } from '../../utils/entityIri';
+import { extractLocalName } from '../../utils/draftChangeHelpers';
 import { IriPreviewField } from './IriPreviewField';
 import { CreateButton } from './CreateButton';
 
@@ -35,7 +36,7 @@ const CreateIndividualModal: React.FC<CreateIndividualModalProps> = ({
 
   const handleCreate = () => {
     if (canCreate) {
-      onCreate(trimmedName, computedIri);
+      onCreate(isFullIriString(trimmedName) ? extractLocalName(trimmedName) : trimmedName, computedIri);
       setName('');
       onClose();
     }

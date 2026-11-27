@@ -34,6 +34,7 @@ interface DashboardHeaderProps {
   onShowPlanDetails: () => void;
   onManageSubscription?: () => void;
   onOpenSubscriptionPlans?: () => void;
+  notifications?: React.ReactNode;
 }
 
 const DashboardHeader: React.FC<DashboardHeaderProps> = ({
@@ -52,6 +53,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
   onShowPlanDetails,
   onManageSubscription,
   onOpenSubscriptionPlans,
+  notifications,
 }) => (
   <header className="bg-white border-b border-gray-200 flex-shrink-0">
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -88,6 +90,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap justify-start sm:justify-end w-full sm:w-auto">
           <AppVersionBadge variant="header" />
+          {notifications}
           <WorkspacePlanControls
             subscription={subscription}
             isWorkspaceOwner={isWorkspaceOwner}

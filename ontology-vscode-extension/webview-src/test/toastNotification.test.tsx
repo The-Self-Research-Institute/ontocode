@@ -27,8 +27,38 @@ describe("ToastNotification", () => {
     vi.useRealTimers();
   });
 
-  const show = (toasts: Toast[], onDismiss: (id: string) => void) => act(() => {
-    root.render(<ToastNotification toasts={toasts} onDismiss={onDismiss} />);
+  const show = (toasts: Toast[], onDismiss: (id: string) => void, showHistory = false) => act(() => {
+    root.render(<ToastNotification toasts={toasts} onDismiss={onDismiss} showHistory={showHistory} />);
+  });
+
+  it("shows a short preview and keeps the complete warning after the snackbar expires", () => {
+    const warning = `Export completed with warnings\n${FIVE_LINES}`;
+    const dismiss = vi.fn(() => show([], dismiss, true));
+    show([{ id: "export", type: "warning", message: warning, duration: 1000 }], dismiss, true);
+
+    const dialog = host.querySelector("dialog")!;
+    dialog.showModal = vi.fn(() => dialog.setAttribute("open", ""));
+    dialog.close = vi.fn(() => dialog.removeAttribute("open"));
+    expect(host.querySelector(".toast-message")?.textContent).toBe("Export completed with warnings…");
+    act(() => host.querySelector<HTMLButtonElement>(".toast-view")?.click());
+    expect(dialog.open).toBe(true);
+    expect(dialog.querySelector("li")?.textContent).toContain(warning);
+    act(() => dialog.querySelector("button")?.click());
+
+    act(() => vi.advanceTimersByTime(1000));
+    expect(host.querySelector(".toast")).toBeNull();
+    act(() => host.querySelector<HTMLButtonElement>(".notification-history-button")?.click());
+    expect(dialog.open).toBe(true);
+    expect(dialog.querySelectorAll("li")).toHaveLength(1);
+    expect(dialog.querySelector("li")?.textContent).toContain(warning);
+  });
+
+  it("shortens single-line warnings too", () => {
+    show([{ id: "long-paragraph", type: "warning", message: FIVE_LINES }], vi.fn(), true);
+    const preview = host.querySelector(".toast-message")?.textContent ?? "";
+    expect(preview.length).toBeLessThanOrEqual(121);
+    expect(preview.endsWith("…")).toBe(true);
+    expect(host.querySelector(".notification-history-message")?.textContent).toBe(FIVE_LINES);
   });
 
   it("stacks several notifications in one list instead of drawing them on top of each other", () => {

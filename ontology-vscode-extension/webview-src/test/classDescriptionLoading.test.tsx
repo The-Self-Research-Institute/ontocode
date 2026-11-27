@@ -23,7 +23,7 @@ function deferred<T>() {
 
 function Fixture() {
   const [item, setItem] = useState(subject);
-  return <ClassEditor item={item} projectId="test" onUpdate={setItem}
+  return <ClassEditor item={item} projectId="test" onUpdate={updated => setItem(updated as TreeNode)}
     onAddAnnotation={() => {}} onEditAnnotation={() => {}} onDeleteAnnotation={() => {}}
     objectProperties={[{ id: 'urn:test:property' }]} />;
 }
