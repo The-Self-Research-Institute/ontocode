@@ -92,10 +92,10 @@ public class ProjectLoadController {
     private final java.util.Set<String> importInFlight =
         java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
-    private record QuickUnsatCacheEntry(long version, self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result) {}
+    private record QuickUnsatCacheEntry(String version, self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result) {}
     private final ConcurrentHashMap<String, QuickUnsatCacheEntry> quickUnsatCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, QuickUnsatRun> quickUnsatInFlight = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Long> quickUnsatTooLarge = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, String> quickUnsatTooLarge = new ConcurrentHashMap<>();
     private static final long QUICK_UNSAT_MAX_TRIPLES = 500_000L;
     private static final long QUICK_UNSAT_TIMEOUT_MS = 15_000L;
     private static final int QUICK_UNSAT_PREPARED_MAX = 2;
@@ -1619,27 +1619,29 @@ public class ProjectLoadController {
             long currentVersion = isDraft
                     ? storageManager.getDraftGraphVersion(projectId, resolvedUserId)
                     : storageManager.getPublicGraphVersion(projectId);
-
+            String versionTag = isDraft
+                    ? currentVersion + "." + datasetService.getDraftWriteStamp(projectId, resolvedUserId)
+                    : String.valueOf(currentVersion);
             QuickUnsatCacheEntry cached = quickUnsatCache.get(cacheKey);
-            if (cached != null && cached.version() == currentVersion) {
+            if (cached != null && cached.version().equals(versionTag)) {
                 return QuickUnsatReplies.of(projectId, cached.result());
             }
-            if (quickUnsatTooLarge.getOrDefault(cacheKey, -1L) == currentVersion) {
+            if (versionTag.equals(quickUnsatTooLarge.get(cacheKey))) {
                 return QuickUnsatReplies.skipped(projectId, "TOO_LARGE");
             }
             long tripleCount = isDraft
                     ? datasetService.countDraftTriples(projectId, resolvedUserId)
-                    : datasetService.getGraphTripleCount(projectId);
+                    : datasetService.freshGraphSizeOrUnknown(projectId);
             if (tripleCount > QUICK_UNSAT_MAX_TRIPLES) {
-                quickUnsatTooLarge.put(cacheKey, currentVersion);
+                quickUnsatTooLarge.put(cacheKey, versionTag);
             }
             if (tripleCount < 0 || tripleCount > QUICK_UNSAT_MAX_TRIPLES) {
                 return QuickUnsatReplies.skipped(projectId, tripleCount < 0 ? "SIZE_UNKNOWN" : "TOO_LARGE");
             }
 
-            String versionedKey = cacheKey + "::" + currentVersion;
+            String versionedKey = cacheKey + "::" + versionTag;
             QuickUnsatRun run = quickUnsatInFlight.computeIfAbsent(versionedKey, k ->
-                    startQuickUnsat(projectId, resolvedUserId, isDraft, cacheKey, currentVersion));
+                    startQuickUnsat(projectId, resolvedUserId, isDraft, cacheKey, currentVersion, versionTag));
             run.result.whenComplete((r, t) -> quickUnsatInFlight.remove(versionedKey, run));
 
             try {
@@ -1660,16 +1662,13 @@ public class ProjectLoadController {
     }
 
     private QuickUnsatRun startQuickUnsat(String projectId, String userId, boolean isDraft, String cacheKey,
-                                          long version) {
+                                          long version, String versionTag) {
         QuickUnsatRun run = new QuickUnsatRun();
         quickUnsatExecutor.execute(() -> {
             try {
                 if (run.isCancelled()) {
                     throw new java.util.concurrent.CancellationException("Quick unsatisfiable-classes check was cancelled");
                 }
-                String versionTag = isDraft
-                        ? version + "." + datasetService.getDraftWriteStamp(projectId, userId)
-                        : String.valueOf(version);
                 OWLOntology reasoningOntology = preparedQuickUnsatOntology(cacheKey, versionTag);
                 if (reasoningOntology == null) {
                     OWLOntology ontology = isDraft
@@ -1681,7 +1680,7 @@ public class ProjectLoadController {
                 self.research.ontology.owlEditor.service.ReasonerService.QuickUnsatResult result =
                         owlEditorReasonerService.getUnsatisfiableClassesQuickWithoutSwrl(
                                 reasoningOntology, ReasonerType.HERMIT, run::attach);
-                quickUnsatCache.put(cacheKey, new QuickUnsatCacheEntry(version, result));
+                quickUnsatCache.put(cacheKey, new QuickUnsatCacheEntry(versionTag, result));
                 quickUnsatPrepared.remove(cacheKey);
                 run.result.complete(result);
             } catch (Throwable t) {

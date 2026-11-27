@@ -708,7 +708,7 @@ public class OntologyQueryService {
      *   at this scale (path traversals complete in <5s).
      */
     @Cacheable(value = "classChildren", key = "#projectId + '_' + #parentIri + '_' + #limit + '_' + #offset + '_' + T(self.research.ontology.owlEditor.service.SparqlQueryContext).cacheKeyComponent()",
-               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()")
+               condition = "!T(self.research.ontology.owlEditor.service.SparqlQueryContext).wantsDraft()", unless = "!@sparqlDatasetService.knownGraphSize(#projectId).isPresent()")
     public List<OntologyDto.TreeNode> children(String projectId, String parentIri, int limit, int offset) {
         safeIri(parentIri);
         long startTime = System.currentTimeMillis();

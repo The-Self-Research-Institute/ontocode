@@ -146,7 +146,7 @@ class GraphSizeEstimatesTest {
     }
 
     @Test
-    void anUnrelatedProjectGetsAQuickRetryWhenBothWorkersAreBusy() throws Exception {
+    void whileBothWorkersAreBusyAQuickEstimateAnswersAtOnceAndAnExactSizeIsCountedOnTheSpot() throws Exception {
         GraphSizeEstimates shared = new GraphSizeEstimates();
         CountDownLatch started = new CountDownLatch(2);
         CountDownLatch release = new CountDownLatch(1);
@@ -162,9 +162,11 @@ class GraphSizeEstimatesTest {
             assertTrue(started.await(5, TimeUnit.SECONDS));
             try {
                 assertTimeoutPreemptively(Duration.ofSeconds(2),
-                        () -> assertEquals(-1, shared.exact("small", counting(4))));
+                        () -> assertEquals(-1, shared.estimate("other", counting(5))));
+                assertTimeoutPreemptively(Duration.ofSeconds(2),
+                        () -> assertEquals(4, shared.exact("small", counting(4))));
                 assertFalse(shared.looksLarge("small", 10));
-                assertEquals(0, counts.get());
+                assertEquals(1, counts.get());
             } finally {
                 release.countDown();
             }
@@ -242,5 +244,17 @@ class GraphSizeEstimatesTest {
         assertEquals(20, GraphSizeEstimates.storedTriples(Map.of("counts", Map.of("triples", 20))));
         assertEquals(-1, GraphSizeEstimates.storedTriples(Map.of("counts", Map.of("classes", 5))));
         assertEquals(-1, GraphSizeEstimates.storedTriples(null));
+    }
+
+    @Test
+    void aSizeTakenFromSavedMetadataIsAnEstimateNotAnExactCount() {
+        sizes.seed("p", 100);
+
+        assertEquals(100, sizes.estimate("p", counting(120)));
+        assertEquals(0, counts.get());
+        assertEquals(120, sizes.exact("p", counting(120)));
+        assertEquals(1, counts.get());
+        assertEquals(120, sizes.exact("p", counting(999)));
+        assertEquals(1, counts.get());
     }
 }

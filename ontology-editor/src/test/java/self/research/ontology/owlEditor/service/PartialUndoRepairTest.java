@@ -65,6 +65,7 @@ class PartialUndoRepairTest {
             + "_:s <http://www.w3.org/2002/07/owl#allValuesFrom> <http://ex/D> .\n";
 
     private SailRepository store;
+    private final java.util.concurrent.atomic.AtomicInteger failOnWrite = new java.util.concurrent.atomic.AtomicInteger();
     private FakeUndoIntents fake;
     private HistorySyncService history;
     private UndoReconciler reconciler;
@@ -92,7 +93,12 @@ class PartialUndoRepairTest {
             }
         });
         OntologyMutationService mutations = mock(OntologyMutationService.class);
-        doAnswer(call -> apply(call.getArgument(1))).when(mutations).applyRawUpdate(eq(P), anyString(), anyBoolean(), any());
+        doAnswer(call -> {
+            if (failOnWrite.get() > 0 && failOnWrite.decrementAndGet() == 0) {
+                throw new IllegalStateException("Fuseki stopped answering");
+            }
+            return apply(call.getArgument(1));
+        }).when(mutations).applyRawUpdate(eq(P), anyString(), anyBoolean(), any());
         history = mock(HistorySyncService.class);
         fake = new FakeUndoIntents();
         reconciler = new UndoReconciler(fake.service, history, new RollbackMutationPlanner(),
@@ -164,6 +170,7 @@ class PartialUndoRepairTest {
         intent.setBatchChangeId("e1");
         intent.setAppliedBatches(applied);
         intent.setBatchTriples(BATCH);
+        intent.setBatchInFlight(true);
         return intent;
     }
 
@@ -245,5 +252,110 @@ class PartialUndoRepairTest {
         assertTrue(Models.isomorphic(parse(BASE, ADDED), graph()), graph().toString());
         assertEquals(1, restrictions());
         assertEquals(Status.COMMITTED, intent.getStatus());
+    }
+
+    @Test
+    void aFirstBatchThatWentThroughBeforeTheTimeoutIsNotSentAgain() throws Exception {
+        graphIs(parse(BASE, ADDED));
+        undoBatches(0);
+        UndoIntentDocument intent = stoppedAfter(ChangeRollbackService.UNDO, 0);
+
+        reconciler.resolveLocked(P);
+
+        assertTrue(Models.isomorphic(parse(BASE, REMOVED), graph()), graph().toString());
+        assertEquals(1, restrictions());
+        assertEquals(Status.COMMITTED, intent.getStatus());
+    }
+
+    @Test
+    void aFirstBatchThatNeverLandedIsCalledSafeOnlyAfterTheGraphIsChecked() throws Exception {
+        graphIs(parse(BASE, ADDED));
+        UndoIntentDocument intent = stoppedAfter(ChangeRollbackService.UNDO, 0);
+
+        reconciler.resolveLocked(P);
+
+        assertTrue(Models.isomorphic(parse(BASE, ADDED), graph()), graph().toString());
+        assertEquals(Status.FAILED, intent.getStatus());
+        verify(history, never()).setEntryReverted(anyString(), anyBoolean(), any());
+    }
+
+    @Test
+    void aRepairThatStopsHalfwayIsRepairedCorrectlyTheNextTime() throws Exception {
+        graphIs(parse(BASE, ADDED));
+        undoBatches(0, 1);
+        UndoIntentDocument intent = stoppedAfter(ChangeRollbackService.UNDO, 2);
+        failOnWrite.set(2);
+
+        reconciler.resolveLocked(P);
+
+        assertEquals(Status.NEEDS_ATTENTION, intent.getStatus());
+        assertEquals(3, intent.getAppliedBatches());
+        assertTrue(intent.isBatchInFlight());
+
+        reconciler.resolveLocked(P);
+
+        assertTrue(Models.isomorphic(parse(BASE, REMOVED), graph()), graph().toString());
+        assertEquals(1, restrictions());
+        assertEquals(Status.COMMITTED, intent.getStatus());
+    }
+
+    private static final String SMALL_OLD = "<http://ex/X> <http://www.w3.org/2000/01/rdf-schema#label> \"x old\" .\n";
+    private static final String SMALL_NEW = "<http://ex/X> <http://www.w3.org/2000/01/rdf-schema#label> \"x new\" .\n";
+
+    private HistoryChange smallChangeAlreadyUndoneByThisOperation() {
+        HistoryChange small = new HistoryChange.Builder(P, "edit", "u@x.com", "u@x.com").operationType("editClass")
+                .entityIRI(EX + "X").entityLabel("X").build();
+        small.setId("e0");
+        small.setExactDeleted(SMALL_OLD);
+        small.setExactInserted(SMALL_NEW);
+        small.setReverted(true);
+        small.setRevertedAuditId("audit-1");
+        when(history.getHistoryChange("e0")).thenReturn(small);
+        return small;
+    }
+
+    private UndoIntentDocument changeSetStoppedInSecondEntry(int applied) {
+        UndoIntentDocument intent = fake.seed(P, "op-2", ChangeRollbackService.UNDO, Status.NEEDS_ATTENTION, Stage.HISTORY_MARKED,
+                List.of("e0", "e1"), "audit-1", null);
+        intent.setBatchChangeId("e1");
+        intent.setAppliedBatches(applied);
+        intent.setBatchTriples(BATCH);
+        intent.setBatchInFlight(true);
+        return intent;
+    }
+
+    @Test
+    void aChangeSetThatCannotFinishPutsBackEveryChangeItHadMade() throws Exception {
+        smallChangeAlreadyUndoneByThisOperation();
+        graphIs(parse(BASE, SMALL_OLD, ADDED));
+        undoBatches(0, 1);
+        removeFromGraph("I5", "new 5");
+        Model expected = parse(BASE, SMALL_NEW, ADDED);
+        expected.remove(VF.createIRI(EX + "I5"), RDFS.LABEL, VF.createLiteral("new 5"));
+        UndoIntentDocument intent = changeSetStoppedInSecondEntry(2);
+
+        reconciler.resolveLocked(P);
+
+        assertTrue(Models.isomorphic(expected, graph()), graph().toString());
+        assertEquals(Status.FAILED, intent.getStatus());
+        assertTrue(intent.getFailureReason().contains("safe to try again"), intent.getFailureReason());
+        verify(history).setEntryReverted("e0", false, null);
+    }
+
+    @Test
+    void aChangeSetWhoseFinishedPartWasEditedSinceIsLeftAloneAndListed() throws Exception {
+        smallChangeAlreadyUndoneByThisOperation();
+        graphIs(parse(BASE, ADDED));
+        undoBatches(0, 1);
+        removeFromGraph("I5", "new 5");
+        Model before = new LinkedHashModel(graph());
+        UndoIntentDocument intent = changeSetStoppedInSecondEntry(2);
+
+        reconciler.resolveLocked(P);
+
+        assertTrue(Models.isomorphic(before, graph()));
+        assertEquals(Status.NEEDS_ATTENTION, intent.getStatus());
+        assertTrue(intent.getFailureReason().contains("Still undone: X, A"), intent.getFailureReason());
+        verify(history, never()).setEntryReverted(anyString(), anyBoolean(), any());
     }
 }

@@ -134,6 +134,7 @@ class UndoStagesTest {
             assertEquals(Status.NEEDS_ATTENTION, intent.getStatus());
             assertEquals("big", intent.getBatchChangeId());
             assertEquals(1, intent.getAppliedBatches());
+            assertTrue(intent.isBatchInFlight());
             assertEquals(100, intent.getBatchTriples());
             assertEquals("audit-1", intent.getAuditId());
             verify(audits, never()).deleteById(anyString());
@@ -141,6 +142,27 @@ class UndoStagesTest {
         } finally {
             Limit.install(Limit.resolve(Limit.Profile.STANDARD, Map.of()));
         }
+    }
+
+    @Test
+    void aSingleWriteUndoWhoseWriteFailsIsNotCalledSafeToRetry() {
+        HistoryChange change = new HistoryChange.Builder(P, "edit", "u@x.com", "u@x.com").operationType("editClass")
+                .entityIRI("http://ex/A").entityLabel("A").build();
+        change.setId("small");
+        change.setExactInserted("<http://ex/A> <http://www.w3.org/2000/01/rdf-schema#label> \"a\" .\n");
+        when(historySync.getHistoryChange("small")).thenReturn(change);
+        when(facts.deltaHolds(anyString(), any(), anyBoolean())).thenAnswer(inv -> inv.getArgument(2));
+        when(facts.entityExists(anyString(), anyString(), anyBoolean(), any())).thenReturn(true);
+        doThrow(new IllegalStateException("Read timed out")).when(mutations).applyRawUpdate(anyString(), anyString(), anyBoolean(), any());
+
+        Result result = service.undoEntry(P, "small", new Actor("u@x.com", "u@x.com"), false);
+
+        assertEquals(500, result.status(), result.message());
+        UndoIntentDocument intent = fake.only().orElseThrow();
+        assertEquals(Status.NEEDS_ATTENTION, intent.getStatus());
+        assertEquals(0, intent.getAppliedBatches());
+        assertTrue(intent.isBatchInFlight());
+        verify(audits, never()).deleteById(anyString());
     }
 
     @Test

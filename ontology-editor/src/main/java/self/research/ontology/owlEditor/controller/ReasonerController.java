@@ -1934,7 +1934,7 @@ public class ReasonerController {
             body.put("omittedTrivialCount", presented.omittedTrivial());
             body.put("truncated", presented.truncated());
             body.put("runId", runId);
-            body.put("counts", runCounts(full, ruleConclusions.size()));
+            body.put("counts", RuleExecutionPresenter.counts(full, ruleConclusions.size()));
             body.put("executionMode", "all");
             body.put("status", status.name());
             body.put("statusLabel", status.label());
@@ -1972,19 +1972,6 @@ public class ReasonerController {
         Optional<String> owner = ruleRunAccess.identity(request);
         return owner.map(id -> ruleRunStore.put(projectId, id, isDraft, full.conclusions(), full.structure(), ruleConclusions))
                 .orElse(null);
-    }
-
-    private static Map<String, Object> runCounts(RuleExecutionPresenter.Full full, int ruleConclusions) {
-        Map<String, Object> counts = new LinkedHashMap<>();
-        counts.put("conclusions", full.conclusions().size());
-        counts.put("ruleConclusions", ruleConclusions);
-        counts.put("structure", full.structure().size());
-        counts.put("omittedTrivial", full.omittedTrivial());
-        if (full.conclusions().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_CONCLUSIONS
-                || full.structure().size() > self.research.ontology.owlEditor.service.RuleRunStore.MAX_STRUCTURE) {
-            counts.put("capped", true);
-        }
-        return counts;
     }
 
     private String resolveUserId(String projectId, String clientSuppliedUserId, HttpServletRequest request) {

@@ -237,8 +237,8 @@ export const describeChange = (opType: string, data: Record<string, any>): Chang
         lines: [`${verb} axiom annotation ${shortPropertyName(data.property)} ${literal(data.value, data.language)}${on ? ` on ${on}` : ""}`],
       };
     }
-    case "deleteCitation":
-      return { label: "Citation", lines: [`Removed ${displayValue(data.value ?? data.iri)}`] };
+    case "addCitation": case "deleteCitation":
+      return { label: "Citation", lines: [`${opType === "addCitation" ? "Added" : "Removed"} ${displayValue(data.value ?? data.iri)}`] };
     case "bulkGraphEdit":
     case "structuralGraphEdit":
       return {

@@ -304,6 +304,7 @@ test('derivedSummary words facts, class relationships and hidden trivial ones', 
   assert.equal(derivedSummary({ conclusions: 0, structure: 0 }), '');
   assert.equal(derivedSummary({ conclusions: 671, ruleConclusions: 0, structure: 0 }), '671 produced: 0 facts from your rules, 671 facts from standard reasoning, no class relationships.');
   assert.equal(derivedSummary({ conclusions: 3, ruleConclusions: 1, structure: 0 }), '3 produced: 1 fact from your rules, 2 facts from standard reasoning, no class relationships.');
+  assert.equal(derivedSummary({ conclusions: 0, ruleConclusions: 0, structure: 5 }), '5 produced: 5 class relationships from standard reasoning.');
 });
 
 test('page math and range text', () => {
@@ -416,6 +417,9 @@ test('axiom list errors are friendly', () => {
 
 test('owl2rl paths and messages', () => {
   assert.equal(owl2rlStartPath('p', { pageSize: 50, type: '', filter: '' }, false), '/api/swrl/p/owl2rl?pageSize=50');
+  assert.equal(owl2rlStartPath('p', { pageSize: 50, type: '', filter: '' }, true, 'u 1'), '/api/swrl/p/owl2rl?pageSize=50&draft=true&userId=u%201');
+  assert.equal(owl2rlRunPath('p', 'r1', { page: 1, pageSize: 50, type: '', filter: '' }, true, 'u1'), '/api/swrl/p/owl2rl/runs/r1?page=1&pageSize=50&draft=true&userId=u1');
+  assert.equal(assertedAxiomsPath('p', { page: 0, pageSize: 50, search: '', type: '' }, true, 'u1'), '/api/swrl/p/axioms/asserted?page=0&pageSize=50&draft=true&userId=u1');
   assert.equal(owl2rlRunPath('p', 'r1', { page: 1, pageSize: 50, type: 'SubClassOf', filter: 'x' }, true), '/api/swrl/p/owl2rl/runs/r1?page=1&pageSize=50&type=SubClassOf&filter=x&draft=true');
   assert.equal(owl2rlErrorMessage({ status: 410, data: { expired: true } }), OWL2RL_EXPIRED_MESSAGE);
   assert.equal(owl2rlErrorMessage({ status: 429, data: { busy: true, message: 'Busy now' } }), 'Busy now');

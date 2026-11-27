@@ -137,9 +137,9 @@ public class AssistantConsistencyCheckService {
                     "Skipped — this edit doesn't appear to touch class axioms.");
         }
         long datasetSize = safeDatasetSize(projectId);
-        if (datasetSize > maxDatasetSizeForCheck) {
+        if (datasetSize < 0 || datasetSize > maxDatasetSizeForCheck) {
             return new AssistantEditProposalService.CheckResult(CONSISTENCY_PRESERVED_CHECK, true,
-                    "Skipped — this ontology (" + datasetSize + " triples) is too large for an automatic "
+                    "Skipped — this ontology (" + (datasetSize < 0 ? "size not known yet" : datasetSize + " triples") + ") is too large for an automatic "
                             + "what-if check; run check_consistency by hand after applying if this touches hierarchy "
                             + "or disjointness.");
         }
@@ -149,11 +149,11 @@ public class AssistantConsistencyCheckService {
 
     private long safeDatasetSize(String projectId) {
         try {
-            return datasetService.getDatasetSize(projectId);
+            return datasetService.getDatasetSizeOrUnknown(projectId);
         } catch (Exception e) {
-            log.warn("[Assistant] Could not read dataset size for project {}, assuming small enough to check: {}",
+            log.warn("[Assistant] Could not read dataset size for project {}, skipping the automatic check: {}",
                     projectId, e.getMessage());
-            return 0;
+            return -1;
         }
     }
 

@@ -42,6 +42,18 @@ public final class RuleExecutionPresenter {
         return out;
     }
 
+    public static Map<String, Object> counts(Full full, int ruleConclusions) {
+        Map<String, Object> counts = new LinkedHashMap<>();
+        counts.put("conclusions", full.conclusions().size());
+        counts.put("ruleConclusions", ruleConclusions);
+        counts.put("structure", full.structure().size());
+        counts.put("omittedTrivial", full.omittedTrivial());
+        if (full.conclusions().size() > RuleRunStore.MAX_CONCLUSIONS || full.structure().size() > RuleRunStore.MAX_STRUCTURE) {
+            counts.put("capped", true);
+        }
+        return counts;
+    }
+
     public static Full partition(Iterable<OWLAxiom> derived, Set<OWLAxiom> asserted) {
         List<OWLAxiom> conclusions = new ArrayList<>();
         List<OWLAxiom> structure = new ArrayList<>();

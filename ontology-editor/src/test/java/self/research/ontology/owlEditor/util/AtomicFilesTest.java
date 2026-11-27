@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -146,5 +147,62 @@ class AtomicFilesTest {
 
         assertEquals("first", Files.readString(target));
         assertEquals(List.of("fresh.owl"), names());
+    }
+
+    @Test
+    void aSaveStoppedBetweenTheTwoMovesLeavesTheOriginalUsableAfterARestart() throws Exception {
+        Path project = Files.createDirectories(dir.resolve("projects").resolve("p1"));
+        Path target = project.resolve("ontology.current.owl");
+        Files.writeString(target, "old");
+        AtomicFiles.stepAside(target);
+        assertFalse(Files.exists(target));
+
+        assertEquals(1, AtomicFiles.recoverAll(dir.resolve("projects")));
+
+        assertEquals("old", Files.readString(target));
+        try (var files = Files.list(project)) {
+            assertEquals(List.of("ontology.current.owl"), files.map(p -> p.getFileName().toString()).toList());
+        }
+        AtomicFiles.replace(staged("newer"), target);
+        assertEquals("newer", Files.readString(target));
+    }
+
+    @Test
+    void aSaveStoppedAfterTheNewFileWentInKeepsTheNewFileAndDropsTheOldCopy() throws Exception {
+        Path target = dir.resolve("ontology.current.owl");
+        Files.writeString(target, "old");
+        Path aside = AtomicFiles.stepAside(target);
+        Files.writeString(target, "new");
+
+        assertEquals(0, AtomicFiles.recoverAll(dir));
+
+        assertEquals("new", Files.readString(target));
+        assertFalse(Files.exists(aside));
+    }
+
+    @Test
+    void theNewestKeptCopyWinsWhenSeveralSavesWereInterrupted() throws Exception {
+        Path target = dir.resolve("ontology.current.owl");
+        Files.writeString(target, "first");
+        Path older = AtomicFiles.stepAside(target);
+        Files.setLastModifiedTime(older, java.nio.file.attribute.FileTime.fromMillis(1_000_000));
+        Files.writeString(target, "second");
+        AtomicFiles.stepAside(target);
+
+        assertEquals(1, AtomicFiles.recoverAll(dir));
+
+        assertEquals("second", Files.readString(target));
+        assertEquals(List.of("ontology.current.owl"), names());
+    }
+
+    @Test
+    void recoveryLeavesOrdinaryFilesAloneAndCopesWithAMissingFolder() throws Exception {
+        Files.writeString(dir.resolve("ontology.current.owl"), "kept");
+        Files.writeString(dir.resolve("notes.old.staged.txt"), "not ours");
+
+        assertEquals(0, AtomicFiles.recoverAll(dir));
+        assertEquals(0, AtomicFiles.recoverAll(dir.resolve("missing")));
+
+        assertEquals(List.of("notes.old.staged.txt", "ontology.current.owl"), names());
     }
 }

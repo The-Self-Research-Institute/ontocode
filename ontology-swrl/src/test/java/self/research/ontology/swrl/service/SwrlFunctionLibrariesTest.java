@@ -472,7 +472,7 @@ class SwrlFunctionLibrariesTest {
         final String document;
         final Map<String, ValidationResult> validated = new ConcurrentHashMap<>();
         final Map<String, ExecutionResult> tested = new ConcurrentHashMap<>();
-        final Map<String, SwrlEngineService.SqwrlQueryResult> queried = new ConcurrentHashMap<>();
+        final Map<String, SqwrlQueryResult> queried = new ConcurrentHashMap<>();
         final Map<String, Set<String>> executedFacts = new ConcurrentHashMap<>();
         final Map<String, String> skipped = new ConcurrentHashMap<>();
         final List<String> executeAllErrors = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -743,7 +743,7 @@ class SwrlFunctionLibrariesTest {
     @ParameterizedTest(name = "sqwrl {0}")
     @MethodSource("allQueries")
     void sqwrlQueriesReturnTheRightTable(Query q) throws Exception {
-        SwrlEngineService.SqwrlQueryResult result = fixture().queried.get(q.id());
+        SqwrlQueryResult result = fixture().queried.get(q.id());
         if (q.message() != null) {
             assertFalse(result.isSuccess(), q.toString());
             assertTrue(result.getErrorMessage().contains(q.message()), q + ": " + result.getErrorMessage());
@@ -815,7 +815,7 @@ class SwrlFunctionLibrariesTest {
                         .map(a -> local(a.getSubjectIri())).collect(Collectors.toCollection(LinkedHashSet::new));
                 assertEquals(rule.getValue(), people, rule.getKey());
             }
-            SwrlEngineService.SqwrlQueryResult query = service.executeSqwrlQuery("p1",
+            SqwrlQueryResult query = service.executeSqwrlQuery("p1",
                     "Employee(?e) ^ ssn(?e, ?s) ^ swrlb:startsWith(?s, \"222\") -> sqwrl:select(?e, ?s)", "q", null);
             assertTrue(query.isSuccess(), query.getErrorMessage());
             assertEquals(List.of(Map.of("e", "Erin", "s", "222-33-4444")), query.getRows());

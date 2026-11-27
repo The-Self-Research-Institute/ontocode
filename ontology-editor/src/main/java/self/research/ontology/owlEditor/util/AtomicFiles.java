@@ -6,17 +6,29 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 @Slf4j
 public final class AtomicFiles {
 
     private static final String STAGED_SUFFIX = ".staged";
+    private static final String ASIDE_SUFFIX = ".old" + STAGED_SUFFIX;
+    private static final Pattern ASIDE = Pattern.compile("(.+)\\.[0-9a-f-]{36}\\.old\\.staged");
+    private static final int RECOVERY_DEPTH = 6;
     static final long MAX_WAIT_MILLIS = 30_000;
     private static final long FIRST_PAUSE_MILLIS = 25;
     private static final long MAX_PAUSE_MILLIS = 1_000;
@@ -96,10 +108,70 @@ public final class AtomicFiles {
         }
     }
 
-    private static boolean swapAside(Path staged, Path target) throws IOException {
-        Path aside = target.resolveSibling(target.getFileName() + "." + UUID.randomUUID() + ".old" + STAGED_SUFFIX);
+    static Path stepAside(Path target) throws IOException {
+        Path aside = target.resolveSibling(target.getFileName() + "." + UUID.randomUUID() + ASIDE_SUFFIX);
+        Files.move(target, aside, StandardCopyOption.ATOMIC_MOVE);
+        return aside;
+    }
+
+    public static int recoverAll(Path root) {
+        if (root == null || !Files.isDirectory(root)) {
+            return 0;
+        }
+        Set<Path> targets = new LinkedHashSet<>();
+        try (Stream<Path> files = Files.walk(root, RECOVERY_DEPTH)) {
+            files.forEach(file -> {
+                Matcher match = ASIDE.matcher(file.getFileName().toString());
+                if (match.matches()) {
+                    targets.add(file.resolveSibling(match.group(1)));
+                }
+            });
+        } catch (IOException | UncheckedIOException e) {
+            log.warn("Could not look for files left by interrupted saves under {}: {}", root, e.getMessage());
+        }
+        int restored = 0;
+        for (Path target : targets) {
+            try {
+                restored += recover(target) ? 1 : 0;
+            } catch (IOException e) {
+                log.warn("Could not recover {} after an interrupted save: {}", target, e.getMessage());
+            }
+        }
+        return restored;
+    }
+
+    static boolean recover(Path target) throws IOException {
+        String name = target.getFileName().toString();
+        List<Path> asides;
+        try (Stream<Path> files = Files.list(target.getParent())) {
+            asides = files.filter(file -> {
+                Matcher match = ASIDE.matcher(file.getFileName().toString());
+                return match.matches() && match.group(1).equals(name);
+            }).sorted(Comparator.comparing(AtomicFiles::modified).reversed()).toList();
+        }
+        boolean restored = !asides.isEmpty() && !Files.exists(target);
+        if (restored) {
+            Files.move(asides.get(0), target, StandardCopyOption.ATOMIC_MOVE);
+            log.warn("Restored {} from the copy kept by a save that was interrupted", target);
+        }
+        for (Path leftover : asides.subList(restored ? 1 : 0, asides.size())) {
+            Files.deleteIfExists(leftover);
+        }
+        return restored;
+    }
+
+    private static FileTime modified(Path file) {
         try {
-            Files.move(target, aside, StandardCopyOption.ATOMIC_MOVE);
+            return Files.getLastModifiedTime(file);
+        } catch (IOException e) {
+            return FileTime.fromMillis(0);
+        }
+    }
+
+    private static boolean swapAside(Path staged, Path target) throws IOException {
+        Path aside;
+        try {
+            aside = stepAside(target);
         } catch (IOException e) {
             return false;
         }

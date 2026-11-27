@@ -85,7 +85,7 @@ import { warnAboutRulesInExport } from "../services/exportRulesWarning";
 import { adviceAfterSlowFailure, adviceBeforeRun } from "../utils/slowReasonerAdvice";
 import { pickFileToOpen, starterOntology } from "../utils/editorEntryFile";
 import { recordCitationOnServer } from "../utils/citationServer";
-import { metadataStillSettling } from "../utils/metadataSettling";
+import { metadataStillSettling, retryUntilSettled } from "../utils/metadataSettling";
 import {
   cancelReasonerSnapshots,
   invalidateReasonerSnapshots,
@@ -4560,22 +4560,15 @@ const Dashboard: React.FC<DashboardProps> = ({
             }
 
             if (!isDesktop() && !isStaleLoad() && metadataStillSettling(res)) {
-              for (let i = 0; i < 20 && !signal.aborted; i++) {
-                await new Promise((r) => setTimeout(r, 3000));
-                if (isStaleLoad()) return;
-                try {
-                  const again = await apiClient.get<any>(
-                    `/api/ontology/metadata/${encodedProjectId}?_t=${Date.now()}&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
-                    undefined,
-                    { signal },
-                  );
-                  if (!metadataStillSettling(again)) {
-                    if (!isStaleLoad()) applyMetadataResponse(again);
-                    break;
-                  }
-                } catch {
-                }
-              }
+              await retryUntilSettled(
+                () => apiClient.get<any>(
+                  `/api/ontology/metadata/${encodedProjectId}?_t=${Date.now()}&userId=${encodeURIComponent(hierarchyUserId)}${draftScopeParam}`,
+                  undefined,
+                  { signal },
+                ),
+                (again) => { if (!isStaleLoad()) { applyMetadataResponse(again); } },
+                { attempts: 20, waitMs: 3000, stopped: () => signal.aborted || isStaleLoad() },
+              );
             }
           } catch (e: any) {
             if (e?.name !== "AbortError" && e?.code !== "ERR_CANCELED") {
@@ -13677,7 +13670,9 @@ const updateItemInState = useCallback(
           }
         }
 
-        if (!isCurrentCitationView() || citationViewRef.current.codeViewContent !== codeViewContent) return;
+        if (!isCurrentCitationView() || citationViewRef.current.codeViewContent !== codeViewContent) {
+          throw new Error("The code view changed while the citation was being prepared. Please insert it again.");
+        }
         await recordCitationOnServer(projectId, generateTurtleCitationBlock(), { title }, resolveMutationActor(user?.userId, user?.username));
         const updateEditor = isCurrentCitationView() && citationViewRef.current.codeViewContent === codeViewContent;
         if (updateEditor) {
@@ -13736,7 +13731,7 @@ const updateItemInState = useCallback(
         console.log("[Dashboard] Citation insertion mode reset after successful insertion");
       } catch (error) {
         console.error("[Dashboard] Error inserting citation at location:", error);
-        notificationService.error("Citation Error", "Failed to insert citation at location");
+        notificationService.error("Citation not inserted", error instanceof Error ? error.message : "Failed to insert citation at location");
         setPendingCitation(null);
         setCitationInsertionMode(false);
         setSelectedInsertionLine(null);

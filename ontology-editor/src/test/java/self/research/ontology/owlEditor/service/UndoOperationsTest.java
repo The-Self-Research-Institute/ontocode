@@ -107,7 +107,7 @@ class UndoOperationsTest {
     @Test
     void aFailureAfterSomeBatchesWentThroughNeedsAttentionAndRemembersWhere() {
         operations.around(request("op-1", "cs-1", false), () -> {
-            UndoOperationContext.batchApplied("e1", 2, 5_000);
+            UndoOperationContext.batchProgress("e1", 2, 5_000, true);
             return new Result(500, false, false, ChangeRollbackService.UNDO, "cs", List.of(), List.of(), null, "Stopped part-way");
         });
 
@@ -116,6 +116,20 @@ class UndoOperationsTest {
         assertEquals("e1", intent.getBatchChangeId());
         assertEquals(2, intent.getAppliedBatches());
         assertEquals(5_000, intent.getBatchTriples());
+        assertTrue(intent.isBatchInFlight());
+    }
+
+    @Test
+    void aFailureWhileTheFirstWriteWasOnItsWayIsNotCalledSafeToRetry() {
+        operations.around(request("op-1", "cs-1", false), () -> {
+            UndoOperationContext.batchProgress("e1", 0, 5_000, true);
+            return new Result(500, false, false, ChangeRollbackService.UNDO, "cs", List.of(), List.of(), null, "Read timed out");
+        });
+
+        UndoIntentDocument intent = fake.only().orElseThrow();
+        assertEquals(Status.NEEDS_ATTENTION, intent.getStatus());
+        assertEquals(0, intent.getAppliedBatches());
+        assertTrue(intent.isBatchInFlight());
     }
 
     @Test

@@ -202,6 +202,7 @@ public class SparqlDatasetService {
     // Gives each file its own Fuseki dataset so buffer-pool / GC pressure from large ontologies
     // (GO-plus, NCBITaxon) cannot degrade queries against smaller co-resident files.
     private final Map<String, Repository> perFileRepositories = new ConcurrentHashMap<>();
+    private final PerFileClients perFileClients = new PerFileClients();
 
     // Projects whose dedicated dataset exists but is empty while the shared named graph has data
     // (legacy split-brain from chunked imports). Cached to avoid re-running expensive COUNT/ASK
@@ -674,7 +675,9 @@ public class SparqlDatasetService {
                     new UsernamePasswordCredentials(fusekiAdminUser, fusekiAdminPassword));
             authHeader = FusekiHttpClients.basicAuth(fusekiAdminUser, fusekiAdminPassword);
         }
-        repo.setHttpClient(FusekiHttpClients.pooled(credentials, authHeader));
+        CloseableHttpClient client = FusekiHttpClients.pooled(credentials, authHeader);
+        repo.setHttpClient(client);
+        perFileClients.register(repo, client);
         repo.init();
         return repo;
     }
@@ -699,17 +702,19 @@ public class SparqlDatasetService {
         boolean datasetExists = fusekiDatasetExists(fusekiBase, dsName);
 
         if (datasetExists || createIfAbsent) {
+            SPARQLRepository repo = null;
             try {
                 if (createIfAbsent && !datasetExists) {
                     ensureFusekiDataset(fusekiBase, dsName);
                 }
-                SPARQLRepository repo = connectPerFileRepository(fusekiBase, dsName);
+                repo = connectPerFileRepository(fusekiBase, dsName);
 
                 // Legacy split-brain: an empty dedicated dataset was created while chunked import
                 // wrote to the shared named graph. Prefer shared when dedicated has no triples.
                 if (!createIfAbsent && datasetExists) {
                     // Fast path: cached decision from a prior call avoids repeated SPARQL on every poll.
                     if (sharedFallbackProjects.contains(projectId)) {
+                        perFileClients.closeNow(repo);
                         return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
                     }
                     try (RepositoryConnection dedicatedConn = repo.getConnection()) {
@@ -722,6 +727,7 @@ public class SparqlDatasetService {
                                     log.info("[PerFileDS] Dedicated dataset '{}' is empty but shared graph has data — using shared for {}",
                                             dsName, projectId);
                                     sharedFallbackProjects.add(projectId);
+                                    perFileClients.closeNow(repo);
                                     return ProjectGraphBinding.shared(getRepository(), projectId, graphUri, fusekiGspEndpoint);
                                 }
                             }
@@ -732,11 +738,16 @@ public class SparqlDatasetService {
                     }
                 }
 
-                perFileRepositories.put(projectId, repo);
+                Repository existing = perFileRepositories.putIfAbsent(projectId, repo);
+                if (existing != null) {
+                    perFileClients.closeNow(repo);
+                    return new ProjectGraphBinding(existing, projectId, graphUri, getPerFileGspEndpoint(projectId), true);
+                }
                 log.info("[PerFileDS] Using dedicated Fuseki dataset '{}' for project {} (existed={}, created={})",
                         dsName, projectId, datasetExists, createIfAbsent && !datasetExists);
                 return new ProjectGraphBinding(repo, projectId, graphUri, getPerFileGspEndpoint(projectId), true);
             } catch (Exception e) {
+                perFileClients.closeNow(repo);
                 if (createIfAbsent) {
                     log.warn("[PerFileDS] Could not use dedicated dataset for {} — shared fallback: {}",
                             projectId, e.getMessage());
@@ -752,7 +763,7 @@ public class SparqlDatasetService {
         if (projectId == null || projectId.isBlank()) {
             return;
         }
-        perFileRepositories.remove(projectId);
+        perFileClients.closeAfterGrace(perFileRepositories.remove(projectId));
         partitionGraphCache.remove(projectId);
         sharedFallbackProjects.remove(projectId);
         log.info("[PerFileDS] Evicted cached repository for project {}", projectId);
@@ -3068,6 +3079,11 @@ public class SparqlDatasetService {
 
     public java.util.OptionalLong knownGraphSize(String projectId) {
         return graphSizes.known(projectId);
+    }
+
+    public long freshGraphSizeOrUnknown(String projectId) {
+        getGraphTripleCount(projectId);
+        return graphSizes.fresh(projectId).orElse(-1L);
     }
 
     public boolean graphLooksLarge(String projectId, long threshold) {

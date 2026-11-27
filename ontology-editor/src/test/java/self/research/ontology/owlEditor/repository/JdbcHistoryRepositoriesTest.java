@@ -412,10 +412,12 @@ class JdbcHistoryRepositoriesTest {
         UndoIntentDocument stored = intents.findById(fresh.getId()).orElseThrow();
         assertNull(stored.getBatchChangeId());
         assertEquals(0, stored.getAppliedBatches());
+        assertFalse(stored.isBatchInFlight());
 
         fresh.setBatchChangeId("c1");
         fresh.setAppliedBatches(3);
         fresh.setBatchTriples(5_000);
+        fresh.setBatchInFlight(true);
         fresh.setStatus(UndoIntentDocument.Status.NEEDS_ATTENTION);
         intents.save(fresh);
 
@@ -424,6 +426,7 @@ class JdbcHistoryRepositoriesTest {
         assertEquals("c1", read.getBatchChangeId());
         assertEquals(3, read.getAppliedBatches());
         assertEquals(5_000, read.getBatchTriples());
+        assertTrue(read.isBatchInFlight());
     }
 
     @Test

@@ -26,7 +26,7 @@ final class GraphSizeEstimates {
         long count(String projectId) throws Exception;
     }
 
-    private record Estimate(long triples, long atMillis, boolean stale) {
+    private record Estimate(long triples, long atMillis, boolean stale, boolean counted) {
         boolean known() {
             return triples >= 0;
         }
@@ -68,10 +68,14 @@ final class GraphSizeEstimates {
 
     long exact(String projectId, Counter counter) {
         Estimate current = estimates.get(projectId);
-        if (current != null && current.known() && !current.stale()) {
+        if (current != null && current.known() && !current.stale() && current.counted()) {
             return current.triples();
         }
-        return await(projectId, start(projectId, counter), EXACT_WAIT_MILLIS);
+        CompletableFuture<Long> running = start(projectId, counter);
+        if (rejected(running)) {
+            running = counted(projectId, counter, Runnable::run);
+        }
+        return await(projectId, running, EXACT_WAIT_MILLIS);
     }
 
     boolean looksLarge(String projectId, long threshold) {
@@ -90,6 +94,11 @@ final class GraphSizeEstimates {
         return current != null && current.known() ? OptionalLong.of(current.triples()) : OptionalLong.empty();
     }
 
+    OptionalLong fresh(String projectId) {
+        Estimate current = estimates.get(projectId);
+        return current != null && current.known() && !current.stale() ? OptionalLong.of(current.triples()) : OptionalLong.empty();
+    }
+
     static long storedTriples(java.util.Map<String, Object> metadata) {
         if (metadata == null) {
             return -1;
@@ -105,7 +114,7 @@ final class GraphSizeEstimates {
 
     void seed(String projectId, long triples) {
         if (projectId != null && triples > 0) {
-            estimates.put(projectId, new Estimate(triples, clock.getAsLong(), false));
+            estimates.put(projectId, new Estimate(triples, clock.getAsLong(), false, false));
         }
     }
 
@@ -113,7 +122,7 @@ final class GraphSizeEstimates {
         long now = clock.getAsLong();
         writes.merge(projectId, 1L, Long::sum);
         estimates.computeIfPresent(projectId, (id, current) ->
-                current.known() ? new Estimate(current.triples(), now, true) : null);
+                current.known() ? new Estimate(current.triples(), now, true, current.counted()) : null);
     }
 
     void reset(String projectId) {
@@ -140,7 +149,15 @@ final class GraphSizeEstimates {
         }
     }
 
+    private static boolean rejected(CompletableFuture<Long> future) {
+        return future.isCompletedExceptionally() && future.handle((value, error) -> error instanceof RejectedExecutionException).join();
+    }
+
     private CompletableFuture<Long> launch(String projectId, Counter counter) {
+        return counted(projectId, counter, pool);
+    }
+
+    private CompletableFuture<Long> counted(String projectId, Counter counter, java.util.concurrent.Executor executor) {
         long writesAtStart = writes.getOrDefault(projectId, 0L);
         long resetsAtStart = resets.getOrDefault(projectId, 0L);
         return CompletableFuture.supplyAsync(() -> {
@@ -149,11 +166,11 @@ final class GraphSizeEstimates {
             } catch (Exception e) {
                 throw new CompletionException(e);
             }
-        }, pool).whenComplete((triples, error) -> {
+        }, executor).whenComplete((triples, error) -> {
             boolean resetSince = resets.getOrDefault(projectId, 0L) != resetsAtStart;
             if (error == null && triples != null && triples >= 0 && !resetSince) {
                 boolean writtenSince = writes.getOrDefault(projectId, 0L) != writesAtStart;
-                estimates.put(projectId, new Estimate(triples, clock.getAsLong(), writtenSince));
+                estimates.put(projectId, new Estimate(triples, clock.getAsLong(), writtenSince, true));
             }
         });
     }
@@ -180,7 +197,7 @@ final class GraphSizeEstimates {
 
     private void rememberUnknown(String projectId) {
         estimates.compute(projectId, (id, current) ->
-                current != null && current.known() ? current : new Estimate(-1, clock.getAsLong(), false));
+                current != null && current.known() ? current : new Estimate(-1, clock.getAsLong(), false, false));
     }
 
     private static java.util.concurrent.ThreadFactory daemonThreads() {

@@ -34,7 +34,7 @@ class SqwrlTimeoutTest {
         };
         ReflectionTestUtils.setField(harness.service, "executionGate", slow);
 
-        SwrlEngineService.SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "slow", null);
+        SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "slow", null);
 
         assertFalse(result.isSuccess());
         assertEquals("Query timed out after 1 seconds", result.getErrorMessage());
@@ -45,7 +45,7 @@ class SqwrlTimeoutTest {
     void aQuickSqwrlQueryStillReturnsRows() throws Exception {
         TriageHarness harness = new TriageHarness();
 
-        SwrlEngineService.SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "ages", null);
+        SqwrlQueryResult result = harness.service.executeSqwrlQuery(TriageHarness.PROJECT, QUERY, "ages", null);
 
         assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
         assertTrue(result.getRowCount() >= 8);

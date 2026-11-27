@@ -11,13 +11,16 @@ final class UndoBatches {
 
     static void apply(OntologyMutationService mutations, String projectId, HistoryChange entry, List<String> updates,
                       boolean draft, boolean wholeEntry) {
-        boolean track = wholeEntry && entry.carriesExactDelta() && updates.size() > 1;
+        boolean track = wholeEntry && entry.carriesExactDelta() && !updates.isEmpty();
         int batchTriples = Limit.DELTA_BATCH_TRIPLES.value();
         for (int i = 0; i < updates.size(); i++) {
-            mutations.applyRawUpdate(projectId, updates.get(i), draft, entry.getUserId());
             if (track) {
-                UndoOperationContext.batchApplied(entry.getId(), i + 1, batchTriples);
+                UndoOperationContext.batchProgress(entry.getId(), i, batchTriples, true);
             }
+            mutations.applyRawUpdate(projectId, updates.get(i), draft, entry.getUserId());
+        }
+        if (track) {
+            UndoOperationContext.batchProgress(entry.getId(), updates.size(), batchTriples, false);
         }
     }
 }
