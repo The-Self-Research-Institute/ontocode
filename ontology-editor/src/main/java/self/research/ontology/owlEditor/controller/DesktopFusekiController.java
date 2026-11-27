@@ -10,11 +10,14 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
+import self.research.ontology.owlEditor.service.DesktopDraftCompactor;
+import self.research.ontology.owlEditor.service.DesktopDraftSaver;
 import self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler;
 import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.DesktopOpenMetricsService;
 import self.research.ontology.owlEditor.service.DraftTrackingService;
 import self.research.ontology.owlEditor.service.ProjectImportService;
+import self.research.ontology.owlEditor.service.ProjectWriteLockRegistry;
 import self.research.ontology.owlEditor.service.StorageManager;
 
 import java.util.Map;
@@ -35,19 +38,27 @@ public class DesktopFusekiController {
     private final DesktopOntologyLoader desktopOntologyLoader;
     private final StorageManager storageManager;
     private final DraftTrackingService draftTrackingService;
+    @Nullable
+    private final DesktopDraftSaver draftSaver;
+    @Autowired(required = false) @Nullable
+    private ProjectWriteLockRegistry lockRegistry;
+    @Autowired(required = false) @Nullable
+    private DesktopDraftCompactor compactor;
 
     public DesktopFusekiController(ProjectImportService projectImportService,
                                    DesktopOpenMetricsService openMetricsService,
                                    @Autowired(required = false) @Nullable DesktopFusekiSyncScheduler fusekiSyncScheduler,
                                    @Autowired(required = false) @Nullable DesktopOntologyLoader desktopOntologyLoader,
                                    StorageManager storageManager,
-                                   DraftTrackingService draftTrackingService) {
+                                   DraftTrackingService draftTrackingService,
+                                   @Autowired(required = false) @Nullable DesktopDraftSaver draftSaver) {
         this.projectImportService = projectImportService;
         this.openMetricsService = openMetricsService;
         this.fusekiSyncScheduler = fusekiSyncScheduler;
         this.desktopOntologyLoader = desktopOntologyLoader;
         this.storageManager = storageManager;
         this.draftTrackingService = draftTrackingService;
+        this.draftSaver = draftSaver;
     }
 
     @PostMapping("/api/desktop/save/{projectId:.+}")
@@ -57,7 +68,7 @@ public class DesktopFusekiController {
             return ResponseEntity.status(503).body(Map.of("saved", false, "error", "fast-open disabled"));
         }
         try {
-            boolean saved = desktopOntologyLoader.saveProject(projectId);
+            boolean saved = saveExclusively(projectId);
             if (saved) {
                 // The file-based save above is the desktop source of truth; the database-tracked
                 // draft records exist only to drive the "pending drafts" UI, so once the save
@@ -75,6 +86,25 @@ public class DesktopFusekiController {
         }
     }
 
+    private boolean saveExclusively(String projectId) throws java.io.IOException {
+        java.util.concurrent.Callable<Boolean> save = () -> {
+            if (draftSaver != null) {
+                draftSaver.flush(projectId);
+            }
+            if (compactor != null) {
+                compactor.forget(projectId);
+            }
+            return desktopOntologyLoader.saveProject(projectId);
+        };
+        try {
+            return lockRegistry == null ? save.call() : lockRegistry.runExclusive(projectId, save);
+        } catch (java.io.IOException | RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new java.io.IOException(e.getMessage(), e);
+        }
+    }
+
     @PostMapping("/api/desktop/discard-draft/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> discardDraft(@PathVariable String projectId) {
         log.info("[Desktop] POST /api/desktop/discard-draft/{}", projectId);
@@ -82,6 +112,12 @@ public class DesktopFusekiController {
             return ResponseEntity.status(503).body(Map.of("discarded", false, "error", "fast-open disabled"));
         }
         try {
+            if (draftSaver != null) {
+                draftSaver.forget(projectId);
+            }
+            if (compactor != null) {
+                compactor.forget(projectId);
+            }
             desktopOntologyLoader.discardDraft(projectId);
             try {
                 draftTrackingService.markDraftHistoryDiscarded(projectId, DESKTOP_USER_ID);
@@ -97,7 +133,9 @@ public class DesktopFusekiController {
 
     @GetMapping("/api/desktop/draft-status/{projectId:.+}")
     public ResponseEntity<Map<String, Object>> draftStatus(@PathVariable String projectId) {
-        return ResponseEntity.ok(Map.of("hasDraft", storageManager.hasDraft(projectId)));
+        String saveError = draftSaver == null ? null : draftSaver.failure(projectId).orElse(null);
+        return ResponseEntity.ok(saveError == null ? Map.of("hasDraft", storageManager.hasDraft(projectId))
+                : Map.of("hasDraft", true, "saveError", saveError));
     }
 
     @PostMapping("/api/desktop/sync-fuseki/{projectId:.+}")

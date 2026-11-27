@@ -262,6 +262,9 @@ public class OntologyMutationService {
                 invalidateReasonerCaches(projectId);
                 return;
             }
+            if (!draft && desktopOwlApiMutationService != null) {
+                desktopOwlApiMutationService.refuseIfTripleStoreIsBehind(projectId);
+            }
 
             long sparqlStart = System.currentTimeMillis();
             MutationContext.setOps(ops);
@@ -388,6 +391,9 @@ public class OntologyMutationService {
             bumpMainGraphRevision(projectId);
             invalidateReasonerCaches(projectId);
             return;
+        }
+        if (!draft && desktopOwlApiMutationService != null) {
+            desktopOwlApiMutationService.refuseIfTripleStoreIsBehind(projectId);
         }
 
         if (draft) {

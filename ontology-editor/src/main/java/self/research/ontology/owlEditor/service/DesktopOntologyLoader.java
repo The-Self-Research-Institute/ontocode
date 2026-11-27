@@ -82,6 +82,9 @@ public class DesktopOntologyLoader {
     @Autowired(required = false)
     private DesktopOpenMetricsService openMetricsService;
 
+    @Autowired(required = false)
+    private DesktopEditJournal editJournal;
+
     // Background OWLAPI parses (post-upload warms, pre-warms, re-warms).
     // NOTE: dispatched explicitly — the previous @Async self-invocation of
     // loadAndCacheAsync bypassed the Spring proxy and ran parses synchronously
@@ -570,6 +573,14 @@ public class DesktopOntologyLoader {
                 reasoner.precomputeInferences();
             }
 
+            if (editJournal != null) {
+                if (owlFilePath.normalize().equals(storageManager.draftOntologyPath(projectId).normalize())) {
+                    editJournal.replay(projectId, ontology, manager);
+                } else if (editJournal.hasPending(projectId)) {
+                    editJournal.setAside(projectId);
+                }
+                editJournal.loadedFrom(projectId, owlFilePath);
+            }
             cache.put(projectId, ontology, reasoner, manager, assertedOnly);
             cache.setCachedVersion(projectId, metadataService.getMutationVersion(projectId));
             log.info("[FastOpen] OWLAPI model cached for project {} in {}ms (assertedOnly={})",
@@ -605,6 +616,9 @@ public class DesktopOntologyLoader {
         try {
             Files.createDirectories(draft.getParent());
             AtomicFileWrite.write(draft, out -> datasetService.exportDatasetToStream(projectId, RDFFormat.RDFXML, out));
+            if (editJournal != null) {
+                editJournal.setAside(projectId);
+            }
             log.info("[Desktop] Rewrote the unsaved draft for {} from the triple store after a bulk write", projectId);
         } catch (Exception e) {
             if (Files.exists(storageManager.projectDir(projectId).resolve(FUSEKI_SYNC_PENDING_MARKER))) {
@@ -628,7 +642,11 @@ public class DesktopOntologyLoader {
      *  A draft left behind after a crash / unsaved exit is recovered on next open. */
     public void persistToDisk(String projectId) throws java.io.IOException {
         Path target = storageManager.draftOntologyPath(projectId);
+        long upTo = editJournal == null ? 0 : editJournal.lastSeq(projectId);
         writeModelTo(projectId, target);
+        if (editJournal != null) {
+            editJournal.written(projectId, upTo);
+        }
         log.info("[Desktop] Autosaved OWLAPI model to draft {}", target);
     }
 
@@ -638,6 +656,14 @@ public class DesktopOntologyLoader {
      * directly (covers save-after-recovery edge cases).
      */
     public boolean saveProject(String projectId) throws java.io.IOException {
+        if (editJournal != null && editJournal.hasPending(projectId) && cache.has(projectId)) {
+            Path target = storageManager.resolveProjectFile(projectId, "ontology.current.owl");
+            writeModelTo(projectId, target);
+            storageManager.deleteDraft(projectId);
+            editJournal.forget(projectId);
+            log.info("[Desktop] Saved the OWLAPI model with its journalled edits to {}", target);
+            return true;
+        }
         if (storageManager.promoteDraft(projectId)) {
             return true;
         }
@@ -654,6 +680,9 @@ public class DesktopOntologyLoader {
     /** Discard unsaved changes: delete draft, evict the in-memory model, re-warm from saved file. */
     public void discardDraft(String projectId) throws java.io.IOException {
         storageManager.deleteDraft(projectId);
+        if (editJournal != null) {
+            editJournal.forget(projectId);
+        }
         cache.evict(projectId);
         triggerLazyLoadIfNeeded(projectId, true);
     }
