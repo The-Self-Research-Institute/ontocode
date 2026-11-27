@@ -107,6 +107,22 @@ public class ProjectFileController {
         }
     }
 
+    @GetMapping("/saved-sizes")
+    public Map<String, Long> savedSizes(@RequestParam("libraryId") String libraryId, CallerIdentity caller) {
+        String prefix = libraryId + "--";
+        var candidates = storageManager.listProjectIds().stream().filter(id -> id.startsWith(prefix)).toList();
+        Map<String, Long> sizes = new java.util.LinkedHashMap<>();
+        for (String id : authorization.accessibleAmong(caller, candidates)) {
+            storageManager.findCurrentOntology(id).ifPresent(path -> {
+                try {
+                    sizes.put(id.substring(prefix.length()), Files.size(path));
+                } catch (IOException ignored) {
+                }
+            });
+        }
+        return sizes;
+    }
+
     private Optional<FileInfo> buildFileInfo(String projectId) {
         try {
             Path ontologyPath = storageManager.findCurrentOntology(projectId).orElse(null);

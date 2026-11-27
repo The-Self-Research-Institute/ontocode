@@ -53,32 +53,36 @@ describe('progressive class Description', () => {
     await act(async () => { button!.click(); });
   }
 
-  it('shows annotations and direct parents while axioms are pending, without fetching Usage', async () => {
+  it('shows direct parents before axioms and keeps annotations in their own tab', async () => {
+    const annotations = deferred<unknown>();
     const parents = deferred<unknown>();
     const axioms = deferred<unknown>();
     get.mockImplementation(async path => {
       if (path.includes('view=parents')) return parents.promise;
       if (path.includes('/classes/details/')) return axioms.promise;
-      if (path.includes('/classes/annotations/')) return { annotations: { 'rdfs:comment': 'Early comment' } };
+      if (path.includes('/classes/annotations/')) return annotations.promise;
       return [];
     });
 
     await act(async () => { root.render(<Fixture />); });
-    expect(host.textContent).toContain('Early comment');
     expect(host.textContent).toContain('Loading direct parents');
     expect(callsFor('/classes/details/')).toHaveLength(1);
     expect(callsFor('/classes/usage/')).toHaveLength(0);
 
     await act(async () => { parents.resolve([parent]); });
     expect(host.querySelector('[aria-label="Direct parents"]')?.textContent).toContain('Parent');
-    expect(host.textContent).toContain('Early comment');
     expect(host.textContent).toContain('Loading axioms and restrictions');
     expect(callsFor('/classes/details/')).toHaveLength(2);
     expect(callsFor('/classes/usage/')).toHaveLength(0);
 
-    await act(async () => { axioms.resolve({ subClassOfAxioms: [] }); });
+    await act(async () => { annotations.resolve({ annotations: { 'rdfs:comment': 'Early comment' } }); });
+    expect(host.textContent).not.toContain('Early comment');
+    await act(async () => { axioms.resolve({ subClassOfAxioms: [], annotations: { 'rdfs:comment': 'Early comment' } }); });
     expect(host.textContent).toContain('SubClass Of');
     expect(host.textContent).not.toContain('Loading axioms and restrictions');
+    expect(host.textContent).not.toContain('Early comment');
+    await clickTab('Annotations (1)');
+    expect(host.textContent).toContain('Early comment');
   });
 
   it('loads Usage on demand and reuses it when revisiting the tab', async () => {

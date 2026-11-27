@@ -51,11 +51,12 @@ export function computeEntityIriPreview(
   rawName: string,
   existingIris: string[],
   preferences?: EntityIriPreferences,
+  iriOverride?: string | null,
 ): EntityIriPreview {
   const trimmedName = rawName.trim();
-  const computedIri = buildEntityIri(ontologyBaseIri, trimmedName, preferences);
+  const computedIri = iriOverride?.trim() ?? buildEntityIri(ontologyBaseIri, trimmedName, preferences);
   const isDuplicate = !!computedIri && existingIris.includes(computedIri);
-  const canCreate = !!trimmedName && !isDuplicate;
+  const canCreate = !!trimmedName && !isDuplicate && (iriOverride == null || isFullIriString(computedIri) && !/\s/.test(computedIri));
   return { trimmedName, computedIri, isDuplicate, canCreate };
 }
 

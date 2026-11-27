@@ -69,8 +69,18 @@ final class CodeViewHistoryRecorder {
         added.removeAll(oldModel);
         Set<Statement> removed = new LinkedHashSet<>(oldModel);
         removed.removeAll(newModel);
+        long addedStructural = added.stream().filter(statement -> !isNamedTriple(statement)).count();
+        long removedStructural = removed.stream().filter(statement -> !isNamedTriple(statement)).count();
+        if (addedStructural > 0 && addedStructural == removedStructural
+                && ExactOrigins.isUnchanged(structuralStatements(oldModel), structuralStatements(newModel))) {
+            added.removeIf(statement -> !isNamedTriple(statement));
+            removed.removeIf(statement -> !isNamedTriple(statement));
+        }
         if (added.isEmpty() && removed.isEmpty()) {
             return false;
+        }
+        if (ChangeOrigin.AI.equals(actor.origin().source()) && actor.origin().exact() == null) {
+            actor = new Actor(projectId, userId, username, draft, ExactOrigins.withDelta(actor.origin(), oldModel, newModel));
         }
         if (actor.origin().ruleNote() != null) {
             recordRule(actor, actor.origin().ruleNote());
@@ -112,6 +122,14 @@ final class CodeViewHistoryRecorder {
                     + (structuralChanges == 1 ? "" : "s"), "Restrictions, unions, rules or other axioms without a name");
         }
         return true;
+    }
+
+    private Model structuralStatements(Model model) {
+        Model structure = new org.eclipse.rdf4j.model.impl.LinkedHashModel();
+        for (Statement statement : model) {
+            if (!isNamedTriple(statement)) structure.add(statement);
+        }
+        return structure;
     }
 
     static final String RULE_CHANGE = "ruleChange";

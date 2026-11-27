@@ -81,7 +81,6 @@ const ClassEditor: React.FC<{
   const [axiomsLoaded, setAxiomsLoaded] = useState(false);
   const [descriptionTimedOut, setDescriptionTimedOut] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
-  const [overviewReadyKey, setOverviewReadyKey] = useState('');
   const [parentResult, setParentResult] = useState<{ key: string; parents: DirectParent[] | null }>();
   const automaticDescriptionKey = useRef('');
   const [conflictIris, setConflictIris] = useState<Set<string> | undefined>(undefined);
@@ -350,9 +349,8 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       }
     };
 
-    void Promise.all([loadAnnotations(), loadParents()]).then(() => {
-      if (alive) setOverviewReadyKey(descriptionKey);
-    });
+    void loadAnnotations();
+    void loadParents();
     if (!propObjectProperties?.length && !propDataProperties?.length) void loadProperties();
 
     return () => {
@@ -682,13 +680,13 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   };
 
   useEffect(() => {
-    if (activeTab === 'description' && overviewReadyKey === descriptionKey && !axiomsLoaded && !loadingDetails
+    if (activeTab === 'description' && parentResult?.key === descriptionKey && !axiomsLoaded && !loadingDetails
         && automaticDescriptionKey.current !== descriptionKey) {
       automaticDescriptionKey.current = descriptionKey;
       void loadDescription();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, axiomsLoaded, loadingDetails, overviewReadyKey, descriptionKey]);
+  }, [activeTab, axiomsLoaded, loadingDetails, parentResult, descriptionKey]);
 
   const loadDescription = async () => {
     descriptionAbortRef.current?.abort();
@@ -1933,16 +1931,6 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
             <div className="bg-stone-100 border-b border-stone-300 px-3 py-1.5">
               <span className="text-xs font-medium text-stone-700">Description: {item.label}</span>
             </div>
-
-            <section aria-label="Class annotations" className="bg-white border-x border-b border-gray-200 p-3">
-              <h3 className="text-xs font-semibold text-stone-700">Annotations</h3>
-              {loadingAnnotations && annotationCount === 0 ? (
-                <p role="status" className="mt-1 text-xs text-gray-500">Loading annotations…</p>
-              ) : (
-                <AnnotationsDisplay annotations={displayAnnotations} onDelete={onDeleteAnnotation}
-                  onEdit={onEditAnnotation} isViewOnly={isViewOnly} onViewOnlyAction={onViewOnlyAction} />
-              )}
-            </section>
 
             {!axiomsLoaded && (
               <section aria-label="Direct parents" className="bg-white border-x border-b border-gray-200 p-3">

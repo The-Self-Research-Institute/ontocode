@@ -1318,9 +1318,9 @@ public class ProjectImportService {
         ImportOptions appendOptions = ImportOptions.builder()
                 .mode(ImportOptions.ImportMode.INCREMENTAL)
                 .partitionStrategy(ImportOptions.PartitionStrategy.NONE)
+                .preserveProjectPrefixes(true)
                 .build();
 
-        // Seed with direct imports from the main ontology
         toProcess.addAll(queryOwlImports(projectId));
 
         if (toProcess.isEmpty()) {

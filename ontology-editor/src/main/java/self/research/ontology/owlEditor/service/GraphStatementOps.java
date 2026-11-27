@@ -12,10 +12,8 @@ import org.eclipse.rdf4j.repository.RepositoryConnection;
 import org.eclipse.rdf4j.repository.RepositoryResult;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFWriter;
-import org.eclipse.rdf4j.rio.Rio;
 
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -70,18 +68,15 @@ final class GraphStatementOps {
 
     static String export(RepositoryConnection conn, String graphUri, RDFFormat format, Map<String, String> extraPrefixes) {
         List<Statement> statements = read(conn, conn.getValueFactory().createIRI(graphUri));
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        RDFWriter writer = Rio.createWriter(format, out);
+        Map<String, String> prefixes = new LinkedHashMap<>(EXPORT_PREFIXES);
+        extraPrefixes.forEach(prefixes::putIfAbsent);
+        StringWriter out = new StringWriter();
+        RDFWriter writer = RdfExportWriter.create(format, out, prefixes);
         writer.startRDF();
-        EXPORT_PREFIXES.forEach(writer::handleNamespace);
-        extraPrefixes.forEach((prefix, namespace) -> {
-            if (!EXPORT_PREFIXES.containsKey(prefix)) {
-                writer.handleNamespace(prefix, namespace);
-            }
-        });
+        prefixes.forEach(writer::handleNamespace);
         statements.forEach(writer::handleStatement);
         writer.endRDF();
-        return out.toString(StandardCharsets.UTF_8);
+        return out.toString();
     }
 
     static SparqlDatasetService.CappedSparqlResult selectCapped(RepositoryConnection conn, String queryText,

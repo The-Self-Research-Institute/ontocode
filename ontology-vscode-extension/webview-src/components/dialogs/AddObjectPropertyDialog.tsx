@@ -29,6 +29,7 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
   existingIris = [],
 }) => {
   const [name, setName] = useState('');
+  const [iriOverride, setIriOverride] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -37,13 +38,19 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
     name,
     existingIris,
     iriPreferences,
+    iriOverride,
   );
+
+  const handleClose = () => {
+    setName('');
+    setIriOverride(null);
+    onClose();
+  };
 
   const handleCreate = () => {
     if (canCreate) {
       onCreate(trimmedName, computedIri);
-      setName('');
-      onClose();
+      handleClose();
     }
   };
 
@@ -51,11 +58,6 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
     if (e.key === 'Enter') {
       handleCreate();
     }
-  };
-
-  const handleClose = () => {
-    setName('');
-    onClose();
   };
 
   const getTitle = () => {
@@ -99,6 +101,7 @@ const AddObjectPropertyDialog: React.FC<AddObjectPropertyDialogProps> = ({
           </div>
           <IriPreviewField
             computedIri={computedIri}
+            onChangeIri={setIriOverride}
             isDuplicate={isDuplicate}
             placeholder="(auto-generated from ontology IRI + property name)"
           />

@@ -10124,20 +10124,7 @@ const updateItemInState = useCallback(
     return map;
   }, [classHierarchy, objectProperties, dataProperties, annotationProperties, individuals, flattenTree]);
 
-  const effectiveOntologyIri = useMemo(() => {
-    if (metadata?.ontologyIRI) return metadata.ontologyIRI;
-    const sampleIri =
-      flattenTree(classHierarchy).find((n) => n.id && n.id !== "http://www.w3.org/2002/07/owl#Thing")?.id ||
-      flattenTree(objectPropertyHierarchy).find((n) => n.id)?.id ||
-      flattenTree(dataPropertyHierarchy).find((n) => n.id)?.id ||
-      individuals.find((i) => i.id)?.id;
-    if (!sampleIri) return undefined;
-    const hashIndex = sampleIri.lastIndexOf('#');
-    if (hashIndex > -1) return sampleIri.slice(0, hashIndex);
-    const slashIndex = sampleIri.lastIndexOf('/');
-    if (slashIndex > -1) return sampleIri.slice(0, slashIndex);
-    return undefined;
-  }, [metadata?.ontologyIRI, classHierarchy, objectPropertyHierarchy, dataPropertyHierarchy, individuals, flattenTree]);
+  const effectiveOntologyIri = metadata?.ontologyIRI || undefined;
 
   const classExistingIris = useMemo(
     () => flattenTree(classHierarchy).map((n) => n.id),

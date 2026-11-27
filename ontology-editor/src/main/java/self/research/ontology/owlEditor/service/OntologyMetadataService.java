@@ -1438,13 +1438,12 @@ public class OntologyMetadataService {
         String declaredHeader = """
                 SELECT ?ont WHERE {
                   ?ont a owl:Ontology .
-                  FILTER(isIRI(?ont))
                   BIND(EXISTS {
                     ?source owl:imports ?target .
                     FILTER(?source != ?ont && (?target = ?ont || EXISTS { ?ont owl:versionIRI ?target }))
                   } AS ?imported)
                   BIND(EXISTS { ?ont owl:imports ?dependency } AS ?hasImports)
-                } ORDER BY ?imported DESC(?hasImports) STR(?ont) LIMIT 1
+                } ORDER BY ?imported DESC(?hasImports) DESC(isIRI(?ont)) STR(?ont) LIMIT 1
                 """;
         String importingHeader = "SELECT ?ont WHERE { ?ont owl:imports ?any . FILTER(isIRI(?ont)) } LIMIT 1";
         String metadataHeader = """
@@ -1459,7 +1458,9 @@ public class OntologyMetadataService {
         try {
             for (String query : List.of(declaredHeader, importingHeader, metadataHeader)) {
                 try (TupleQueryResult rows = datasetService.execSelect(projectId, PREFIXES + query)) {
-                    if (rows.hasNext() && rows.next().getValue("ont") instanceof org.eclipse.rdf4j.model.IRI ontologyIri) {
+                    if (rows.hasNext()) {
+                        var ontologyIri = rows.next().getValue("ont");
+                        if (ontologyIri == null || !ontologyIri.isIRI()) return null;
                         String iri = ontologyIri.stringValue();
                         rememberOntologyIri(projectId, iri, useCache);
                         return iri;

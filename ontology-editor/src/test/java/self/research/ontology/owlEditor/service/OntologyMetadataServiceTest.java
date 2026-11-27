@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -68,6 +69,15 @@ class OntologyMetadataServiceTest {
 
     @Test
     void readsTheRootHeaderEvenIfAnImportWasLoadedFirstAndUsesAVersionIri() throws Exception {
+        assertEquals("http://ex.org/project", readHeader("<http://ex.org/project>"));
+    }
+
+    @Test
+    void anAnonymousProjectNeverInheritsItsImportedOntologysIri() throws Exception {
+        assertNull(readHeader("[]"));
+    }
+
+    private String readHeader(String root) throws Exception {
         var repository = new SailRepository(new MemoryStore());
         try (var connection = repository.getConnection()) {
             connection.add(new StringReader("""
@@ -75,14 +85,14 @@ class OntologyMetadataServiceTest {
                     <http://ex.org/bfo> a owl:Ontology ; owl:versionIRI <http://ex.org/bfo/v1> ;
                       owl:imports <http://ex.org/external> .
                     <http://ex.org/external> a owl:Ontology .
-                    <http://ex.org/project> a owl:Ontology ; owl:imports <http://ex.org/bfo/v1> .
-                    """), "", RDFFormat.TURTLE);
+                    %s a owl:Ontology ; owl:imports <http://ex.org/bfo/v1> .
+                    """.formatted(root)), "", RDFFormat.TURTLE);
             when(datasetService.execSelect(eq("fresh-project"), anyString())).thenAnswer(call -> {
                 try (var rows = connection.prepareTupleQuery(call.getArgument(1, String.class)).evaluate()) {
                     return new SimpleTupleQueryResult(rows.getBindingNames(), QueryResults.asList(rows));
                 }
             });
-            assertEquals("http://ex.org/project", service.currentOntologyIri("fresh-project", false, null));
+            return service.currentOntologyIri("fresh-project", false, null);
         } finally {
             repository.shutDown();
         }

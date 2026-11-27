@@ -15,6 +15,7 @@ const HIGHLIGHT_MS = 4000;
 interface CodeViewPageWindow {
   startLine: number;
   lineCount: number;
+  totalLines?: number;
 }
 
 interface AskAiCodeViewSyncOptions {
@@ -75,15 +76,26 @@ function useApplyHighlight(options: AskAiCodeViewSyncOptions, optionsRef: Option
 
 function useCodeViewJump(options: AskAiCodeViewSyncOptions, optionsRef: OptionsRef, showLines: ShowLines) {
   const { codeViewContent, codeViewFormat, codeViewPage, busy } = options;
-  const pendingJumpRef = useRef<{ format: CodeViewFormat; startLine: number } | null>(null);
+  const pendingJumpRef = useRef<{ format: CodeViewFormat; startLine: number; requestedPage?: boolean } | null>(null);
   const [jumpTick, setJumpTick] = useState(0);
 
   useEffect(() => {
     if (busy) return;
     const jump = pendingJumpRef.current;
     if (!jump || jump.format !== codeViewFormat) return;
+    const line = codeViewPage?.totalLines == null ? jump.startLine
+      : Math.min(jump.startLine, Math.max(0, codeViewPage.totalLines - 1));
+    const relative = line - (codeViewPage?.startLine ?? 0);
+    if (codeViewPage && (relative < 0 || relative >= codeViewPage.lineCount)) {
+      if (jump.requestedPage) {
+        pendingJumpRef.current = null;
+      } else {
+        jump.requestedPage = true;
+        void optionsRef.current.loadCodeViewPage(line, true);
+      }
+      return;
+    }
     pendingJumpRef.current = null;
-    const relative = jump.startLine - (codeViewPage?.startLine ?? 0);
     if (relative >= 0) showLines(new Map([[relative + 1, "full" as const]]), relative + 1);
   }, [codeViewContent, codeViewFormat, codeViewPage, busy, jumpTick, showLines]);
 
@@ -95,6 +107,7 @@ function useCodeViewJump(options: AskAiCodeViewSyncOptions, optionsRef: OptionsR
     if (format !== current) {
       void fetchCodeViewContent(format);
     } else if (page && (startLine < page.startLine || startLine >= page.startLine + page.lineCount)) {
+      pendingJumpRef.current.requestedPage = true;
       void loadCodeViewPage(startLine, true);
     } else {
       setJumpTick((tick) => tick + 1);

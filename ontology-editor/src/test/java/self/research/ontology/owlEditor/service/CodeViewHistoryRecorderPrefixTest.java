@@ -2,6 +2,7 @@ package self.research.ontology.owlEditor.service;
 
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.impl.LinkedHashModel;
+import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.junit.jupiter.api.Test;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -14,6 +15,34 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 class CodeViewHistoryRecorderPrefixTest {
+
+    @Test
+    void aPrefixOnlyRewriteWithNewBlankNodeIdsHasNoStructuralHistory() {
+        OntologyHistoryService history = mock(OntologyHistoryService.class);
+        CodeViewHistoryRecorder recorder = new CodeViewHistoryRecorder(history, mock(DraftTrackingService.class));
+        var vf = SimpleValueFactory.getInstance();
+        var cls = vf.createIRI("urn:test:Class");
+        var former = vf.createBNode("former");
+        var current = vf.createBNode("current");
+        Model oldModel = new LinkedHashModel();
+        Model newModel = new LinkedHashModel();
+        oldModel.add(cls, org.eclipse.rdf4j.model.vocabulary.RDFS.SUBCLASSOF, former);
+        newModel.add(cls, org.eclipse.rdf4j.model.vocabulary.RDFS.SUBCLASSOF, current);
+        oldModel.add(former, org.eclipse.rdf4j.model.vocabulary.OWL.ONPROPERTY, vf.createIRI("urn:test:property"));
+        newModel.add(current, org.eclipse.rdf4j.model.vocabulary.OWL.ONPROPERTY, vf.createIRI("urn:test:property"));
+        newModel.setNamespace("ex", "http://example.org/");
+
+        recorder.record("p", "u", "u", oldModel, newModel, false);
+
+        verify(history).recordEdit(eq("p"), eq("u"), eq("u"), eq("prefixAdded"), isNull(), eq("ex"),
+                isNull(), eq("http://example.org/"), anyString(), isNull(), isNull(), eq(false), any());
+        org.mockito.Mockito.verifyNoMoreInteractions(history);
+
+        newModel.add(cls, org.eclipse.rdf4j.model.vocabulary.RDFS.LABEL, vf.createLiteral("Class"));
+        recorder.record("p", "u", "u", oldModel, newModel, false);
+        verify(history, never()).recordEdit(anyString(), anyString(), anyString(), eq("codeViewStructuralEdit"),
+                any(), any(), any(), any(), anyString(), any(), any(), anyBoolean(), any());
+    }
 
     @Test
     void aSinglePrefixAdditionIsRecordedWithItsPreciseOpType() {

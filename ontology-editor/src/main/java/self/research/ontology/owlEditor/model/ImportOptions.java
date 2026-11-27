@@ -8,6 +8,7 @@ import lombok.Data;
 public class ImportOptions {
     private ImportMode mode;
     private PartitionStrategy partitionStrategy;
+    private boolean preserveProjectPrefixes;
 
     public static ImportOptions defaults() {
         return ImportOptions.builder()

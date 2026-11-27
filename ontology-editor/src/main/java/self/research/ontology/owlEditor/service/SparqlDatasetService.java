@@ -45,6 +45,7 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.SequenceInputStream;
 import java.io.StringWriter;
+import java.io.Writer;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -1630,7 +1631,7 @@ public class SparqlDatasetService {
         try (RepositoryConnection conn = binding.repository().getConnection()) {
             java.io.StringWriter writer = new java.io.StringWriter();
             IRI context = conn.getValueFactory().createIRI(graphUri);
-            conn.export(projectScopedWriter(projectId, org.eclipse.rdf4j.rio.Rio.createWriter(format, writer)), context);
+            conn.export(projectScopedWriter(projectId, format, writer, false, null), context);
             return writer.toString();
         } catch (Exception e) {
             log.error("Failed to export graph {} for project {}", graphUri, projectId, e);
@@ -2103,7 +2104,9 @@ public class SparqlDatasetService {
                                         + " triples but named graph is empty after commit for project " + projectId);
                     }
 
-                    persistCapturedNamespaces(projectId, capturedNamespaces, draft, draftUserId, rdfFormat);
+                    if (!resolvedOptions.isPreserveProjectPrefixes()) {
+                        persistCapturedNamespaces(projectId, capturedNamespaces, draft, draftUserId, rdfFormat);
+                    }
 
                     // Invalidate context caches after new data is committed
                     invalidateContextCaches(projectId);
@@ -2867,7 +2870,7 @@ public class SparqlDatasetService {
                 contexts.add(conn.getValueFactory().createIRI(g));
             }
 
-            conn.export(projectScopedWriter(projectId, Rio.createWriter(format, writer)), contexts.toArray(new IRI[0]));
+            conn.export(projectScopedWriter(projectId, format, writer, false, null), contexts.toArray(new IRI[0]));
 
             String result = writer.toString();
             log.info("[TIMING] exportDataset for project {}: {} ms ({} chars, format: {})",
@@ -2911,7 +2914,7 @@ public class SparqlDatasetService {
                 }
             }
             conn.export(
-                projectScopedWriter(projectId, Rio.createWriter(format, new OutputStreamWriter(out, StandardCharsets.UTF_8)),
+                projectScopedWriter(projectId, format, new OutputStreamWriter(out, StandardCharsets.UTF_8),
                         draft, userId),
                 contexts.toArray(new IRI[0])
             );
@@ -2931,15 +2934,9 @@ public class SparqlDatasetService {
      * Projects with no stored prefixes fall back to the repository namespaces, minus GraphDB
      * system prefixes and the default prefix (which would come from whichever project set it last).
      */
-    private RDFHandler projectScopedWriter(String projectId, RDFWriter writer) {
-        return projectScopedWriter(writer, readProjectPrefixes(projectId));
-    }
-
-    private RDFHandler projectScopedWriter(String projectId, RDFWriter writer, boolean draft, String userId) {
-        return projectScopedWriter(writer, readProjectPrefixes(projectId, draft, userId));
-    }
-
-    private RDFHandler projectScopedWriter(RDFWriter writer, Map<String, String> ownPrefixes) {
+    private RDFHandler projectScopedWriter(String projectId, RDFFormat format, Writer out, boolean draft, String userId) {
+        Map<String, String> ownPrefixes = readProjectPrefixes(projectId, draft, userId);
+        RDFWriter writer = RdfExportWriter.create(format, out, ownPrefixes);
         return new org.eclipse.rdf4j.rio.helpers.RDFHandlerWrapper(writer) {
             @Override
             public void startRDF() {
