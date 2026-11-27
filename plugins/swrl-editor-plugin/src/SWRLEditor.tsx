@@ -1331,7 +1331,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                parsed.type?.toLowerCase().includes(searchLower);
       })
     : inScope;
-  const filteredAxioms = paged ? matchedAxioms : matchedAxioms.slice(0, visibleLimit);
+  const matchedSections = splitSections(matchedAxioms, ruleHeads, results.attributionComplete);
+  const filteredAxioms = paged ? matchedAxioms : matchedSections.flatMap(section => section.axioms).slice(0, visibleLimit);
   const matchedConclusions = matchedAxioms.filter(ax => ax.category === 'conclusion');
   const selectedConclusions = Array.from(selectedMap.values());
   const selectedCount = selectedConclusions.length;
@@ -1358,8 +1359,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     shown: filteredAxioms.length,
     searching: searchFilter.trim() !== '',
   });
-  const matchedSections = splitSections(matchedAxioms, ruleHeads, results.attributionComplete);
-  const sections = splitSections(filteredAxioms, ruleHeads, results.attributionComplete);
+  const sections = paged ? matchedSections : splitSections(filteredAxioms, ruleHeads, results.attributionComplete);
   const loadedTotals = { conclusions: conclusionTotal, structure: structureTotal };
   const sectionLabel = (sec: SectionData): string => {
     if (paged) {

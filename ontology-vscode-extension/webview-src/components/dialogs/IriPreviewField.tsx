@@ -1,19 +1,24 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 interface IriPreviewFieldProps {
   computedIri: string;
   isDuplicate: boolean;
   placeholder: string;
+  onChangeIri?: (value: string) => void;
 }
 
-export const IriPreviewField: React.FC<IriPreviewFieldProps> = ({ computedIri, isDuplicate, placeholder }) => (
+export const IriPreviewField: React.FC<IriPreviewFieldProps> = ({ computedIri, isDuplicate, placeholder, onChangeIri }) => {
+  const id = useId();
+  return (
   <div>
-    <label className="font-medium text-black block mb-2">IRI Preview</label>
+    <label htmlFor={id} className="font-medium text-black block mb-2">{onChangeIri ? 'IRI' : 'IRI Preview'}</label>
     <input
+      id={id}
       type="text"
-      disabled
-      value={computedIri || placeholder}
-      style={{ direction: 'rtl', textAlign: 'left' }}
+      readOnly={!onChangeIri}
+      value={computedIri}
+      placeholder={placeholder}
+      onChange={onChangeIri ? event => onChangeIri(event.target.value) : undefined}
       className={`w-full px-3 py-2 border rounded-md text-xs ${
         isDuplicate
           ? 'border-red-300 bg-red-50 text-red-700'
@@ -26,4 +31,5 @@ export const IriPreviewField: React.FC<IriPreviewFieldProps> = ({ computedIri, i
       </p>
     )}
   </div>
-);
+  );
+};

@@ -1318,9 +1318,9 @@ public class ProjectImportService {
         ImportOptions appendOptions = ImportOptions.builder()
                 .mode(ImportOptions.ImportMode.INCREMENTAL)
                 .partitionStrategy(ImportOptions.PartitionStrategy.NONE)
+                .preserveProjectPrefixes(true)
                 .build();
 
-        // Seed with direct imports from the main ontology
         toProcess.addAll(queryOwlImports(projectId));
 
         if (toProcess.isEmpty()) {
@@ -1860,10 +1860,9 @@ public class ProjectImportService {
                     .build();
 
             log.info("[Import {}] Lazy Fuseki sync starting ({} bytes)", projectId, size);
-            boolean done = datasetService.directHttpUpload(projectId, owlFile, format, size, options, null);
-            if (!done) {
-                done = datasetService.serverSideImport(projectId, owlFile, format, size, options, null);
-            }
+            boolean done = FusekiSyncCopy.upload(storageManager.projectDir(projectId), owlFile,
+                    (copy, bytes) -> datasetService.directHttpUpload(projectId, copy, format, bytes, options, null)
+                            || datasetService.serverSideImport(projectId, copy, format, bytes, options, null));
             if (!done) {
                 result.put("synced", false);
                 result.put("error", "Fuseki sync failed — is the triple store running?");

@@ -110,6 +110,9 @@ public class RollbackGraphFacts {
     }
 
     public boolean deltaHolds(String projectId, HistoryChange entry, boolean undo) {
+        if (ExactReversal.checkedDeltaOf(entry).isEmpty()) {
+            return true;
+        }
         return inGraph(projectId, entry, (graph, ask) -> {
             for (ExactDelta whole : ExactReversal.checkedDeltaOf(entry).stream().toList()) {
                 for (ExactDelta delta : DeltaBatches.split(whole, Limit.DELTA_BATCH_TRIPLES.value())) {

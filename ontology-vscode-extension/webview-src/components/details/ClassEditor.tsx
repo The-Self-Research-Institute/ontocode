@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Search, ExternalLink, AlertCircle, Edit3, User } from 'lucide-react';
+import ClassUsageTab from './ClassUsageTab';
+import { Plus, Trash2, ExternalLink, AlertCircle, Edit3, User } from 'lucide-react';
 import { Panel, AnnotationsDisplay, AxiomSubsection, CollaboratorPresenceBar } from './common';
 import { ClassExpressionDialog, MultiClassSelectorDialog, MultiPropertySelectorDialog, IRIEditorDialog, IndividualSelectorDialog, RestrictionData } from '../dialogs';
 import GCIEditorDialog from '../dialogs/GCIEditorDialog';
@@ -29,234 +30,7 @@ function conflictIrisCacheKey(reasonerLabel: string, classIri: string, draft: bo
 }
 
 type AxiomType = 'EquivalentTo' | 'SubClassOf' | 'DisjointWith';
-
-interface UsageItem {
-  type: string;
-  subject: string;
-  subjectLabel?: string;
-  predicate?: string;
-  object?: string;
-  context?: string;
-}
-
-const UsageTab: React.FC<{
-  classIri: string;
-  projectId: string;
-  label: string;
-}> = ({ classIri, projectId, label }) => {
-  const [loading, setLoading] = useState(false); 
-  const [loaded, setLoaded] = useState(false);
-  const [timedOut, setTimedOut] = useState(false);
-  const [usages, setUsages] = useState<UsageItem[]>([]);
-  const [filter, setFilter] = useState('');
-  const [showTypes, setShowTypes] = useState({
-    instance: true,
-    subclass: true,
-    superclass: true,
-    disjoint: true,
-    domain: true,
-    range: true,
-    restriction: true,
-    equivalent: true,
-    union: true,
-    intersection: true,
-    annotation: true,
-    annotation_on_class: true
-  });
-
-  const usageAbortRef = React.useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    usageAbortRef.current?.abort();
-    setLoading(false);
-    setLoaded(false);
-    setTimedOut(false);
-    setUsages([]);
-    setFilter('');
-  }, [classIri, projectId]);
-
-  const loadUsages = async () => {
-    usageAbortRef.current?.abort();
-    setLoading(true);
-    setTimedOut(false);
-    const controller = new AbortController();
-    usageAbortRef.current = controller;
-    const watchdog = setTimeout(() => {
-      controller.abort();
-      setLoading(false);
-      setTimedOut(true);
-    }, 30_000);
-    try {
-      const response = await apiClient.get<any>(
-        withDraftScope(`/api/ontology/classes/usage/${projectId}?classIri=${encodeURIComponent(classIri)}`),
-        undefined,
-        { signal: controller.signal },
-      );
-      const usageData = response?.data?.data || response?.data || response || [];
-      console.log('[UsageTab] Loaded usages:', usageData);
-      setUsages(Array.isArray(usageData) ? usageData : []);
-      setLoaded(true);
-    } catch (error: any) {
-      if (error?.name === 'AbortError' || controller.signal.aborted) {
-        return;
-      }
-      console.error('Failed to load usage data:', error);
-      setUsages([]);
-      setLoaded(true);
-    } finally {
-      clearTimeout(watchdog);
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!loaded && !loading && !timedOut) {
-      void loadUsages();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classIri, projectId, loaded, loading, timedOut]);
-
-  const filteredUsages = usages.filter(u =>
-    (u.subjectLabel || u.subject || '').toLowerCase().includes(filter.toLowerCase()) &&
-    showTypes[u.type as keyof typeof showTypes] !== false
-  );
-  const usagesByType = {
-    instance: filteredUsages.filter(u => u.type === 'instance'),
-    subclass: filteredUsages.filter(u => u.type === 'subclass'),
-    superclass: filteredUsages.filter(u => u.type === 'superclass'),
-    disjoint: filteredUsages.filter(u => u.type === 'disjoint'),
-    domain: filteredUsages.filter(u => u.type === 'domain'),
-    range: filteredUsages.filter(u => u.type === 'range'),
-    restriction: filteredUsages.filter(u => u.type === 'restriction'),
-    equivalent: filteredUsages.filter(u => u.type === 'equivalent'),
-    union: filteredUsages.filter(u => u.type === 'union'),
-    intersection: filteredUsages.filter(u => u.type === 'intersection'),
-    annotation: filteredUsages.filter(u => u.type === 'annotation'),
-    annotation_on_class: filteredUsages.filter(u => u.type === 'annotation_on_class')
-  };
-
-  if (!loaded && !loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[200px] py-12 p-6 text-center">
-        {timedOut ? (
-          <>
-            <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 max-w-sm">
-              Usage query timed out — the server is under load. Wait a moment, then try again.
-            </div>
-            <button
-              onClick={loadUsages}
-              data-testid="load-usage-btn"
-              className="px-4 py-2 text-sm rounded bg-amber-600 text-white hover:bg-amber-700"
-            >
-              Retry
-            </button>
-          </>
-        ) : (
-          <div className="text-sm text-gray-500">Loading usage information...</div>
-        )}
-      </div>
-    );
-  }
-
-  if (loading) {
-    return <div className="p-4 text-sm text-gray-500">Loading usage information...</div>;
-  }
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="p-2 border-b border-gray-200 space-y-2">
-        <div className="text-xs text-gray-600">
-          Found <span className="font-bold text-purple-600">{usages.length}</span> uses of <span className="font-semibold">{label}</span>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <div className="flex-1 relative">
-            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Filter usages..."
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              className="w-full pl-7 pr-2 py-1 text-xs rounded focus:outline-none theme-input"
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2 text-xs">
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.instance} onChange={(e) => setShowTypes({...showTypes, instance: e.target.checked})} className="w-3 h-3" />
-            <span>instances ({usagesByType.instance.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.subclass} onChange={(e) => setShowTypes({...showTypes, subclass: e.target.checked})} className="w-3 h-3" />
-            <span>subclasses ({usagesByType.subclass.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.superclass} onChange={(e) => setShowTypes({...showTypes, superclass: e.target.checked})} className="w-3 h-3" />
-            <span>superclasses ({usagesByType.superclass.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.disjoint} onChange={(e) => setShowTypes({...showTypes, disjoint: e.target.checked})} className="w-3 h-3" />
-            <span>disjoints ({usagesByType.disjoint.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.domain} onChange={(e) => setShowTypes({...showTypes, domain: e.target.checked})} className="w-3 h-3" />
-            <span>domains ({usagesByType.domain.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.range} onChange={(e) => setShowTypes({...showTypes, range: e.target.checked})} className="w-3 h-3" />
-            <span>ranges ({usagesByType.range.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.restriction} onChange={(e) => setShowTypes({...showTypes, restriction: e.target.checked})} className="w-3 h-3" />
-            <span>restrictions ({usagesByType.restriction.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.equivalent} onChange={(e) => setShowTypes({...showTypes, equivalent: e.target.checked})} className="w-3 h-3" />
-            <span>equivalent ({usagesByType.equivalent.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.union} onChange={(e) => setShowTypes({...showTypes, union: e.target.checked})} className="w-3 h-3" />
-            <span>unions ({usagesByType.union.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.intersection} onChange={(e) => setShowTypes({...showTypes, intersection: e.target.checked})} className="w-3 h-3" />
-            <span>intersections ({usagesByType.intersection.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.annotation} onChange={(e) => setShowTypes({...showTypes, annotation: e.target.checked})} className="w-3 h-3" />
-            <span>annotations ({usagesByType.annotation.length})</span>
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={showTypes.annotation_on_class} onChange={(e) => setShowTypes({...showTypes, annotation_on_class: e.target.checked})} className="w-3 h-3" />
-            <span>class annotations ({usagesByType.annotation_on_class.length})</span>
-          </label>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-2">
-        {filteredUsages.length === 0 ? (
-          <div className="text-xs text-gray-400 italic text-center py-4">No usages found</div>
-        ) : (
-          <div className="space-y-1">
-            {filteredUsages.map((usage, idx) => (
-              <div key={idx} className="p-2 bg-gray-50 rounded border border-gray-200 hover:bg-gray-100">
-                <div className="flex items-start gap-2">
-                  <span className="text-xs font-semibold text-orange-600 uppercase min-w-[80px]">{usage.type}</span>
-                  <div className="flex-1 text-xs">
-                    <div className="font-mono text-purple-700">{usage.subjectLabel || usage.subject}</div>
-                    {usage.context && <div className="text-gray-600 mt-1">{usage.context}</div>}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
+type DirectParent = { iri: string; label: string };
 
 const ClassEditor: React.FC<{
   item: TreeNode;
@@ -290,7 +64,8 @@ const ClassEditor: React.FC<{
   onViewOnlyAction?: () => void;
   existingIris?: string[];
   selectedReasoner?: string;
-}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction, existingIris = [], selectedReasoner = 'HERMIT' }) => {
+  syncMode?: 'private' | 'public';
+}> = ({ item, projectId, onUpdate, onAddAnnotation, onEditAnnotation, onDeleteAnnotation, activeTheme, classHierarchy = [], onToggleNode, expandedNodes = [], onAddClass, onAddClassInline, onDeleteClass, onRefreshClasses, onAddObjectProperty, onAddDataProperty, onDeleteProperty, metadata, objectPropertyHierarchy: propObjectPropertyHierarchy, dataPropertyHierarchy: propDataPropertyHierarchy, objectProperties: propObjectProperties, dataProperties: propDataProperties, viewMode = 'asserted', individuals: propIndividuals = [], onAddIndividual, onDeleteIndividual, onRefreshIndividuals, isViewOnly = false, onViewOnlyAction, existingIris = [], selectedReasoner = 'HERMIT', syncMode = 'public' }) => {
   const { user } = useAuth();
   const collaboration = useCollaboration();
 
@@ -306,6 +81,8 @@ const ClassEditor: React.FC<{
   const [axiomsLoaded, setAxiomsLoaded] = useState(false);
   const [descriptionTimedOut, setDescriptionTimedOut] = useState(false);
   const [classDetails, setClassDetails] = useState<any>(null);
+  const [parentResult, setParentResult] = useState<{ key: string; parents: DirectParent[] | null }>();
+  const automaticDescriptionKey = useRef('');
   const [conflictIris, setConflictIris] = useState<Set<string> | undefined>(undefined);
   const [lastEditAt, setLastEditAt] = useState(0);
 
@@ -516,6 +293,9 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   }
 };
   const inferredReasonerKey = viewMode === 'inferred' ? selectedReasoner : null;
+  const readingUserId = readerUserId(user);
+  const entityScopeKey = JSON.stringify([projectId, item.id, syncMode, readingUserId]);
+  const descriptionKey = JSON.stringify([entityScopeKey, inferredReasonerKey]);
   useEffect(() => {
     if (!item.id || !projectId) return;
 
@@ -534,69 +314,54 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       setAllClassesLookup(new Map());
     }
 
-    const watchdog = setTimeout(() => {
-      if (alive) {
-        setLoadingAnnotations(false);
-        setLoadingDetails(false);
-      }
-    }, 30000);
-
-    const debounceTimer = setTimeout(() => {
-      if (!alive) return;
-      runLoad();
-    }, 200);
-
-    const runLoad = () => {
-    const currentId = item.id;
+    const query = `classIri=${encodeURIComponent(item.id)}${readingUserId ? `&userId=${encodeURIComponent(readingUserId)}` : ''}`;
     const annotationsAtFetchStart = item.annotations;
-    const shortIri = currentId.split(/[#/]/).pop() || currentId;
-    console.log(`[perf][ClassEditor] ▶ select "${shortIri}" — annotations only (axioms on Description tab)`);
-
-    (async () => {
-      const t1 = performance.now();
+    const loadAnnotations = async () => {
       try {
-        const annUserId = readerUserId(user);
-        const annUserParam = annUserId ? `&userId=${encodeURIComponent(annUserId)}` : '';
         const annResp = await apiClient.get<any>(
-          withDraftScope(`/api/ontology/classes/annotations/${projectId}?classIri=${encodeURIComponent(currentId)}${annUserParam}`),
+          withDraftScope(`/api/ontology/classes/annotations/${projectId}?${query}`),
           undefined,
-          { signal },
+          { signal, timeout: 10_000 },
         );
-        if (!alive || currentId !== item.id) return;
+        if (!alive) return;
         const annData = annResp?.data?.data || annResp?.data || annResp;
-        if (annData && typeof annData === "object") {
-          setClassDetails((prev: any) => ({ ...(prev || {}), ...annData }));
-          if (annData.annotations) {
-            const latestItem = itemRef.current;
-            if (latestItem.id === currentId && latestItem.annotations === annotationsAtFetchStart) {
-              onUpdate({ ...latestItem, annotations: annData.annotations } as TreeNode);
-            } else {
-              console.log(`[perf][ClassEditor] Skipping stale annotations response for "${shortIri}" — local annotations changed since fetch started`);
-            }
-          }
-          console.log(`[perf][ClassEditor] ✓ annotations in ${(performance.now() - t1).toFixed(0)}ms`);
+        const latestItem = itemRef.current;
+        if (annData?.annotations && latestItem.id === item.id && latestItem.annotations === annotationsAtFetchStart) {
+          onUpdate({ ...latestItem, annotations: annData.annotations } as TreeNode);
         }
       } catch (e) {
-        console.warn(`[perf][ClassEditor] ✗ annotations failed`, e);
+        if (alive) console.warn('[ClassEditor] Could not load annotations', e);
       } finally {
-        if (alive && currentId === item.id) setLoadingAnnotations(false);
+        if (alive) setLoadingAnnotations(false);
       }
-    })();
-
-    if (!propObjectProperties?.length && !propDataProperties?.length) {
-      loadProperties();
-    }
     };
+    const loadParents = async () => {
+      try {
+        const response = await apiClient.get<any>(
+          withDraftScope(`/api/ontology/classes/details/${projectId}?${query}&view=parents`),
+          undefined,
+          { signal, timeout: 10_000 },
+        );
+        const parents = response?.data?.data || response?.data || response;
+        if (alive) setParentResult({ key: descriptionKey, parents: Array.isArray(parents) ? parents : null });
+      } catch {
+        if (alive) setParentResult({ key: descriptionKey, parents: null });
+      }
+    };
+
+    void loadAnnotations();
+    void loadParents();
+    if (!propObjectProperties?.length && !propDataProperties?.length) void loadProperties();
 
     return () => {
       alive = false;
       abortController.abort();
       descriptionAbortRef.current?.abort();
-      clearTimeout(watchdog);
-      clearTimeout(debounceTimer);
+      detailsLoadGenRef.current++;
+      automaticDescriptionKey.current = '';
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, projectId, viewMode, inferredReasonerKey]);
+  }, [descriptionKey]);
 
   useEffect(() => {
     if (isEditorOpen || isGCAEditorOpen || (classDetails?.generalClassAxioms?.length ?? 0) > 0) {
@@ -743,6 +508,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
   const loadClassDetails = async (signal?: AbortSignal, afterMutation?: boolean): Promise<any | null> => {
     const loadGen = ++detailsLoadGenRef.current;
+    const annotationsAtStart = itemRef.current.annotations;
     setLoadingDetails(true);
     setLoadingDetailsElapsed(0);
     const elapsedTimer = setInterval(() => {
@@ -771,7 +537,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
           signal ? { signal } : undefined,
         );
       }
-      if (loadGen !== detailsLoadGenRef.current) {
+      if (signal?.aborted || loadGen !== detailsLoadGenRef.current) {
         console.log("[ClassEditor] Discarding stale class details response");
         return null;
       }
@@ -811,7 +577,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
           };
         } catch (err) {
           console.warn("[ClassEditor] Failed to load inferred details:", err);
-          if (viewMode === "inferred") {
+          if (!signal?.aborted && loadGen === detailsLoadGenRef.current) {
             notificationService.warning(
               "Inferred axioms unavailable",
               friendlyApiErrorMessage(err, "Reasoner timed out — showing asserted axioms only."),
@@ -820,20 +586,24 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
         }
       }
 
+      if (signal?.aborted || loadGen !== detailsLoadGenRef.current) return null;
       setClassDetails(details);
       setAxiomsLoaded(true);
       if (afterMutation) {
         setLastEditAt(Date.now());
       }
 
+      const latestItem = itemRef.current;
       const updatedItem: TreeNode = {
-        ...item,
-        annotations: details.annotations || item.annotations,
-        subClassOfAxioms: details.subClassOfAxioms || item.subClassOfAxioms,
-        equivalentClassesAxioms: details.equivalentClassesAxioms || item.equivalentClassesAxioms,
-        disjointClassesAxioms: details.disjointClassesAxioms || item.disjointClassesAxioms,
-        disjointUnionAxioms: details.disjointUnionAxioms || item.disjointUnionAxioms,
-        hasKeyAxioms: details.hasKeyAxioms || item.hasKeyAxioms,
+        ...latestItem,
+        annotations: latestItem.annotations === annotationsAtStart
+          ? details.annotations || latestItem.annotations
+          : latestItem.annotations,
+        subClassOfAxioms: details.subClassOfAxioms || latestItem.subClassOfAxioms,
+        equivalentClassesAxioms: details.equivalentClassesAxioms || latestItem.equivalentClassesAxioms,
+        disjointClassesAxioms: details.disjointClassesAxioms || latestItem.disjointClassesAxioms,
+        disjointUnionAxioms: details.disjointUnionAxioms || latestItem.disjointUnionAxioms,
+        hasKeyAxioms: details.hasKeyAxioms || latestItem.hasKeyAxioms,
         inferredSubClassOfAxioms: details.inferredSubClassOfAxioms,
         inferredEquivalentClassesAxioms: details.inferredEquivalentClassesAxioms,
         isUnsatisfiable: details.isUnsatisfiable,
@@ -842,7 +612,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       onUpdate(updatedItem);
       return details;
     } catch (error) {
-      if (loadGen !== detailsLoadGenRef.current) return null;
+      if (signal?.aborted || loadGen !== detailsLoadGenRef.current) return null;
       console.error("Failed to load class details:", error);
       notificationService.error(
         "Description not ready",
@@ -910,11 +680,13 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
   };
 
   useEffect(() => {
-    if (activeTab === 'description' && !axiomsLoaded && !loadingDetails && !descriptionTimedOut) {
+    if (activeTab === 'description' && parentResult?.key === descriptionKey && !axiomsLoaded && !loadingDetails
+        && automaticDescriptionKey.current !== descriptionKey) {
+      automaticDescriptionKey.current = descriptionKey;
       void loadDescription();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, axiomsLoaded, loadingDetails, descriptionTimedOut, item?.id]);
+  }, [activeTab, axiomsLoaded, loadingDetails, parentResult, descriptionKey]);
 
   const loadDescription = async () => {
     descriptionAbortRef.current?.abort();
@@ -922,12 +694,16 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
     descriptionAbortRef.current = controller;
     setDescriptionTimedOut(false);
     const watchdog = setTimeout(() => {
+      if (controller.signal.aborted || descriptionAbortRef.current !== controller) return;
       controller.abort();
       setLoadingDetails(false);
       setDescriptionTimedOut(true);
     }, isDesktop() ? 45_000 : 90_000);
     try {
-      await Promise.all([loadClassDetails(controller.signal), loadInstances(controller.signal)]);
+      const [details] = await Promise.all([loadClassDetails(controller.signal), loadInstances(controller.signal)]);
+      if (!details && !controller.signal.aborted && descriptionAbortRef.current === controller) {
+        setDescriptionTimedOut(true);
+      }
     } finally {
       clearTimeout(watchdog);
     }
@@ -949,11 +725,11 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
       const instances = response?.data?.data || response?.data || response || [];
       const list = Array.isArray(instances) ? instances : [];
       console.log("[ClassEditor] Class instances loaded:", list.length);
-      setClassInstances(list);
+      if (!signal?.aborted) setClassInstances(list);
       return list;
     } catch (error) {
       console.error("Failed to load class instances:", error);
-      setClassInstances([]);
+      if (!signal?.aborted) setClassInstances([]);
       return [];
     }
   };
@@ -2063,6 +1839,7 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
   const annotationCount = Object.keys(item.annotations || {}).length;
   const displayAnnotations = item.annotations || {};
+  const directParents = parentResult?.key === descriptionKey ? parentResult.parents : undefined;
 
   const editingGCADefinition = editingGCAId
     ? (classDetails?.generalClassAxioms?.find((a: Axiom) => a.id === editingGCAId)?.definition ?? '')
@@ -2074,19 +1851,12 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {loadingAnnotations && (
+      {activeTab === "annotations" && loadingAnnotations && (
         <div className="sticky top-0 left-0 right-0 bg-blue-50 border-b border-blue-200 text-xs text-blue-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm pointer-events-none">
           <div className="animate-spin mr-2 h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
           Loading annotations for <span className="font-semibold mx-1">{item.label || "class"}</span>…
         </div>
       )}
-      {loadingDetails && (
-        <div className="sticky top-0 left-0 right-0 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 px-3 py-1.5 z-20 flex items-center justify-center shadow-sm pointer-events-none">
-          <div className="animate-spin mr-2 h-3 w-3 border-2 border-amber-600 border-t-transparent rounded-full"></div>
-          Loading description for <span className="font-semibold mx-1">{item.label || "class"}</span>…
-        </div>
-      )}
-
       <div className="bg-gray-100 border-b border-gray-200 p-3 flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-hidden">
           <div className="bg-yellow-200 text-yellow-800 p-1 rounded text-xs font-bold">C</div>
@@ -2128,7 +1898,8 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
 
       <div className="flex-1 overflow-y-auto bg-gray-50 p-3 min-h-0">
         <div className={activeTab !== "usage" ? "hidden" : ""}>
-          <UsageTab classIri={item.id} projectId={projectId} label={item.label} />
+          <ClassUsageTab key={entityScopeKey} classIri={item.id} projectId={projectId} label={item.label}
+            active={activeTab === "usage"} />
         </div>
 
         {activeTab === "annotations" && (
@@ -2161,13 +1932,35 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
               <span className="text-xs font-medium text-stone-700">Description: {item.label}</span>
             </div>
 
+            {!axiomsLoaded && (
+              <section aria-label="Direct parents" className="bg-white border-x border-b border-gray-200 p-3">
+                <h3 className="text-xs font-semibold text-stone-700">Direct parents</h3>
+                {directParents?.length ? (
+                  <ul className="mt-1 space-y-1">
+                    {directParents.map(parent => (
+                      <li key={parent.iri}>
+                        <button type="button" onClick={() => handleNavigate(parent.iri, 'class')}
+                          className="text-left text-xs text-purple-700 hover:underline" title={parent.iri}>
+                          {parent.label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-xs text-gray-500">
+                    {directParents === undefined ? 'Loading direct parents…'
+                      : directParents === null ? 'Direct parents unavailable.' : 'No named direct parents.'}
+                  </p>
+                )}
+              </section>
+            )}
+
             {!axiomsLoaded && !loadingDetails && (
-              <div className="flex flex-col items-center justify-center min-h-[220px] py-10 px-6 text-center bg-white border border-t-0 border-gray-200 rounded-b-sm">
+              <div className="flex flex-col items-center px-3 py-3 text-center bg-white border border-t-0 border-gray-200 rounded-b-sm">
                 {descriptionTimedOut ? (
                   <>
                     <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 max-w-sm">
-                      Description load timed out — the server is under load or the ontology is very large.
-                      Switch to <strong>Asserted</strong> mode for faster results, or try again.
+                      Could not load the remaining axioms and restrictions.
                     </div>
                     <button
                       type="button"
@@ -2181,14 +1974,14 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
                 ) : (
                   <div className="flex items-center gap-2 text-sm text-gray-500">
                     <div className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
-                    <span>Loading description…</span>
+                    <span>Loading axioms and restrictions…</span>
                   </div>
                 )}
               </div>
             )}
 
             {loadingDetails && !axiomsLoaded && (
-              <div className="flex flex-col items-center justify-center min-h-[160px] py-8 bg-white border border-t-0 border-gray-200 rounded-b-sm text-sm text-gray-500 gap-2">
+              <div className="flex flex-col items-center py-3 bg-white border border-t-0 border-gray-200 rounded-b-sm text-sm text-gray-500 gap-2">
                 <div className="flex items-center gap-2">
                   <div className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full" />
                   <span>
@@ -2217,16 +2010,16 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
             {axiomsLoaded && (
             <div className={`bg-white border border-t-0 border-gray-200 rounded-b-sm p-3 space-y-4 transition-opacity duration-150 ${isSavingAxiom ? "opacity-50 pointer-events-none" : ""}`}>
               <AxiomSubsection
-                title="Equivalent To"
+                title="SubClass Of"
                 viewMode={viewMode}
-                axioms={classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms}
-                inferredAxioms={classDetails?.inferredEquivalentClassesAxioms}
-                onAdd={(def) => handleAddAxiom("EquivalentTo", def)}
-                onEdit={(id, newDef) => handleEditAxiom("EquivalentTo", id, newDef)}
-                onDelete={(id) => handleDeleteAxiom("EquivalentTo", id)}
-                onAddClick={() => openEditor("EquivalentTo", "Equivalent Class Expression")}
+                axioms={classDetails?.subClassOfAxioms || item.subClassOfAxioms}
+                inferredAxioms={classDetails?.inferredSubClassOfAxioms}
+                onAdd={(def) => handleAddAxiom("SubClassOf", def)}
+                onEdit={(id, newDef) => handleEditAxiom("SubClassOf", id, newDef)}
+                onDelete={(id) => handleDeleteAxiom("SubClassOf", id)}
+                onAddClick={() => openEditor("SubClassOf", "SubClass Expression")}
                 onEditClick={(axiom, initialTab, restrictionData) =>
-                  openEditor("EquivalentTo", "Equivalent Class Expression", axiom.definition, axiom.id, initialTab, restrictionData)
+                  openEditor("SubClassOf", "SubClass Expression", axiom.definition, axiom.id, initialTab, restrictionData)
                 }
                 properties={properties}
                 dataProperties={dataProperties}
@@ -2240,16 +2033,16 @@ const handleSaveIRI = async (newIRI: string, newLabel: string) => {
               />
 
               <AxiomSubsection
-                title="SubClass Of"
+                title="Equivalent To"
                 viewMode={viewMode}
-                axioms={classDetails?.subClassOfAxioms || item.subClassOfAxioms}
-                inferredAxioms={classDetails?.inferredSubClassOfAxioms}
-                onAdd={(def) => handleAddAxiom("SubClassOf", def)}
-                onEdit={(id, newDef) => handleEditAxiom("SubClassOf", id, newDef)}
-                onDelete={(id) => handleDeleteAxiom("SubClassOf", id)}
-                onAddClick={() => openEditor("SubClassOf", "SubClass Expression")}
+                axioms={classDetails?.equivalentClassesAxioms || item.equivalentClassesAxioms}
+                inferredAxioms={classDetails?.inferredEquivalentClassesAxioms}
+                onAdd={(def) => handleAddAxiom("EquivalentTo", def)}
+                onEdit={(id, newDef) => handleEditAxiom("EquivalentTo", id, newDef)}
+                onDelete={(id) => handleDeleteAxiom("EquivalentTo", id)}
+                onAddClick={() => openEditor("EquivalentTo", "Equivalent Class Expression")}
                 onEditClick={(axiom, initialTab, restrictionData) =>
-                  openEditor("SubClassOf", "SubClass Expression", axiom.definition, axiom.id, initialTab, restrictionData)
+                  openEditor("EquivalentTo", "Equivalent Class Expression", axiom.definition, axiom.id, initialTab, restrictionData)
                 }
                 properties={properties}
                 dataProperties={dataProperties}

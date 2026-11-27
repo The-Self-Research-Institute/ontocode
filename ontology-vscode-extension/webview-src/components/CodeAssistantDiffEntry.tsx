@@ -86,7 +86,7 @@ export const CodeAssistantDiffEntry: React.FC<CodeAssistantDiffEntryProps> = ({ 
             onClick={() => onShowInCodeView(entry.targetPath, entry.startLine as number)}
             className="ml-auto font-sans font-semibold text-blue-700 hover:underline"
           >
-            Show in Code View
+            Open {formatName(entry.targetPath)} in Code View
           </button>
         )}
       </div>

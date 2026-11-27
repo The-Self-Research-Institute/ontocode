@@ -406,9 +406,7 @@ public class DesktopHierarchyService {
             boolean isAncestor = !current.equals(cls);
             ont.subClassAxiomsForSubClass(current).forEach(ax -> {
                 OWLClassExpression superCe = ax.getSuperClass();
-                if (superCe.isAnonymous()) {
-                    addAnonymousAncestor(ont, current, superCe, seenAncestorKeys, anonymousAncestorAxioms, false);
-                } else if (!superCe.isOWLThing() && !superCe.isOWLNothing()) {
+                if (!superCe.isAnonymous() && !superCe.isOWLThing() && !superCe.isOWLNothing()) {
                     OWLClass superNamed = superCe.asOWLClass();
                     if (isAncestor && !superNamed.equals(cls)) {
                         addNamedAncestor(ont, current, superNamed, seenAncestorKeys, anonymousAncestorAxioms);
@@ -416,6 +414,8 @@ public class DesktopHierarchyService {
                     if (visited.add(superNamed)) {
                         queue.add(superNamed);
                     }
+                } else if (isAncestor && superCe.isAnonymous()) {
+                    addAnonymousAncestor(ont, current, superCe, seenAncestorKeys, anonymousAncestorAxioms, false);
                 }
             });
             if (isAncestor) {

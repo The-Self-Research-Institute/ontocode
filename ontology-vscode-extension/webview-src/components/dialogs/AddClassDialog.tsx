@@ -30,6 +30,7 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
   existingIris = [],
 }) => {
   const [name, setName] = useState('');
+  const [iriOverride, setIriOverride] = useState<string | null>(null);
   const desktop = isDesktop();
 
   if (!isOpen) return null;
@@ -39,13 +40,19 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
     name,
     existingIris,
     iriPreferences,
+    iriOverride,
   );
+
+  const handleClose = () => {
+    setName('');
+    setIriOverride(null);
+    onClose();
+  };
 
   const handleCreate = () => {
     if (canCreate) {
       onCreate(trimmedName, computedIri);
-      setName('');
-      onClose();
+      handleClose();
     }
   };
 
@@ -53,11 +60,6 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
     if (e.key === 'Enter') {
       handleCreate();
     }
-  };
-
-  const handleClose = () => {
-    setName('');
-    onClose();
   };
 
   const getTitle = () => {
@@ -99,6 +101,7 @@ const AddClassDialog: React.FC<AddClassDialogProps> = ({
           </div>
           <IriPreviewField
             computedIri={computedIri}
+            onChangeIri={setIriOverride}
             isDuplicate={isDuplicate}
             placeholder="(auto-generated from ontology IRI + class name)"
           />

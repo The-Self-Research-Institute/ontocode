@@ -17,6 +17,7 @@ final class PrefixScanner {
     private static final Pattern TURTLE = Pattern.compile(
             "^\\s*(?:@prefix|PREFIX)\\s+([^\\s:]*):\\s*<([^>]*)>", Pattern.CASE_INSENSITIVE);
     private static final Pattern XML = Pattern.compile("xmlns(?::([\\w.-]+))?\\s*=\\s*[\"']([^\"']*)[\"']");
+    private static final Pattern XML_ROOT = Pattern.compile("<(?:[^\\s<>/:]+:)?(?:RDF|Ontology)(?=[\\s>])");
     private static final Pattern FUNCTIONAL = Pattern.compile("^\\s*Prefix\\(\\s*([^:=\\s]*):?\\s*=\\s*<([^>]*)>\\s*\\)");
     private static final Pattern MANCHESTER = Pattern.compile("^\\s*Prefix:\\s*([^:\\s]*):\\s*<([^>]*)>");
 
@@ -71,7 +72,7 @@ final class PrefixScanner {
             String line;
             int count = 0;
             while ((line = reader.readLine()) != null && count++ < Limit.PREFIX_SCAN_MAX_LINES.value()) {
-                if (!inRootTag && (line.contains("<rdf:RDF") || line.contains("<Ontology") || line.contains("<RDF"))) {
+                if (!inRootTag && XML_ROOT.matcher(line).find()) {
                     inRootTag = true;
                 }
                 if (!inRootTag) {

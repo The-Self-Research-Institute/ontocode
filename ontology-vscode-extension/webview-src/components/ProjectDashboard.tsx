@@ -170,11 +170,10 @@ const ProjectDashboard: React.FC<ProjectDashboardProps> = ({
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
-      <ToastNotification toasts={toasts} onDismiss={dismissToast} />
-
       <DashboardBanners pendingFile={pendingFile} onOpenLocalFile={onOpenLocalFile} />
 
       <DashboardHeader
+        notifications={<ToastNotification showHistory toasts={toasts} onDismiss={dismissToast} />}
         user={user}
         currentWorkspaceName={currentWorkspaceName}
         appVersion={appVersion}

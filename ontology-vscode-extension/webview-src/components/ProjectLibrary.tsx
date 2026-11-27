@@ -46,6 +46,7 @@ interface FileItem {
   id: string;
   name: string;
   size: number;
+  savedSize?: number;
   uploadedBy: string;
   uploadedByUserId: string;
   uploadedAt: string;
@@ -608,8 +609,15 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
         setUserProjectRole(response.userProjectRole);
       }
 
-      const filesArray = Array.isArray(fileList) ? fileList : [];
+      const filesArray: FileItem[] = Array.isArray(fileList) ? fileList : [];
       setFiles(filesArray);
+      if (filesArray.length > 0) {
+        void apiClient.get<Record<string, number>>(`/api/ontology/files/saved-sizes?libraryId=${encodeURIComponent(projectId)}`)
+          .then(sizes => setFiles(current => current === filesArray
+            ? current.map(file => ({ ...file, savedSize: sizes?.[file.id] }))
+            : current))
+          .catch(() => undefined);
+      }
       return filesArray;
     } catch (error) {
       console.error("Error loading files:", error);
@@ -1369,7 +1377,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                   )}
 
                   <div className="flex items-center gap-4 text-xs text-gray-500 mb-2">
-                    <span>{formatFileSize(file.size)}</span>
+                    <span title={file.savedSize == null ? "Original upload size" : "Saved file size"}>{formatFileSize(file.savedSize ?? file.size)}{file.savedSize == null ? " uploaded" : ""}</span>
                     <span>•</span>
                     <span className="flex items-center gap-1">
                       <Clock size={12} />
@@ -1509,7 +1517,7 @@ const ProjectLibrary: React.FC<ProjectLibraryProps> = ({
                           </div>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{formatFileSize(file.size)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600" title={file.savedSize == null ? "Original upload size" : "Saved file size"}>{formatFileSize(file.savedSize ?? file.size)}{file.savedSize == null ? " uploaded" : ""}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{file.uploadedBy}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{formatDate(file.uploadedAt)}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm">

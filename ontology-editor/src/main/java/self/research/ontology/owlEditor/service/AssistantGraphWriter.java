@@ -97,8 +97,10 @@ final class AssistantGraphWriter {
                     userEmail, removed, added, origin);
             operationService.markCommitted(operation);
             seedIndex(sourceFile, patch);
-            datasetService.captureAndPersistPrefixesFromFile(projectId, splicedFile, group.getTargetPath(),
-                    group.isDraft(), group.getDraftUserId());
+            if (editsTouchPrefixes(group)) {
+                datasetService.captureAndPersistPrefixesFromFile(projectId, splicedFile, group.getTargetPath(),
+                        group.isDraft(), group.getDraftUserId());
+            }
             perf.mark("patchFinish");
             log.info("[Assistant] Patched {} removed and {} added triples for group {} instead of reimporting",
                     removed.size(), added.size(), group.getId());

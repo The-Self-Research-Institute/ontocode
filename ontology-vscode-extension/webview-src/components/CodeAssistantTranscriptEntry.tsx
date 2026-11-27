@@ -33,11 +33,18 @@ function actionLabel(action: CodeAssistantAction): string {
   return ACTIONS.find((a) => a.id === action)?.label ?? action;
 }
 
-const ReviewCard: React.FC<{ entry: ReviewEntry; review: ReviewHandlers }> = ({ entry, review }) => (
+export function proposalExplanation(entry: Pick<ReviewEntry, "groups" | "explanation">): string | undefined {
+  if (!entry.groups.some(group => group.diff.some(diff => typeof diff.startLine === "number"))) return entry.explanation;
+  return entry.explanation?.replace(/\blines?\s+(?:#\s*)?\d+(?:\s*(?:[-–—]|through|to)\s*\d+)?\b/gi, "the location in the diff below");
+}
+
+const ReviewCard: React.FC<{ entry: ReviewEntry; review: ReviewHandlers }> = ({ entry, review }) => {
+  const explanation = proposalExplanation(entry);
+  return (
   <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 chat-message-enter">
-    {entry.explanation && (
+    {explanation && (
       <div className="text-sm text-gray-800">
-        <CodeAssistantMarkdown text={entry.explanation} />
+        <CodeAssistantMarkdown text={explanation} />
       </div>
     )}
     <CodeAssistantReviewGroups
@@ -58,7 +65,8 @@ const ReviewCard: React.FC<{ entry: ReviewEntry; review: ReviewHandlers }> = ({ 
     />
     <CodeAssistantContextUsed events={entry.contextUsed} usage={entry.usage} />
   </div>
-);
+  );
+};
 
 export const CodeAssistantTranscriptEntry: React.FC<TranscriptEntryProps> = (props) => {
   const { entry } = props;

@@ -132,15 +132,15 @@ public final class OwlApiQuerySupport {
         } else if (ce instanceof OWLDataMinCardinality) {
             OWLDataMinCardinality r = (OWLDataMinCardinality) ce;
             String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
-            return p + " min " + r.getCardinality() + " " + dataRangeToString(r.getFiller());
+            return p + " min " + r.getCardinality() + (r.isQualified() ? " " + dataRangeToString(r.getFiller()) : "");
         } else if (ce instanceof OWLDataMaxCardinality) {
             OWLDataMaxCardinality r = (OWLDataMaxCardinality) ce;
             String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
-            return p + " max " + r.getCardinality() + " " + dataRangeToString(r.getFiller());
+            return p + " max " + r.getCardinality() + (r.isQualified() ? " " + dataRangeToString(r.getFiller()) : "");
         } else if (ce instanceof OWLDataExactCardinality) {
             OWLDataExactCardinality r = (OWLDataExactCardinality) ce;
             String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
-            return p + " exactly " + r.getCardinality() + " " + dataRangeToString(r.getFiller());
+            return p + " exactly " + r.getCardinality() + (r.isQualified() ? " " + dataRangeToString(r.getFiller()) : "");
         } else if (ce instanceof OWLDataHasValue) {
             OWLDataHasValue r = (OWLDataHasValue) ce;
             String p = (r.getProperty() instanceof OWLDataProperty) ? getLabel(ont, ((OWLDataProperty) r.getProperty()).getIRI()) : "?";
@@ -165,6 +165,9 @@ public final class OwlApiQuerySupport {
     }
 
     public static String dataRangeToString(OWLDataRange range) {
+        if (range instanceof OWLDatatypeRestriction) {
+            return new org.semanticweb.owlapi.manchestersyntax.renderer.ManchesterOWLSyntaxOWLObjectRendererImpl().render(range);
+        }
         if (range instanceof OWLDatatype) {
             IRI dtIri = ((OWLDatatype) range).getIRI();
             String full = dtIri.toString();

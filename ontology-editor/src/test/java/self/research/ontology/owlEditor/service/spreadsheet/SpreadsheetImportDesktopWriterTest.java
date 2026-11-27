@@ -6,6 +6,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.owlEditor.cache.ProjectOntologyCache;
 import self.research.ontology.owlEditor.service.DesktopFusekiSyncScheduler;
+import self.research.ontology.owlEditor.service.DesktopDraftSaver;
 import self.research.ontology.owlEditor.service.DesktopOntologyLoader;
 import self.research.ontology.owlEditor.service.InMemorySparqlOntologyMutator;
 import self.research.ontology.owlEditor.service.OntologyMutationService;
@@ -45,7 +46,7 @@ class SpreadsheetImportDesktopWriterTest {
 
     @BeforeEach
     void setUp() {
-        writer = new SpreadsheetImportDesktopWriter(provider(cache), provider(mutator), provider(loader),
+        writer = new SpreadsheetImportDesktopWriter(provider(cache), provider(mutator), provider(new DesktopDraftSaver(loader, cache)),
             provider(imports), provider(scheduler), provider(mutations), storage);
         ReflectionTestUtils.setField(writer, "desktopMode", true);
         ReflectionTestUtils.setField(writer, "owlApiFirst", true);

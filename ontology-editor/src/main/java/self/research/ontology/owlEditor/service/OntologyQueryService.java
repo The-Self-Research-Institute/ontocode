@@ -1874,7 +1874,7 @@ public class OntologyQueryService {
 
     private String buildRestrictionSparqlBody(String selectKw, String extraVar, String preamble, String link) {
         return PREFIXES + """
-            %s %s ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card WHERE {
+            %s %s ?restriction ?prop ?propLabel ?restrictionType ?filler ?fillerLabel ?card ?unqualified ?datatype ?facet ?bound WHERE {
               %s
               {
                 %s
@@ -1917,21 +1917,28 @@ public class OntologyQueryService {
                 FILTER NOT EXISTS { ?restriction owl:minQualifiedCardinality ?any }
                 BIND("min" AS ?restrictionType)
                 BIND(owl:Thing AS ?filler)
+                BIND(true AS ?unqualified)
               } UNION {
                 %s
                 ?restriction owl:maxCardinality ?card .
                 FILTER NOT EXISTS { ?restriction owl:maxQualifiedCardinality ?any }
                 BIND("max" AS ?restrictionType)
                 BIND(owl:Thing AS ?filler)
+                BIND(true AS ?unqualified)
               } UNION {
                 %s
                 ?restriction owl:cardinality ?card .
                 FILTER NOT EXISTS { ?restriction owl:qualifiedCardinality ?any }
                 BIND("exactly" AS ?restrictionType)
                 BIND(owl:Thing AS ?filler)
+                BIND(true AS ?unqualified)
               }
               OPTIONAL { ?prop rdfs:label ?propLabel }
               OPTIONAL { ?filler rdfs:label ?fillerLabel }
+              OPTIONAL {
+                ?filler owl:onDatatype ?datatype ; owl:withRestrictions/rdf:rest*/rdf:first ?facetNode .
+                ?facetNode ?facet ?bound . FILTER(isLiteral(?bound))
+              }
             }
             """.formatted(selectKw, extraVar, preamble, link, link, link, link, link, link, link, link, link, link);
     }
@@ -1953,22 +1960,6 @@ public class OntologyQueryService {
         return normalizedId.equals(id);
     }
 
-    private String formatRestrictionManchester(BindingSet sol) {
-        String propIri = resource(sol, "prop");
-        String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : formatIriWithPrefix(propIri);
-        String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
-        String fillerIri = sol.hasBinding("filler") ? sol.getValue("filler").stringValue() : "";
-        String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel") : formatIriWithPrefix(fillerIri);
-        String cardinality = sol.hasBinding("card") ? literal(sol, "card") : "";
-        if ("Self".equals(fillerLabel)) {
-            return propLabel + " some Self";
-        }
-        if (!cardinality.isEmpty()) {
-            return propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
-        }
-        return propLabel + " " + restrictionType + " " + fillerLabel;
-    }
-
     /**
      * Render a Manchester-style class expression for a blank node (restriction, and/or/not, etc.).
      * Uses class-anchored SPARQL and matches blank nodes by RDF4J internal ID in Java — GraphDB
@@ -1983,14 +1974,15 @@ public class OntologyQueryService {
 
         if (classIri != null && !classIri.isBlank()) {
             for (String axiomProperty : List.of("owl:equivalentClass", "rdfs:subClassOf")) {
-                try {
-                    TupleQueryResult rs = datasetService.execSelect(projectId, buildClassRestrictionSparql(classIri, axiomProperty));
+                try (TupleQueryResult rs = datasetService.execSelect(projectId, buildClassRestrictionSparql(classIri, axiomProperty))) {
+                    List<BindingSet> matches = new ArrayList<>();
                     while (rs.hasNext()) {
                         BindingSet sol = rs.next();
                         if (blankNodeBindingMatches(sol, "restriction", normId)) {
-                            return formatRestrictionManchester(sol);
+                            matches.add(sol);
                         }
                     }
+                    if (!matches.isEmpty()) return ClassRestrictionDisplay.format(matches, this::formatIriWithPrefix);
                 } catch (Exception e) {
                     log.debug("Could not describe restriction for {} via {}: {}", blankNodeId, axiomProperty, e.getMessage());
                 }
@@ -3153,6 +3145,7 @@ WHERE {
                   { ?ancestor rdfs:subClassOf ?super . }
                   UNION
                   { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) BIND(true AS ?fromDefinition) }
+                  FILTER(?ancestor != <%1$s>)
                   FILTER(isBlank(?super) || (?super != owl:Thing && ?super != owl:Nothing && ?super != <%1$s>))
                   OPTIONAL { ?super rdfs:label ?label }
                   OPTIONAL {
@@ -3262,33 +3255,24 @@ WHERE {
 
         // --- Process restrictions (sub + equiv axes from the merged query) ---
         TupleQueryResult restrictionsRs = restrictionsFuture.join();
-        Set<String> seenRestrictions = new LinkedHashSet<>();
-        Set<String> seenEquivRestrictions = new LinkedHashSet<>();
+        Map<String, List<BindingSet>> restrictionsByAxiom = new LinkedHashMap<>();
         while (restrictionsRs.hasNext()) {
             BindingSet sol = restrictionsRs.next();
+            String id = resourceOrBlank(sol, "restriction");
+            if (id != null) restrictionsByAxiom.computeIfAbsent(literal(sol, "rel") + "|" + id, key -> new ArrayList<>()).add(sol);
+        }
+        for (List<BindingSet> rows : restrictionsByAxiom.values()) {
+            BindingSet sol = rows.getFirst();
             String restrictionNode = resourceOrBlank(sol, "restriction");
-            if (restrictionNode == null) continue;
-            String rel = sol.hasBinding("rel") ? literal(sol, "rel") : "sub";
-            boolean isEquiv = "equiv".equals(rel);
-            Set<String> seen = isEquiv ? seenEquivRestrictions : seenRestrictions;
-            if (seen.contains(restrictionNode)) continue;
-            seen.add(restrictionNode);
+            boolean isEquiv = "equiv".equals(literal(sol, "rel"));
             Map<String, String> axiom = new LinkedHashMap<>();
             String propIri = resource(sol, "prop");
-            String propLabel = sol.hasBinding("propLabel") ? literal(sol, "propLabel") : formatIriWithPrefix(propIri);
             String restrictionType = sol.hasBinding("restrictionType") ? literal(sol, "restrictionType") : "some";
             String fillerIri = sol.hasBinding("filler") ? sol.getValue("filler").stringValue() : "";
-            String fillerLabel = sol.hasBinding("fillerLabel") ? literal(sol, "fillerLabel") : formatIriWithPrefix(fillerIri);
             String cardinality = sol.hasBinding("card") ? literal(sol, "card") : "";
-            String definition;
-            if (!cardinality.isEmpty()) {
-                definition = propLabel + " " + restrictionType + " " + cardinality + " " + fillerLabel;
-            } else {
-                definition = propLabel + " " + restrictionType + " " + fillerLabel;
-            }
             axiom.put("id", restrictionNode);
             axiom.put("type", isEquiv ? "EquivalentTo" : "SubClassOf");
-            axiom.put("definition", definition);
+            axiom.put("definition", ClassRestrictionDisplay.format(rows, this::formatIriWithPrefix));
             axiom.put("isRestriction", "true");
             axiom.put("propertyIri", propIri);
             axiom.put("restrictionType", restrictionType);
@@ -3624,34 +3608,6 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
                 anonymousAncestorAxioms.add(axiom);
             }
         }
-        // Direct anonymous restrictions on this class also belong in "SubClass Of (Anonymous Ancestor)"
-        // to match desktop OWLAPI behavior (BFS starts at the current class and includes its own
-        // anonymous supers). Without this, owl:hasValue / someValuesFrom restrictions declared
-        // directly on a class are invisible in the Anonymous Ancestor section for the webapp path.
-        for (Map<String, String> subAxiom : subClassAxioms) {
-            if (!"true".equals(subAxiom.get("isRestriction")) && !"true".equals(subAxiom.get("isComplex"))) continue;
-            String restrictionId = subAxiom.get("id");
-            if (restrictionId == null) continue;
-            String ancestorKey = classIri + "|" + restrictionId;
-            if (seenAncestors.contains(ancestorKey)) continue;
-            seenAncestors.add(ancestorKey);
-            Map<String, String> entry = new LinkedHashMap<>();
-            entry.put("id", restrictionId);
-            entry.put("type", "SubClassOf");
-            entry.put("ancestorIri", classIri);
-            entry.put("navigable", "false");
-            entry.put("definition", subAxiom.get("definition") != null ? subAxiom.get("definition") : "Anonymous restriction");
-            // Carry the same structural fields subClassOfAxioms already has for this restriction,
-            // so deleting it from this mirrored section can match by content (property/filler/
-            // cardinality) instead of blank-node identity, same as the inherited-ancestor case above.
-            if ("true".equals(subAxiom.get("isRestriction"))) entry.put("isRestriction", "true");
-            if (subAxiom.get("definition") != null) entry.put("manchester", subAxiom.get("definition"));
-            if (subAxiom.get("propertyIri") != null) entry.put("propertyIri", subAxiom.get("propertyIri"));
-            if (subAxiom.get("restrictionType") != null) entry.put("restrictionType", subAxiom.get("restrictionType"));
-            if (subAxiom.get("fillerIri") != null) entry.put("fillerIri", subAxiom.get("fillerIri"));
-            if (subAxiom.get("cardinality") != null) entry.put("cardinality", subAxiom.get("cardinality"));
-            anonymousAncestorAxioms.add(entry);
-        }
         details.put("anonymousAncestorAxioms", anonymousAncestorAxioms);
 
         long duration = System.currentTimeMillis() - startTime;
@@ -3852,15 +3808,16 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
         CompletableFuture<TupleQueryResult> ancestorFuture = queryAsync(() -> {
             String q = PREFIXES + """
                 SELECT DISTINCT ?ancestor ?super ?label ?fromDefinition WHERE {
-                  <%s> rdfs:subClassOf+ ?ancestor .
+                  <%1$s> rdfs:subClassOf+ ?ancestor .
                   { ?ancestor rdfs:subClassOf ?super . }
                   UNION
                   { ?ancestor owl:equivalentClass ?super . FILTER(isBlank(?super)) BIND(true AS ?fromDefinition) }
-                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != owl:Nothing && ?super != <%s>))
+                  FILTER(?ancestor != <%1$s>)
+                  FILTER(isBlank(?super) || (?super != owl:Thing && ?super != owl:Nothing && ?super != <%1$s>))
                   OPTIONAL { ?super rdfs:label ?label }
                 }
                 LIMIT 500
-                """.formatted(classIri, classIri);
+                """.formatted(classIri);
             return datasetService.execSelect(projectId, q);
         }, queryPool);
 
@@ -4296,9 +4253,12 @@ List<String> sortedMembers = new ArrayList<>(membersByIdentity.values());
         String propsQuery = PREFIXES + """
             SELECT ?prop ?obj ?objLabel WHERE {
               <%s> ?prop ?obj .
-              FILTER(?prop != rdf:type)
-              FILTER(?prop != owl:sameAs)
-              FILTER(?prop != owl:differentFrom)
+              FILTER(?prop NOT IN (
+                rdf:type, owl:sameAs, owl:differentFrom,
+                rdfs:label, rdfs:comment, rdfs:seeAlso, rdfs:isDefinedBy,
+                owl:deprecated, owl:versionInfo, owl:backwardCompatibleWith,
+                owl:incompatibleWith, owl:priorVersion
+              ))
               FILTER NOT EXISTS { ?prop a owl:AnnotationProperty }
               OPTIONAL { ?obj rdfs:label ?objLabel }
             }

@@ -38,7 +38,7 @@ class DesktopFusekiControllerTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         controller = new DesktopFusekiController(projectImportService, openMetricsService,
-                null, desktopOntologyLoader, storageManager, draftTrackingService);
+                null, desktopOntologyLoader, storageManager, draftTrackingService, null);
     }
 
     @Test
@@ -63,7 +63,7 @@ class DesktopFusekiControllerTest {
     @Test
     void fastOpenDisabledReturns503WithoutTouchingDraftTracking() {
         controller = new DesktopFusekiController(projectImportService, openMetricsService,
-                null, null, storageManager, draftTrackingService);
+                null, null, storageManager, draftTrackingService, null);
 
         ResponseEntity<Map<String, Object>> response = controller.saveProject("proj-1");
 

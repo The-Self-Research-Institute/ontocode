@@ -82,6 +82,18 @@ class ProjectFileControllerListTest {
     }
 
     @Test
+    void reportsSavedBytesForVisibleFilesInTheSelectedLibrary() throws Exception {
+        onDisk(List.of("p-parent--visible", "p-parent--hidden", "p-other--child"));
+        Files.writeString(folder.resolve("p-parent_visible.owl"), "0123456789");
+        when(repository.accessibleProjects("u-1", "me@x.org"))
+                .thenReturn(visible(Set.of("p-parent--visible", "p-other--child"), Set.of()));
+
+        assertEquals(Map.of("visible", 10L), controller.savedSizes("p-parent", new CallerIdentity("u-1", "me@x.org")));
+        verify(storage, never()).findCurrentOntology("p-parent--hidden");
+        verify(storage, never()).findCurrentOntology("p-other--child");
+    }
+
+    @Test
     void theSameProjectsAreVisibleAsWithTheOneByOneCheck() throws Exception {
         List<String> ids = List.of("a", "b", "c");
         when(repository.hasAccess(eq("a"), eq("a"), any(), any())).thenReturn(true);

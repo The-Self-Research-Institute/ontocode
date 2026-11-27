@@ -17,6 +17,7 @@ class DesktopClassDetailsAncestorsTest {
     private static final String ONTOLOGY = """
             Prefix(:=<http://example.org/t#>)
             Prefix(owl:=<http://www.w3.org/2002/07/owl#>)
+            Prefix(xsd:=<http://www.w3.org/2001/XMLSchema#>)
             Ontology(<http://example.org/t>
             Declaration(Class(:Leaf))
             Declaration(Class(:Parent))
@@ -25,7 +26,10 @@ class DesktopClassDetailsAncestorsTest {
             Declaration(Class(:Filler))
             Declaration(ObjectProperty(:hasPart))
             Declaration(ObjectProperty(:partOf))
+            Declaration(DataProperty(:age))
             SubClassOf(:Leaf :Parent)
+            SubClassOf(:Leaf ObjectSomeValuesFrom(:hasPart :Filler))
+            EquivalentClasses(:Leaf DataSomeValuesFrom(:age DatatypeRestriction(xsd:integer xsd:minInclusive "18"^^xsd:integer)))
             SubClassOf(:Parent :Grand)
             SubClassOf(:Grand :Great)
             SubClassOf(:Grand ObjectSomeValuesFrom(:hasPart :Filler))
@@ -33,12 +37,15 @@ class DesktopClassDetailsAncestorsTest {
             )
             """;
 
-    private List<Map<String, String>> ancestors() throws Exception {
+    private Map<String, Object> details() throws Exception {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ont = manager.loadOntologyFromOntologyDocument(new org.semanticweb.owlapi.io.StringDocumentSource(ONTOLOGY));
-        Map<String, Object> details = new DesktopHierarchyService().buildClassDetails(ont, null, NS + "Leaf");
+        return new DesktopHierarchyService().buildClassDetails(ont, null, NS + "Leaf");
+    }
+
+    private List<Map<String, String>> ancestors() throws Exception {
         @SuppressWarnings("unchecked")
-        List<Map<String, String>> list = (List<Map<String, String>>) details.get("anonymousAncestorAxioms");
+        List<Map<String, String>> list = (List<Map<String, String>>) details().get("anonymousAncestorAxioms");
         return list;
     }
 
@@ -73,6 +80,18 @@ class DesktopClassDetailsAncestorsTest {
     @Test
     void doesNotListTheClassOwnDirectParentOnItsOwn() throws Exception {
         assertTrue(ancestors().stream().noneMatch(e -> e.get("ancestorIri").endsWith("#Leaf") && "true".equals(e.get("navigable"))));
+    }
+
+    @Test
+    void doesNotListTheClassOwnRestrictionAsInherited() throws Exception {
+        assertTrue(ancestors().stream().noneMatch(e -> (NS + "Leaf").equals(e.get("ancestorIri"))));
+    }
+
+    @Test
+    void rendersDatatypeRestrictionInsteadOfItsImplementationName() throws Exception {
+        var axioms = (List<?>) details().get("equivalentClassesAxioms");
+        assertTrue(axioms.stream().map(axiom -> ((Map<?, ?>) axiom).get("definition").toString())
+                .anyMatch(text -> text.contains("age some") && text.contains("integer") && text.contains(">= 18")), axioms.toString());
     }
 
     @Test

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { buildEntityIri, computeEntityIriPreview, labelForNewEntity } from "../utils/entityIri";
 
+it("validates an explicitly edited IRI without changing the entity name", () => {
+  const iri = "https://example.org/custom#NamedEntity";
+  expect(computeEntityIriPreview("https://example.org/project", "My entity", [], undefined, iri))
+    .toEqual({ trimmedName: "My entity", computedIri: iri, isDuplicate: false, canCreate: true });
+  expect(computeEntityIriPreview("https://example.org/project", "My entity", [iri], undefined, iri).canCreate).toBe(false);
+  expect(computeEntityIriPreview("https://example.org/project", "My entity", [], undefined, "relative name").canCreate).toBe(false);
+});
+
 describe("buildEntityIri", () => {
   it("adds a hash after an ontology IRI that has none", () => {
     expect(buildEntityIri("http://example.org/onto", "Cat")).toBe("http://example.org/onto#Cat");
