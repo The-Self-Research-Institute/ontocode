@@ -994,6 +994,15 @@ const parseAxiomText = (axiom: InferredAxiom, readable: string): ParsedAxiom => 
 };
 
 const formatInferredAxiom = (axiom: InferredAxiom): ParsedAxiom => {
+  if (axiom.subjectIri && axiom.predicateIri) {
+    const type = axiom.axiomType;
+    if (type === 'ObjectPropertyAssertion' && axiom.objectIri || type === 'DataPropertyAssertion' && axiom.objectLiteral != null) {
+      const subject = extractLocalName(axiom.subjectIri);
+      const predicate = extractLocalName(axiom.predicateIri);
+      const object = axiom.objectIri ? extractLocalName(axiom.objectIri) : axiom.objectLiteral ?? '';
+      return { type, subject, predicate, object, formatted: `${subject} ${predicate} ${object}` };
+    }
+  }
   const technical = parseAxiomText(axiom, axiom.description || '');
   if (technical.recognized !== false) return technical;
   const friendly = parseAxiomText(axiom, axiom.readable || '');
@@ -1054,7 +1063,8 @@ type FactSection = 'rules' | 'standard' | 'structure';
 
 const SECTION_TITLES: Record<FactSection, string> = { rules: 'From your rules', standard: 'From standard reasoning', structure: 'Class relationships' };
 const SECTION_ORDER: FactSection[] = ['rules', 'standard', 'structure'];
-const STANDARD_NOTE = 'These follow from the class tree and the standard reasoning the engine always applies, not from a rule you wrote. For example, a Customer is also a Person because Customer is a kind of Person. They are not errors, and no rule explanation exists for them.';
+const STANDARD_NOTE = 'The ontology already implies these facts with its rules switched off. For example, a Customer is also a Person when Customer is a kind of Person.';
+const RULE_DEPENDENT_NOTE = 'These facts depend on the enabled rules. This includes facts that standard reasoning inferred after a rule added new knowledge.';
 
 const axiomHeadKey = (ax: InferredAxiom): { name: string; literal: string | null } => {
   const parsed = formatInferredAxiom(ax);
@@ -1095,14 +1105,17 @@ const groupAxiomsByRule = (axioms: InferredAxiom[], heads: RuleHeads[]): Map<str
   return groups;
 };
 
-const splitSections = (axioms: InferredAxiom[], heads: RuleHeads[]): SectionData[] => {
+const splitSections = (axioms: InferredAxiom[], heads: RuleHeads[], attributionComplete?: boolean): SectionData[] => {
   const names = headNameSet(heads);
   const buckets: Record<FactSection, InferredAxiom[]> = { rules: [], standard: [], structure: [] };
-  axioms.forEach(ax => buckets[sectionOf(ax, names)].push(ax));
+  axioms.forEach(ax => {
+    const section = attributionComplete === false && ax.category === 'conclusion' ? 'standard' : sectionOf(ax, names);
+    buckets[section].push(ax);
+  });
   return SECTION_ORDER.filter(key => buckets[key].length > 0).map(key => ({
     key,
-    title: SECTION_TITLES[key],
-    note: key === 'rules' ? undefined : STANDARD_NOTE,
+    title: attributionComplete === false && key === 'standard' ? 'Inferred facts' : SECTION_TITLES[key],
+    note: attributionComplete === true ? (key === 'rules' ? RULE_DEPENDENT_NOTE : STANDARD_NOTE) : undefined,
     axioms: buckets[key],
     groups: key === 'rules' ? groupAxiomsByRule(buckets[key], heads) : groupAxiomsByType(buckets[key]),
   }));
@@ -1178,13 +1191,14 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const [viewMode, setViewMode] = useState<'grouped' | 'table' | 'raw'>('grouped');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [searchFilter, setSearchFilter] = useState('');
-  const [showWarning, setShowWarning] = useState(false);
   const [scopeChoice, setScopeChoice] = useState<'conclusions' | 'structure' | 'all' | null>(null);
   const [visibleLimit, setVisibleLimit] = useState(100);
   const [selectedMap, setSelectedMap] = useState<Map<string, InferredAxiom>>(new Map());
   const selectedKeys = useMemo(() => new Set(selectedMap.keys()), [selectedMap]);
 
   const paged = isPagedRun(results);
+  const hasRuleAttribution = results?.attributionComplete === true;
+  const [showStandardFacts, setShowStandardFacts] = useState(false);
   const runId = results?.runId ?? '';
   const [tabChoice, setTabChoice] = useState<AxiomKind | null>(null);
   const [offset, setOffset] = useState(0);
@@ -1194,9 +1208,15 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const [pageError, setPageError] = useState<string | null>(null);
   const [expired, setExpired] = useState(false);
   const lastShownRef = useRef<AxiomsPageResponse | null>(null);
-  const pagedKind: AxiomKind = tabChoice ?? ((results?.counts?.conclusions ?? 0) > 0 || (results?.counts?.structure ?? 0) === 0 ? 'conclusions' : 'structure');
+  const defaultTab: AxiomKind = (results?.counts?.conclusions ?? 0) > 0 || (results?.counts?.structure ?? 0) === 0
+    ? (hasRuleAttribution ? 'rules' : 'conclusions') : 'structure';
+  const pagedKind: AxiomKind = tabChoice ?? defaultTab;
   const pageKey = pageCacheKey(runId, pagedKind, debouncedQuery.trim(), offset);
   const pageCached = pageCache[pageKey] !== undefined;
+
+  useEffect(() => {
+    setShowStandardFacts(false);
+  }, [results]);
 
   useEffect(() => {
     setTabChoice(null);
@@ -1247,7 +1267,7 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     return () => { cancelled = true; };
   }, [paged, expired, pageKey, pageCached]);
 
-  const currentPage = pageCache[pageKey] ?? lastShownRef.current;
+  const currentPage = pageCache[pageKey] ?? (lastShownRef.current?.kind === pagedKind ? lastShownRef.current : null);
   if (pageCache[pageKey]) lastShownRef.current = pageCache[pageKey];
   const pageAxioms: InferredAxiom[] = currentPage?.axioms ?? [];
   const pageTotal = currentPage?.total ?? 0;
@@ -1294,6 +1314,9 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const structureTotal = results.inferredAxioms.filter(ax => ax.category === 'structure').length;
   const scope = scopeChoice ?? (conclusionTotal > 0 ? 'conclusions' : 'all');
   const inScope = paged ? pageAxioms : results.inferredAxioms.filter(ax => {
+    if (hasRuleAttribution && !showStandardFacts && ax.category === 'conclusion' && ax.origin !== 'RULE_ENGINE') {
+      return false;
+    }
     if (!ax.category || scope === 'all') return true;
     return scope === 'conclusions' ? ax.category === 'conclusion' : ax.category === 'structure';
   });
@@ -1320,10 +1343,12 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
   const pagerNext = nextOffset(offset, pageTotal);
 
   const modelTotals = {
-    conclusions: paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal),
+    conclusions: (paged ? pagedKind === 'rules' : hasRuleAttribution && !showStandardFacts)
+      ? (results.counts?.ruleConclusions ?? 0)
+      : (paged ? (results.counts?.conclusions ?? 0) : (results.conclusionCount ?? conclusionTotal)),
     structure: paged ? (results.counts?.structure ?? 0) : (results.structureCount ?? structureTotal),
   };
-  const modelFilter: ResultFilter = paged ? pagedKind : scope;
+  const modelFilter: ResultFilter = paged ? (pagedKind === 'rules' ? 'conclusions' : pagedKind) : scope;
   const counts = resultCounts({
     filter: modelFilter,
     paged,
@@ -1333,8 +1358,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
     shown: filteredAxioms.length,
     searching: searchFilter.trim() !== '',
   });
-  const matchedSections = splitSections(matchedAxioms, ruleHeads);
-  const sections = splitSections(filteredAxioms, ruleHeads);
+  const matchedSections = splitSections(matchedAxioms, ruleHeads, results.attributionComplete);
+  const sections = splitSections(filteredAxioms, ruleHeads, results.attributionComplete);
   const loadedTotals = { conclusions: conclusionTotal, structure: structureTotal };
   const sectionLabel = (sec: SectionData): string => {
     if (paged) {
@@ -1379,8 +1404,8 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
             <div className="text-xs uppercase tracking-wide mb-1" style={rt.label}>Status</div>
             <div className="text-lg font-bold flex items-center gap-2" style={rt.value}>
-              {results.success ? <Check size={20} /> : <X size={20} />}
-              {results.success ? 'Success' : 'Failed'}
+              {results.status && results.status !== 'COMPLETED' ? <AlertCircle size={20} /> : results.success ? <Check size={20} /> : <X size={20} />}
+              {results.statusLabel || (results.completion === 'completed_with_warnings' ? 'Completed with warnings' : results.success ? 'Success' : 'Failed')}
             </div>
           </div>
           <div className="rounded-lg p-3 shadow-sm" style={rt.card}>
@@ -1425,53 +1450,6 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
           {results.limitations.map((text, i) => <div key={i}>{text}</div>)}
         </div>
       )}
-      {results.success && results.inferredAxioms.length > 0 && !results.inferredAxioms.some(ax => formatInferredAxiom(ax).type === 'ClassAssertion') && (
-        <div className="rounded-xl overflow-hidden" style={rt.bannerWarning}>
-          <div 
-            className="p-4 flex items-start gap-3 cursor-pointer"
-            onClick={() => setShowWarning(!showWarning)}
-          >
-            <AlertCircle size={24} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--warning)' }} />
-            <div className="flex-1">
-              <div className="flex justify-between items-center">
-                <div className="font-bold" style={rt.heading}>No SWRL ClassAssertion Results</div>
-                {showWarning ? <ChevronUp size={20} style={rt.value} /> : <ChevronDown size={20} style={rt.value} />}
-              </div>
-              {!showWarning && (
-                 <div className="text-sm mt-1" style={rt.value}>
-                   {results.inferredAxioms.length} general OWL inferences found. Click to see details.
-                 </div>
-              )}
-            </div>
-          </div>
-          
-          {showWarning && (
-            <div className="px-4 pb-4 pl-12">
-              <div className="text-sm mt-1" style={rt.value}>
-                Your SWRL rule should create ClassAssertion axioms (e.g., "Emma → Adult"). 
-                The {results.inferredAxioms.length} inferences below are general OWL reasoning results, not from SWRL rules.
-                <br /><br />
-                <strong>Most Common Issue:</strong>
-                <div className="mt-2 p-3 rounded-lg" style={rt.card}>
-                  <span className="font-bold">The target class doesn't exist!</span>
-                  <p className="mt-1">
-                    If your rule is <code className="px-1 rounded" style={rt.code}>Person(?p) → Adult(?p)</code>, 
-                    you need to <strong>first create the "Adult" class</strong> in your ontology's Classes tab.
-                  </p>
-                </div>
-                <br />
-                <strong>Other possible reasons:</strong>
-                <ul className="list-disc list-inside mt-1 space-y-1">
-                  <li>No individuals match the rule conditions (e.g., no persons with age ≥ 18)</li>
-                  <li>Missing data properties (hasAge) on Person individuals</li>
-                  <li>The rule has syntax errors in the body</li>
-                </ul>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {!results.success && results.errorMessage && (() => {
         const err = parseSwrlError(results.errorMessage);
         return (
@@ -1624,10 +1602,22 @@ const ResultsPanel: React.FC<ResultsPanelProps> = ({ projectId, results, isExecu
                   )}
                 </div>
               )}
+              {!paged && hasRuleAttribution && (
+                <label className="mt-3 flex w-fit items-center gap-2 text-xs" style={rt.label}>
+                  <input type="checkbox" checked={showStandardFacts} onChange={e => setShowStandardFacts(e.target.checked)} />
+                  Include standard reasoning facts
+                </label>
+              )}
               {paged && results.counts && (
                 <div className="mt-3 space-y-2 text-xs">
                   <div className="flex flex-wrap items-center gap-2">
-                    {([['conclusions', `Facts about individuals (${formatCount(results.counts.conclusions)})`], ['structure', `Class relationships (${formatCount(results.counts.structure)})`]] as const).map(([key, label]) => (
+                    {hasRuleAttribution && (
+                      <button type="button" onClick={() => { setTabChoice('rules'); setOffset(0); }}
+                        className="px-3 py-1 rounded-full" style={pagedKind === 'rules' ? rt.chipOn : rt.button}>
+                        From your rules ({formatCount(results.counts.ruleConclusions ?? 0)})
+                      </button>
+                    )}
+                    {([['conclusions', `${hasRuleAttribution ? 'All facts about individuals' : 'Facts about individuals'} (${formatCount(results.counts.conclusions)})`], ['structure', `Class relationships (${formatCount(results.counts.structure)})`]] as const).map(([key, label]) => (
                       <button
                         key={key}
                         onClick={() => { setTabChoice(key); setOffset(0); }}
@@ -2432,6 +2422,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
     });
   };
 
+  const failedRuleRun = (error: unknown, fallback: string): ExecutionResponse => ({
+    success: false, errorMessage: friendlyRuleError(error, fallback), executionTimeMs: 0,
+    totalRulesExecuted: 0, inferredAxiomsCount: 0, inferredAxioms: [],
+  });
+
   const handleExecuteAll = async (): Promise<ExecutionResponse | null> => {
     if (runInFlightRef.current) return null;
     runInFlightRef.current = true;
@@ -2445,14 +2440,7 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       return res;
     } catch (e) {
       console.error('Execution failed:', e);
-      const failed = {
-        success: false,
-        errorMessage: friendlyRuleError(e, 'Execution failed'),
-        executionTimeMs: 0,
-        totalRulesExecuted: 0,
-        inferredAxiomsCount: 0,
-        inferredAxioms: []
-      } as ExecutionResponse;
+      const failed = failedRuleRun(e, 'Execution failed');
       setExecutionResult(failed);
       return failed;
     } finally {
@@ -2478,8 +2466,9 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
       setExecutionResult(res);
       return res;
     } catch (e) {
-      console.error('Execution failed:', e);
-      return null;
+      const failed = failedRuleRun(e, 'Selected rules could not be run');
+      setExecutionResult(failed);
+      return failed;
     } finally {
       runInFlightRef.current = false;
       setIsExecuting(false);
@@ -2497,11 +2486,11 @@ export const SWRLEditor: React.FC<SWRLEditorProps> = ({ projectId, context, draf
 
     try {
       const res = await apiClient.post<ExecutionResponse>(
-        withDraft(`/api/swrl/${projectId}/rules/${selectedRule.id}/test`, draftMode)
+        withDraft(`/api/swrl/${projectId}/rules/${selectedRule.id}/test`, draftMode, draftUserId)
       );
       setExecutionResult(res);
     } catch (e) {
-      console.error('Test failed:', e);
+      setExecutionResult(failedRuleRun(e, 'The rule could not be tested'));
     } finally {
       runInFlightRef.current = false;
       setIsTesting(false);

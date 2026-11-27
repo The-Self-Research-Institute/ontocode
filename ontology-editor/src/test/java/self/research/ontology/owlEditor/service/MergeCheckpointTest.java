@@ -7,10 +7,16 @@ import org.springframework.data.domain.Pageable;
 import self.research.ontology.owlEditor.model.HistoryChange;
 import self.research.ontology.owlEditor.repository.HistoryChangeRepository;
 
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -68,6 +74,51 @@ class MergeCheckpointTest {
         assertEquals("BEFORE", Files.readString(target));
         store.restoreTo(P, ID, false, target);
         assertEquals("AFTER", Files.readString(target));
+    }
+
+    @Test
+    void aRestoreWaitsForAProgramThatHasTheProjectFileOpenThenFinishes() throws Exception {
+        MergeCheckpointStore store = new MergeCheckpointStore(storage);
+        store.saveBefore(P, ID, Files.writeString(dir.resolve("before.owl"), "BEFORE"));
+        Path target = Files.writeString(dir.resolve("current.owl"), "CURRENT");
+        FileInputStream lock = new FileInputStream(target.toFile());
+        CompletableFuture<Void> release = CompletableFuture.runAsync(() -> {
+            try {
+                Thread.sleep(300);
+                lock.close();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        store.restoreTo(P, ID, true, target);
+        release.get(5, TimeUnit.SECONDS);
+
+        assertEquals("BEFORE", Files.readString(target));
+        assertFalse(Files.exists(dir.resolve("current.owl.restore")));
+    }
+
+    @Test
+    void someoneReadingASavedCopyNeverSeesItHalfRewritten() throws Exception {
+        MergeCheckpointStore store = new MergeCheckpointStore(storage);
+        String old = "OLD".repeat(50_000);
+        store.saveBefore(P, ID, Files.writeString(dir.resolve("first.owl"), old));
+        Path checkpoints = dir.resolve("merge-checkpoints");
+        Path saved;
+        try (var files = Files.list(checkpoints)) {
+            saved = files.findFirst().orElseThrow();
+        }
+
+        try (InputStream reader = Files.newInputStream(saved)) {
+            store.saveBefore(P, ID, Files.writeString(dir.resolve("second.owl"), "NEW"));
+            assertEquals(old, new String(new GZIPInputStream(reader).readAllBytes(), StandardCharsets.UTF_8));
+        }
+        Path target = dir.resolve("current.owl");
+        store.restoreTo(P, ID, true, target);
+        assertEquals("NEW", Files.readString(target));
+        try (var files = Files.list(checkpoints)) {
+            assertEquals(1, files.count());
+        }
     }
 
     @Test

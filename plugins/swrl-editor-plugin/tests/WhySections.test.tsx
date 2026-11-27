@@ -59,7 +59,7 @@ const RESULT = {
   errorMessage: null,
 };
 
-const NOTE_START = 'These follow from the class tree and the standard reasoning';
+const NOTE_START = 'The ontology already implies these facts with its rules switched off';
 const PLAIN = 'None of your rules produced this fact.';
 const NEW_NOTE = 'None of your rules produced this fact. It comes from the standard reasoning the engine always applies, for example "a Customer is also a Person because Customer is a kind of Person". It is not an error.';
 
@@ -148,11 +148,25 @@ describe('inferred facts split by where they come from', () => {
     expect(document.activeElement).toBe(w);
   });
 
-  it('writes the standard reasoning note once per section', async () => {
+  it('writes the standard reasoning note once per section when the engine says which facts came from rules', async () => {
+    api.post.mockResolvedValue({
+      ...RESULT,
+      attributionComplete: true,
+      inferredAxioms: RESULT.inferredAxioms.map(ax => ax.category !== 'conclusion' ? ax
+        : { ...ax, origin: ax.objectIri === `${NS}Senior` ? 'RULE_ENGINE' : 'OWL_REASONER' }),
+    });
     await run();
+    const toggle = Array.from(container.querySelectorAll('label'))
+      .find(l => l.textContent?.includes('Include standard reasoning facts'))!.querySelector('input') as HTMLElement;
+    await click(toggle);
     expect(count(section('standard')!.textContent!, NOTE_START)).toBe(1);
     expect(count(section('structure')!.textContent!, NOTE_START)).toBe(1);
     expect(section('rules')!.textContent).not.toContain(NOTE_START);
+  });
+
+  it('does not say where facts came from when the engine did not work it out', async () => {
+    await run();
+    expect(text()).not.toContain(NOTE_START);
   });
 
   it('selects rows across sections for adding', async () => {

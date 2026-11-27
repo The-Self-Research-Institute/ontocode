@@ -83,6 +83,14 @@ public final class AtomicFiles {
         replace(staged, target, MAX_WAIT_MILLIS);
     }
 
+    public static void replaceOrDiscard(Path staged, Path target) throws IOException {
+        try {
+            replace(staged, target);
+        } finally {
+            Files.deleteIfExists(staged);
+        }
+    }
+
     static void replace(Path staged, Path target, long maxWaitMillis) throws IOException {
         long waited = 0;
         long pause = FIRST_PAUSE_MILLIS;

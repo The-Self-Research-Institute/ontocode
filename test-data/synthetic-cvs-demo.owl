@@ -1,0 +1,2142 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns="https://example.org/synthetic-cvs#"
+     xml:base="https://example.org/synthetic-cvs"
+     xmlns:owl="http://www.w3.org/2002/07/owl#"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:xml="http://www.w3.org/XML/1998/namespace"
+     xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+     xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+     xmlns:swrl="http://www.w3.org/2003/11/swrl#"
+     xmlns:swrlb="http://www.w3.org/2003/11/swrlb#"
+     xmlns:synthetic-cvs="https://example.org/synthetic-cvs#">
+    <owl:Ontology rdf:about="https://example.org/synthetic-cvs">
+        <rdfs:comment>Invented measurements and arbitrary test scores. There are no patient records and the rules make no clinical decisions.</rdfs:comment>
+        <rdfs:label>Synthetic cardiovascular-measurement workflow for SWRL verification</rdfs:label>
+    </owl:Ontology>
+
+
+
+    <!--
+    ///////////////////////////////////////////////////////////////////////////////////////
+    //
+    // Object Properties
+    //
+    ///////////////////////////////////////////////////////////////////////////////////////
+     -->
+
+
+
+
+
+    <!-- https://example.org/synthetic-cvs#hasDataSource -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#hasDataSource">
+        <owl:propertyChainAxiom rdf:parseType="Collection">
+            <rdf:Description rdf:about="https://example.org/synthetic-cvs#hasSession"/>
+            <rdf:Description rdf:about="https://example.org/synthetic-cvs#usesDevice"/>
+        </owl:propertyChainAxiom>
+    </owl:ObjectProperty>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hasSession -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#hasSession"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hasSite -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#hasSite">
+        <owl:propertyChainAxiom rdf:parseType="Collection">
+            <rdf:Description rdf:about="https://example.org/synthetic-cvs#hasSession"/>
+            <rdf:Description rdf:about="https://example.org/synthetic-cvs#occursAt"/>
+        </owl:propertyChainAxiom>
+    </owl:ObjectProperty>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hasUnit -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#hasUnit"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hasVendor -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#hasVendor">
+        <owl:propertyChainAxiom rdf:parseType="Collection">
+            <rdf:Description rdf:about="https://example.org/synthetic-cvs#hasDataSource"/>
+            <rdf:Description rdf:about="https://example.org/synthetic-cvs#suppliedBy"/>
+        </owl:propertyChainAxiom>
+    </owl:ObjectProperty>
+
+
+
+    <!-- https://example.org/synthetic-cvs#occursAt -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#occursAt"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#suppliedBy -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#suppliedBy"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#usesDevice -->
+
+
+    <owl:ObjectProperty rdf:about="https://example.org/synthetic-cvs#usesDevice"/>
+
+
+
+    <!--
+    ///////////////////////////////////////////////////////////////////////////////////////
+    //
+    // Data properties
+    //
+    ///////////////////////////////////////////////////////////////////////////////////////
+     -->
+
+
+
+
+
+    <!-- https://example.org/synthetic-cvs#testScore -->
+
+
+    <owl:DatatypeProperty rdf:about="https://example.org/synthetic-cvs#testScore"/>
+
+
+
+    <!--
+    ///////////////////////////////////////////////////////////////////////////////////////
+    //
+    // Classes
+    //
+    ///////////////////////////////////////////////////////////////////////////////////////
+     -->
+
+
+
+
+
+    <!-- https://example.org/synthetic-cvs#ApprovedDevice -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#ApprovedDevice"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#BloodPressure -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#BloodPressure"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#Diastolic -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#Diastolic">
+        <rdfs:subClassOf rdf:resource="https://example.org/synthetic-cvs#BloodPressure"/>
+    </owl:Class>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase1 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase1"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase10 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase10"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase11 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase11"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase12 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase12"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase13 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase13"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase14 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase14"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase15 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase15"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase16 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase16"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase17 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase17"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase18 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase18"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase19 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase19"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase2 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase2"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase3 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase3"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase4 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase4"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase5 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase5"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase6 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase6"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase7 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase7"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase8 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase8"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#GuardCase9 -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#GuardCase9"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#HeartRate -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#HeartRate"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#ParticipatingVendor -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#ParticipatingVendor"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#PilotSite -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#PilotSite"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#ReadyForReview -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#ReadyForReview"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#SourceVerified -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#SourceVerified"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#Systolic -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#Systolic">
+        <rdfs:subClassOf rdf:resource="https://example.org/synthetic-cvs#BloodPressure"/>
+    </owl:Class>
+
+
+
+    <!-- https://example.org/synthetic-cvs#UnexpectedOutcome -->
+
+
+    <owl:Class rdf:about="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+
+
+
+    <!--
+    ///////////////////////////////////////////////////////////////////////////////////////
+    //
+    // Individuals
+    //
+    ///////////////////////////////////////////////////////////////////////////////////////
+     -->
+
+
+
+
+
+    <!-- https://example.org/synthetic-cvs#approved_alpha -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#approved_alpha">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+        <suppliedBy rdf:resource="https://example.org/synthetic-cvs#vendor_alpha"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#approved_beta -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#approved_beta">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+        <suppliedBy rdf:resource="https://example.org/synthetic-cvs#vendor_beta"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#approved_unlisted -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#approved_unlisted">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+        <suppliedBy rdf:resource="https://example.org/synthetic-cvs#vendor_unlisted"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#dbp_01 -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#dbp_01">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#Diastolic"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#dbp_01_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">55</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#dbp_01_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#dbp_01_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_south"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_alpha"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#dbp_02 -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#dbp_02">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#Diastolic"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#dbp_02_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">65</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#dbp_02_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#dbp_02_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_north"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_beta"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#dbp_wrong_unit -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#dbp_wrong_unit">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#Diastolic"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase15"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase3"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase9"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#dbp_wrong_unit_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#rateUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">25</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#dbp_wrong_unit_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#dbp_wrong_unit_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_south"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_beta"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#external_site -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#external_site"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_01 -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_01">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#HeartRate"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#hr_01_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#rateUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">15</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_01_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_01_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_north"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_alpha"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_02 -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_02">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#HeartRate"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#hr_02_repeat_session"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#hr_02_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#rateUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">25</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_02_repeat_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_02_repeat_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_south"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_beta"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_02_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_02_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_south"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_beta"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_low -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_low">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase12"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase18"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase6"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#HeartRate"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#hr_low_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#rateUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">0</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_low_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_low_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_north"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_alpha"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_missing_source -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_missing_source">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase1"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase13"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase19"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase7"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#HeartRate"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#hr_missing_source_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#rateUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">30</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_missing_source_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_missing_source_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_north"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_outside_pilot -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_outside_pilot">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase10"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase16"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase4"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#HeartRate"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#hr_outside_pilot_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#rateUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">25</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#hr_outside_pilot_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#hr_outside_pilot_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#external_site"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_alpha"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#pilot_north -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#pilot_north">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#pilot_south -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#pilot_south">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#pressureUnit -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#pressureUnit"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#rateUnit -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#rateUnit"/>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_01 -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_01">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#Systolic"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#sbp_01_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">35</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_01_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_01_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_north"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_alpha"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_02 -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_02">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#Systolic"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#sbp_02_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">45</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_02_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_02_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_south"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_beta"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_unapproved -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_unapproved">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase14"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase2"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase8"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#Systolic"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#sbp_unapproved_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">20</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_unapproved_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_unapproved_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_north"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#unapproved"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_unlisted_vendor -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_unlisted_vendor">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase11"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase17"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#GuardCase5"/>
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#Systolic"/>
+        <hasSession rdf:resource="https://example.org/synthetic-cvs#sbp_unlisted_vendor_session"/>
+        <hasUnit rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+        <testScore rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">50</testScore>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#sbp_unlisted_vendor_session -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#sbp_unlisted_vendor_session">
+        <occursAt rdf:resource="https://example.org/synthetic-cvs#pilot_north"/>
+        <usesDevice rdf:resource="https://example.org/synthetic-cvs#approved_unlisted"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#unapproved -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#unapproved">
+        <suppliedBy rdf:resource="https://example.org/synthetic-cvs#vendor_alpha"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#vendor_alpha -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#vendor_alpha">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#ParticipatingVendor"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#vendor_beta -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#vendor_beta">
+        <rdf:type rdf:resource="https://example.org/synthetic-cvs#ParticipatingVendor"/>
+    </owl:NamedIndividual>
+
+
+
+    <!-- https://example.org/synthetic-cvs#vendor_unlisted -->
+
+
+    <owl:NamedIndividual rdf:about="https://example.org/synthetic-cvs#vendor_unlisted"/>
+
+
+
+    <!--
+    ///////////////////////////////////////////////////////////////////////////////////////
+    //
+    // Rules
+    //
+    ///////////////////////////////////////////////////////////////////////////////////////
+     -->
+
+
+    <rdf:Description rdf:about="https://example.org/synthetic-cvs#m">
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+    </rdf:Description>
+    <rdf:Description rdf:about="https://example.org/synthetic-cvs#vendor">
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+    </rdf:Description>
+    <rdf:Description rdf:about="https://example.org/synthetic-cvs#dev">
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+    </rdf:Description>
+    <rdf:Description rdf:about="https://example.org/synthetic-cvs#site">
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+    </rdf:Description>
+    <rdf:Description rdf:about="https://example.org/synthetic-cvs#raw">
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+    </rdf:Description>
+    <rdf:Description rdf:about="https://example.org/synthetic-cvs#adjusted">
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Variable"/>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 18 for hr_low</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase18"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 19 for hr_missing_source</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase19"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 2 for sbp_unapproved</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase2"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 3 for dbp_wrong_unit</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase3"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasUnit"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 4 for hr_outside_pilot</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase4"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasSite"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 5 for sbp_unlisted_vendor</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase5"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 6 for hr_low</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase6"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 7 for hr_missing_source</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase7"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 8 for sbp_unapproved</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase8"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 9 for dbp_wrong_unit</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase9"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasUnit"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Queue verified heart rate for review</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#HeartRate"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#SourceVerified"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                        <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasVendor"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                        <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#vendor"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                        <rdf:first>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ParticipatingVendor"/>
+                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#vendor"/>
+                                            </rdf:Description>
+                                        </rdf:first>
+                                        <rdf:rest>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                <rdf:first>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#DatavaluedPropertyAtom"/>
+                                                        <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#testScore"/>
+                                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                                        <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#raw"/>
+                                                    </rdf:Description>
+                                                </rdf:first>
+                                                <rdf:rest>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                        <rdf:first>
+                                                            <rdf:Description>
+                                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+                                                                <swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#add"/>
+                                                                <swrl:arguments>
+                                                                    <rdf:Description>
+                                                                        <rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+                                                                        <rdf:first rdf:resource="https://example.org/synthetic-cvs#adjusted"/>
+                                                                        <rdf:rest>
+                                                                            <rdf:Description>
+                                                                                <rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+                                                                                <rdf:first rdf:resource="https://example.org/synthetic-cvs#raw"/>
+                                                                                <rdf:rest>
+                                                                                    <rdf:Description>
+                                                                                        <rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+                                                                                        <rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">1</rdf:first>
+                                                                                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                                                                                    </rdf:Description>
+                                                                                </rdf:rest>
+                                                                            </rdf:Description>
+                                                                        </rdf:rest>
+                                                                    </rdf:Description>
+                                                                </swrl:arguments>
+                                                            </rdf:Description>
+                                                        </rdf:first>
+                                                        <rdf:rest>
+                                                            <rdf:Description>
+                                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                                <rdf:first>
+                                                                    <rdf:Description>
+                                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#BuiltinAtom"/>
+                                                                        <swrl:builtin rdf:resource="http://www.w3.org/2003/11/swrlb#greaterThan"/>
+                                                                        <swrl:arguments>
+                                                                            <rdf:Description>
+                                                                                <rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+                                                                                <rdf:first rdf:resource="https://example.org/synthetic-cvs#adjusted"/>
+                                                                                <rdf:rest>
+                                                                                    <rdf:Description>
+                                                                                        <rdf:type rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#List"/>
+                                                                                        <rdf:first rdf:datatype="http://www.w3.org/2001/XMLSchema#integer">10</rdf:first>
+                                                                                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                                                                                    </rdf:Description>
+                                                                                </rdf:rest>
+                                                                            </rdf:Description>
+                                                                        </swrl:arguments>
+                                                                    </rdf:Description>
+                                                                </rdf:first>
+                                                                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                                                            </rdf:Description>
+                                                        </rdf:rest>
+                                                    </rdf:Description>
+                                                </rdf:rest>
+                                            </rdf:Description>
+                                        </rdf:rest>
+                                    </rdf:Description>
+                                </rdf:rest>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Verify Diastolic source</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#Diastolic"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                        <rdf:first>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasSite"/>
+                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                            </rdf:Description>
+                                        </rdf:first>
+                                        <rdf:rest>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                <rdf:first>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+                                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                                    </rdf:Description>
+                                                </rdf:first>
+                                                <rdf:rest>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                        <rdf:first>
+                                                            <rdf:Description>
+                                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasUnit"/>
+                                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+                                                            </rdf:Description>
+                                                        </rdf:first>
+                                                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                                                    </rdf:Description>
+                                                </rdf:rest>
+                                            </rdf:Description>
+                                        </rdf:rest>
+                                    </rdf:Description>
+                                </rdf:rest>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#SourceVerified"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Verify HeartRate source</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#HeartRate"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                        <rdf:first>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasSite"/>
+                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                            </rdf:Description>
+                                        </rdf:first>
+                                        <rdf:rest>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                <rdf:first>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+                                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                                    </rdf:Description>
+                                                </rdf:first>
+                                                <rdf:rest>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                        <rdf:first>
+                                                            <rdf:Description>
+                                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasUnit"/>
+                                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#rateUnit"/>
+                                                            </rdf:Description>
+                                                        </rdf:first>
+                                                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                                                    </rdf:Description>
+                                                </rdf:rest>
+                                            </rdf:Description>
+                                        </rdf:rest>
+                                    </rdf:Description>
+                                </rdf:rest>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#SourceVerified"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Verify Systolic source</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#Systolic"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                        <rdf:first>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasSite"/>
+                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                            </rdf:Description>
+                                        </rdf:first>
+                                        <rdf:rest>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                <rdf:first>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+                                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                                    </rdf:Description>
+                                                </rdf:first>
+                                                <rdf:rest>
+                                                    <rdf:Description>
+                                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                                        <rdf:first>
+                                                            <rdf:Description>
+                                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasUnit"/>
+                                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+                                                            </rdf:Description>
+                                                        </rdf:first>
+                                                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                                                    </rdf:Description>
+                                                </rdf:rest>
+                                            </rdf:Description>
+                                        </rdf:rest>
+                                    </rdf:Description>
+                                </rdf:rest>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#SourceVerified"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 1 for hr_missing_source</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase1"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 10 for hr_outside_pilot</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase10"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasSite"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 11 for sbp_unlisted_vendor</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase11"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 12 for hr_low</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase12"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 13 for hr_missing_source</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase13"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Queue verified blood pressure for review</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#BloodPressure"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#SourceVerified"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                        <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasVendor"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                        <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#vendor"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                        <rdf:first>
+                                            <rdf:Description>
+                                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ParticipatingVendor"/>
+                                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#vendor"/>
+                                            </rdf:Description>
+                                        </rdf:first>
+                                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                                    </rdf:Description>
+                                </rdf:rest>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 14 for sbp_unapproved</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase14"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasDataSource"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ApprovedDevice"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#dev"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 15 for dbp_wrong_unit</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase15"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasUnit"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#pressureUnit"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 16 for hr_outside_pilot</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase16"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#IndividualPropertyAtom"/>
+                                <swrl:propertyPredicate rdf:resource="https://example.org/synthetic-cvs#hasSite"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                                <swrl:argument2 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                                <rdf:first>
+                                    <rdf:Description>
+                                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#PilotSite"/>
+                                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#site"/>
+                                    </rdf:Description>
+                                </rdf:first>
+                                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                            </rdf:Description>
+                        </rdf:rest>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+    <rdf:Description>
+        <rdfs:label>Guard 17 for sbp_unlisted_vendor</rdfs:label>
+        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#Imp"/>
+        <swrl:body>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#GuardCase17"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                        <rdf:first>
+                            <rdf:Description>
+                                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                                <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#ReadyForReview"/>
+                                <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                            </rdf:Description>
+                        </rdf:first>
+                        <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+                    </rdf:Description>
+                </rdf:rest>
+            </rdf:Description>
+        </swrl:body>
+        <swrl:head>
+            <rdf:Description>
+                <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#AtomList"/>
+                <rdf:first>
+                    <rdf:Description>
+                        <rdf:type rdf:resource="http://www.w3.org/2003/11/swrl#ClassAtom"/>
+                        <swrl:classPredicate rdf:resource="https://example.org/synthetic-cvs#UnexpectedOutcome"/>
+                        <swrl:argument1 rdf:resource="https://example.org/synthetic-cvs#m"/>
+                    </rdf:Description>
+                </rdf:first>
+                <rdf:rest rdf:resource="http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"/>
+            </rdf:Description>
+        </swrl:head>
+    </rdf:Description>
+</rdf:RDF>
+
+
+
+<!-- Generated by the OWL API (version 5.5.0.2023-01-14T12:41:38Z) https://github.com/owlcs/owlapi/ -->

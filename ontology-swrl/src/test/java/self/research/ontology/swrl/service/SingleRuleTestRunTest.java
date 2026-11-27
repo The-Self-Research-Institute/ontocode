@@ -1,6 +1,7 @@
 package self.research.ontology.swrl.service;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
 import self.research.ontology.swrl.model.ExecutionResult;
 import self.research.ontology.swrl.model.InferredAxiom;
@@ -56,6 +57,20 @@ class SingleRuleTestRunTest {
         ExecutionResult executed = harness.service.executeRules(TriageHarness.PROJECT);
 
         assertEquals(executed.getConclusionCount(), test.getConclusionCount());
+    }
+
+    @Test
+    void testingADraftOnlyRuleUsesDraftRulesAndDraftFacts() throws Exception {
+        TriageHarness harness = new TriageHarness(rule("draft-only", "Draft age rule", CHILD));
+        Mockito.when(harness.client.fetchOntology(TriageHarness.PROJECT)).thenAnswer(invocation -> TriageHarness.bare());
+
+        ExecutionResult result = harness.service.testSingleRuleById(TriageHarness.PROJECT, "draft-only", "owner");
+
+        assertTrue(result.isSuccess(), String.valueOf(result.getErrorMessage()));
+        assertEquals(List.of("draft-only"), result.getExecutedRuleIds());
+        assertFalse(result.getInferredAxioms().isEmpty());
+        Mockito.verify(harness.client, Mockito.atLeastOnce()).fetchOntologyWithStamp(TriageHarness.PROJECT, "owner");
+        Mockito.verify(harness.client, Mockito.never()).fetchOntology(TriageHarness.PROJECT);
     }
 
     @Test

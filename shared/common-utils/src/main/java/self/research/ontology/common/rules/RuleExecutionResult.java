@@ -57,7 +57,7 @@ public record RuleExecutionResult(
     }
 
     public enum Origin {
-        RULE_ENGINE, OWL_REASONER
+        RULE_ENGINE, OWL_REASONER, UNDETERMINED
     }
 
     public record DerivedFact(OWLAxiom axiom, Origin origin, int round) {

@@ -1885,13 +1885,21 @@ public class ReasonerController {
                          heavyWork.admitRuleExecute(resolvedUserId, ontology.getAxiomCount())) {
                 result = new RuleExecution(ruleStage,
                         input -> new org.semanticweb.HermiT.ReasonerFactory().createReasoner(input), "HermiT 1.4.5.519")
-                        .run(ontology, projectId + ":" + ontology.getAxiomCount(), RuleExecutionLimits.defaults());
+                        .runForDisplay(ontology, projectId + ":" + ontology.getAxiomCount(), RuleExecutionLimits.defaults());
             }
 
             Set<OWLAxiom> asserted = RuleExecutionPresenter.assertionsOf(ontology);
             List<OWLAxiom> derived = result.derived().stream().map(RuleExecutionResult.DerivedFact::axiom).toList();
             RuleExecutionPresenter.Full full = RuleExecutionPresenter.partition(derived, asserted);
-            Set<OWLAxiom> ruleConclusions = RuleExecutionPresenter.ruleConclusions(full, result.derived());
+            boolean attributionComplete = result.derived().stream().noneMatch(
+                    fact -> fact.origin() == RuleExecutionResult.Origin.UNDETERMINED);
+            Set<OWLAxiom> ruleConclusions = attributionComplete
+                    ? RuleExecutionPresenter.ruleConclusions(full, result.derived()) : null;
+            if (ruleConclusions != null && !ruleConclusions.isEmpty()) {
+                full = new RuleExecutionPresenter.Full(
+                        full.conclusions().stream().sorted(java.util.Comparator.comparing(axiom ->
+                                !ruleConclusions.contains(axiom))).toList(), full.structure(), full.omittedTrivial());
+            }
             String runId = storeRun(projectId, isDraft, request, full, ruleConclusions);
             RuleExecutionPresenter.Presented presented = runId != null
                     ? RuleExecutionPresenter.firstPage(full, RuleExecutionPresenter.FIRST_PAGE)
@@ -1934,7 +1942,8 @@ public class ReasonerController {
             body.put("omittedTrivialCount", presented.omittedTrivial());
             body.put("truncated", presented.truncated());
             body.put("runId", runId);
-            body.put("counts", RuleExecutionPresenter.counts(full, ruleConclusions.size()));
+            body.put("counts", RuleExecutionPresenter.counts(full, attributionComplete ? ruleConclusions.size() : null));
+            body.put("attributionComplete", attributionComplete);
             body.put("executionMode", "all");
             body.put("status", status.name());
             body.put("statusLabel", status.label());

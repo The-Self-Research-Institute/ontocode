@@ -1600,7 +1600,7 @@ export const ReasonerPluginView: React.FC<ReasonerPluginProps> = ({
               <h3 className={`text-lg font-semibold ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>No Reasoner Running</h3>
               <p className={`text-sm max-w-md ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
                 Click <strong>Start</strong> to begin reasoning over the ontology.<br />
-                Select a reasoner from the dropdown menu above.
+                Select a reasoner from the dropdown menu above. To run selected SWRL rules or inspect individual rule results, open the SWRL tab.
               </p>
             </div>
             {(consistencyData || displayStats) && (

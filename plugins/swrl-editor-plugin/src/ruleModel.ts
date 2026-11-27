@@ -675,7 +675,7 @@ export function applySavedRule<T extends { id: string; ruleName: string }>(
 export const RESULTS_PAGE_SIZE = 50;
 export const EXPIRED_RUN_MESSAGE = 'This result has expired. Run Execute again.';
 
-export type AxiomKind = 'conclusions' | 'structure';
+export type AxiomKind = 'rules' | 'conclusions' | 'structure';
 
 export interface RunCounts {
   conclusions: number;
@@ -714,7 +714,7 @@ export function derivedSummary(counts: RunCounts): string {
   } else if (facts > 0) {
     const ruleFacts = counts.ruleConclusions;
     const standardFacts = facts - ruleFacts;
-    parts.push(`${formatCount(ruleFacts)} ${pluralize(ruleFacts, 'fact', 'facts')} from your rules`);
+    if (ruleFacts > 0) parts.push(`${formatCount(ruleFacts)} ${pluralize(ruleFacts, 'fact', 'facts')} from your rules`);
     if (standardFacts > 0) parts.push(`${formatCount(standardFacts)} ${pluralize(standardFacts, 'fact', 'facts')} from standard reasoning`);
   }
   parts.push(relations > 0 ? `${formatCount(relations)} ${pluralize(relations, 'class relationship', 'class relationships')} from standard reasoning` : 'no class relationships');
@@ -997,6 +997,10 @@ export interface RunLike {
   structureCount?: number;
   counts?: { conclusions: number; structure: number };
   status?: string;
+  statusLabel?: string;
+  completion?: string;
+  message?: string;
+  limitations?: string[];
   skippedRules?: Array<string | { ruleName?: string; name?: string; ruleId?: string; reason?: string }>;
 }
 
@@ -1127,7 +1131,9 @@ export function runLogLines(run: RunLike & { executionTimeMs?: number; errorMess
   }
   const ran = run.executedRuleNames?.length ?? run.totalRulesExecuted ?? 0;
   return [
-    'Rules ran successfully.',
+    run.statusLabel || (run.completion === 'completed_with_warnings' ? 'Rules ran with warnings.' : 'Rules ran successfully.'),
+    ...(run.status && run.status !== 'COMPLETED' && run.message ? [run.message] : []),
+    ...(run.limitations ?? []),
     `Number of rules run: ${formatCount(ran)}`,
     ...skippedLogLines(skippedInfo(run)),
     inferredLogLine(run),

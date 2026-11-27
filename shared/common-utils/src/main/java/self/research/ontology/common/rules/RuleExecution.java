@@ -71,6 +71,12 @@ public final class RuleExecution {
         this.reasonerName = reasonerName;
     }
 
+    public RuleExecutionResult runForDisplay(OWLOntology asserted, String snapshotId, RuleExecutionLimits limits) {
+        long started = System.nanoTime();
+        RuleExecutionResult result = run(asserted, snapshotId, limits);
+        return new RuleDisplayFacts(reasonerFactory, limits, started).complete(asserted, result);
+    }
+
     public RuleExecutionResult run(OWLOntology asserted, String snapshotId, RuleExecutionLimits limits) {
         long started = System.nanoTime();
         Map<String, String> versions = new TreeMap<>();
@@ -154,12 +160,16 @@ public final class RuleExecution {
             limitations.add("Equality (sameAs, differentFrom, functional properties) found by OWL reasoning is not passed to the rule engine, so rules that depend on it may miss conclusions.");
         }
 
-        Set<org.semanticweb.owlapi.model.OWLEntity> engineInputs = new LinkedHashSet<>();
+        Set<OWLObjectProperty> chainInputs = PropertyChainInputs.forNativeRules(working);
+        if (!chainInputs.isEmpty()) {
+            limitations.add("This run makes property-chain facts about named individuals available to rules that use them.");
+        }
+        Set<OWLEntity> nextRoundInputs = new LinkedHashSet<>(chainInputs);
         for (SWRLRule rule : engineRules) {
-            rule.body().forEach(atom -> atom.signature().forEach(engineInputs::add));
+            rule.body().forEach(atom -> atom.signature().forEach(nextRoundInputs::add));
         }
         Set<OWLClass> classes = new LinkedHashSet<>();
-        Set<OWLObjectProperty> objectProperties = new LinkedHashSet<>();
+        Set<OWLObjectProperty> objectProperties = new LinkedHashSet<>(chainInputs);
         Set<OWLDataProperty> dataProperties = new LinkedHashSet<>();
         for (SWRLRule rule : engineRules) {
             rule.body().forEach(atom -> collect(atom, classes, objectProperties, dataProperties));
@@ -202,7 +212,7 @@ public final class RuleExecution {
                         busyNote = RestRuleStage.takeBusyLimitation();
                     } else {
                         engineRan = true;
-                        absorb(out.get(), working, manager, engineBase, baseManager, derived, Origin.RULE_ENGINE, round, ignored, engineInputs);
+                        absorb(out.get(), working, manager, engineBase, baseManager, derived, Origin.RULE_ENGINE, round, ignored, nextRoundInputs);
                     }
                 }
                 if (derived.size() > limits.maxDerivedFacts()) {
@@ -218,12 +228,12 @@ public final class RuleExecution {
                     forced = Status.INCONSISTENT;
                     break;
                 }
-                int added = absorb(owlFacts.get(), working, manager, engineBase, baseManager, derived, Origin.OWL_REASONER, round, ignored, engineInputs);
+                int added = absorb(owlFacts.get(), working, manager, engineBase, baseManager, derived, Origin.OWL_REASONER, round, ignored, nextRoundInputs);
                 if (derived.size() > limits.maxDerivedFacts()) {
                     limit = Limit.DERIVED_FACTS;
                     break;
                 }
-                if (added == 0 || engineRules.isEmpty() || !engineAvailable) {
+                if (added == 0 || (chainInputs.isEmpty() && (engineRules.isEmpty() || !engineAvailable))) {
                     converged = true;
                     break;
                 }

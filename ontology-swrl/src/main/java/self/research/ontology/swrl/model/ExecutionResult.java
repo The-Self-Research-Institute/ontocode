@@ -19,6 +19,7 @@ public class ExecutionResult {
     private boolean truncated;
     private List<self.research.ontology.swrl.model.SkippedRule> skippedRules = new ArrayList<>();
     private String completion = "completed";
+    private List<String> limitations = List.of();
 
     public ExecutionResult() {}
 
@@ -69,6 +70,9 @@ public class ExecutionResult {
     public void setTruncated(boolean truncated) { this.truncated = truncated; }
     public List<self.research.ontology.swrl.model.SkippedRule> getSkippedRules() { return skippedRules; }
     public void setSkippedRules(List<self.research.ontology.swrl.model.SkippedRule> skippedRules) { this.skippedRules = skippedRules; }
+
+    public List<String> getLimitations() { return limitations; }
+    public void setLimitations(List<String> limitations) { this.limitations = limitations; }
 
     public String getCompletion() { return completion; }
     public void setCompletion(String completion) { this.completion = completion; }

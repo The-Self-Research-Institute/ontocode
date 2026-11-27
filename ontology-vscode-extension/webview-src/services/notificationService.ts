@@ -18,6 +18,11 @@ export interface NotificationOptions {
   actions?: Array<{ label: string; action: () => void }>;
 }
 
+export function readingTimeMs(text: string, type: NotificationType): number {
+  const base = type === 'error' ? 9000 : type === 'warning' ? 7000 : 5000;
+  return Math.min(30000, base + Math.max(0, text.length - 80) * 60);
+}
+
 class NotificationService {
   private static instance: NotificationService;
   private isVSCode = typeof window !== 'undefined' && !!window.vscode;
@@ -37,7 +42,9 @@ class NotificationService {
     };
   }
 
-  notify(options: NotificationOptions): void {
+  notify(requested: NotificationOptions): void {
+    const readable = readingTimeMs(`${requested.title} ${requested.message}`, requested.type);
+    const options = { ...requested, duration: Math.max(requested.duration ?? 0, readable) };
     if (this.isVSCode) {
       this.showVSCodeNotification(options);
 
@@ -106,19 +113,19 @@ class NotificationService {
   }
 
   success(title: string, message: string): void {
-    this.notify({ title, message, type: 'success', duration: 5000 });
+    this.notify({ title, message, type: 'success' });
   }
 
   error(title: string, message: string): void {
-    this.notify({ title, message, type: 'error', duration: 8000 });
+    this.notify({ title, message, type: 'error' });
   }
 
   info(title: string, message: string): void {
-    this.notify({ title, message, type: 'info', duration: 5000 });
+    this.notify({ title, message, type: 'info' });
   }
 
   warning(title: string, message: string): void {
-    this.notify({ title, message, type: 'warning', duration: 6000 });
+    this.notify({ title, message, type: 'warning' });
   }
 }
 

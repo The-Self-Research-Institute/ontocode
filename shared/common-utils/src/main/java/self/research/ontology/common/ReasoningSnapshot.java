@@ -593,9 +593,12 @@ public final class ReasoningSnapshot {
                     inferred.add(df.getOWLClassAssertionAxiom(owlClass, individual));
                 }
             }
-            boolean truncated = inferred.size() > limit;
-            List<Map<String, Object>> axioms = inferred.stream()
-                    .limit(limit)
+            InferredPropertyFacts.Result properties = InferredPropertyFacts.collect(ontology, propertyReasoner, df, limit);
+            stoppedEarly |= properties.stoppedEarly();
+            List<OWLAxiom> shown = InferredPropertyFacts.share(inferred, properties.facts(), limit);
+            int total = inferred.size() + properties.facts().size();
+            boolean truncated = total > shown.size();
+            List<Map<String, Object>> axioms = shown.stream()
                     .map(axiom -> {
                         Map<String, Object> entry = new HashMap<>();
                         entry.put("axiomType", axiom.getAxiomType().getName());
@@ -609,16 +612,17 @@ public final class ReasoningSnapshot {
                     })
                     .collect(Collectors.toList());
 
-            result.put("totalInferredAxioms", inferred.size());
+            result.put("totalInferredAxioms", total);
             result.put("axioms", axioms);
+            String note = properties.note() == null ? "" : " " + properties.note();
             if (stoppedEarly) {
                 result.put("totalIsPartial", true);
-                result.put("message", "Showing the first " + axioms.size() + " of at least " + inferred.size()
-                        + " inferred axioms (the search stopped early, so there may be more)");
+                result.put("message", "Showing the first " + axioms.size() + " of at least " + total
+                        + " inferred axioms (the search stopped early, so there may be more)" + note);
             } else if (truncated) {
-                result.put("message", "Showing the first " + axioms.size() + " of " + inferred.size() + " inferred axioms");
+                result.put("message", "Showing the first " + axioms.size() + " of " + total + " inferred axioms" + note);
             } else {
-                result.put("message", "Showing all " + inferred.size() + " inferred axioms");
+                result.put("message", "Showing all " + total + " inferred axioms" + note);
             }
         } catch (Exception e) {
             rethrowIfStopped(e);
