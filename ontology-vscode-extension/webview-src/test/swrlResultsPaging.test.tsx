@@ -44,7 +44,11 @@ const makeAxioms = (kind: string, offset: number, count: number) =>
 
 const TOTALS: Record<string, number> = { rules: 90, conclusions: 120, structure: 7 };
 
-const setup = async (opts: { expireOnPage2?: boolean; attributionComplete?: boolean } = {}) => {
+const setup = async (opts: {
+  expireOnPage2?: boolean;
+  attributionComplete?: boolean;
+  inlineAxioms?: ReturnType<typeof makeAxioms>;
+} = {}) => {
   const pageUrls: string[] = [];
   const posts: any[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: any) => {
@@ -60,6 +64,10 @@ const setup = async (opts: { expireOnPage2?: boolean; attributionComplete?: bool
     }
     if (u.endsWith("/api/ontology/p1/rules/execute") && init?.method === "POST") {
       posts.push(u);
+      if (opts.inlineAxioms) return reply({
+        success: true, executionTimeMs: 5, totalRulesExecuted: 1,
+        inferredAxiomsCount: opts.inlineAxioms.length, inferredAxioms: opts.inlineAxioms,
+      });
       return reply({
         success: true, executionTimeMs: 5, inferredAxiomsCount: 127, totalRulesExecuted: 1,
         inferredAxioms: makeAxioms("conclusions", 0, 3), errorMessage: null,
@@ -81,6 +89,25 @@ const setup = async (opts: { expireOnPage2?: boolean; attributionComplete?: bool
 };
 
 describe("SWRL results paging", () => {
+  it("shows rule results first even when they follow more than 100 standard results in the response", async () => {
+    const { pageUrls } = await setup({
+      inlineAxioms: [
+        ...makeAxioms("conclusions", 0, 120),
+        ...makeAxioms("rules", 0, 2),
+      ],
+    });
+    const sections = () => [...host.querySelectorAll('[data-testid^="section-"]')].map(section => section.getAttribute("data-testid"));
+    expect(pageUrls).toHaveLength(0);
+    expect(sections()).toEqual(["section-rules", "section-standard"]);
+    expect(host.textContent).toContain("rules1");
+    expect(host.textContent).toContain("rules2");
+    expect(host.textContent).not.toContain("conclusions120");
+
+    await act(async () => buttonStarting("Show 22 more")!.click());
+    expect(sections()).toEqual(["section-rules", "section-standard"]);
+    expect(host.textContent).toContain("conclusions120");
+  });
+
   it("defaults to rule-dependent facts and switches to all facts when requested", async () => {
     const { pageUrls } = await setup({ attributionComplete: true });
     expect(pageUrls[0]).toContain("kind=rules");
